@@ -4,7 +4,6 @@ import {
   beaconLock,
   holderSignatureValid,
   inputScriptValid,
-  pubkeyHashHex,
   readCountersigned,
   readHolderUnlock,
   sameKeySets,
@@ -88,7 +87,8 @@ export type ResolveResult =
 export function resolveCountersignTransfer(
   tx: Transaction,
   deploys: ReadonlyMap<string, CountersignDeploy>,
-  myPkhHex?: string,
+  /** Holder pubkey hashes this wallet holds: its identity hash and the `p color` children it can derive. */
+  heldHashes?: ReadonlySet<string>,
 ): ResolveResult {
   const ins = new Map<string, bigint>()
   for (let vin = 0; vin < tx.inputs.length; vin++) {
@@ -120,7 +120,7 @@ export function resolveCountersignTransfer(
       return { ok: false, reason: 'output', detail: `output ${vout} names other key sets` }
     }
     outs.set(read.assetId, (outs.get(read.assetId) ?? 0n) + read.amount)
-    if (myPkhHex && read.holderPkhHex === myPkhHex) {
+    if (heldHashes?.has(read.holderPkhHex)) {
       mine.push({ vout, assetId: read.assetId, amount: read.amount })
     }
   }
@@ -158,8 +158,8 @@ export type AcceptCheck =
  * The acceptor's checks before it countersigns: every input is an accepted,
  * unreserved output of an asset this acceptor answers for, signed by its
  * holder ALL|ANYONECANPAY; every output keeps the clause, carries one
- * satoshi, and pays either a named recipient's identity key or the sender
- * back; amounts are conserved.
+ * satoshi, and pays either the holder hash a recipient entry proved or an
+ * input's holder back; amounts are conserved.
  */
 export function checkAcceptRequest(args: {
   tx: Transaction
@@ -168,7 +168,8 @@ export function checkAcceptRequest(args: {
   accepted: ReadonlySet<string>
   reservedBy: (outpoint: string) => string | undefined
   requestId: string
-  recipients: ReadonlyArray<{ vout: number; identityKey: string }>
+  /** Holder pubkey hash per listed output, already proven from the request's linkage. */
+  recipients: ReadonlyArray<{ vout: number; holderPkhHex: string }>
   frozen?: (holderPkhHex: string) => boolean
   /**
    * Quorum requests: the holder's own fee inputs follow the asset inputs.
@@ -211,7 +212,7 @@ export function checkAcceptRequest(args: {
     inputs.push(asset.outpoint)
     senders.add(asset.read.holderPkhHex)
   }
-  const named = new Map(args.recipients.map((r) => [r.vout, pubkeyHashHex(r.identityKey.toLowerCase())]))
+  const named = new Map(args.recipients.map((r) => [r.vout, r.holderPkhHex]))
   const outs = new Map<string, bigint>()
   for (let vout = 0; vout < tx.outputs.length; vout++) {
     const output = tx.outputs[vout]!

@@ -1,4 +1,4 @@
-import { Beef, KeyDeriver, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
+import { Beef, Hash, KeyDeriver, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { countersignMachine } from '../../machines/countersignMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
@@ -10,6 +10,22 @@ import { getWalletRuntime } from '../walletRuntime'
 import { runExclusiveSpend } from '../spendGuard'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { normalizeTokenId } from '../token/types'
+import { readDeliveryRemittance, type ColorRemittance } from '../colorKeys'
+import {
+  deliveryOutputsFor,
+  deliveryOutputsFromEntries,
+  holderKeyAsset,
+  holderPkhFor,
+  holderPrivateKey,
+  holderRemittanceOf,
+  planHolderRemittance,
+  provenRecipientPkh,
+  readRecipientEntries,
+  recipientEntries,
+  type DeliveryOutput,
+  type HolderRemittance,
+  type RecipientEntry,
+} from './holderKeys'
 import {
   ACCEPT_REFUSAL_COPY,
   chooseCosignerQuorum,
@@ -28,6 +44,7 @@ import {
   checkAcceptRequest,
   readCountersignDeploy,
   resolveCountersignTransfer,
+  type AcceptCheck,
   type AcceptRefusal,
   type CountersignDeploy,
 } from './resolve'
@@ -102,7 +119,8 @@ type Wire =
       t: 'request'
       token: string
       ef: string
-      recipients: Array<{ vout: number; identityKey: string }>
+      /** Who holds each listed output, each proven by a linkage encrypted to the addressed acceptor. */
+      recipients: RecipientEntry[]
       /** Ancestors of the request, so a cosigner can prove each input was accepted. */
       beef?: string
     }
@@ -113,7 +131,17 @@ type Wire =
   /** A quorum cancel carries signed refusals proving no quorum can sign the request. */
   | { v: 1; t: 'cancel'; token: string; request: string; refusals?: Record<string, SignedRefusal> }
   | { v: 1; t: 'cancelled'; token: string; request: string; signature: string }
-  | { v: 1; t: 'transfer'; token: string; ef: string; beef?: string; deploy?: string }
+  | {
+      v: 1
+      t: 'transfer'
+      token: string
+      ef: string
+      /** Remittance for the recipient's outputs: it derives each holder key from these. */
+      senderIdentityKey?: string
+      outputs?: DeliveryOutput[]
+      beef?: string
+      deploy?: string
+    }
   /** The issuer names this wallet as a cosigner; nothing happens until its user joins. */
   | { v: 1; t: 'join'; token: string; deploy: string }
   /** A cosigner proposes the next beacon; input 0 (the beacon) is unsigned. */
@@ -132,7 +160,11 @@ export type CountersignHolding = {
   assetId: string
   amount: bigint
   lockingScript: string
+  /** The `p color` remittance of the holder key; absent for an identity-key holding. */
+  remittance?: ColorRemittance
 }
+
+type HolderRequest = { tx: Transaction; recipients: RecipientEntry[]; requestId: string; prover: string }
 
 function currentActive(): ActiveWallet | null {
   return getWalletRuntime()?.instance ?? null
@@ -150,6 +182,64 @@ function rootKeyOf(active: ActiveWallet): PrivateKey {
 
 function selfPkh(active: ActiveWallet): string {
   return pubkeyHashHex(active.identityKey.toLowerCase())
+}
+
+/** The key that signs as holder of one output. */
+function holderKeyOf(active: ActiveWallet, holding: Pick<CountersignHolding, 'assetId' | 'outpoint' | 'remittance'>): PrivateKey {
+  const root = rootKeyOf(active)
+  return holding.remittance
+    ? holderPrivateKey(root, holderKeyAsset(holding.assetId, holding.outpoint), holding.remittance)
+    : root
+}
+
+/** Holder hashes of one transfer that this wallet keeps, with the remittance each is filed with. */
+function heldHashes(active: ActiveWallet, tx: Transaction, remittances: ReadonlyMap<number, ColorRemittance>): Map<string, ColorRemittance | null> {
+  const held = new Map<string, ColorRemittance | null>([[selfPkh(active), null]])
+  const root = rootKeyOf(active)
+  for (const [vout, remittance] of remittances) {
+    const script = tx.outputs[vout]?.lockingScript
+    const read = script ? readCountersigned(script) : null
+    if (!read?.assetId) continue
+    try {
+      const key = holderPrivateKey(root, read.assetId, remittance)
+      const pkh = Utils.toHex(Hash.hash160(key.toPublicKey().encode(true) as number[]))
+      if (pkh === read.holderPkhHex) held.set(pkh, remittance)
+    } catch {
+      // A malformed row derives nothing; the output stays unclaimed.
+    }
+  }
+  return held
+}
+
+/** The remittance rows of the outputs this wallet keeps from its own transfer. */
+function ownRemittances(active: ActiveWallet, remittance: HolderRemittance | undefined): Map<number, ColorRemittance> {
+  const self = active.identityKey.toLowerCase()
+  return new Map(
+    (remittance?.outputs ?? [])
+      .filter((o) => o.identityKey === self)
+      .map((o) => [o.vout, { derivationPrefix: remittance!.prefix, derivationSuffix: o.derivationSuffix, senderIdentityKey: self }]),
+  )
+}
+
+/**
+ * The holder hash each request entry proves, read with this acceptor's key.
+ * An entry whose linkage does not decrypt refuses the request.
+ */
+function provenRecipients(
+  active: ActiveWallet,
+  request: HolderRequest,
+): { ok: true; recipients: Array<{ vout: number; holderPkhHex: string }> } | { ok: false; detail: string } {
+  const root = rootKeyOf(active)
+  const recipients: Array<{ vout: number; holderPkhHex: string }> = []
+  for (const entry of request.recipients) {
+    const script = request.tx.outputs[entry.vout]?.lockingScript
+    const assetId = script ? readCountersigned(script)?.assetId : null
+    if (!assetId) return { ok: false, detail: `recipient ${entry.vout} names no asset output` }
+    const holderPkhHex = provenRecipientPkh(root, request.prover, assetId, entry)
+    if (!holderPkhHex) return { ok: false, detail: `recipient ${entry.vout} linkage does not open` }
+    recipients.push({ vout: entry.vout, holderPkhHex })
+  }
+  return { ok: true, recipients }
 }
 
 function underscore(outpoint: string): string {
@@ -289,17 +379,40 @@ export async function listCountersignedHoldings(
 ): Promise<CountersignHolding[]> {
   const pages = await Promise.all(
     COUNTERSIGNED_SCHEMES.map((basket) =>
-      active.wallet.listOutputs({ basket, include: 'locking scripts', includeTags: true, limit: 1000 }),
+      active.wallet.listOutputs({
+        basket,
+        include: 'locking scripts',
+        includeTags: true,
+        includeCustomInstructions: true,
+        limit: 1000,
+      }),
     ),
   )
-  const mine = selfPkh(active)
+  const self = selfPkh(active)
   return pages.flatMap((page) => page.outputs ?? []).flatMap((o) => {
     if (o.spendable === false || !o.lockingScript) return []
     const read = readCountersigned(o.lockingScript)
-    if (!read || read.holderPkhHex !== mine) return []
+    if (!read) return []
     const id = read.assetId ?? underscore(o.outpoint)
     if (assetId && id !== assetId) return []
-    return [{ outpoint: o.outpoint.replace('_', '.'), assetId: id, amount: read.amount, lockingScript: o.lockingScript }]
+    const outpoint = o.outpoint.replace('_', '.')
+    const remittance = holderRemittanceOf(o.customInstructions) ?? undefined
+    if (read.holderPkhHex !== self) {
+      if (!remittance) return []
+      try {
+        const key = holderKeyOf(active, { assetId: id, outpoint, remittance })
+        if (Utils.toHex(Hash.hash160(key.toPublicKey().encode(true) as number[])) !== read.holderPkhHex) return []
+      } catch {
+        return []
+      }
+    }
+    return [{
+      outpoint,
+      assetId: id,
+      amount: read.amount,
+      lockingScript: o.lockingScript,
+      ...(read.holderPkhHex !== self && remittance ? { remittance } : {}),
+    }]
   })
 }
 
@@ -340,6 +453,7 @@ function countersignedInstructions(
   assetId: string | null,
   deploy: { kind: string; fields: Pick<CountersignDeployFields, 'sym' | 'dec' | 'name' | 'col'> },
   amount: bigint,
+  remittance?: ColorRemittance | null,
 ): string {
   return JSON.stringify({
     ...(assetId ? { id: assetId } : {}),
@@ -349,6 +463,7 @@ function countersignedInstructions(
     ...(deploy.fields.dec != null ? { dec: deploy.fields.dec } : {}),
     ...(deploy.fields.name ? { name: deploy.fields.name } : {}),
     ...(deploy.fields.col ? { col: deploy.fields.col } : {}),
+    ...(remittance ?? {}),
   })
 }
 
@@ -614,12 +729,19 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
       } catch (err) {
         refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
       }
+      const self = active.identityKey.toLowerCase()
+      const deployHolder = planHolderRemittance([{ vout: 0, identityKey: self }])
+      const deployRemittance: ColorRemittance = {
+        derivationPrefix: deployHolder.prefix,
+        derivationSuffix: deployHolder.outputs[0]!.derivationSuffix,
+        senderIdentityKey: self,
+      }
       let deployLock: string
       try {
         deployLock = countersignDeployLock({
           supply: BigInt(supplyRaw),
           payload,
-          holderPkhHex: selfPkh(active),
+          holderPkhHex: holderPkhFor(rootKeyOf(active), 'ISSUE', deployHolder.prefix, deployHolder.outputs[0]!),
           sets,
         }).toHex()
       } catch (err) {
@@ -637,7 +759,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
             outputDescription: `Countersigned ${kind} deploy`,
             basket: countersignedSchemeFor(kind),
             tags: countersignedTags(null, shape, BigInt(supplyRaw)),
-            customInstructions: countersignedInstructions(null, shape, BigInt(supplyRaw)),
+            customInstructions: countersignedInstructions(null, shape, BigInt(supplyRaw), deployRemittance),
           },
           {
             lockingScript: beaconLock(sets).toHex(),
@@ -681,7 +803,6 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
       })
       chart.send({ type: 'COMMITTED' })
       if (quorum.quorum === 'shared' && deployTx) {
-        const self = active.identityKey.toLowerCase()
         const invite: Wire = { v: 1, t: 'join', token: deploy.assetId, deploy: deployTx.toHex() }
         for (const cosigner of sets.issuer.keys.filter((k) => k !== self)) {
           await replyTo(active, cosigner, invite).catch((err) => {
@@ -735,7 +856,7 @@ function priorAcceptance(state: CountersignState, requestId: string): { record: 
  */
 async function acceptRequest(
   active: ActiveWallet,
-  request: { tx: Transaction; recipients: Array<{ vout: number; identityKey: string }>; requestId: string },
+  request: HolderRequest,
 ): Promise<Decision> {
   const startedAt = Date.now()
   const state = readCountersignState()
@@ -758,6 +879,11 @@ async function acceptRequest(
     }
   }
   if (marked) writeCountersignState(state)
+  const proven = provenRecipients(active, request)
+  if (!proven.ok) {
+    console.warn(`[countersign] acceptor refuse recipient — ${proven.detail}`)
+    return { kind: 'refused', reason: 'recipient', detail: proven.detail }
+  }
   const accepted = new Set(Object.values(state.acceptor).flatMap((r) => r.accepted))
   const spentBy = (outpoint: string) =>
     Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint]
@@ -768,7 +894,7 @@ async function acceptRequest(
     accepted,
     reservedBy: spentBy,
     requestId: request.requestId,
-    recipients: request.recipients,
+    recipients: proven.recipients,
   })
   if (!check.ok) {
     console.warn(`[countersign] acceptor refuse ${check.reason} — ${check.detail}`)
@@ -861,7 +987,7 @@ async function quorumAccepted(
  */
 async function cosignRequest(
   active: ActiveWallet,
-  request: { tx: Transaction; recipients: Array<{ vout: number; identityKey: string }>; requestId: string },
+  request: HolderRequest,
 ): Promise<Decision> {
   const startedAt = Date.now()
   const state = readCountersignState()
@@ -877,6 +1003,7 @@ async function cosignRequest(
     return { kind: 'refused', reason: 'policy', detail: 'cancelled' }
   }
   const tx = request.tx
+  const proven = provenRecipients(active, request)
   const answersFor = (assetId: string) => Boolean(state.acceptor[assetId]?.shared && !state.acceptor[assetId]!.ended)
   const accepted = new Set<string>()
   for (let vin = 0; vin < tx.inputs.length; vin++) {
@@ -886,16 +1013,18 @@ async function cosignRequest(
       accepted.add(asset.outpoint)
     }
   }
-  const check = checkAcceptRequest({
-    tx,
-    deploys,
-    answersFor,
-    accepted,
-    reservedBy: (outpoint) => Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint],
-    requestId: request.requestId,
-    recipients: request.recipients,
-    holderFunded: true,
-  })
+  const check: AcceptCheck = proven.ok
+    ? checkAcceptRequest({
+        tx,
+        deploys,
+        answersFor,
+        accepted,
+        reservedBy: (outpoint) => Object.values(state.acceptor).find((r) => r.spent[outpoint])?.spent[outpoint],
+        requestId: request.requestId,
+        recipients: proven.recipients,
+        holderFunded: true,
+      })
+    : { ok: false, reason: 'recipient', detail: proven.detail }
   if (!check.ok) {
     // A refusal is final: the holder's cancel proof counts on it never turning into a signature.
     for (let vin = 0; vin < tx.inputs.length; vin++) {
@@ -1042,7 +1171,7 @@ async function sendQuorumCancels(active: ActiveWallet, outgoing: OutgoingRequest
 async function requestQuorum(
   active: ActiveWallet,
   outgoing: OutgoingRequest,
-  wire: Extract<Wire, { t: 'request' }>,
+  wireFor: (cosigner: string) => Promise<Extract<Wire, { t: 'request' }>>,
   own: Decision | null,
 ): Promise<Decision> {
   const self = active.identityKey.toLowerCase()
@@ -1060,7 +1189,7 @@ async function requestQuorum(
             signed: {
               t: 'refused' as const,
               reason: own.reason,
-              signature: await signDecision(active, decisionPreimage('refused', wire.token, outgoing.requestId, own.reason)),
+              signature: await signDecision(active, decisionPreimage('refused', outgoing.assetId, outgoing.requestId, own.reason)),
             },
           }
         : own
@@ -1073,7 +1202,7 @@ async function requestQuorum(
   let sent = 0
   for (const cosigner of others) {
     try {
-      await sendSealedToPeerBox(active.rootKeyHex, cosigner, COUNTERSIGN_BOX, JSON.stringify(wire))
+      await sendSealedToPeerBox(active.rootKeyHex, cosigner, COUNTERSIGN_BOX, JSON.stringify(await wireFor(cosigner)))
       sent += 1
     } catch (err) {
       console.warn('[countersign] request send failed', cosigner.slice(0, 12), err instanceof Error ? err.message : String(err))
@@ -1189,14 +1318,14 @@ const awaiting = new Set<string>()
 async function requestRemoteAcceptance(
   active: ActiveWallet,
   acceptors: string[],
-  wire: Extract<Wire, { t: 'request' }>,
+  wireFor: (acceptor: string) => Promise<Extract<Wire, { t: 'request' }>>,
   requestId: string,
 ): Promise<Decision> {
   const { sendSealedToPeerBox, listSealedOwnBox, acknowledgeOwnBox } = await import('../messageTransport')
   let sent = 0
   for (const acceptor of acceptors) {
     try {
-      await sendSealedToPeerBox(active.rootKeyHex, acceptor, COUNTERSIGN_BOX, JSON.stringify(wire))
+      await sendSealedToPeerBox(active.rootKeyHex, acceptor, COUNTERSIGN_BOX, JSON.stringify(await wireFor(acceptor)))
       sent += 1
     } catch (err) {
       console.warn('[countersign] request send failed', acceptor.slice(0, 12), err instanceof Error ? err.message : String(err))
@@ -1255,7 +1384,7 @@ async function decisionFromReply(reply: Wire, sender: string): Promise<Decision 
  * The accepted transaction is the request plus only the acceptor's inputs
  * (none on the quorum path, where the holder funded it), and it resolves.
  */
-function acceptanceMatches(request: Transaction, accepted: Transaction, deploys: Map<string, CountersignDeploy>, mine: string): boolean {
+function acceptanceMatches(request: Transaction, accepted: Transaction, deploys: Map<string, CountersignDeploy>): boolean {
   if (accepted.outputs.length !== request.outputs.length || accepted.inputs.length < request.inputs.length) return false
   const sameOutputs = request.outputs.every(
     (o, i) => accepted.outputs[i]?.satoshis === o.satoshis && accepted.outputs[i]?.lockingScript?.toHex() === o.lockingScript?.toHex(),
@@ -1267,7 +1396,7 @@ function acceptanceMatches(request: Transaction, accepted: Transaction, deploys:
       other?.sourceOutputIndex === input.sourceOutputIndex
     )
   })
-  return sameOutputs && sameInputs && resolveCountersignTransfer(accepted, deploys, mine).ok
+  return sameOutputs && sameInputs && resolveCountersignTransfer(accepted, deploys).ok
 }
 
 export type CountersignTransferResult = {
@@ -1335,21 +1464,19 @@ export async function transferCountersignedAsset(args: {
           sequence: 0xffffffff,
         })
       }
-      tx.addOutput({
-        lockingScript: countersignedLock({
-          assetId: path.assetId,
-          amount: path.amount,
-          holderPkhHex: pubkeyHashHex(path.recipient),
-          sets: deploy!.sets,
-        }),
-        satoshis: 1,
-      })
-      if (covered > path.amount) {
+      const self = active.identityKey.toLowerCase()
+      const root = rootKeyOf(active)
+      const remittance = planHolderRemittance([
+        { vout: 0, identityKey: path.recipient },
+        ...(covered > path.amount ? [{ vout: 1, identityKey: self }] : []),
+      ])
+      const amounts = [path.amount, covered - path.amount]
+      for (const output of remittance.outputs) {
         tx.addOutput({
           lockingScript: countersignedLock({
             assetId: path.assetId,
-            amount: covered - path.amount,
-            holderPkhHex: selfPkh(active),
+            amount: amounts[output.vout]!,
+            holderPkhHex: holderPkhFor(root, path.assetId, remittance.prefix, output),
             sets: deploy!.sets,
           }),
           satoshis: 1,
@@ -1360,10 +1487,9 @@ export async function transferCountersignedAsset(args: {
         // sequence is final, which disables nLockTime: a past height only makes the bytes unique.
         tx.lockTime = Math.floor(Math.random() * 400_000)
       }
-      const root = rootKeyOf(active)
-      const signatures = tx.inputs.map((_, vin) => signInput(tx, vin, root, HOLDER_SCOPE))
-      signatures.forEach((signature, vin) => {
-        tx.inputs[vin]!.unlockingScript = holderUnlock(signature, active.identityKey.toLowerCase())
+      selected.forEach((holding, vin) => {
+        const key = holderKeyOf(active, holding)
+        tx.inputs[vin]!.unlockingScript = holderUnlock(signInput(tx, vin, key, HOLDER_SCOPE), key.toPublicKey().toString())
       })
       // A quorum signs one fixed transaction, so the holder pays its fee.
       const feeCoins =
@@ -1371,7 +1497,7 @@ export async function transferCountersignedAsset(args: {
       if (feeCoins.length) await signFeeInputs(active, tx, feeCoins, selected.length)
       const efBytes = tx.toEF()
       const requestId = requestIdOf(efBytes)
-      const recipients = [{ vout: 0, identityKey: path.recipient }]
+      const ownRecipients = () => recipientEntries(root, path.assetId, remittance, self)
       chart.send({ type: 'SIGNED', requestId })
       const outgoing: OutgoingRequest = {
         requestId,
@@ -1388,6 +1514,7 @@ export async function transferCountersignedAsset(args: {
                 ? path.cosigners.keys
                 : [],
         inputs: selected.map((h) => underscore(h.outpoint)),
+        remittance,
         state: 'open',
         at: Date.now(),
         ...(path.path === 'quorum' ? { cosigners: path.cosigners, feeCoins: feeCoins.map(feeCoinKey) } : {}),
@@ -1395,14 +1522,17 @@ export async function transferCountersignedAsset(args: {
       state.outgoing[requestId] = outgoing
       writeCountersignState(state)
 
-      const requestWire = async (): Promise<Extract<Wire, { t: 'request' }>> => {
+      let ancestors: Promise<string | null> | null = null
+      const requestWire = async (acceptor: string): Promise<Extract<Wire, { t: 'request' }>> => {
         const { MESSAGEBOX_BODY_MAX } = await import('../messageTransport')
         const ef = Utils.toBase64(efBytes)
-        const beef = await atomicBeefFor(active, Transaction.fromEF(efBytes), readCountersignState())
+        ancestors ??= atomicBeefFor(active, Transaction.fromEF(efBytes), readCountersignState())
           .then((bytes) => Utils.toBase64(bytes))
           .catch(() => null)
+        const beef = await ancestors
+        const recipients = await recipientEntries(root, path.assetId, remittance, acceptor)
         // Sealing grows the body, so the optional ancestors get what half the box cap leaves.
-        const fits = beef != null && ef.length + beef.length < MESSAGEBOX_BODY_MAX / 2
+        const fits = beef != null && ef.length + beef.length + JSON.stringify(recipients).length < MESSAGEBOX_BODY_MAX / 2
         return { v: 1, t: 'request', token: path.assetId, ef, recipients, ...(fits ? { beef } : {}) }
       }
       let released = path.path === 'released'
@@ -1410,17 +1540,17 @@ export async function transferCountersignedAsset(args: {
         path.path === 'released'
           ? await countersignReleased(active, Transaction.fromEF(efBytes), path.keys, deploy!, state)
           : path.path === 'local-acceptor'
-            ? await acceptRequest(active, { tx: Transaction.fromEF(efBytes), recipients, requestId })
+            ? await acceptRequest(active, { tx: Transaction.fromEF(efBytes), recipients: await ownRecipients(), requestId, prover: self })
             : path.path === 'quorum'
               ? await requestQuorum(
                   active,
                   outgoing,
-                  await requestWire(),
+                  requestWire,
                   path.selfCosigns
-                    ? await cosignRequest(active, { tx: Transaction.fromEF(efBytes), recipients, requestId })
+                    ? await cosignRequest(active, { tx: Transaction.fromEF(efBytes), recipients: await ownRecipients(), requestId, prover: self })
                     : null,
                 )
-              : await requestRemoteAcceptance(active, path.acceptors, await requestWire(), requestId)
+              : await requestRemoteAcceptance(active, path.acceptors, requestWire, requestId)
       // A silent or retired issuer: the beacon chain says whether the release keys are out.
       if (
         (path.path === 'remote-acceptor' || path.path === 'quorum') &&
@@ -1490,7 +1620,7 @@ async function completeAcceptedTransfer(
   const deploys = deployMap(state)
   const request = Transaction.fromEF(Utils.toArray(outgoing.efHex, 'hex'))
   const accepted = decision.tx
-  if (!acceptanceMatches(request, accepted, deploys, selfPkh(active))) {
+  if (!acceptanceMatches(request, accepted, deploys)) {
     refuse('invalid-acceptance', 'The countersigned transaction is not this transfer. Nothing was filed.')
   }
   const txid = String(accepted.id('hex')).toLowerCase()
@@ -1502,7 +1632,7 @@ async function completeAcceptedTransfer(
   startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'countersign' }))
   chart?.send({ type: 'BROADCASTED', txid })
   const deploy = deploys.get(outgoing.assetId)!
-  await fileResolvedOutputs(active, txid, atomic, accepted, deploys, deploy)
+  await fileResolvedOutputs(active, txid, atomic, accepted, deploys, deploy, heldHashes(active, accepted, ownRemittances(active, outgoing.remittance)))
   for (const outpoint of outgoing.inputs) {
     await active.wallet
       .relinquishOutput({ basket: countersignedSchemeFor(deploy.kind), output: outpoint.replace('_', '.') })
@@ -1512,7 +1642,11 @@ async function completeAcceptedTransfer(
     await active.wallet.relinquishOutput({ basket: FEE_BASKET, output: coin }).catch(() => {})
   }
   if (outgoing.recipient !== active.identityKey.toLowerCase()) {
-    void deliverTransfer(active, outgoing.recipient, outgoing.assetId, accepted, atomic).catch(() => {})
+    const outputs = outgoing.remittance ? deliveryOutputsFor(outgoing.remittance, outgoing.recipient) : []
+    void deliverTransfer(active, outgoing.recipient, outgoing.assetId, accepted, atomic, {
+      senderIdentityKey: active.identityKey.toLowerCase(),
+      outputs,
+    }).catch(() => {})
   }
   const next = readCountersignState()
   next.outgoing[outgoing.requestId] = { ...outgoing, state: 'accepted', txid }
@@ -1538,8 +1672,9 @@ async function fileResolvedOutputs(
   tx: Transaction,
   deploys: Map<string, CountersignDeploy>,
   deploy: CountersignDeploy,
+  held: ReadonlyMap<string, ColorRemittance | null>,
 ): Promise<number> {
-  const resolved = resolveCountersignTransfer(tx, deploys, selfPkh(active))
+  const resolved = resolveCountersignTransfer(tx, deploys, new Set(held.keys()))
   if (!resolved.ok || resolved.mine.length === 0) return 0
   const { withRestoredInternalizeStatus } = await import('../peerIngestHelpers')
   await withRestoredInternalizeStatus(txid, () =>
@@ -1553,7 +1688,12 @@ async function fileResolvedOutputs(
         insertionRemittance: {
           basket: countersignedSchemeFor(deploys.get(m.assetId)!.kind),
           tags: countersignedTags(m.assetId, deploys.get(m.assetId)!, m.amount),
-          customInstructions: countersignedInstructions(m.assetId, deploys.get(m.assetId)!, m.amount),
+          customInstructions: countersignedInstructions(
+            m.assetId,
+            deploys.get(m.assetId)!,
+            m.amount,
+            held.get(readCountersigned(tx.outputs[m.vout]!.lockingScript!)!.holderPkhHex),
+          ),
         },
       })),
     }),
@@ -1567,6 +1707,7 @@ async function deliverTransfer(
   assetId: string,
   tx: Transaction,
   atomic: number[],
+  remittance: { senderIdentityKey: string; outputs: DeliveryOutput[] },
 ): Promise<void> {
   const { sendSealedToPeerBox, MESSAGEBOX_BODY_MAX } = await import('../messageTransport')
   const ef = Utils.toBase64(tx.toEF())
@@ -1580,6 +1721,7 @@ async function deliverTransfer(
     t: 'transfer',
     token: assetId,
     ef,
+    ...(remittance.outputs.length ? { senderIdentityKey: remittance.senderIdentityKey, outputs: remittance.outputs } : {}),
     ...(ef.length + beef.length < budget ? { beef } : {}),
     ...(deployHex && ef.length + beef.length + deployHex.length < budget ? { deploy: deployHex } : {}),
   }
@@ -1620,12 +1762,12 @@ async function answerRequest(active: ActiveWallet, sender: string, wire: Extract
       // Ancestors are a shortcut; quorumAccepted fetches what it lacks.
     }
   }
-  const recipients = Array.isArray(wire.recipients) ? wire.recipients : []
+  const recipients = readRecipientEntries(wire.recipients)
   const state = readCountersignState()
   const asset = assetOfInput(tx, 0, deployMap(state))
   const shared = asset ? state.acceptor[asset.assetId]?.shared === true : false
   const decision = await runExclusiveSpend(
-    () => (shared ? cosignRequest : acceptRequest)(active, { tx, recipients, requestId }),
+    () => (shared ? cosignRequest : acceptRequest)(active, { tx, recipients, requestId, prover: sender }),
     undefined,
     { promote: false },
   )
@@ -1647,8 +1789,10 @@ async function answerRequest(active: ActiveWallet, sender: string, wire: Extract
     const { registerSignedSend, startSignedSendPropagation } = await import('../signedSendLifecycle')
     if (decision.atomic) startSignedSendPropagation(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'countersign' }))
     await replyTo(active, sender, { v: 1, t: 'accepted', token: wire.token, request: requestId, ef: Utils.toBase64(Utils.toArray(decision.efHex, 'hex')), beef: Utils.toBase64(atomic) })
-    for (const r of wire.recipients ?? []) {
-      if (r.identityKey !== sender) void deliverTransfer(active, r.identityKey, wire.token, decision.tx, atomic).catch(() => {})
+    for (const who of new Set(recipients.map((r) => r.identityKey))) {
+      if (who === sender) continue
+      const outputs = deliveryOutputsFromEntries(recipients, who)
+      void deliverTransfer(active, who, wire.token, decision.tx, atomic, { senderIdentityKey: sender, outputs }).catch(() => {})
     }
     return
   }
@@ -1707,15 +1851,16 @@ async function ingestTransfer(active: ActiveWallet, wire: Extract<Wire, { t: 'tr
   if (!deploy) return 'retry'
   writeCountersignState(state)
   const deploys = deployMap(state)
-  const resolved = resolveCountersignTransfer(tx, deploys, selfPkh(active))
+  const held = heldHashes(active, tx, readDeliveryRemittance({ senderIdentityKey: wire.senderIdentityKey, outputs: wire.outputs }))
+  const resolved = resolveCountersignTransfer(tx, deploys, new Set(held.keys()))
   if (!resolved.ok) {
     console.warn(`[countersign] transfer refused ${resolved.reason} — ${resolved.detail}`)
     return 'invalid'
   }
   if (resolved.mine.length === 0) return 'invalid'
   const txid = String(tx.id('hex')).toLowerCase()
-  const held = await listCountersignedHoldings(active, wire.token)
-  if (held.some((h) => h.outpoint.startsWith(txid))) return 'filed'
+  const holdings = await listCountersignedHoldings(active, wire.token)
+  if (holdings.some((h) => h.outpoint.startsWith(txid))) return 'filed'
   // Accept-once ends at release: the holder could countersign another spend, so only mining is final.
   const releasedSpend =
     tx.inputs.some((input) => unlockBranch(input.unlockingScript) === 'release') ||
@@ -1727,7 +1872,7 @@ async function ingestTransfer(active: ActiveWallet, wire: Extract<Wire, { t: 'tr
   atomic ??= await atomicBeefFor(active, tx, state)
   try {
     rememberBeefTree(atomic, txid)
-    await fileResolvedOutputs(active, txid, atomic, tx, deploys, deploy)
+    await fileResolvedOutputs(active, txid, atomic, tx, deploys, deploy, held)
   } catch (err) {
     console.warn('[countersign] transfer filing deferred', err instanceof Error ? err.message : String(err))
     return 'retry'
@@ -1800,16 +1945,12 @@ async function resendQuorumWork(active: ActiveWallet): Promise<void> {
     if (outgoing.state === 'open') {
       quorumSentAt.set(outgoing.requestId, Date.now())
       const answered = new Set([...Object.keys(outgoing.countersigs ?? {}), ...Object.keys(outgoing.refusals ?? {}), self])
-      const efBytes = Utils.toArray(outgoing.efHex, 'hex')
-      const wire: Wire = {
-        v: 1,
-        t: 'request',
-        token: outgoing.assetId,
-        ef: Utils.toBase64(efBytes),
-        recipients: [{ vout: 0, identityKey: outgoing.recipient }],
-      }
+      const ef = Utils.toBase64(Utils.toArray(outgoing.efHex, 'hex'))
       for (const cosigner of outgoing.cosigners.keys.filter((k) => !answered.has(k))) {
-        await replyTo(active, cosigner, wire).catch(() => {})
+        const recipients = outgoing.remittance
+          ? await recipientEntries(rootKeyOf(active), outgoing.assetId, outgoing.remittance, cosigner)
+          : [{ vout: 0, identityKey: outgoing.recipient }]
+        await replyTo(active, cosigner, { v: 1, t: 'request', token: outgoing.assetId, ef, recipients }).catch(() => {})
       }
     } else if (outgoing.state === 'refused' && outgoing.cancelPending?.length) {
       quorumSentAt.set(outgoing.requestId, Date.now())

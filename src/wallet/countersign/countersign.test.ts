@@ -158,7 +158,7 @@ describe('countersigned transfer', () => {
     const { tx } = transfer(deploy, 0, [{ to: recipient, amount: 60n }, { to: holder, amount: 40n }], assetId)
     const ef = Transaction.fromEF(tx.toEF())
     expect(inputScriptValid(ef, 0)).toBe(true)
-    const resolved = resolveCountersignTransfer(ef, deploys, pkh(recipient))
+    const resolved = resolveCountersignTransfer(ef, deploys, new Set([pkh(recipient)]))
     expect(resolved).toEqual({ ok: true, mine: [{ vout: 0, assetId, amount: 60n }], assetIds: [assetId] })
   })
 
@@ -174,12 +174,12 @@ describe('countersigned transfer', () => {
 
   it('refuses minting more than was spent and an item written twice', () => {
     const { tx } = transfer(deploy, 0, [{ to: recipient, amount: 101n }], assetId)
-    expect(resolveCountersignTransfer(Transaction.fromEF(tx.toEF()), deploys, pkh(recipient))).toMatchObject({ ok: false })
+    expect(resolveCountersignTransfer(Transaction.fromEF(tx.toEF()), deploys, new Set([pkh(recipient)]))).toMatchObject({ ok: false })
     const item = deployTx('item', 1n)
     const itemId = `${item.id('hex')}_0`
     const itemDeploys = new Map([[itemId, readCountersignDeploy(item)!]])
     const twice = transfer(item, 0, [{ to: recipient, amount: 1n }, { to: recipient, amount: 1n }], itemId).tx
-    expect(resolveCountersignTransfer(Transaction.fromEF(twice.toEF()), itemDeploys, pkh(recipient))).toMatchObject({ ok: false })
+    expect(resolveCountersignTransfer(Transaction.fromEF(twice.toEF()), itemDeploys, new Set([pkh(recipient)]))).toMatchObject({ ok: false })
   })
 
   it('never resolves a deploy paid straight to the recipient', () => {
@@ -188,7 +188,7 @@ describe('countersigned transfer', () => {
     forgedTx.addInput({ sourceTransaction: funding, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
     forgedTx.addOutput({ lockingScript: countersignedLock({ assetId: `${forged.id('hex')}_0`, amount: 1n, holderPkhHex: pkh(recipient), sets }), satoshis: 1 })
     const known = new Map([[`${forged.id('hex')}_0`, readCountersignDeploy(forged)!]])
-    expect(resolveCountersignTransfer(Transaction.fromEF(forgedTx.toEF()), known, pkh(recipient))).toMatchObject({ ok: false, reason: 'deploy' })
+    expect(resolveCountersignTransfer(Transaction.fromEF(forgedTx.toEF()), known, new Set([pkh(recipient)]))).toMatchObject({ ok: false, reason: 'deploy' })
   })
 
   describe('acceptor checks', () => {
@@ -201,7 +201,7 @@ describe('countersigned transfer', () => {
         accepted,
         reservedBy: () => undefined,
         requestId: requestIdOf(request.toEF()),
-        recipients: [{ vout: 0, identityKey: pub(recipient) }],
+        recipients: [{ vout: 0, holderPkhHex: pkh(recipient) }],
         ...overrides,
       })
 
@@ -216,7 +216,7 @@ describe('countersigned transfer', () => {
       expect(base(request, { accepted: new Set() })).toMatchObject({ reason: 'unknown_input' })
       expect(base(request, { reservedBy: () => 'other' })).toMatchObject({ reason: 'spent' })
       expect(base(request, { answersFor: () => false })).toMatchObject({ reason: 'not_acceptor' })
-      expect(base(request, { recipients: [{ vout: 0, identityKey: pub(PrivateKey.fromRandom()) }] })).toMatchObject({ reason: 'recipient' })
+      expect(base(request, { recipients: [{ vout: 0, holderPkhHex: pkh(PrivateKey.fromRandom()) }] })).toMatchObject({ reason: 'recipient' })
       expect(base(request, { frozen: () => true })).toMatchObject({ reason: 'frozen' })
       const unsigned = Transaction.fromEF(request.toEF())
       unsigned.inputs[0]!.unlockingScript = holderUnlock(signInput(unsigned, 0, holder, COUNTERSIGN_SCOPE), pub(holder))
@@ -348,7 +348,7 @@ describe('beacon and release', () => {
     expect(inputScriptValid(ef, 0)).toBe(true)
     expect(unlockBranch(ef.inputs[0]!.unlockingScript)).toBe('release')
     expect(unlockBranch(transfer(deploy, 0, [{ to: recipient, amount: 100n }], assetId).tx.inputs[0]!.unlockingScript)).toBe('issuer')
-    expect(resolveCountersignTransfer(ef, deploys, pkh(recipient))).toMatchObject({ ok: true })
+    expect(resolveCountersignTransfer(ef, deploys, new Set([pkh(recipient)]))).toMatchObject({ ok: true })
     const stranger = Transaction.fromEF(tx.toEF())
     stranger.inputs[0]!.unlockingScript = countersignedUnlock({
       countersignatures: keys.map((key) => signInput(stranger, 0, key, COUNTERSIGN_SCOPE)),

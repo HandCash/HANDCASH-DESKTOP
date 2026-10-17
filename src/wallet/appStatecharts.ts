@@ -625,6 +625,10 @@ const COUNTERSIGN = `stateDiagram-v2
   note right of holderSigning
     Holder signs ALL|ANYONECANPAY; token
     inputs only, one satoshi per output.
+    Each output is a fresh p color child
+    (recipient's, or own for change); each
+    request lists every output with a
+    linkage sealed to the acceptor it goes to.
     local-acceptor: this wallet holds an
     issuer key and accepts in process.
     remote-acceptor: sealed request to the
@@ -634,7 +638,9 @@ const COUNTERSIGN = `stateDiagram-v2
     ended (retired | lapsed): refuse.
   end note
   note right of requesting
-    Acceptor: accept-once record, adds its
+    Acceptor: opens each linkage (refuses
+    recipient if one does not prove its
+    holder), accept-once record, adds its
     fee input, countersigns ALL. Until it
     signs, no transaction exists.
     outstanding: inputs stay reserved;

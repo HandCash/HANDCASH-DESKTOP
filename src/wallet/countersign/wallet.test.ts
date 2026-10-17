@@ -1,6 +1,7 @@
 import { Beef, LockingScript, P2PKH, PrivateKey, ProtoWallet, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readCountersigned } from './script'
+import { pubkeyHashHex, readCountersigned } from './script'
+import { holderPrivateKey } from './holderKeys'
 import { resolveCountersignTransfer } from './resolve'
 
 const durable = new Map<string, string>()
@@ -225,6 +226,36 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
     expect(acceptor.accepted).toContain(`${sent.txid}_1`)
     const { assets } = await listCountersignedAssets()
     expect(assets).toEqual([expect.objectContaining({ assetId: issued.assetId, held: '60', issuer: true })])
+  })
+
+  it('holds under p color children and delivers the remittance the recipient derives from', async () => {
+    const issued = await issueCountersignedAsset({ kind: 'token', sym: 'OAK', supply: '10', release: custodians })
+    const deployLock = readCountersigned(rows.find((r) => r.outpoint === issued.assetId.replace('_', '.'))!.lockingScript)!
+    expect(deployLock.holderPkhHex).not.toBe(pubkeyHashHex(identityKey))
+    const recipientKey = PrivateKey.fromRandom()
+    const recipient = recipientKey.toPublicKey().toString()
+    sent.length = 0
+
+    const transfer = await transferCountersignedAsset({ assetId: issued.assetId, amount: '4', recipient })
+    const tx = txs.get(transfer.txid)!
+    const payee = readCountersigned(tx.outputs[0]!.lockingScript.toHex())!
+    const change = readCountersigned(tx.outputs[1]!.lockingScript.toHex())!
+    expect(payee.holderPkhHex).not.toBe(pubkeyHashHex(recipient))
+    expect(change.holderPkhHex).not.toBe(pubkeyHashHex(identityKey))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const delivery = sent.find((s) => s.to === recipient && s.wire.t === 'transfer')!.wire as {
+      senderIdentityKey: string
+      outputs: Array<{ vout: number; derivationPrefix: string; derivationSuffix: string }>
+    }
+    expect(delivery.senderIdentityKey).toBe(identityKey)
+    expect(delivery.outputs.map((o) => o.vout)).toEqual([0])
+    const derived = holderPrivateKey(recipientKey, issued.assetId, { ...delivery.outputs[0]!, senderIdentityKey: identityKey })
+    expect(pubkeyHashHex(derived.toPublicKey().toString())).toBe(payee.holderPkhHex)
+
+    const held = await listCountersignedHoldings(active as never, issued.assetId)
+    expect(held.map((h) => [h.outpoint, h.amount])).toEqual([[`${transfer.txid}.1`, 6n]])
+    const again = await transferCountersignedAsset({ assetId: issued.assetId, amount: '6', recipient })
+    expect(again.acceptedBy).toBe('local')
   })
 
   it('issues an item and moves it to the issuer again under acceptance', async () => {

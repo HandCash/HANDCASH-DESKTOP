@@ -5,6 +5,7 @@ import type { BeaconChainView, CountersignPhase } from './beacon'
 import type { CountersignDeployFields } from './payload'
 import type { AcceptRefusal, CountersignDeploy } from './resolve'
 import type { CountersignKeySets } from './script'
+import type { HolderRemittance } from './holderKeys'
 
 /** A deploy as stored: the icon bytes stay in the deploy body, not here. */
 export type StoredDeploy = Omit<CountersignDeploy, 'fields'> & {
@@ -63,6 +64,8 @@ export type OutgoingRequest = {
   amount: string
   acceptors: string[]
   inputs: string[]
+  /** The transfer's `p color` remittance: who holds each output and its suffix under one prefix. */
+  remittance?: HolderRemittance
   state: 'open' | 'accepted' | 'refused' | 'cancelled'
   reason?: AcceptRefusal
   txid?: string
