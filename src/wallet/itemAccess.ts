@@ -202,87 +202,100 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
   const parsed = parsePBasket(raw)
   if (!parsed) return true
   const scheme = parsed.scheme.toLowerCase()
-  return scheme !== ITEM_SCHEME && scheme !== COSIGNED_SCHEME && !isTokenPermissionScheme(scheme)
+  return scheme !== ITEM_SCHEME && !countersignedScheme(scheme) && !isTokenPermissionScheme(scheme)
 }
 
-/** Permission scheme and filing basket for issuer-accepted tokens and items. */
-export const COSIGNED_SCHEME = 'cosigned'
-export const COSIGNED_STORAGE_BASKET = 'cosigned'
+/**
+ * Countersigned (issuer-accepted) profiles. Each kind has its own filing
+ * basket and BRC-99 permission scheme, beside `p2pft` and `1sat`.
+ */
+export const P2PFT_CS = 'p2pft-cs'
+export const ONESAT_CS = '1sat-cs'
+export type CountersignedScheme = typeof P2PFT_CS | typeof ONESAT_CS
+export const COUNTERSIGNED_SCHEMES: readonly CountersignedScheme[] = [P2PFT_CS, ONESAT_CS]
 
-export type CosignedViewScope = 'all' | 'tokens' | 'items' | 'asset' | 'collection' | 'id'
+/** The profile for a deploy's kind. */
+export function countersignedSchemeFor(kind: 'token' | 'item'): CountersignedScheme {
+  return kind === 'item' ? ONESAT_CS : P2PFT_CS
+}
 
-export type CosignedViewRequest = {
-  scope: CosignedViewScope
+function countersignedScheme(name: unknown): CountersignedScheme | null {
+  const n = typeof name === 'string' ? name.trim().toLowerCase() : ''
+  return (COUNTERSIGNED_SCHEMES as readonly string[]).includes(n) ? (n as CountersignedScheme) : null
+}
+
+export type CountersignedViewScope = 'all' | 'asset' | 'collection' | 'id'
+
+export type CountersignedViewRequest = {
+  scheme: CountersignedScheme
+  scope: CountersignedViewScope
   /** Asset ids, collection ids or row keys named in tags, by scope. */
   values: string[]
 }
 
-const COSIGNED_SCOPE_TAG: Record<Exclude<CosignedViewScope, 'all' | 'tokens' | 'items'>, string> = {
-  asset: 'cosigned:',
-  collection: 'collection:',
-  id: 'id:',
+const COUNTERSIGNED_SCOPES: Record<CountersignedScheme, CountersignedViewScope[]> = {
+  [P2PFT_CS]: ['all', 'asset', 'id'],
+  [ONESAT_CS]: ['all', 'asset', 'collection', 'id'],
 }
 
-/** `p cosigned …` view basket (never the bare filing name). */
-export function isCosignedViewBasket(basket: unknown): boolean {
+/** `p p2pft-cs …` / `p 1sat-cs …` view basket (never the bare filing name). */
+export function countersignedViewScheme(basket: unknown): CountersignedScheme | null {
   const p = parsePBasket(basket)
-  return !!p && p.scheme.toLowerCase() === COSIGNED_SCHEME
+  return p ? countersignedScheme(p.scheme) : null
 }
 
-function namesCosignedFiling(basket: unknown): boolean {
-  if (typeof basket !== 'string') return false
-  return basket.trim().toLowerCase() === COSIGNED_STORAGE_BASKET || isCosignedViewBasket(basket)
+function namesCountersignedFiling(basket: unknown): boolean {
+  return countersignedScheme(basket) != null || countersignedViewScheme(basket) != null
 }
 
 /**
- * Apps never write into the cosigned filing or spend from it with a label:
+ * Apps never write into a countersigned filing or spend from it with a label:
  * outputs land there only after the wallet resolves an issuer-accepted
  * transfer, and transfers go through `transferCountersignedAsset`.
  */
-export function cosignedWriteRefusal(args: unknown): string | null {
+export function countersignedWriteRefusal(args: unknown): string | null {
   const body = asRecord(args)
   const labels = Array.isArray(body.labels) ? body.labels : []
-  if (labels.some((l) => typeof l === 'string' && /^p cosigned input id /i.test(l))) {
+  if (labels.some((l) => typeof l === 'string' && /^p (p2pft-cs|1sat-cs) input id /i.test(l))) {
     return 'Issuer-accepted assets move only through transferCountersignedAsset.'
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
   for (const raw of outputs) {
     const out = asRecord(raw)
     const rem = asRecord(out.insertionRemittance)
-    if (namesCosignedFiling(out.basket) || namesCosignedFiling(rem.basket)) {
-      return 'Only the wallet files issuer-accepted outputs; apps cannot write basket "cosigned".'
+    if (namesCountersignedFiling(out.basket) || namesCountersignedFiling(rem.basket)) {
+      return 'Only the wallet files issuer-accepted outputs; apps cannot write baskets "p2pft-cs" or "1sat-cs".'
     }
   }
   return null
 }
 
-/** Asset id of a cosigned row; a deploy row is the asset its own outpoint names. */
-export function cosignedAssetOfRow(row: { outpoint?: unknown; tags?: unknown }): string | null {
+/** Asset id of a countersigned row; a deploy row is the asset its own outpoint names. */
+export function countersignedAssetOfRow(
+  row: { outpoint?: unknown; tags?: unknown },
+  scheme: CountersignedScheme,
+): string | null {
   const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : []
-  for (const value of tagValues(tags, ['cosigned:'])) {
+  for (const value of tagValues(tags, [`${scheme}:`])) {
     const id = normalizeOutpointId(value)
     if (id) return id.replace('.', '_')
   }
-  if (tags.includes('cosigned:deploy') && typeof row.outpoint === 'string') {
+  if (tags.includes(`${scheme}:deploy`) && typeof row.outpoint === 'string') {
     return normalizeOutpointId(row.outpoint)?.replace('.', '_') ?? null
   }
   return null
 }
 
-export function outputMatchesCosignedView(
+export function outputMatchesCountersignedView(
   row: { outpoint?: unknown; tags?: unknown; customInstructions?: unknown },
-  request: CosignedViewRequest,
+  request: CountersignedViewRequest,
 ): boolean {
   const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : []
   switch (request.scope) {
     case 'all':
       return true
-    case 'tokens':
-      return tags.includes('cosigned:token')
-    case 'items':
-      return tags.includes('cosigned:item')
     case 'asset': {
-      const id = cosignedAssetOfRow(row)
+      const id = countersignedAssetOfRow(row, request.scheme)
       return !!id && request.values.includes(id)
     }
     case 'id':
@@ -299,38 +312,40 @@ export function outputMatchesCosignedView(
 }
 
 /** Stamp each listed deploy row with the asset id it names by its own outpoint. */
-export function withCosignedAssetTags(result: unknown, request: CosignedViewRequest): unknown {
+export function withCountersignedAssetTags(result: unknown, request: CountersignedViewRequest): unknown {
   if (!result || typeof result !== 'object') return { outputs: [], totalOutputs: 0 }
   const body = result as { outputs?: unknown[] }
   const outputs = (Array.isArray(body.outputs) ? body.outputs : []).flatMap((raw) => {
     const row = asRecord(raw)
-    if (!outputMatchesCosignedView(row, request)) return []
-    const id = cosignedAssetOfRow(row)
+    if (!outputMatchesCountersignedView(row, request)) return []
+    const id = countersignedAssetOfRow(row, request.scheme)
     const tags = Array.isArray(row.tags) ? (row.tags as string[]) : []
-    return [id && !tags.includes(`cosigned:${id}`) ? { ...row, tags: [...tags, `cosigned:${id}`] } : row]
+    const tag = `${request.scheme}:${id}`
+    return [id && !tags.includes(tag) ? { ...row, tags: [...tags, tag] } : row]
   })
   return { ...body, outputs, totalOutputs: outputs.length }
 }
 
-function prepareCosignedView(body: Record<string, unknown>): {
+function prepareCountersignedView(body: Record<string, unknown>, scheme: CountersignedScheme): {
   error?: { code: string; description: string }
-  request?: CosignedViewRequest
+  request?: CountersignedViewRequest
 } {
   const p = parsePBasket(body.basket)
-  const scope = (p?.rest ?? '').toLowerCase() as CosignedViewScope
-  const scopes: CosignedViewScope[] = ['all', 'tokens', 'items', 'asset', 'collection', 'id']
+  const scope = (p?.rest ?? '').toLowerCase() as CountersignedViewScope
+  const scopes = COUNTERSIGNED_SCOPES[scheme]
   if (!p || !scopes.includes(scope) || p.rest !== scope) {
     return {
       error: {
-        code: 'INVALID_PCOSIGNED_SCOPE',
-        description: 'Use exactly "p cosigned all|tokens|items|asset|collection|id"; filter values belong in tags.',
+        code: 'INVALID_COUNTERSIGNED_SCOPE',
+        description: `Use exactly "p ${scheme} ${scopes.join('|')}"; filter values belong in tags.`,
       },
     }
   }
   const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
   let values: string[] = []
-  if (scope === 'asset' || scope === 'collection' || scope === 'id') {
-    const raw = tagValues(tags, [COSIGNED_SCOPE_TAG[scope]])
+  if (scope !== 'all') {
+    const prefix = scope === 'asset' ? `${scheme}:` : scope === 'collection' ? 'collection:' : 'id:'
+    const raw = tagValues(tags, [prefix])
     values =
       scope === 'asset'
         ? raw.flatMap((v) => normalizeOutpointId(v)?.replace('.', '_') ?? [])
@@ -338,13 +353,13 @@ function prepareCosignedView(body: Record<string, unknown>): {
     if (values.length === 0) {
       return {
         error: {
-          code: 'MISSING_PCOSIGNED_SCOPE_TAG',
-          description: `Basket "p cosigned ${scope}" requires at least one "${COSIGNED_SCOPE_TAG[scope]}<value>" tag.`,
+          code: 'MISSING_COUNTERSIGNED_SCOPE_TAG',
+          description: `Basket "p ${scheme} ${scope}" requires at least one "${prefix}<value>" tag.`,
         },
       }
     }
   }
-  return { request: { scope, values: [...new Set(values)] } }
+  return { request: { scheme, scope, values: [...new Set(values)] } }
 }
 
 /**
@@ -455,7 +470,7 @@ export function prepareItemBasketArgs(args: unknown): {
   error?: { code: string; description: string }
   itemViewRequest?: ItemViewRequest
   tokenViewRequest?: TokenViewRequest
-  cosignedViewRequest?: CosignedViewRequest
+  countersignedViewRequest?: CountersignedViewRequest
 } {
   if (args == null || typeof args !== 'object' || Array.isArray(args)) {
     return { args }
@@ -477,27 +492,28 @@ export function prepareItemBasketArgs(args: unknown): {
   let itemViewRequest: ItemViewRequest | undefined
   let tokenViewRequest: TokenViewRequest | undefined
 
-  const cosignedWrite = cosignedWriteRefusal(body)
-  if (cosignedWrite) {
-    return { args, error: { code: 'COSIGNED_WALLET_ONLY', description: cosignedWrite } }
+  const countersignedWrite = countersignedWriteRefusal(body)
+  if (countersignedWrite) {
+    return { args, error: { code: 'COUNTERSIGNED_WALLET_ONLY', description: countersignedWrite } }
   }
-  if (typeof body.basket === 'string' && body.basket.trim().toLowerCase() === COSIGNED_STORAGE_BASKET) {
+  const bareCountersigned = countersignedScheme(body.basket)
+  if (bareCountersigned) {
     return {
       args,
       error: {
-        code: 'USE_PCOSIGNED_SCOPE',
-        description:
-          'Use basket "p cosigned all|tokens|items|asset|collection|id" (filter values in tags). Storage basket "cosigned" is wallet-internal.',
+        code: 'USE_COUNTERSIGNED_SCOPE',
+        description: `Use basket "p ${bareCountersigned} ${COUNTERSIGNED_SCOPES[bareCountersigned].join('|')}" (filter values in tags). Storage basket "${bareCountersigned}" is wallet-internal.`,
       },
     }
   }
-  if (isCosignedViewBasket(body.basket)) {
-    const cosigned = prepareCosignedView(body)
-    if (cosigned.error) return { args, error: cosigned.error }
+  const viewScheme = countersignedViewScheme(body.basket)
+  if (viewScheme) {
+    const view = prepareCountersignedView(body, viewScheme)
+    if (view.error) return { args, error: view.error }
     const { tags: _scopeTags, ...rest } = body
     return {
-      args: { ...rest, basket: COSIGNED_STORAGE_BASKET, includeTags: true },
-      cosignedViewRequest: cosigned.request,
+      args: { ...rest, basket: viewScheme, includeTags: true },
+      countersignedViewRequest: view.request,
     }
   }
 
@@ -625,7 +641,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", "p2pft" and "cosigned" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", "p2pft", "p2pft-cs" and "1sat-cs" are implemented.`
     }
     return null
   }
@@ -639,7 +655,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21", "p2pft" and "cosigned" are implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21", "p2pft", "p2pft-cs" and "1sat-cs" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err

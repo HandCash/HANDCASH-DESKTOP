@@ -29,7 +29,7 @@ import {
   getTokenAccess,
   requestItemViewApproval,
   requestTokenViewApproval,
-  requestCosignedViewApproval,
+  requestCountersignedViewApproval,
 } from './permissions'
 import { normalizeAppHost } from './appIdentity'
 import {
@@ -48,8 +48,8 @@ import {
   p1SatSpendIds,
   p2pftSpendIds,
   prepareItemBasketArgs,
-  withCosignedAssetTags,
-  type CosignedViewRequest,
+  withCountersignedAssetTags,
+  type CountersignedViewRequest,
   type ItemViewRequest,
   type TokenViewRequest,
 } from './itemAccess'
@@ -567,6 +567,14 @@ export async function dispatchWalletMethod(
       return (await import('./countersign/wallet')).transferCountersignedAsset(
         (args ?? {}) as Parameters<typeof import('./countersign/wallet').transferCountersignedAsset>[0],
       )
+    case 'retireCountersignedAsset':
+      return (await import('./countersign/wallet')).retireCountersignedAsset(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').retireCountersignedAsset>[0],
+      )
+    case 'releaseCountersignedAsset':
+      return (await import('./countersign/wallet')).releaseCountersignedAsset(
+        (args ?? {}) as Parameters<typeof import('./countersign/wallet').releaseCountersignedAsset>[0],
+      )
     case 'listCountersignedAssets':
       return (await import('./countersign/wallet')).listCountersignedAssets()
     case 'claimCloudHandle':
@@ -923,7 +931,7 @@ async function handleBrc100RequestInner(
   let args: unknown = undefined
   let itemViewRequest: ItemViewRequest | undefined
   let tokenViewRequest: TokenViewRequest | undefined
-  let cosignedViewRequest: CosignedViewRequest | undefined
+  let countersignedViewRequest: CountersignedViewRequest | undefined
   if (event.body) {
     try {
       args = JSON.parse(event.body)
@@ -963,7 +971,7 @@ async function handleBrc100RequestInner(
     args = prepared.args
     itemViewRequest = prepared.itemViewRequest
     tokenViewRequest = prepared.tokenViewRequest
-    cosignedViewRequest = prepared.cosignedViewRequest
+    countersignedViewRequest = prepared.countersignedViewRequest
   }
 
   const access = await gateOriginAccess(originator, method, channel)
@@ -1177,8 +1185,8 @@ async function handleBrc100RequestInner(
         )}s origin=${normalizeOrigin(originator) || 'unknown'}`,
       )
     }, 8_000)
-    if (cosignedViewRequest) {
-      const viewDecision = await requestCosignedViewApproval(originator, cosignedViewRequest).finally(
+    if (countersignedViewRequest) {
+      const viewDecision = await requestCountersignedViewApproval(originator, countersignedViewRequest).finally(
         () => clearTimeout(slowGate),
       )
       if (viewDecision !== 'allow') {
@@ -1186,7 +1194,7 @@ async function handleBrc100RequestInner(
           status: 403,
           body: JSON.stringify({
             status: 'error',
-            code: 'COSIGNED_VIEW_DENIED',
+            code: 'COUNTERSIGNED_VIEW_DENIED',
             description: 'You denied this app access to view issuer-accepted assets.',
           }),
         }
@@ -1386,8 +1394,8 @@ async function handleBrc100RequestInner(
         args && typeof args === 'object' && !Array.isArray(args)
           ? (args as { basket?: unknown }).basket
           : undefined
-      if (cosignedViewRequest) {
-        result = withCosignedAssetTags(result, cosignedViewRequest)
+      if (countersignedViewRequest) {
+        result = withCountersignedAssetTags(result, countersignedViewRequest)
       } else if (isTokenViewBasket(basket)) {
         result = stampBsv21IconOnListedOutputs(
           filterTokenOutputsForOrigin(originator, result, tokenViewRequest),

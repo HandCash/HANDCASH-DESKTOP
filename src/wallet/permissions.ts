@@ -32,7 +32,8 @@ import {
   tokenViewGranted,
   isHandCashCatalogOrigin,
   viewGrantOriginAliases,
-  type CosignedViewRequest,
+  type CountersignedScheme,
+  type CountersignedViewRequest,
   type ItemAccess,
   type ItemViewRequest,
   type TokenAccess,
@@ -65,8 +66,8 @@ export type ConnectedApp = {
   itemAccess?: ItemAccess
   /** BSV-21 token view — never implied by item view. */
   tokenAccess?: TokenAccess
-  /** Issuer-accepted (`p cosigned`) inventory view — never implied by item or token view. */
-  cosignedView?: boolean
+  /** Issuer-accepted views granted, per profile (`p2pft-cs`, `1sat-cs`) — never implied by item or token view. */
+  countersignedViews?: CountersignedScheme[]
   /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
   /** `in-app`: connected in a Mobile app tab, so the loopback socket may not use it. */
@@ -161,7 +162,9 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
-          ...(a.cosignedView === true ? { cosignedView: true } : {}),
+          ...(Array.isArray(a.countersignedViews) && a.countersignedViews.length
+            ? { countersignedViews: a.countersignedViews.filter((v) => v === 'p2pft-cs' || v === '1sat-cs') }
+            : {}),
           acceptIncomingFunds:
             a.acceptIncomingFunds === true
               ? true
@@ -451,7 +454,7 @@ export function allowOrigin(origin: string | undefined, channel: BridgeChannel =
       // a prior View items / View tokens Allow so catalog reloads do not re-prompt.
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
-      ...(prior?.cosignedView ? { cosignedView: true } : {}),
+      ...(prior?.countersignedViews?.length ? { countersignedViews: prior.countersignedViews } : {}),
       // Plain BSV receive is part of Connect. Preserve an explicit user opt-out
       // ("Require receive approval"); otherwise grant / restore the default.
       acceptIncomingFunds: prior?.acceptIncomingFunds === false ? false : true,
@@ -632,6 +635,8 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'cancelDirectOffer',
         'issueCountersignedAsset',
         'transferCountersignedAsset',
+        'retireCountersignedAsset',
+        'releaseCountersignedAsset',
       ].includes(prompt.method)
     ) {
       return
@@ -1303,6 +1308,7 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         'Every later transfer needs your wallet to countersign it',
         'Your wallet keeps a beacon output alive while it answers',
+        'If your wallet retires it or stops answering, holders can move it on their own signature',
       ],
     }
   }
@@ -1317,6 +1323,30 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
         recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
+      ],
+    }
+  }
+
+  if (method === 'retireCountersignedAsset') {
+    return {
+      title: 'Retire issuer-accepted asset',
+      summary: 'Stop accepting transfers for good. Holders move it on their own signature once it is released.',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        'Freezes and transfer rules end; this cannot be undone',
+      ],
+    }
+  }
+
+  if (method === 'releaseCountersignedAsset') {
+    return {
+      title: 'Release issuer-accepted asset',
+      summary: 'Publish your release key on chain so holders can move it without the issuer',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        'Only after the issuer retired or stopped refreshing its beacon',
       ],
     }
   }
@@ -1723,19 +1753,18 @@ export async function requestTokenViewApproval(
 }
 
 /**
- * `p cosigned …` inventory view. One grant covers every scope; `id` is a
- * narrow row lookup and, as for items and tokens, never prompts.
+ * `p p2pft-cs …` / `p 1sat-cs …` inventory view. One grant per profile covers
+ * every scope; `id` is a narrow row lookup and, as for items and tokens, never prompts.
  */
-export async function requestCosignedViewApproval(
+export async function requestCountersignedViewApproval(
   origin: string | undefined,
-  request: CosignedViewRequest,
+  request: CountersignedViewRequest,
 ): Promise<PermissionDecision> {
   const { idx, apps } = findConnectedApp(origin)
-  if (idx >= 0 && apps[idx]?.cosignedView) return 'allow'
+  if (idx >= 0 && apps[idx]?.countersignedViews?.includes(request.scheme)) return 'allow'
   if (request.scope === 'id' || !isThirdPartyOriginator(origin)) return 'allow'
   const key = normalizeOrigin(origin)
-  const what =
-    request.scope === 'tokens' ? 'tokens' : request.scope === 'items' ? 'items' : 'tokens and items'
+  const what = request.scheme === 'p2pft-cs' ? 'tokens' : 'items'
   return enqueuePrompt({
     id: idCounter++,
     kind: 'action',
@@ -1752,7 +1781,11 @@ export async function requestCosignedViewApproval(
     if (decision === 'allow') {
       const found = ensureConnectedApp(origin)
       const copy = [...found.apps]
-      copy[found.idx] = { ...copy[found.idx]!, cosignedView: true }
+      const granted = copy[found.idx]!.countersignedViews ?? []
+      copy[found.idx] = {
+        ...copy[found.idx]!,
+        countersignedViews: granted.includes(request.scheme) ? granted : [...granted, request.scheme],
+      }
       writeConnected(copy)
     }
     return decision

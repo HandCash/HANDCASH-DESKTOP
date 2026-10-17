@@ -13,7 +13,7 @@ The bridge listens on `https://127.0.0.1:2121`, with an HTTP fallback on `http:/
 | Public | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` | No origin check |
 | Silent | `isAuthenticated` | Never prompts |
 | Connect | `waitForAuthentication` | Shows the Connect prompt |
-| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listDirectOffers`, `listCountersignedAssets`, market reads | Connect only. `listOutputs` on an item, token or cosigned scope adds a view gate. |
+| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listDirectOffers`, `listCountersignedAssets`, market reads | Connect only. `listOutputs` on an item, token, `p2pft-cs` or `1sat-cs` scope adds a view gate. |
 | Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createDirectOffer`, `buyDirectOffer`, `collectDirectOfferProceeds`, `cancelDirectOffer`, `issueCountersignedAsset`, `transferCountersignedAsset` | Connect, then an approval for each call. No two actions share consent. |
 | Migration | `getLegacyAddress`, `refreshLegacyAddress`, `listMigrationTxids`, `openKeyRecovery` | HandCash hosts only (`migration.ts`) |
 
@@ -39,7 +39,8 @@ All grants are stored per account (`accountLocalKey`). Every HandCash catalog ho
 | **Connect** | Connected methods; opens a 20 s fresh-connect window | Connect prompt (`allowOrigin`) | Disconnect |
 | **Item view** | `listOutputs` on `p 1sat all \| collection \| app \| creator \| id`; filtered to the granted collections, apps, creators or ids | View prompt (`requestItemViewApproval`); `id` lookups are silent and cover only that id; catalog hosts get `all` | Disconnect |
 | **Token view** | `listOutputs` on `p p2pft all \| token \| id` (`p bsv21` still read); a filtered grant stays an allowlist | View prompt (`requestTokenViewApproval`) | Disconnect |
-| **Cosigned view** | `listOutputs` on `p cosigned all \| tokens \| items \| asset \| collection \| id` | View prompt (`requestCosignedViewApproval`); `id` lookups are silent | Disconnect |
+| **Countersigned token view** | `listOutputs` on `p p2pft-cs all \| asset \| id` | View prompt (`requestCountersignedViewApproval`), one grant per profile; `id` lookups are silent | Disconnect |
+| **Countersigned item view** | `listOutputs` on `p 1sat-cs all \| asset \| collection \| id` | Same, its own grant | Disconnect |
 | **Item and token receive** | Later item or token `internalizeAction` calls without a prompt | First approved receive | Disconnect |
 | **BSV receive** | Plain BSV `internalizeAction` without a prompt | On by default; "Require receive approval" opts out | Opt-out or disconnect |
 | **Auto-pay** | `createAction` paying up to `maxUsd` (default $10) per `windowHours` (default 24); never `signAction` | App details | Cleared or disconnect |
@@ -53,7 +54,7 @@ Not implemented: BRC-73 protocol, basket, certificate and counterparty grants. C
 
 Revocation: `revokeOrigin` removes the app and clears its auto-pay, spending authorization and session grants (`AppDetailsPanel.tsx`, Disconnect).
 
-Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bsv21` (`USE_PBSV21_SCOPE`), a bare `cosigned` (`USE_PCOSIGNED_SCOPE`), any app write into `cosigned` or `p cosigned input id` label (`COSIGNED_WALLET_ONLY`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
+Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bsv21` (`USE_PBSV21_SCOPE`), a bare `p2pft-cs` or `1sat-cs` (`USE_COUNTERSIGNED_SCOPE`), any app write into either or a `p p2pft-cs|1sat-cs input id` label (`COUNTERSIGNED_WALLET_ONLY`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
 
 ## 3. Item actions (1Sat)
 
@@ -141,7 +142,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
 | Token split as a user action | Missing; only combine is exposed | The combine self-send |
-| Issuer freeze, transfer limits, successor recovery | Acceptance ships (section 9); the acceptor has no freeze or limit policy yet, and no successor takeover | Acceptor `frozen` / `limit` refusals in `countersign/resolve.ts` |
+| Issuer freeze, transfer limits | Acceptance and release ship (section 9); the acceptor has no freeze or limit policy yet | Acceptor `frozen` / `limit` refusals in `countersign/resolve.ts` |
 | Required-processing profiles | Every `req` is unsupported | `requiredProcessing.ts` is the hook |
 | On-chain escrow | Chat card only, local stub | BRC-218 parser |
 | Subscriptions | Missing | Spending authorization, auto-pay |
@@ -188,19 +189,24 @@ Run every bridge asset action in one pass, direct offers included, at `https://b
 
 Every offer transaction goes through `signedSendLifecycle`. Delivery of the seller's proceeds rides the messagebox and never gates broadcast.
 
-## 9. Countersigned assets: basket `cosigned`
+## 9. Countersigned assets: profiles `p2pft-cs` and `1sat-cs`
 
-From an unpublished issuer-control draft. A countersigned output is a BRC-162 transfer whose lock also needs an acceptor signature: the holder signs `0xC1`, and the issuer key set (or, after its beacon goes silent, the successor set) countersigns. Tokens and items share one scheme, because an item is a deploy with a supply of 1. Code: `src/wallet/countersign/` (`script.ts`, `payload.ts`, `resolve.ts`, `path.ts`, `wallet.ts`), chart `countersignMachine`.
+From an unpublished issuer-control draft. A countersigned output is a BRC-162 transfer whose lock also needs a second signature: the holder signs `0xC1`, and the issuer key set countersigns. Countersigning is for assets whose value comes from the issuer (handles, stablecoins, tickets); art and open tokens stay BRC-150 / BRC-162. Tokens and items share one scheme, because an item is a deploy with a supply of 1. Code: `src/wallet/countersign/` (`script.ts`, `payload.ts`, `resolve.ts`, `path.ts`, `beacon.ts`, `beaconSource.ts`, `wallet.ts`), chart `countersignMachine`.
 
 | Method (action, prompts) | What it does |
 |---|---|
-| `issueCountersignedAsset({ kind, sym?, name?, supply?, dec?, icon?, content?, successors?, silenceSeconds? })` | Deploys at output 0 (this wallet's identity key is the 1-of-1 issuer and first holder), the beacon at output 1, an item's content at output 2. Default successors are two self-derived keys, 2-of-2; silence is at least 7 days (default 30). |
-| `transferCountersignedAsset({ assetId, amount?, recipient })` | Holder signs; the acceptor countersigns or refuses. `CountersignTransferPath`: `local-acceptor` when this wallet holds the issuer key, `remote-acceptor` over box `countersign`, or `refuse`. A refusal or 45 s of silence sends nothing. |
-| `listCountersignedAssets()` (connect) | Deploys this wallet knows, what it holds of each, and whether it is the issuer |
+| `issueCountersignedAsset({ kind, sym?, name?, supply?, dec?, icon?, content?, release?, silenceSeconds? })` | Deploys at output 0 (this wallet's identity key is the 1-of-1 issuer and first holder), the beacon at output 1, an item's content at output 2. `release` is the custodians' `{ threshold, keys }`; the default is this wallet's own release key (`[2, 'countersign release']`, key `1`), 1-of-1. Silence is at least 7 days (default 30). |
+| `transferCountersignedAsset({ assetId, amount?, recipient })` | Holder signs; the acceptor countersigns or refuses. `CountersignTransferPath`: `local-acceptor` when this wallet holds the issuer key, `remote-acceptor` over box `countersign`, or `refuse`. `released` once the beacon chain shows the release keys published. A refusal or 45 s of silence sends nothing; on silence or `not_acceptor` the wallet reads the beacon chain and, if released, completes the transfer itself. |
+| `retireCountersignedAsset({ assetId })` | Issuer only. Stops accepting for good. When this wallet holds the release keys it publishes them in the same step; otherwise it writes the final beacon and a retire marker for the custodians. |
+| `releaseCountersignedAsset({ assetId })` | Custodian. Publishes this wallet's release key by spending the last beacon on the release branch, only once the asset has retired or lapsed (for its own issuer, releasing is retiring). |
+| `listCountersignedAssets()` (connect) | Deploys this wallet knows, what it holds of each, whether it is the issuer, its phase (`live`, `ended`, `released`, `unknown`), and `releaseKey`: this wallet's custodian key for an issuer to name |
 
 - The acceptor accepts once: a durable record of accepted outputs and spends, written in one step before anything leaves the wallet. It funds the fee from root-key coins in basket `countersign-fee` (200 sats, minted four at a time) and adds no change. Refusals are named (`unknown_input`, `spent`, `invalid`, `frozen`, `recipient`, `limit`, `fee`, `policy`, `not_acceptor`) and signed.
 - Box `countersign` carries requests, cancels, decisions and deliveries to the recipient, each BRC-78 sealed. Deliveries carry the Atomic BEEF; the recipient resolves the transfer offline from the deploy before filing. The box never gates custody.
-- The beacon (basket `countersign-beacon`) is re-spent to itself once half the silence period has passed.
-- Filing name `cosigned`, wallet-internal. Tags: `cosigned:<assetId>` (`cosigned:deploy` on the issuer's deploy row, which is its own asset id), `cosigned:token` or `cosigned:item`, `id:<key>` (BRC-164).
-- App scopes: `p cosigned all | tokens | items | asset | collection | id`, with `cosigned:<assetId>`, `collection:<id>` or `id:<key>` tags for the narrow ones. Listed deploy rows get a `cosigned:<assetId>` tag.
-- Apps cannot write into `cosigned` or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …`, `p p2pft …` and `bsv21` never return a `cosigned` output, and payment or auto-pay grants never cover one.
+- The beacon (basket `countersign-beacon`) is `OP_IF <issuer> OP_ELSE <release> OP_ENDIF`. The issuer re-spends it on the issuer branch once half the silence period has passed. An issuer whose last refresh is older than the silence period has lapsed for good and stops countersigning (`not_acceptor`).
+- Phases come from the beacon chain alone (`beacon.ts`, read over WhatsOnChain): `live`; `ended` when retired or when two mined beacons, or the last one and the tip, are more than the silence period apart (a mempool refresh does not count); `released` when the last beacon is spent on the release branch with an `OP_RETURN` publishing the release private keys.
+- After release the asset is owner-only: the holder countersigns with the published keys and funds the fee from its own `countersign-fee` coins. Accept-once is gone, so a receipt that spends on the release branch, or any receipt of an asset known to be released, is filed only once mined.
+- Two profiles, each its own filing basket and permission scheme: countersigned tokens in `p2pft-cs`, countersigned items in `1sat-cs`, beside `p2pft` and `1sat`. A released asset stays in its countersigned profile: its lock still carries the clause and spends with the published keys, so it is not a plain token or item.
+- Tags: `<profile>:<assetId>` (`<profile>:deploy` on the issuer's deploy row, which is its own asset id), `amt:<units>`, `id:<key>` (BRC-164).
+- App scopes: `p p2pft-cs all | asset | id` and `p 1sat-cs all | asset | collection | id`, with `<profile>:<assetId>`, `collection:<id>` or `id:<key>` tags for the narrow ones. Listed deploy rows get a `<profile>:<assetId>` tag.
+- Apps cannot write into either profile or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …`, `p p2pft …` and `bsv21` never return a countersigned output, and payment or auto-pay grants never cover one.

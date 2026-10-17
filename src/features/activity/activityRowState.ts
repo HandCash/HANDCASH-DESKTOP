@@ -124,6 +124,8 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   cancelDirectOffer: 'direct offer cancel',
   issueCountersignedAsset: 'issuer-accepted issue',
   transferCountersignedAsset: 'issuer-accepted transfer',
+  retireCountersignedAsset: 'issuer retire',
+  releaseCountersignedAsset: 'asset release',
 }
 
 /** What the row is called before a description or txid exists. */

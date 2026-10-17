@@ -34,6 +34,8 @@ export const ACTION_BRC100_METHODS = [
   'cancelDirectOffer',
   'issueCountersignedAsset',
   'transferCountersignedAsset',
+  'retireCountersignedAsset',
+  'releaseCountersignedAsset',
   'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',

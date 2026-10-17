@@ -601,10 +601,11 @@ const COUNTERSIGN = `stateDiagram-v2
   issuing --> failed : FAIL
   idle --> classifying : TRANSFER (CountersignTransferPath)
   classifying --> failed : refuse / named reason
-  classifying --> holderSigning : local-acceptor | remote-acceptor
+  classifying --> holderSigning : local-acceptor | remote-acceptor | released
   holderSigning --> requesting : SIGNED request id
   holderSigning --> failed : FAIL
   requesting --> accepted : ACCEPTED countersigned EF
+  requesting --> accepted : ACCEPTED released (holder countersigns with published keys)
   requesting --> refused : REFUSED signed reason
   requesting --> outstanding : SILENT
   requesting --> failed : FAIL
@@ -617,6 +618,9 @@ const COUNTERSIGN = `stateDiagram-v2
     issuer key and accepts in process.
     remote-acceptor: sealed request to the
     issuer's box countersign, no endpoint.
+    released: the beacon chain shows the
+    release keys published; no request.
+    ended (retired | lapsed): refuse.
   end note
   note right of requesting
     Acceptor: accept-once record, adds its
@@ -624,6 +628,10 @@ const COUNTERSIGN = `stateDiagram-v2
     signs, no transaction exists.
     outstanding: inputs stay reserved;
     a repeat is the same request.
+    Silent or not_acceptor issuer: read the
+    beacon chain; released → holder
+    countersigns and funds the fee.
+    Released receipts credit once mined.
   end note
 `
 

@@ -4,7 +4,7 @@ import { countersignMachine } from '../../machines/countersignMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
 import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid, rememberBeefTree } from '../beefCache'
 import { scheduleHistoryBackupPush } from '../deviceSync'
-import { stampBrc164Id } from '../itemAccess'
+import { COUNTERSIGNED_SCHEMES, countersignedSchemeFor, stampBrc164Id } from '../itemAccess'
 import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { runExclusiveSpend } from '../spendGuard'
@@ -60,8 +60,6 @@ import {
   type StoredDeploy,
 } from './store'
 
-/** Filing name for resolved outputs of every countersigned asset. */
-export const COSIGNED_BASKET = 'cosigned'
 /** Store-and-forward box for requests, decisions and deliveries. */
 export const COUNTERSIGN_BOX = 'countersign'
 const BEACON_BASKET = 'countersign-beacon'
@@ -235,19 +233,18 @@ async function deployFor(
 
 // ── Holdings ───────────────────────────────────────────────────────────────
 
-/** Resolved outputs this wallet holds, from the `cosigned` filing. */
+/** Resolved outputs this wallet holds, from the `p2pft-cs` and `1sat-cs` filings. */
 export async function listCountersignedHoldings(
   active: ActiveWallet,
   assetId?: string,
 ): Promise<CountersignHolding[]> {
-  const page = await active.wallet.listOutputs({
-    basket: COSIGNED_BASKET,
-    include: 'locking scripts',
-    includeTags: true,
-    limit: 1000,
-  })
+  const pages = await Promise.all(
+    COUNTERSIGNED_SCHEMES.map((basket) =>
+      active.wallet.listOutputs({ basket, include: 'locking scripts', includeTags: true, limit: 1000 }),
+    ),
+  )
   const mine = selfPkh(active)
-  return (page.outputs ?? []).flatMap((o) => {
+  return pages.flatMap((page) => page.outputs ?? []).flatMap((o) => {
     if (o.spendable === false || !o.lockingScript) return []
     const read = readCountersigned(o.lockingScript)
     if (!read || read.holderPkhHex !== mine) return []
@@ -257,15 +254,12 @@ export async function listCountersignedHoldings(
   })
 }
 
-function cosignedTags(assetId: string | null, deploy: Pick<CountersignDeploy, 'kind'>, amount: bigint): string[] {
-  return stampBrc164Id([
-    assetId ? `cosigned:${assetId}` : 'cosigned:deploy',
-    `cosigned:${deploy.kind}`,
-    `amt:${amount}`,
-  ])
+function countersignedTags(assetId: string | null, deploy: Pick<CountersignDeploy, 'kind'>, amount: bigint): string[] {
+  const scheme = countersignedSchemeFor(deploy.kind)
+  return stampBrc164Id([assetId ? `${scheme}:${assetId}` : `${scheme}:deploy`, `amt:${amount}`])
 }
 
-function cosignedInstructions(
+function countersignedInstructions(
   assetId: string | null,
   deploy: { kind: string; fields: Pick<CountersignDeployFields, 'sym' | 'dec' | 'name' | 'col'> },
   amount: bigint,
@@ -541,9 +535,9 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
             lockingScript: deployLock,
             satoshis: 1,
             outputDescription: `Countersigned ${kind} deploy`,
-            basket: COSIGNED_BASKET,
-            tags: cosignedTags(null, shape, BigInt(supplyRaw)),
-            customInstructions: cosignedInstructions(null, shape, BigInt(supplyRaw)),
+            basket: countersignedSchemeFor(kind),
+            tags: countersignedTags(null, shape, BigInt(supplyRaw)),
+            customInstructions: countersignedInstructions(null, shape, BigInt(supplyRaw)),
           },
           {
             lockingScript: beaconLock(sets).toHex(),
@@ -1054,7 +1048,7 @@ async function completeAcceptedTransfer(
   await fileResolvedOutputs(active, txid, atomic, accepted, deploys, deploy)
   for (const outpoint of outgoing.inputs) {
     await active.wallet
-      .relinquishOutput({ basket: COSIGNED_BASKET, output: outpoint.replace('_', '.') })
+      .relinquishOutput({ basket: countersignedSchemeFor(deploy.kind), output: outpoint.replace('_', '.') })
       .catch(() => {})
   }
   if (outgoing.recipient !== active.identityKey.toLowerCase()) {
@@ -1097,9 +1091,9 @@ async function fileResolvedOutputs(
         outputIndex: m.vout,
         protocol: 'basket insertion' as const,
         insertionRemittance: {
-          basket: COSIGNED_BASKET,
-          tags: cosignedTags(m.assetId, deploys.get(m.assetId)!, m.amount),
-          customInstructions: cosignedInstructions(m.assetId, deploys.get(m.assetId)!, m.amount),
+          basket: countersignedSchemeFor(deploys.get(m.assetId)!.kind),
+          tags: countersignedTags(m.assetId, deploys.get(m.assetId)!, m.amount),
+          customInstructions: countersignedInstructions(m.assetId, deploys.get(m.assetId)!, m.amount),
         },
       })),
     }),
