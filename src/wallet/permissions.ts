@@ -32,6 +32,7 @@ import {
   tokenViewGranted,
   isHandCashCatalogOrigin,
   viewGrantOriginAliases,
+  type CosignedViewRequest,
   type ItemAccess,
   type ItemViewRequest,
   type TokenAccess,
@@ -64,6 +65,8 @@ export type ConnectedApp = {
   itemAccess?: ItemAccess
   /** BSV-21 token view — never implied by item view. */
   tokenAccess?: TokenAccess
+  /** Issuer-accepted (`p cosigned`) inventory view — never implied by item or token view. */
+  cosignedView?: boolean
   /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
   /** `in-app`: connected in a Mobile app tab, so the loopback socket may not use it. */
@@ -158,6 +161,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
+          ...(a.cosignedView === true ? { cosignedView: true } : {}),
           acceptIncomingFunds:
             a.acceptIncomingFunds === true
               ? true
@@ -447,6 +451,7 @@ export function allowOrigin(origin: string | undefined, channel: BridgeChannel =
       // a prior View items / View tokens Allow so catalog reloads do not re-prompt.
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
+      ...(prior?.cosignedView ? { cosignedView: true } : {}),
       // Plain BSV receive is part of Connect. Preserve an explicit user opt-out
       // ("Require receive approval"); otherwise grant / restore the default.
       acceptIncomingFunds: prior?.acceptIncomingFunds === false ? false : true,
@@ -625,6 +630,8 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'buyDirectOffer',
         'collectDirectOfferProceeds',
         'cancelDirectOffer',
+        'issueCountersignedAsset',
+        'transferCountersignedAsset',
       ].includes(prompt.method)
     ) {
       return
@@ -1282,6 +1289,38 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'issueCountersignedAsset') {
+    const kind = body.kind === 'item' ? 'item' : 'token'
+    const label =
+      kind === 'item'
+        ? typeof body.name === 'string' ? body.name : 'item'
+        : `${String(body.supply ?? '?')} ${typeof body.sym === 'string' ? body.sym : 'tokens'}`
+    return {
+      title: `Issue ${label}`,
+      summary: `Deploy an issuer-accepted ${kind}; you hold it and accept every transfer of it`,
+      itemName: label,
+      previewKind: kind === 'item' ? 'collectable' : 'token',
+      details: [
+        'Every later transfer needs your wallet to countersign it',
+        'Your wallet keeps a beacon output alive while it answers',
+      ],
+    }
+  }
+
+  if (method === 'transferCountersignedAsset') {
+    const amount = String(body.amount ?? '1')
+    const recipient = typeof body.recipient === 'string' ? body.recipient : ''
+    return {
+      title: `Send ${amount} issuer-accepted`,
+      summary: 'You sign; the issuer countersigns or refuses. A refusal sends nothing.',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
+      ],
+    }
+  }
+
   if (method.startsWith('reveal')) {
     return {
       title: 'Share key details',
@@ -1681,6 +1720,43 @@ export async function requestTokenViewApproval(
     details,
     createdAt: Date.now(),
   }).then(grant)
+}
+
+/**
+ * `p cosigned …` inventory view. One grant covers every scope; `id` is a
+ * narrow row lookup and, as for items and tokens, never prompts.
+ */
+export async function requestCosignedViewApproval(
+  origin: string | undefined,
+  request: CosignedViewRequest,
+): Promise<PermissionDecision> {
+  const { idx, apps } = findConnectedApp(origin)
+  if (idx >= 0 && apps[idx]?.cosignedView) return 'allow'
+  if (request.scope === 'id' || !isThirdPartyOriginator(origin)) return 'allow'
+  const key = normalizeOrigin(origin)
+  const what =
+    request.scope === 'tokens' ? 'tokens' : request.scope === 'items' ? 'items' : 'tokens and items'
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: key,
+    method: 'listOutputs',
+    title: `View issuer-accepted ${what}`,
+    summary: `Let this app see the issuer-accepted ${what} you hold`,
+    details: [
+      'Read only: the app cannot move them',
+      'Every transfer still needs your approval and the issuer’s countersignature',
+    ],
+    createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow') {
+      const found = ensureConnectedApp(origin)
+      const copy = [...found.apps]
+      copy[found.idx] = { ...copy[found.idx]!, cosignedView: true }
+      writeConnected(copy)
+    }
+    return decision
+  })
 }
 
 /** Filter listOutputs payload to what the app's item grant allows. */

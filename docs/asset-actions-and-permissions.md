@@ -1,6 +1,6 @@
 # Asset actions and permissions
 
-Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections cover offers (market listings and direct offers), what is still missing, and the basket scheme proposed for countersigned assets.
+Every permission an app can hold, and every item, token, market and BSV action the wallet performs, with the module that owns it. The last sections cover offers (market listings and direct offers), what is still missing, and countersigned (issuer-accepted) tokens and items.
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
@@ -13,8 +13,8 @@ The bridge listens on `https://127.0.0.1:2121`, with an HTTP fallback on `http:/
 | Public | `getVersion`, `getNetwork`, `getHeight`, `getHeaderForHeight` | No origin check |
 | Silent | `isAuthenticated` | Never prompts |
 | Connect | `waitForAuthentication` | Shows the Connect prompt |
-| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listDirectOffers`, market reads | Connect only. `listOutputs` on an item or token scope adds a view gate. |
-| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createDirectOffer`, `buyDirectOffer`, `collectDirectOfferProceeds`, `cancelDirectOffer` | Connect, then an approval for each call. No two actions share consent. |
+| Connected | `getPublicKey`, `abortAction`, `listActions`, `listOutputs`, `getBalance`, `createHmac`, `verifyHmac`, `verifySignature`, `listCertificates`, `discoverByIdentityKey`, `discoverByAttributes`, `getClaimedCloudHandle`, `getTokenIcon`, `listDirectOffers`, `listCountersignedAssets`, market reads | Connect only. `listOutputs` on an item, token or cosigned scope adds a view gate. |
+| Action | `createAction`, `signAction`, `internalizeAction`, `relinquishOutput`, `relinquishCertificate`, `createSignature`, `encrypt`, `decrypt`, `revealCounterpartyKeyLinkage`, `revealSpecificKeyLinkage`, `proveCertificate`, `acquireCertificate`, `createAdminIdentityProof`, market writes, `createDirectOffer`, `buyDirectOffer`, `collectDirectOfferProceeds`, `cancelDirectOffer`, `issueCountersignedAsset`, `transferCountersignedAsset` | Connect, then an approval for each call. No two actions share consent. |
 | Migration | `getLegacyAddress`, `refreshLegacyAddress`, `listMigrationTxids`, `openKeyRecovery` | HandCash hosts only (`migration.ts`) |
 
 Origin-limited HandCash methods:
@@ -39,6 +39,7 @@ All grants are stored per account (`accountLocalKey`). Every HandCash catalog ho
 | **Connect** | Connected methods; opens a 20 s fresh-connect window | Connect prompt (`allowOrigin`) | Disconnect |
 | **Item view** | `listOutputs` on `p 1sat all \| collection \| app \| creator \| id`; filtered to the granted collections, apps, creators or ids | View prompt (`requestItemViewApproval`); `id` lookups are silent and cover only that id; catalog hosts get `all` | Disconnect |
 | **Token view** | `listOutputs` on `p p2pft all \| token \| id` (`p bsv21` still read); a filtered grant stays an allowlist | View prompt (`requestTokenViewApproval`) | Disconnect |
+| **Cosigned view** | `listOutputs` on `p cosigned all \| tokens \| items \| asset \| collection \| id` | View prompt (`requestCosignedViewApproval`); `id` lookups are silent | Disconnect |
 | **Item and token receive** | Later item or token `internalizeAction` calls without a prompt | First approved receive | Disconnect |
 | **BSV receive** | Plain BSV `internalizeAction` without a prompt | On by default; "Require receive approval" opts out | Opt-out or disconnect |
 | **Auto-pay** | `createAction` paying up to `maxUsd` (default $10) per `windowHours` (default 24); never `signAction` | App details | Cleared or disconnect |
@@ -52,7 +53,7 @@ Not implemented: BRC-73 protocol, basket, certificate and counterparty grants. C
 
 Revocation: `revokeOrigin` removes the app and clears its auto-pay, spending authorization and session grants (`AppDetailsPanel.tsx`, Disconnect).
 
-Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bsv21` (`USE_PBSV21_SCOPE`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
+Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bsv21` (`USE_PBSV21_SCOPE`), a bare `cosigned` (`USE_PCOSIGNED_SCOPE`), any app write into `cosigned` or `p cosigned input id` label (`COSIGNED_WALLET_ONLY`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
 
 ## 3. Item actions (1Sat)
 
@@ -140,7 +141,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
 | Token split as a user action | Missing; only combine is exposed | The combine self-send |
-| Issuer-controlled tokens (freeze, acceptance) | Missing; cosigned tips are refused | Unpublished issuer-control draft |
+| Issuer freeze, transfer limits, successor recovery | Acceptance ships (section 9); the acceptor has no freeze or limit policy yet, and no successor takeover | Acceptor `frozen` / `limit` refusals in `countersign/resolve.ts` |
 | Required-processing profiles | Every `req` is unsupported | `requiredProcessing.ts` is the hook |
 | On-chain escrow | Chat card only, local stub | BRC-218 parser |
 | Subscriptions | Missing | Spending authorization, auto-pay |
@@ -189,10 +190,17 @@ Every offer transaction goes through `signedSendLifecycle`. Delivery of the sell
 
 ## 9. Countersigned assets: basket `cosigned`
 
-Proposed in an unpublished issuer-control draft. Tokens and items share one scheme, because an item is a countersigned deploy with a supply of 1.
+From an unpublished issuer-control draft. A countersigned output is a BRC-162 transfer whose lock also needs an acceptor signature: the holder signs `0xC1`, and the issuer key set (or, after its beacon goes silent, the successor set) countersigns. Tokens and items share one scheme, because an item is a deploy with a supply of 1. Code: `src/wallet/countersign/` (`script.ts`, `payload.ts`, `resolve.ts`, `path.ts`, `wallet.ts`), chart `countersignMachine`.
 
-- Filing name `cosigned`, wallet-internal. An app naming it is refused.
-- Tags: `cosigned:<assetId>` (deploy outpoint), `cosigned:token` or `cosigned:item`, `col:<collectionId>` when membership checks out, `id:<key>` (BRC-164).
-- App scopes: `p cosigned all | tokens | items | asset | collection | id`. `asset`, `collection` and `id` need matching tags.
-- Spend label: `p cosigned input id <key>`. The wallet then requests acceptance itself; the app never addresses the acceptor.
-- `p 1sat …`, `p p2pft …` and `bsv21` never return a `cosigned` output, and payment or auto-pay grants never cover one.
+| Method (action, prompts) | What it does |
+|---|---|
+| `issueCountersignedAsset({ kind, sym?, name?, supply?, dec?, icon?, content?, successors?, silenceSeconds? })` | Deploys at output 0 (this wallet's identity key is the 1-of-1 issuer and first holder), the beacon at output 1, an item's content at output 2. Default successors are two self-derived keys, 2-of-2; silence is at least 7 days (default 30). |
+| `transferCountersignedAsset({ assetId, amount?, recipient })` | Holder signs; the acceptor countersigns or refuses. `CountersignTransferPath`: `local-acceptor` when this wallet holds the issuer key, `remote-acceptor` over box `countersign`, or `refuse`. A refusal or 45 s of silence sends nothing. |
+| `listCountersignedAssets()` (connect) | Deploys this wallet knows, what it holds of each, and whether it is the issuer |
+
+- The acceptor accepts once: a durable record of accepted outputs and spends, written in one step before anything leaves the wallet. It funds the fee from root-key coins in basket `countersign-fee` (200 sats, minted four at a time) and adds no change. Refusals are named (`unknown_input`, `spent`, `invalid`, `frozen`, `recipient`, `limit`, `fee`, `policy`, `not_acceptor`) and signed.
+- Box `countersign` carries requests, cancels, decisions and deliveries to the recipient, each BRC-78 sealed. Deliveries carry the Atomic BEEF; the recipient resolves the transfer offline from the deploy before filing. The box never gates custody.
+- The beacon (basket `countersign-beacon`) is re-spent to itself once half the silence period has passed.
+- Filing name `cosigned`, wallet-internal. Tags: `cosigned:<assetId>` (`cosigned:deploy` on the issuer's deploy row, which is its own asset id), `cosigned:token` or `cosigned:item`, `id:<key>` (BRC-164).
+- App scopes: `p cosigned all | tokens | items | asset | collection | id`, with `cosigned:<assetId>`, `collection:<id>` or `id:<key>` tags for the narrow ones. Listed deploy rows get a `cosigned:<assetId>` tag.
+- Apps cannot write into `cosigned` or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …`, `p p2pft …` and `bsv21` never return a `cosigned` output, and payment or auto-pay grants never cover one.

@@ -313,6 +313,14 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Cancelling…',
     detail: 'Returning the listed lot',
   },
+  issueCountersignedAsset: {
+    label: 'Issuing…',
+    detail: 'Deploying the issuer-accepted asset',
+  },
+  transferCountersignedAsset: {
+    label: 'Sending…',
+    detail: 'Waiting for the issuer to accept',
+  },
 }
 
 /** Copy for a market method that keeps the wallet busy after approval. */

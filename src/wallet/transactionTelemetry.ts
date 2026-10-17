@@ -40,6 +40,7 @@ export type TransactionFlow =
   | 'inbound_internalization'
   | 'brc100_action'
   | 'identity_publish'
+  | 'countersign'
   | 'payment'
 
 export type TransactionStage =

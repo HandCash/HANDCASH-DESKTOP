@@ -593,6 +593,40 @@ const BRC29_SEND = `stateDiagram-v2
   signing --> failed : FAIL
 `
 
+const COUNTERSIGN = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> issuing : ISSUE
+  issuing --> broadcast : BROADCASTED deploy + beacon
+  issuing --> failed : FAIL
+  idle --> classifying : TRANSFER (CountersignTransferPath)
+  classifying --> failed : refuse / named reason
+  classifying --> holderSigning : local-acceptor | remote-acceptor
+  holderSigning --> requesting : SIGNED request id
+  holderSigning --> failed : FAIL
+  requesting --> accepted : ACCEPTED countersigned EF
+  requesting --> refused : REFUSED signed reason
+  requesting --> outstanding : SILENT
+  requesting --> failed : FAIL
+  accepted --> broadcast : BROADCASTED
+  broadcast --> committed : COMMITTED
+  note right of holderSigning
+    Holder signs ALL|ANYONECANPAY; token
+    inputs only, one satoshi per output.
+    local-acceptor: this wallet holds an
+    issuer key and accepts in process.
+    remote-acceptor: sealed request to the
+    issuer's box countersign, no endpoint.
+  end note
+  note right of requesting
+    Acceptor: accept-once record, adds its
+    fee input, countersigns ALL. Until it
+    signs, no transaction exists.
+    outstanding: inputs stay reserved;
+    a repeat is the same request.
+  end note
+`
+
 const OFFER = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -1659,6 +1693,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'offerMachine — list / cancel on either venue, direct buy and collect; one SINGLE|ACP seller signature (offerSeal); abort+restore the lot until the cheque is registered',
     source: OFFER,
+  },
+  {
+    id: 'countersign',
+    label: 'Countersigned',
+    caption:
+      'countersignMachine — issuer-accepted tokens and items: holder signs, the acceptor countersigns or refuses; nothing exists until accepted',
+    source: COUNTERSIGN,
   },
   {
     id: 'marketPurchase',

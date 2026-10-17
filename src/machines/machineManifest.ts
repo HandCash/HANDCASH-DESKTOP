@@ -5,6 +5,7 @@ import { appMachine } from './appMachine'
 import { sendMachine } from './sendMachine'
 import { unlockMachine } from './unlockMachine'
 import { offerMachine } from './offerMachine'
+import { countersignMachine } from './countersignMachine'
 import { marketPurchaseMachine } from './marketPurchaseMachine'
 import { marketSellerSettlementMachine } from './marketSellerSettlementMachine'
 import { appBrowserMachine } from './appBrowserMachine'
@@ -51,6 +52,7 @@ export const machineManifest = Object.freeze({
   send: sendMachine,
   unlock: unlockMachine,
   offer: offerMachine,
+  countersign: countersignMachine,
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
   appBrowser: appBrowserMachine,

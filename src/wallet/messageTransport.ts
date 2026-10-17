@@ -1091,6 +1091,51 @@ async function postSessionSignal(rootKeyHex: string, self: string, to: string, p
 }
 
 /**
+ * Seal `plaintext` to `to` and post it in `messageBox` on that key's box (the
+ * friend's resolved host, else the default host).
+ */
+export async function sendSealedToPeerBox(
+  rootKeyHex: string,
+  to: string,
+  messageBox: string,
+  plaintext: string,
+): Promise<void> {
+  const recipient = to.trim().toLowerCase()
+  const self = PrivateKey.fromHex(rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
+  const box = sessionSignalBox(self, recipient)
+  const body = sealForPeer({ plaintext, rootKeyHex, recipientIdentityKey: recipient })
+  const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/sendMessage`, {
+    method: 'POST',
+    headers: signedMessageboxHeaders(rootKeyHex, 'sendMessage', {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }, box, messageBox),
+    body: JSON.stringify({ message: { recipient, messageBox, body } }),
+  })
+  if (!res.ok) throw new Error(`${messageBox} send refused (${res.status})`)
+}
+
+/** Messages in an own-key box, each opened from its sender; null when the host did not answer. */
+export async function listSealedOwnBox(
+  rootKeyHex: string,
+  messageBox: string,
+): Promise<Array<{ messageId: string; sender: string; plaintext: string | null }> | null> {
+  const listed = await listOwnBox(rootKeyHex, messageBox)
+  if (!listed) return null
+  return listed.map((m) => {
+    const sender = listedSender(m)
+    const opened = sender
+      ? openPeerMessage({ body: m.body, rootKeyHex, expectedSenderIdentityKey: sender })
+      : null
+    return {
+      messageId: String(m.messageId ?? ''),
+      sender,
+      plaintext: opened && !('refuse' in opened) && opened.sealed ? opened.plaintext : null,
+    }
+  })
+}
+
+/**
  * A box on the identity's own key, shared by every install of that identity
  * (`account-holding`, draft BRC-249). Lives on the default host, like sibling
  * session signalling.
@@ -1379,6 +1424,9 @@ export async function pollInboundTipHints(args: {
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
     scheduleMarketRecovery()
+    void import('./countersign/wallet')
+      .then(({ serveCountersignBox }) => serveCountersignBox())
+      .catch((err) => console.warn('[countersign] box serve failed', err instanceof Error ? err.message : String(err)))
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0

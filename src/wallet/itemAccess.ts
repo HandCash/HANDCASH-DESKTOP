@@ -202,7 +202,149 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
   const parsed = parsePBasket(raw)
   if (!parsed) return true
   const scheme = parsed.scheme.toLowerCase()
-  return scheme !== ITEM_SCHEME && !isTokenPermissionScheme(scheme)
+  return scheme !== ITEM_SCHEME && scheme !== COSIGNED_SCHEME && !isTokenPermissionScheme(scheme)
+}
+
+/** Permission scheme and filing basket for issuer-accepted tokens and items. */
+export const COSIGNED_SCHEME = 'cosigned'
+export const COSIGNED_STORAGE_BASKET = 'cosigned'
+
+export type CosignedViewScope = 'all' | 'tokens' | 'items' | 'asset' | 'collection' | 'id'
+
+export type CosignedViewRequest = {
+  scope: CosignedViewScope
+  /** Asset ids, collection ids or row keys named in tags, by scope. */
+  values: string[]
+}
+
+const COSIGNED_SCOPE_TAG: Record<Exclude<CosignedViewScope, 'all' | 'tokens' | 'items'>, string> = {
+  asset: 'cosigned:',
+  collection: 'collection:',
+  id: 'id:',
+}
+
+/** `p cosigned …` view basket (never the bare filing name). */
+export function isCosignedViewBasket(basket: unknown): boolean {
+  const p = parsePBasket(basket)
+  return !!p && p.scheme.toLowerCase() === COSIGNED_SCHEME
+}
+
+function namesCosignedFiling(basket: unknown): boolean {
+  if (typeof basket !== 'string') return false
+  return basket.trim().toLowerCase() === COSIGNED_STORAGE_BASKET || isCosignedViewBasket(basket)
+}
+
+/**
+ * Apps never write into the cosigned filing or spend from it with a label:
+ * outputs land there only after the wallet resolves an issuer-accepted
+ * transfer, and transfers go through `transferCountersignedAsset`.
+ */
+export function cosignedWriteRefusal(args: unknown): string | null {
+  const body = asRecord(args)
+  const labels = Array.isArray(body.labels) ? body.labels : []
+  if (labels.some((l) => typeof l === 'string' && /^p cosigned input id /i.test(l))) {
+    return 'Issuer-accepted assets move only through transferCountersignedAsset.'
+  }
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  for (const raw of outputs) {
+    const out = asRecord(raw)
+    const rem = asRecord(out.insertionRemittance)
+    if (namesCosignedFiling(out.basket) || namesCosignedFiling(rem.basket)) {
+      return 'Only the wallet files issuer-accepted outputs; apps cannot write basket "cosigned".'
+    }
+  }
+  return null
+}
+
+/** Asset id of a cosigned row; a deploy row is the asset its own outpoint names. */
+export function cosignedAssetOfRow(row: { outpoint?: unknown; tags?: unknown }): string | null {
+  const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : []
+  for (const value of tagValues(tags, ['cosigned:'])) {
+    const id = normalizeOutpointId(value)
+    if (id) return id.replace('.', '_')
+  }
+  if (tags.includes('cosigned:deploy') && typeof row.outpoint === 'string') {
+    return normalizeOutpointId(row.outpoint)?.replace('.', '_') ?? null
+  }
+  return null
+}
+
+export function outputMatchesCosignedView(
+  row: { outpoint?: unknown; tags?: unknown; customInstructions?: unknown },
+  request: CosignedViewRequest,
+): boolean {
+  const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : []
+  switch (request.scope) {
+    case 'all':
+      return true
+    case 'tokens':
+      return tags.includes('cosigned:token')
+    case 'items':
+      return tags.includes('cosigned:item')
+    case 'asset': {
+      const id = cosignedAssetOfRow(row)
+      return !!id && request.values.includes(id)
+    }
+    case 'id':
+      return tagValues(tags, ['id:']).some((key) => request.values.includes(key.toLowerCase()))
+    case 'collection': {
+      try {
+        const col = (JSON.parse(String(row.customInstructions ?? '{}')) as { col?: unknown }).col
+        return typeof col === 'string' && request.values.includes(col.toLowerCase())
+      } catch {
+        return false
+      }
+    }
+  }
+}
+
+/** Stamp each listed deploy row with the asset id it names by its own outpoint. */
+export function withCosignedAssetTags(result: unknown, request: CosignedViewRequest): unknown {
+  if (!result || typeof result !== 'object') return { outputs: [], totalOutputs: 0 }
+  const body = result as { outputs?: unknown[] }
+  const outputs = (Array.isArray(body.outputs) ? body.outputs : []).flatMap((raw) => {
+    const row = asRecord(raw)
+    if (!outputMatchesCosignedView(row, request)) return []
+    const id = cosignedAssetOfRow(row)
+    const tags = Array.isArray(row.tags) ? (row.tags as string[]) : []
+    return [id && !tags.includes(`cosigned:${id}`) ? { ...row, tags: [...tags, `cosigned:${id}`] } : row]
+  })
+  return { ...body, outputs, totalOutputs: outputs.length }
+}
+
+function prepareCosignedView(body: Record<string, unknown>): {
+  error?: { code: string; description: string }
+  request?: CosignedViewRequest
+} {
+  const p = parsePBasket(body.basket)
+  const scope = (p?.rest ?? '').toLowerCase() as CosignedViewScope
+  const scopes: CosignedViewScope[] = ['all', 'tokens', 'items', 'asset', 'collection', 'id']
+  if (!p || !scopes.includes(scope) || p.rest !== scope) {
+    return {
+      error: {
+        code: 'INVALID_PCOSIGNED_SCOPE',
+        description: 'Use exactly "p cosigned all|tokens|items|asset|collection|id"; filter values belong in tags.',
+      },
+    }
+  }
+  const tags = Array.isArray(body.tags) ? body.tags.filter((t): t is string => typeof t === 'string') : []
+  let values: string[] = []
+  if (scope === 'asset' || scope === 'collection' || scope === 'id') {
+    const raw = tagValues(tags, [COSIGNED_SCOPE_TAG[scope]])
+    values =
+      scope === 'asset'
+        ? raw.flatMap((v) => normalizeOutpointId(v)?.replace('.', '_') ?? [])
+        : raw.map((v) => v.toLowerCase())
+    if (values.length === 0) {
+      return {
+        error: {
+          code: 'MISSING_PCOSIGNED_SCOPE_TAG',
+          description: `Basket "p cosigned ${scope}" requires at least one "${COSIGNED_SCOPE_TAG[scope]}<value>" tag.`,
+        },
+      }
+    }
+  }
+  return { request: { scope, values: [...new Set(values)] } }
 }
 
 /**
@@ -313,6 +455,7 @@ export function prepareItemBasketArgs(args: unknown): {
   error?: { code: string; description: string }
   itemViewRequest?: ItemViewRequest
   tokenViewRequest?: TokenViewRequest
+  cosignedViewRequest?: CosignedViewRequest
 } {
   if (args == null || typeof args !== 'object' || Array.isArray(args)) {
     return { args }
@@ -333,6 +476,30 @@ export function prepareItemBasketArgs(args: unknown): {
   let changed = false
   let itemViewRequest: ItemViewRequest | undefined
   let tokenViewRequest: TokenViewRequest | undefined
+
+  const cosignedWrite = cosignedWriteRefusal(body)
+  if (cosignedWrite) {
+    return { args, error: { code: 'COSIGNED_WALLET_ONLY', description: cosignedWrite } }
+  }
+  if (typeof body.basket === 'string' && body.basket.trim().toLowerCase() === COSIGNED_STORAGE_BASKET) {
+    return {
+      args,
+      error: {
+        code: 'USE_PCOSIGNED_SCOPE',
+        description:
+          'Use basket "p cosigned all|tokens|items|asset|collection|id" (filter values in tags). Storage basket "cosigned" is wallet-internal.',
+      },
+    }
+  }
+  if (isCosignedViewBasket(body.basket)) {
+    const cosigned = prepareCosignedView(body)
+    if (cosigned.error) return { args, error: cosigned.error }
+    const { tags: _scopeTags, ...rest } = body
+    return {
+      args: { ...rest, basket: COSIGNED_STORAGE_BASKET, includeTags: true },
+      cosignedViewRequest: cosigned.request,
+    }
+  }
 
   if (typeof body.basket === 'string' && isItemBasket(body.basket)) {
     const p = parsePBasket(body.basket)
@@ -458,7 +625,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21" and "p2pft" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", "p2pft" and "cosigned" are implemented.`
     }
     return null
   }
@@ -472,7 +639,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21" and "p2pft" are implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat", "bsv21", "p2pft" and "cosigned" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err

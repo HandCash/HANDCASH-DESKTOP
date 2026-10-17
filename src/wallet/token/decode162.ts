@@ -577,6 +577,13 @@ function readDagCbor(bytes: Uint8Array, at: number, depth: number): CborRead | n
   return null
 }
 
+/** Strict DAG-CBOR map (BRC-162 §Payload rules), or null. */
+export function decodeDagCborMap(bytes: Uint8Array): Map<string, unknown> | null {
+  const parsed = bytes.length ? readDagCbor(bytes, 0, 0) : null
+  if (!parsed || parsed.next !== bytes.length || !(parsed.value instanceof Map)) return null
+  return parsed.value
+}
+
 /**
  * Current-layout attributes. A payload that is not a valid DAG-CBOR map
  * carries none; it never invalidates the output.
