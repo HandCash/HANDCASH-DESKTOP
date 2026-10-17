@@ -49,7 +49,7 @@ Hand these four to a developer integrating today. Each one has HandCash behavior
 | Auth | `isAuthenticated`, then `waitForAuthentication` | The origin is the session. There is no `authToken` and no app secret. |
 | Payments | `createAction`, `signAction`, `abortAction`, `internalizeAction`, `listActions`, `listOutputs` on basket `default` | Amounts are satoshis. Auto-pay and the BRC-73 cap cover plain payments only. Retry `CHANGE_CHAINING_REQUIRED`. |
 | Items | `listOutputs` on `p 1sat …`, `createAction` into basket `1sat`, `internalizeAction` with `basket insertion` | Always prompts. The app builds the ordinal script. Reads return only what the user granted. The contract is BRC-147, 150, 164, and 165; see [The 1Sat stack](#the-1sat-stack). |
-| Plain BSV-21 | `listOutputs` on `p bsv21 …`, `createAction` into basket `bsv21`, `internalizeAction` into `bsv21` | The app builds the BRC-162 script. Change back into `bsv21` is mandatory. Cosigned tips are not this path: the wallet will not cosign, and a plain unlock is refused. |
+| P2P-FT tokens | `listOutputs` on `p p2pft …`, `createAction` into basket `p2pft`, `internalizeAction` into `p2pft` | The contract is BRC-251; the app builds the BRC-162 script. Change back into `p2pft` is mandatory. Cosigned tips are not this path: the wallet will not cosign, and a plain unlock is refused. |
 
 Ordinary signing rides along with auth when a back end needs proof the wallet holds the key: `getPublicKey`, `createSignature`, `verifySignature`, `encrypt`, `decrypt`, `createHmac`, `verifyHmac`. A `createSignature` whose `protocolID` is `[2, 'wallet identity proof']` is checked against the calling origin. Any other protocol is signed as a normal BRC-42 signature.
 
@@ -156,15 +156,17 @@ A view returns tags plus the wallet's `originVerified` verdict. Provenance BEEF 
 
 Task page: [Collectables](/brc-wallet/items) · [items.md](https://docs.handcash.io/brc-wallet/items.md)
 
-## Tokens (BSV-21)
+## Tokens (P2P-FT)
+
+P2P-FT is [BRC-251](https://github.com/bsv-blockchain/BRCs/pull/320): BRC-162 tokens held, sent and received peer to peer. [BRC-252](https://github.com/bsv-blockchain/BRCs/pull/321) is how a send ships lineage: only the bodies the recipient has not already proven. Both are open proposals.
 
 | Connect | BRC wallet | Notes |
 | --- | --- | --- |
-| No fungible token API in Connect | `wallet.listOutputs({ basket: 'p bsv21 all' })` or `basket: 'p bsv21 id', tags: ['bsv21:<tokenId>']` | Balances are the sum of `amt:` across held tips per token id. There is no per-token balance method; `basket: 'bsv21'` directly returns `400 USE_PBSV21_SCOPE`. |
-| — | `createAction` with a BRC-162 / BSV-21 output, basket `bsv21`, tags `bsv21`, `op:`, `sym:`, `amt:`, `dec:` | Mint and transfer are the same call with different scripts. Amount lives in the lock, the output is 1 satoshi, change back to `bsv21` is mandatory. |
-| — | `internalizeAction` with `basket insertion` into `bsv21` | The named output must be 1 sat, pay the wallet, and decode to the same token id and amount. Every output paying you in a self-send is custody. |
+| No fungible token API in Connect | `wallet.listOutputs({ basket: 'p p2pft all' })`, `basket: 'p p2pft token', tags: ['p2pft:<tokenId>']`, or `basket: 'p p2pft id', tags: ['id:<key>']` | Balances are the sum of `amt:` across held tips per token id. There is no per-token balance method. `p2pft` and `bsv21` are storage baskets; naming either directly returns `400 USE_PBSV21_SCOPE`. `p bsv21 …` is still accepted for grants issued before the rename. |
+| — | `createAction` with a BRC-162 output, basket `p2pft`, tags `p2pft`, `op:`, `sym:`, `amt:`, `dec:` | Mint and transfer are the same call with different scripts. Amount lives in the lock, the output is 1 satoshi, change back to `p2pft` is mandatory. Outputs an older app files under `bsv21` are read and moved into `p2pft` once. |
+| — | `internalizeAction` with `basket insertion` into `p2pft` | The named output must be 1 sat, pay the wallet, and decode to the same token id and amount. Every output paying you in a self-send is custody. |
 | — | Cosigned tips | Not the integrator path. The wallet's own send refuses them with `cosigner_required`, and the bridge will not produce the cosigner signature. An app spends one only by supplying that unlock itself. |
-| — | Provenance | BRC-176 walk from tip to a fixed-supply deploy; `issuerAttested` is a Sigma signature check, not a supply audit. |
+| — | Provenance | BRC-176 walk from tip to a fixed-supply deploy, shipped as BRC-252 compact lineage; `issuerAttested` is a Sigma signature check, not a supply audit. |
 
 Task page: [Tokens](/brc-wallet/tokens) · [tokens.md](https://docs.handcash.io/brc-wallet/tokens.md)
 
@@ -240,7 +242,7 @@ This is where features live. A payment, a collectable, and a fungible token are 
 | Transaction proofs | BRC-62 Atomic BEEF | `inputBEEF` on `createAction`, `tx` on `internalizeAction` |
 | Silent spending cap | BRC-73 | `spendingAuthorization` in your web `manifest.json` |
 | Collectables | 1Sat ordinals: BRC-147 basket profile, BRC-150 provenance, BRC-164 held-row key, BRC-165 permission grammar | Basket `1sat`, tags `ordinal`, `origin:`, `name:`, `app:`, `collection:`, `creator:`, `id:`; read scope `p 1sat <scope>`; spend label `p 1sat input id <key>`. See [The 1Sat stack](#the-1sat-stack). |
-| Fungible tokens | BSV-21 with BRC-162 value locks, BRC-176 provenance | Basket `bsv21`, tags `bsv21:`, `amt:`, `op:`, `sym:`, `dec:` |
+| Fungible tokens | P2P-FT (BRC-251): BRC-162 value locks, BRC-176 provenance shipped as BRC-252 compact lineage | Basket `p2pft`, tags `p2pft:`, `amt:`, `op:`, `sym:`, `dec:` (`bsv21` / `bsv21:` still read) |
 | Certificates | BRC-52 | Forwarded, not proven. Leave off the integrator path until a third-party call is shown succeeding. |
 | Catalog and overlay packs | BRC-230 | Not in this release. Shipping on `feature/brc-230-index-expansion`; the methods return `404 INDEX_EXPANSION_UNAVAILABLE` today |
 

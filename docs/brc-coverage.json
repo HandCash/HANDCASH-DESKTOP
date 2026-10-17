@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-14T11:25:09.888Z",
+  "generated": "2026-10-17T05:14:44.470Z",
   "model": [
     "jev-1.13.0"
   ],
@@ -657,7 +657,7 @@
       "status": "merged"
     },
     "162": {
-      "title": "Mandala Tokens",
+      "title": "1Color",
       "status": "merged"
     },
     "163": {
@@ -832,8 +832,16 @@
       "title": "Extensible Wallet Version Strings and Account Labels",
       "status": "merged"
     },
+    "207": {
+      "title": "1Color Wallet Module",
+      "status": "merged"
+    },
     "208": {
       "title": "Vault Sub-Accounts",
+      "status": "merged"
+    },
+    "209": {
+      "title": "1Color Minimal Resource Profile",
       "status": "merged"
     },
     "210": {
@@ -908,6 +916,14 @@
       "title": "Device Login and Recovery",
       "status": "draft"
     },
+    "251": {
+      "title": "Peer-to-Peer Fungible Tokens (P2P-FT)",
+      "status": "draft"
+    },
+    "252": {
+      "title": "Compact Lineage Evidence for P2P-FT",
+      "status": "draft"
+    },
     "369": {
       "title": "Keyed Content and Conditional Key Release",
       "status": "merged"
@@ -919,8 +935,8 @@
       "path": "electron/brc39Archive.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.57,
-      "interop": 0.25,
+      "isFeature": 0.55,
+      "interop": 0.26,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -933,12 +949,12 @@
       "path": "electron/bridgeDeadline.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.28,
-      "interop": 0.62,
+      "isFeature": 0.27,
+      "interop": 0.6,
       "implements": [
         {
           "n": 100,
-          "p": 0.93,
+          "p": 0.91,
           "cited": true
         }
       ],
@@ -947,13 +963,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.66,
-        "needs": 0.31,
+        "uncovered": 0.65,
+        "needs": 0.33,
         "kind": "covered",
         "kindP": 0.52,
         "closest": 100,
-        "closestP": 0.99,
-        "priority": 2.74
+        "closestP": 0.98,
+        "priority": 2.71
       }
     },
     {
@@ -969,37 +985,22 @@
         100
       ],
       "gap": {
-        "uncovered": 0.92,
-        "needs": 0.38,
-        "kind": "not_needed",
-        "kindP": 0.37,
+        "uncovered": 0.91,
+        "needs": 0.42,
+        "kind": "covered",
+        "kindP": 0.34,
         "closest": 100,
-        "closestP": 0.72,
-        "priority": 1.49
+        "closestP": 0.69,
+        "priority": 1.68
       }
-    },
-    {
-      "name": "Durable store",
-      "path": "electron/durableStore.ts",
-      "kind": "module",
-      "area": "local_state",
-      "isFeature": 0.5,
-      "interop": 0.25,
-      "implements": [],
-      "uses": [],
-      "mentions": [
-        29,
-        100
-      ],
-      "gap": null
     },
     {
       "name": "HTTP server",
       "path": "electron/httpServer.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.74,
-      "interop": 0.81,
+      "isFeature": 0.76,
+      "interop": 0.83,
       "implements": [
         {
           "n": 219,
@@ -1013,12 +1014,12 @@
         219
       ],
       "gap": {
-        "uncovered": 0.72,
-        "needs": 0.31,
+        "uncovered": 0.67,
+        "needs": 0.3,
         "kind": "covered",
-        "kindP": 0.44,
+        "kindP": 0.47,
         "closest": 5,
-        "closestP": 0.64,
+        "closestP": 0.69,
         "priority": 1.94
       }
     },
@@ -1027,8 +1028,8 @@
       "path": "electron/main.ts",
       "kind": "module",
       "area": "shell",
-      "isFeature": 0.74,
-      "interop": 0.81,
+      "isFeature": 0.79,
+      "interop": 0.82,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -1036,15 +1037,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.87,
-        "needs": 0.52,
+        "uncovered": 0.89,
+        "needs": 0.49,
         "kind": "covered",
-        "kindP": 0.45,
-        "closest": 100,
-        "closestP": 0.93,
-        "priority": 2.2,
-        "specified": 0.6,
-        "specifiedBy": null
+        "kindP": 0.51,
+        "closest": 185,
+        "closestP": 0.54,
+        "priority": 2.57
       }
     },
     {
@@ -1052,12 +1051,12 @@
       "path": "electron/oneSatAppCapabilities.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.86,
+      "isFeature": 0.87,
       "interop": 0.93,
       "implements": [
         {
           "n": 100,
-          "p": 0.6,
+          "p": 0.59,
           "cited": true
         }
       ],
@@ -1069,11 +1068,11 @@
       "gap": {
         "uncovered": 0.84,
         "needs": 0.39,
-        "kind": "extend_existing",
-        "kindP": 0.41,
+        "kind": "covered",
+        "kindP": 0.45,
         "closest": 100,
-        "closestP": 0.67,
-        "priority": 2.44
+        "closestP": 0.73,
+        "priority": 2.42
       }
     },
     {
@@ -1082,11 +1081,11 @@
       "kind": "module",
       "area": "app_bridge",
       "isFeature": 0.73,
-      "interop": 0.87,
+      "interop": 0.89,
       "implements": [
         {
           "n": 100,
-          "p": 0.98,
+          "p": 0.96,
           "cited": true
         }
       ],
@@ -1095,13 +1094,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.61,
-        "needs": 0.25,
+        "uncovered": 0.66,
+        "needs": 0.23,
         "kind": "covered",
-        "kindP": 0.81,
+        "kindP": 0.83,
         "closest": 100,
         "closestP": 0.99,
-        "priority": 3.49
+        "priority": 3.43
       }
     },
     {
@@ -1121,11 +1120,11 @@
       "uses": [
         {
           "n": 29,
-          "p": 0.65
+          "p": 0.71
         },
         {
           "n": 38,
-          "p": 0.59
+          "p": 0.53
         }
       ],
       "mentions": [
@@ -1135,13 +1134,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.46,
-        "needs": 0.52,
+        "uncovered": 0.43,
+        "needs": 0.51,
         "kind": "extend_existing",
-        "kindP": 0.6,
+        "kindP": 0.57,
         "closest": 249,
-        "closestP": 0.67,
-        "priority": 3.18
+        "closestP": 0.65,
+        "priority": 3.21
       }
     },
     {
@@ -1149,25 +1148,25 @@
       "path": "src/wallet/accountHolderRecord.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.77,
+      "isFeature": 0.76,
       "interop": 0.92,
       "implements": [
         {
           "n": 249,
-          "p": 0.97,
+          "p": 0.95,
           "cited": false
         }
       ],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.32,
-        "needs": 0.43,
+        "uncovered": 0.33,
+        "needs": 0.42,
         "kind": "covered",
-        "kindP": 0.46,
+        "kindP": 0.53,
         "closest": 249,
-        "closestP": 0.49,
-        "priority": 2.54
+        "closestP": 0.62,
+        "priority": 2.61
       }
     },
     {
@@ -1175,7 +1174,7 @@
       "path": "src/wallet/accountHolding.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.76,
+      "isFeature": 0.77,
       "interop": 0.92,
       "implements": [
         {
@@ -1191,12 +1190,12 @@
       ],
       "gap": {
         "uncovered": 0.26,
-        "needs": 0.55,
+        "needs": 0.59,
         "kind": "new_brc",
-        "kindP": 0.43,
+        "kindP": 0.41,
         "closest": 249,
         "closestP": 0.97,
-        "priority": 3.31
+        "priority": 3.33
       }
     },
     {
@@ -1209,7 +1208,7 @@
       "implements": [
         {
           "n": 208,
-          "p": 0.9299999999999999,
+          "p": 0.93,
           "cited": true
         }
       ],
@@ -1225,7 +1224,7 @@
       "kind": "module",
       "area": "devices_accounts",
       "isFeature": 0.88,
-      "interop": 0.89,
+      "interop": 0.9,
       "implements": [
         {
           "n": 249,
@@ -1238,13 +1237,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.3,
+        "uncovered": 0.32,
         "needs": 0.43,
         "kind": "covered",
-        "kindP": 0.67,
+        "kindP": 0.66,
         "closest": 249,
         "closestP": 1,
-        "priority": 3.15
+        "priority": 3.12
       }
     },
     {
@@ -1266,13 +1265,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.34,
-        "needs": 0.52,
+        "uncovered": 0.33,
+        "needs": 0.56,
         "kind": "covered",
-        "kindP": 0.53,
+        "kindP": 0.49,
         "closest": 249,
-        "closestP": 0.99,
-        "priority": 3.15
+        "closestP": 0.98,
+        "priority": 3.1
       }
     },
     {
@@ -1281,7 +1280,7 @@
       "kind": "module",
       "area": "devices_accounts",
       "isFeature": 0.88,
-      "interop": 0.96,
+      "interop": 0.97,
       "implements": [
         {
           "n": 249,
@@ -1292,7 +1291,7 @@
       "uses": [
         {
           "n": 33,
-          "p": 0.75
+          "p": 0.72
         }
       ],
       "mentions": [
@@ -1300,13 +1299,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.28,
-        "needs": 0.54,
+        "uncovered": 0.27,
+        "needs": 0.53,
         "kind": "extend_existing",
-        "kindP": 0.51,
+        "kindP": 0.56,
         "closest": 249,
-        "closestP": 0.52,
-        "priority": 3.24
+        "closestP": 0.59,
+        "priority": 3.2
       }
     },
     {
@@ -1314,8 +1313,8 @@
       "path": "src/wallet/appIdentity.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.21,
-      "interop": 0.34,
+      "isFeature": 0.19,
+      "interop": 0.36,
       "implements": [
         {
           "n": 116,
@@ -1324,7 +1323,7 @@
         },
         {
           "n": 100,
-          "p": 0.78,
+          "p": 0.72,
           "cited": true
         }
       ],
@@ -1339,32 +1338,32 @@
       "path": "src/wallet/appSignedCheque.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.79,
-      "interop": 0.77,
+      "isFeature": 0.75,
+      "interop": 0.78,
       "implements": [
         {
           "n": 100,
-          "p": 0.67,
+          "p": 0.66,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 95,
-          "p": 0.75
+          "p": 0.81
         }
       ],
       "mentions": [
         100
       ],
       "gap": {
-        "uncovered": 0.5,
+        "uncovered": 0.54,
         "needs": 0.24,
         "kind": "covered",
-        "kindP": 0.69,
+        "kindP": 0.65,
         "closest": 100,
-        "closestP": 0.91,
-        "priority": 2.94
+        "closestP": 0.89,
+        "priority": 2.87
       }
     },
     {
@@ -1372,19 +1371,19 @@
       "path": "src/wallet/arcadeV2.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.78,
+      "isFeature": 0.81,
       "interop": 0.91,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
         "uncovered": 0.94,
-        "needs": 0.37,
+        "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.54,
+        "kindP": 0.38,
         "closest": 100,
-        "closestP": 0.75,
-        "priority": 2.29
+        "closestP": 0.73,
+        "priority": 2.36
       }
     },
     {
@@ -1392,12 +1391,12 @@
       "path": "src/wallet/authenticityMachine.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.23,
-      "interop": 0.15,
+      "isFeature": 0.2,
+      "interop": 0.14,
       "implements": [
         {
           "n": 150,
-          "p": 0.77,
+          "p": 0.82,
           "cited": true
         }
       ],
@@ -1411,14 +1410,14 @@
       "name": "Auto pay",
       "path": "src/wallet/autoPay.ts",
       "kind": "module",
-      "area": "payments",
-      "isFeature": 0.88,
-      "interop": 0.16,
+      "area": "app_bridge",
+      "isFeature": 0.89,
+      "interop": 0.18,
       "implements": [],
       "uses": [
         {
           "n": 100,
-          "p": 0.88
+          "p": 0.81
         }
       ],
       "mentions": [],
@@ -1430,18 +1429,18 @@
       "kind": "module",
       "area": "items",
       "isFeature": 0.52,
-      "interop": 0.91,
+      "interop": 0.9,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
         "uncovered": 0.94,
-        "needs": 0.43,
+        "needs": 0.44,
         "kind": "not_needed",
-        "kindP": 0.49,
+        "kindP": 0.45,
         "closest": 98,
-        "closestP": 0.38,
-        "priority": 1.79
+        "closestP": 0.33,
+        "priority": 1.8
       }
     },
     {
@@ -1449,8 +1448,8 @@
       "path": "src/wallet/backupStatus.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.64,
-      "interop": 0.19,
+      "isFeature": 0.62,
+      "interop": 0.17,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -1468,7 +1467,7 @@
       "implements": [
         {
           "n": 100,
-          "p": 0.68,
+          "p": 0.62,
           "cited": true
         }
       ],
@@ -1477,14 +1476,14 @@
         100
       ],
       "gap": {
-        "uncovered": 0.89,
-        "needs": 0.69,
-        "kind": "extend_existing",
-        "kindP": 0.48,
+        "uncovered": 0.9,
+        "needs": 0.68,
+        "kind": "new_brc",
+        "kindP": 0.47000000000000003,
         "closest": 189,
-        "closestP": 0.36,
-        "priority": 2.94,
-        "specified": 0.85,
+        "closestP": 0.54,
+        "priority": 2.87,
+        "specified": 0.86,
         "specifiedBy": 248
       }
     },
@@ -1494,18 +1493,18 @@
       "kind": "module",
       "area": "chain",
       "isFeature": 0.09,
-      "interop": 0.61,
+      "interop": 0.66,
       "implements": [
         {
           "n": 95,
-          "p": 0.89,
+          "p": 0.9,
           "cited": true
         }
       ],
       "uses": [
         {
-          "n": 150,
-          "p": 0.56
+          "n": 62,
+          "p": 0.5
         }
       ],
       "mentions": [
@@ -1513,13 +1512,13 @@
         150
       ],
       "gap": {
-        "uncovered": 0.65,
-        "needs": 0.28,
+        "uncovered": 0.54,
+        "needs": 0.27,
         "kind": "not_needed",
-        "kindP": 0.48,
+        "kindP": 0.52,
         "closest": 95,
-        "closestP": 0.6,
-        "priority": 2.27
+        "closestP": 0.38,
+        "priority": 2.32
       }
     },
     {
@@ -1527,30 +1526,30 @@
       "path": "src/wallet/blockHeaders.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.25,
+      "isFeature": 0.26,
       "interop": 0.89,
       "implements": [
         {
           "n": 9,
-          "p": 0.9,
+          "p": 0.9299999999999999,
           "cited": false
         }
       ],
       "uses": [
         {
           "n": 74,
-          "p": 0.81
+          "p": 0.78
         }
       ],
       "mentions": [],
       "gap": {
         "uncovered": 0.69,
-        "needs": 0.32,
+        "needs": 0.3,
         "kind": "covered",
-        "kindP": 0.48,
+        "kindP": 0.44,
         "closest": 135,
-        "closestP": 0.6,
-        "priority": 2.59
+        "closestP": 0.58,
+        "priority": 2.56
       }
     },
     {
@@ -1559,16 +1558,16 @@
       "kind": "module",
       "area": "app_bridge",
       "isFeature": 0.71,
-      "interop": 0.87,
+      "interop": 0.86,
       "implements": [
         {
           "n": 100,
-          "p": 0.93,
+          "p": 0.9,
           "cited": true
         },
         {
           "n": 29,
-          "p": 0.92,
+          "p": 0.89,
           "cited": true
         }
       ],
@@ -1578,41 +1577,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.48,
-        "needs": 0.33,
+        "uncovered": 0.41,
+        "needs": 0.29,
         "kind": "covered",
-        "kindP": 0.42,
+        "kindP": 0.54,
         "closest": 100,
-        "closestP": 0.74,
-        "priority": 2.66
-      }
-    },
-    {
-      "name": "BRC-100 activity side effects",
-      "path": "src/wallet/brc100ActivitySideEffects.ts",
-      "kind": "module",
-      "area": "app_bridge",
-      "isFeature": 0.12,
-      "interop": 0.58,
-      "implements": [
-        {
-          "n": 100,
-          "p": 0.51,
-          "cited": true
-        }
-      ],
-      "uses": [],
-      "mentions": [
-        100
-      ],
-      "gap": {
-        "uncovered": 0.55,
-        "needs": 0.25,
-        "kind": "not_needed",
-        "kindP": 0.41,
-        "closest": 100,
-        "closestP": 0.52,
-        "priority": 1.99
+        "closestP": 0.63,
+        "priority": 2.75
       }
     },
     {
@@ -1621,11 +1592,11 @@
       "kind": "module",
       "area": "app_bridge",
       "isFeature": 0.79,
-      "interop": 0.83,
+      "interop": 0.84,
       "implements": [
         {
           "n": 100,
-          "p": 0.97,
+          "p": 0.96,
           "cited": true
         }
       ],
@@ -1637,13 +1608,13 @@
         208
       ],
       "gap": {
-        "uncovered": 0.45,
+        "uncovered": 0.43,
         "needs": 0.31,
         "kind": "covered",
-        "kindP": 0.68,
+        "kindP": 0.66,
         "closest": 100,
         "closestP": 0.96,
-        "priority": 3.21
+        "priority": 3.24
       }
     },
     {
@@ -1651,12 +1622,12 @@
       "path": "src/wallet/brc112.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.52,
-      "interop": 0.38,
+      "isFeature": 0.47,
+      "interop": 0.37,
       "implements": [
         {
           "n": 112,
-          "p": 0.95,
+          "p": 0.96,
           "cited": true
         }
       ],
@@ -1671,8 +1642,8 @@
       "path": "src/wallet/brc114.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.25,
-      "interop": 0.72,
+      "isFeature": 0.24,
+      "interop": 0.73,
       "implements": [
         {
           "n": 114,
@@ -1685,10 +1656,10 @@
         114
       ],
       "gap": {
-        "uncovered": 0.24,
-        "needs": 0.3,
-        "kind": "extend_existing",
-        "kindP": 0.52,
+        "uncovered": 0.25,
+        "needs": 0.33,
+        "kind": "covered",
+        "kindP": 0.48,
         "closest": 114,
         "closestP": 1,
         "priority": 2.57
@@ -1699,12 +1670,12 @@
       "path": "src/wallet/brc140Backup.ts",
       "kind": "module",
       "area": "keys_crypto",
-      "isFeature": 0.9,
-      "interop": 0.94,
+      "isFeature": 0.92,
+      "interop": 0.93,
       "implements": [
         {
           "n": 140,
-          "p": 0.86,
+          "p": 0.84,
           "cited": true
         }
       ],
@@ -1716,10 +1687,10 @@
         "uncovered": 0.34,
         "needs": 0.26,
         "kind": "covered",
-        "kindP": 0.62,
+        "kindP": 0.69,
         "closest": 140,
         "closestP": 0.98,
-        "priority": 3.19
+        "priority": 3.16
       }
     },
     {
@@ -1728,12 +1699,12 @@
       "kind": "module",
       "area": "recovery_login",
       "isFeature": 0.87,
-      "interop": 0.46,
+      "interop": 0.47,
       "implements": [],
       "uses": [
         {
           "n": 140,
-          "p": 0.56
+          "p": 0.55
         }
       ],
       "mentions": [
@@ -1747,7 +1718,7 @@
       "kind": "module",
       "area": "messaging",
       "isFeature": 0.6,
-      "interop": 0.58,
+      "interop": 0.62,
       "implements": [
         {
           "n": 218,
@@ -1761,12 +1732,215 @@
       ],
       "gap": {
         "uncovered": 0.21,
-        "needs": 0.27,
+        "needs": 0.25,
         "kind": "covered",
         "kindP": 0.87,
         "closest": 218,
+        "closestP": 0.99,
+        "priority": 3.25
+      }
+    },
+    {
+      "name": "API (brc250)",
+      "path": "src/wallet/brc250/api.ts",
+      "kind": "module",
+      "area": "identity",
+      "isFeature": 0.89,
+      "interop": 0.96,
+      "implements": [
+        {
+          "n": 250,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        250
+      ],
+      "gap": {
+        "uncovered": 0.25,
+        "needs": 0.43,
+        "kind": "covered",
+        "kindP": 0.8099999999999999,
+        "closest": 250,
         "closestP": 1,
-        "priority": 3.22
+        "priority": 3.23
+      }
+    },
+    {
+      "name": "Crypto (brc250)",
+      "path": "src/wallet/brc250/crypto.ts",
+      "kind": "module",
+      "area": "keys_crypto",
+      "isFeature": 0.84,
+      "interop": 0.94,
+      "implements": [
+        {
+          "n": 250,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        250
+      ],
+      "gap": {
+        "uncovered": 0.52,
+        "needs": 0.53,
+        "kind": "covered",
+        "kindP": 0.73,
+        "closest": 250,
+        "closestP": 0.99,
+        "priority": 3.14,
+        "specified": 0.58,
+        "specifiedBy": 250
+      }
+    },
+    {
+      "name": "Device service (brc250)",
+      "path": "src/wallet/brc250/deviceService.ts",
+      "kind": "module",
+      "area": "devices_accounts",
+      "isFeature": 0.8,
+      "interop": 0.79,
+      "implements": [
+        {
+          "n": 250,
+          "p": 0.96,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        250
+      ],
+      "gap": {
+        "uncovered": 0.23,
+        "needs": 0.33,
+        "kind": "covered",
+        "kindP": 0.77,
+        "closest": 250,
+        "closestP": 0.99,
+        "priority": 2.74
+      }
+    },
+    {
+      "name": "Enrollment (brc250)",
+      "path": "src/wallet/brc250/enrollment.ts",
+      "kind": "module",
+      "area": "recovery_login",
+      "isFeature": 0.92,
+      "interop": 0.92,
+      "implements": [
+        {
+          "n": 250,
+          "p": 1,
+          "cited": false
+        }
+      ],
+      "uses": [
+        {
+          "n": 140,
+          "p": 0.89
+        }
+      ],
+      "mentions": [
+        42,
+        157
+      ],
+      "gap": {
+        "uncovered": 0.32,
+        "needs": 0.46,
+        "kind": "covered",
+        "kindP": 0.54,
+        "closest": 250,
+        "closestP": 0.76,
+        "priority": 3.19
+      }
+    },
+    {
+      "name": "Login (brc250)",
+      "path": "src/wallet/brc250/login.ts",
+      "kind": "module",
+      "area": "recovery_login",
+      "isFeature": 0.91,
+      "interop": 0.92,
+      "implements": [
+        {
+          "n": 250,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [
+        {
+          "n": 42,
+          "p": 0.61
+        }
+      ],
+      "mentions": [
+        42,
+        157,
+        250
+      ],
+      "gap": {
+        "uncovered": 0.37,
+        "needs": 0.52,
+        "kind": "covered",
+        "kindP": 0.75,
+        "closest": 250,
+        "closestP": 0.92,
+        "priority": 3.19
+      }
+    },
+    {
+      "name": "Store (brc250)",
+      "path": "src/wallet/brc250/store.ts",
+      "kind": "module",
+      "area": "recovery_login",
+      "isFeature": 0.63,
+      "interop": 0.08,
+      "implements": [
+        {
+          "n": 250,
+          "p": 0.92,
+          "cited": false
+        }
+      ],
+      "uses": [],
+      "mentions": [],
+      "gap": null
+    },
+    {
+      "name": "Types (brc250)",
+      "path": "src/wallet/brc250/types.ts",
+      "kind": "module",
+      "area": "recovery_login",
+      "isFeature": 0.25,
+      "interop": 0.92,
+      "implements": [
+        {
+          "n": 250,
+          "p": 0.93,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        42,
+        157,
+        250
+      ],
+      "gap": {
+        "uncovered": 0.3,
+        "needs": 0.51,
+        "kind": "covered",
+        "kindP": 0.49,
+        "closest": 250,
+        "closestP": 0.85,
+        "priority": 3.18
       }
     },
     {
@@ -1774,8 +1948,8 @@
       "path": "src/wallet/brc29SendMachine.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.83,
-      "interop": 0.65,
+      "isFeature": 0.86,
+      "interop": 0.71,
       "implements": [
         {
           "n": 29,
@@ -1788,13 +1962,13 @@
         29
       ],
       "gap": {
-        "uncovered": 0.45,
+        "uncovered": 0.36,
         "needs": 0.36,
         "kind": "covered",
-        "kindP": 0.65,
+        "kindP": 0.76,
         "closest": 29,
-        "closestP": 0.97,
-        "priority": 2.94
+        "closestP": 0.98,
+        "priority": 2.93
       }
     },
     {
@@ -1803,11 +1977,11 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.64,
-      "interop": 0.32,
+      "interop": 0.31,
       "implements": [
         {
           "n": 29,
-          "p": 0.93,
+          "p": 0.92,
           "cited": true
         }
       ],
@@ -1822,12 +1996,12 @@
       "path": "src/wallet/brc29Uri.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.83,
+      "isFeature": 0.84,
       "interop": 0.94,
       "implements": [
         {
           "n": 29,
-          "p": 0.97,
+          "p": 0.99,
           "cited": true
         }
       ],
@@ -1837,15 +2011,13 @@
         125
       ],
       "gap": {
-        "uncovered": 0.64,
-        "needs": 0.5,
+        "uncovered": 0.66,
+        "needs": 0.48,
         "kind": "covered",
         "kindP": 0.54,
         "closest": 29,
-        "closestP": 0.83,
-        "priority": 2.91,
-        "specified": 0.41,
-        "specifiedBy": 29
+        "closestP": 0.77,
+        "priority": 2.89
       }
     },
     {
@@ -1854,11 +2026,11 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.36,
-      "interop": 0.5,
+      "interop": 0.47,
       "implements": [
         {
           "n": 38,
-          "p": 0.71,
+          "p": 0.72,
           "cited": true
         }
       ],
@@ -1866,23 +2038,15 @@
       "mentions": [
         38
       ],
-      "gap": {
-        "uncovered": 0.31,
-        "needs": 0.2,
-        "kind": "not_needed",
-        "kindP": 0.47000000000000003,
-        "closest": 38,
-        "closestP": 0.88,
-        "priority": 1.63
-      }
+      "gap": null
     },
     {
       "name": "BRC-38 stream export",
       "path": "src/wallet/brc38StreamExport.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.85,
-      "interop": 0.92,
+      "isFeature": 0.86,
+      "interop": 0.93,
       "implements": [
         {
           "n": 38,
@@ -1897,12 +2061,12 @@
       ],
       "gap": {
         "uncovered": 0.23,
-        "needs": 0.32,
+        "needs": 0.31,
         "kind": "covered",
-        "kindP": 0.49,
+        "kindP": 0.51,
         "closest": 38,
-        "closestP": 0.99,
-        "priority": 2.91
+        "closestP": 0.98,
+        "priority": 2.74
       }
     },
     {
@@ -1910,8 +2074,8 @@
       "path": "src/wallet/brc39.worker.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.55,
-      "interop": 0.6,
+      "isFeature": 0.56,
+      "interop": 0.56,
       "implements": [
         {
           "n": 39,
@@ -1925,12 +2089,12 @@
       ],
       "gap": {
         "uncovered": 0.48,
-        "needs": 0.35,
+        "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.65,
+        "kindP": 0.67,
         "closest": 39,
         "closestP": 0.96,
-        "priority": 3
+        "priority": 3.03
       }
     },
     {
@@ -1938,12 +2102,12 @@
       "path": "src/wallet/brc39Encrypt.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.68,
-      "interop": 0.61,
+      "isFeature": 0.6,
+      "interop": 0.55,
       "implements": [
         {
           "n": 39,
-          "p": 0.96,
+          "p": 0.95,
           "cited": true
         }
       ],
@@ -1953,13 +2117,13 @@
         39
       ],
       "gap": {
-        "uncovered": 0.31,
-        "needs": 0.31,
+        "uncovered": 0.37,
+        "needs": 0.29,
         "kind": "covered",
-        "kindP": 0.53,
+        "kindP": 0.44,
         "closest": 39,
-        "closestP": 0.95,
-        "priority": 2.82
+        "closestP": 0.92,
+        "priority": 2.6
       }
     },
     {
@@ -1967,7 +2131,7 @@
       "path": "src/wallet/brc39Lean.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.91,
+      "isFeature": 0.89,
       "interop": 0.94,
       "implements": [
         {
@@ -1979,7 +2143,7 @@
       "uses": [
         {
           "n": 38,
-          "p": 0.61
+          "p": 0.63
         }
       ],
       "mentions": [
@@ -1987,13 +2151,13 @@
         39
       ],
       "gap": {
-        "uncovered": 0.26,
-        "needs": 0.34,
+        "uncovered": 0.27,
+        "needs": 0.35,
         "kind": "covered",
         "kindP": 0.5,
         "closest": 39,
-        "closestP": 1,
-        "priority": 2.76
+        "closestP": 0.99,
+        "priority": 2.75
       }
     },
     {
@@ -2002,24 +2166,24 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.73,
-      "interop": 0.79,
+      "interop": 0.77,
       "implements": [],
       "uses": [
         {
           "n": 39,
-          "p": 0.83
+          "p": 0.8099999999999999
         }
       ],
       "mentions": [
         39
       ],
       "gap": {
-        "uncovered": 0.85,
-        "needs": 0.34,
+        "uncovered": 0.84,
+        "needs": 0.33,
         "kind": "not_needed",
-        "kindP": 0.49,
+        "kindP": 0.47000000000000003,
         "closest": 39,
-        "closestP": 0.88,
+        "closestP": 0.87,
         "priority": 1.46
       }
     },
@@ -2028,8 +2192,8 @@
       "path": "src/wallet/bridgeOrigin.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.57,
-      "interop": 0.62,
+      "isFeature": 0.53,
+      "interop": 0.64,
       "implements": [
         {
           "n": 100,
@@ -2038,7 +2202,7 @@
         },
         {
           "n": 116,
-          "p": 0.9,
+          "p": 0.91,
           "cited": false
         }
       ],
@@ -2047,13 +2211,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.54,
+        "uncovered": 0.52,
         "needs": 0.33,
         "kind": "covered",
-        "kindP": 0.45,
+        "kindP": 0.48,
         "closest": 100,
         "closestP": 0.65,
-        "priority": 2.96
+        "priority": 2.98
       }
     },
     {
@@ -2062,7 +2226,7 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.74,
-      "interop": 0.18,
+      "interop": 0.22,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -2073,13 +2237,18 @@
       "path": "src/wallet/burn.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.79,
+      "isFeature": 0.78,
       "interop": 0.9,
       "implements": [
         {
           "n": 162,
-          "p": 0.92,
+          "p": 0.9,
           "cited": true
+        },
+        {
+          "n": 163,
+          "p": 0.9,
+          "cited": false
         }
       ],
       "uses": [],
@@ -2087,15 +2256,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.62,
-        "needs": 0.51,
+        "uncovered": 0.44,
+        "needs": 0.4,
         "kind": "covered",
-        "kindP": 0.48,
-        "closest": 21,
-        "closestP": 0.53,
-        "priority": 2.7,
-        "specified": 0.56,
-        "specifiedBy": 162
+        "kindP": 0.53,
+        "closest": 163,
+        "closestP": 0.8,
+        "priority": 2.83
       }
     },
     {
@@ -2104,19 +2271,17 @@
       "kind": "module",
       "area": "tokens",
       "isFeature": 0.63,
-      "interop": 0.5,
-      "implements": [],
+      "interop": 0.48,
+      "implements": [
+        {
+          "n": 161,
+          "p": 0.9,
+          "cited": false
+        }
+      ],
       "uses": [],
       "mentions": [],
-      "gap": {
-        "uncovered": 0.77,
-        "needs": 0.34,
-        "kind": "not_needed",
-        "kindP": 0.48,
-        "closest": 46,
-        "closestP": 0.64,
-        "priority": 2.24
-      }
+      "gap": null
     },
     {
       "name": "Chain ingest",
@@ -2124,12 +2289,12 @@
       "kind": "module",
       "area": "chain",
       "isFeature": 0.55,
-      "interop": 0.38,
+      "interop": 0.33,
       "implements": [],
       "uses": [
         {
           "n": 62,
-          "p": 0.7
+          "p": 0.68
         }
       ],
       "mentions": [
@@ -2149,13 +2314,13 @@
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.93,
-        "needs": 0.26,
+        "uncovered": 0.91,
+        "needs": 0.29,
         "kind": "not_needed",
-        "kindP": 0.57,
+        "kindP": 0.73,
         "closest": 5,
-        "closestP": 0.6,
-        "priority": 1.35
+        "closestP": 0.57,
+        "priority": 1.53
       }
     },
     {
@@ -2163,19 +2328,19 @@
       "path": "src/wallet/changeScriptFate.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.26,
-      "interop": 0.69,
+      "isFeature": 0.25,
+      "interop": 0.65,
       "implements": [
         {
           "n": 29,
-          "p": 0.87,
+          "p": 0.82,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 42,
-          "p": 0.72
+          "p": 0.81
         }
       ],
       "mentions": [
@@ -2184,26 +2349,26 @@
         42
       ],
       "gap": {
-        "uncovered": 0.65,
+        "uncovered": 0.66,
         "needs": 0.24,
         "kind": "not_needed",
         "kindP": 0.75,
         "closest": 29,
-        "closestP": 0.72,
-        "priority": 2.25
+        "closestP": 0.77,
+        "priority": 2.38
       }
     },
     {
       "name": "Claim ticket",
       "path": "src/wallet/claimTicket.ts",
       "kind": "module",
-      "area": "keys_crypto",
-      "isFeature": 0.82,
+      "area": "identity",
+      "isFeature": 0.81,
       "interop": 0.95,
       "implements": [
         {
           "n": 169,
-          "p": 0.61,
+          "p": 0.62,
           "cited": true
         }
       ],
@@ -2212,13 +2377,13 @@
         169
       ],
       "gap": {
-        "uncovered": 0.85,
-        "needs": 0.45,
-        "kind": "new_brc",
-        "kindP": 0.33999999999999997,
+        "uncovered": 0.84,
+        "needs": 0.46,
+        "kind": "extend_existing",
+        "kindP": 0.44,
         "closest": 138,
-        "closestP": 0.87,
-        "priority": 2.45
+        "closestP": 0.82,
+        "priority": 2.56
       }
     },
     {
@@ -2226,8 +2391,8 @@
       "path": "src/wallet/cloudBackupHealth.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.63,
-      "interop": 0.27,
+      "isFeature": 0.6,
+      "interop": 0.35,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -2240,12 +2405,12 @@
       "path": "src/wallet/collectableGroups.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.16,
-      "interop": 0.19,
+      "isFeature": 0.12,
+      "interop": 0.2,
       "implements": [
         {
           "n": 247,
-          "p": 0.96,
+          "p": 0.97,
           "cited": true
         }
       ],
@@ -2260,13 +2425,13 @@
       "path": "src/wallet/collectableSendMachine.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.73,
+      "isFeature": 0.74,
       "interop": 0.24,
       "implements": [],
       "uses": [
         {
           "n": 16,
-          "p": 0.52
+          "p": 0.53
         }
       ],
       "mentions": [],
@@ -2277,12 +2442,12 @@
       "path": "src/wallet/collectableSendReady.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.3,
+      "isFeature": 0.33,
       "interop": 0.4,
       "implements": [
         {
           "n": 150,
-          "p": 0.73,
+          "p": 0.69,
           "cited": true
         }
       ],
@@ -2293,16 +2458,28 @@
       "gap": null
     },
     {
+      "name": "Collectable send run",
+      "path": "src/wallet/collectableSendRun.ts",
+      "kind": "module",
+      "area": "items",
+      "isFeature": 0.53,
+      "interop": 0.18,
+      "implements": [],
+      "uses": [],
+      "mentions": [],
+      "gap": null
+    },
+    {
       "name": "Collectable tip kind",
       "path": "src/wallet/collectableTipKind.ts",
       "kind": "module",
       "area": "items",
       "isFeature": 0.62,
-      "interop": 0.81,
+      "interop": 0.82,
       "implements": [
         {
           "n": 150,
-          "p": 0.65,
+          "p": 0.68,
           "cited": true
         }
       ],
@@ -2314,10 +2491,10 @@
         "uncovered": 0.73,
         "needs": 0.31,
         "kind": "not_needed",
-        "kindP": 0.38,
+        "kindP": 0.46,
         "closest": 150,
-        "closestP": 0.91,
-        "priority": 2.66
+        "closestP": 0.9,
+        "priority": 2.71
       }
     },
     {
@@ -2326,21 +2503,21 @@
       "kind": "module",
       "area": "items",
       "isFeature": 0.75,
-      "interop": 0.67,
+      "interop": 0.68,
       "implements": [
         {
           "n": 147,
-          "p": 0.98,
+          "p": 0.96,
           "cited": false
         },
         {
           "n": 150,
-          "p": 0.86,
+          "p": 0.79,
           "cited": true
         },
         {
           "n": 100,
-          "p": 0.65,
+          "p": 0.66,
           "cited": true
         }
       ],
@@ -2355,12 +2532,12 @@
       ],
       "gap": {
         "uncovered": 0.55,
-        "needs": 0.38,
+        "needs": 0.39,
         "kind": "extend_existing",
-        "kindP": 0.5,
+        "kindP": 0.48,
         "closest": 100,
         "closestP": 0.79,
-        "priority": 2.89
+        "priority": 2.94
       }
     },
     {
@@ -2368,26 +2545,26 @@
       "path": "src/wallet/cryptoBackend.ts",
       "kind": "module",
       "area": "keys_crypto",
-      "isFeature": 0.71,
-      "interop": 0.73,
+      "isFeature": 0.68,
+      "interop": 0.71,
       "implements": [],
       "uses": [
         {
           "n": 42,
-          "p": 0.55
+          "p": 0.63
         }
       ],
       "mentions": [
         42
       ],
       "gap": {
-        "uncovered": 0.84,
-        "needs": 0.26,
+        "uncovered": 0.82,
+        "needs": 0.27,
         "kind": "not_needed",
-        "kindP": 0.41,
+        "kindP": 0.44,
         "closest": 100,
-        "closestP": 0.76,
-        "priority": 2.16
+        "closestP": 0.54,
+        "priority": 2.05
       }
     },
     {
@@ -2400,7 +2577,7 @@
       "implements": [
         {
           "n": 100,
-          "p": 0.77,
+          "p": 0.78,
           "cited": true
         }
       ],
@@ -2411,13 +2588,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.8,
-        "needs": 0.46,
+        "uncovered": 0.81,
+        "needs": 0.47,
         "kind": "extend_existing",
-        "kindP": 0.4,
+        "kindP": 0.35,
         "closest": 100,
         "closestP": 0.93,
-        "priority": 3.04
+        "priority": 2.96
       }
     },
     {
@@ -2425,7 +2602,7 @@
       "path": "src/wallet/custodyJournalBackup.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.81,
+      "isFeature": 0.8,
       "interop": 0.79,
       "implements": [],
       "uses": [],
@@ -2436,10 +2613,10 @@
         "uncovered": 0.83,
         "needs": 0.4,
         "kind": "covered",
-        "kindP": 0.48,
+        "kindP": 0.38,
         "closest": 40,
-        "closestP": 0.94,
-        "priority": 2.25
+        "closestP": 0.91,
+        "priority": 2.22
       }
     },
     {
@@ -2447,8 +2624,8 @@
       "path": "src/wallet/custodyJournalRecovery.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.79,
-      "interop": 0.44,
+      "isFeature": 0.75,
+      "interop": 0.38,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -2459,8 +2636,8 @@
       "path": "src/wallet/deadCoinSweep.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.59,
-      "interop": 0.47,
+      "isFeature": 0.64,
+      "interop": 0.42,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -2488,7 +2665,7 @@
       "uses": [
         {
           "n": 100,
-          "p": 0.66
+          "p": 0.63
         }
       ],
       "mentions": [
@@ -2499,10 +2676,10 @@
         "uncovered": 0.26,
         "needs": 0.31,
         "kind": "covered",
-        "kindP": 0.55,
+        "kindP": 0.51,
         "closest": 100,
-        "closestP": 0.63,
-        "priority": 2.75
+        "closestP": 0.66,
+        "priority": 2.68
       }
     },
     {
@@ -2510,8 +2687,8 @@
       "path": "src/wallet/derivativeContent.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.61,
-      "interop": 0.89,
+      "isFeature": 0.6,
+      "interop": 0.9,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -2520,13 +2697,13 @@
       "gap": {
         "uncovered": 0.94,
         "needs": 0.62,
-        "kind": "extend_existing",
-        "kindP": 0.48,
+        "kind": "new_brc",
+        "kindP": 0.54,
         "closest": 150,
-        "closestP": 0.87,
-        "priority": 2.94,
-        "specified": 0.49,
-        "specifiedBy": null
+        "closestP": 0.84,
+        "priority": 2.98,
+        "specified": 0.42,
+        "specifiedBy": 150
       }
     },
     {
@@ -2534,12 +2711,12 @@
       "path": "src/wallet/derivativeContentResolve.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.35,
+      "isFeature": 0.39,
       "interop": 0.82,
       "implements": [
         {
           "n": 160,
-          "p": 0.94,
+          "p": 0.9,
           "cited": true
         }
       ],
@@ -2548,21 +2725,23 @@
         160
       ],
       "gap": {
-        "uncovered": 0.49,
-        "needs": 0.47,
+        "uncovered": 0.5,
+        "needs": 0.51,
         "kind": "extend_existing",
-        "kindP": 0.54,
+        "kindP": 0.55,
         "closest": 160,
-        "closestP": 0.8,
-        "priority": 2.69
+        "closestP": 0.67,
+        "priority": 2.68,
+        "specified": 0.52,
+        "specifiedBy": 160
       }
     },
     {
       "name": "Derived change echo",
       "path": "src/wallet/derivedChangeEcho.ts",
       "kind": "module",
-      "area": "local_state",
-      "isFeature": 0.72,
+      "area": "payments",
+      "isFeature": 0.68,
       "interop": 0.31,
       "implements": [],
       "uses": [],
@@ -2582,12 +2761,12 @@
       "implements": [
         {
           "n": 42,
-          "p": 0.8,
+          "p": 0.78,
           "cited": true
         },
         {
           "n": 29,
-          "p": 0.61,
+          "p": 0.66,
           "cited": true
         }
       ],
@@ -2597,13 +2776,13 @@
         42
       ],
       "gap": {
-        "uncovered": 0.7,
-        "needs": 0.39,
+        "uncovered": 0.71,
+        "needs": 0.37,
         "kind": "extend_existing",
-        "kindP": 0.36,
+        "kindP": 0.4,
         "closest": 100,
-        "closestP": 0.67,
-        "priority": 2.03
+        "closestP": 0.69,
+        "priority": 2.04
       }
     },
     {
@@ -2611,32 +2790,32 @@
       "path": "src/wallet/deviceAuth.ts",
       "kind": "module",
       "area": "recovery_login",
-      "isFeature": 0.72,
+      "isFeature": 0.73,
       "interop": 0.78,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.88,
+        "uncovered": 0.87,
         "needs": 0.42,
         "kind": "not_needed",
-        "kindP": 0.54,
+        "kindP": 0.51,
         "closest": 100,
-        "closestP": 0.59,
-        "priority": 1.95
+        "closestP": 0.51,
+        "priority": 1.91
       }
     },
     {
       "name": "Device key backup",
       "path": "src/wallet/deviceKeyBackup.ts",
       "kind": "module",
-      "area": "backup_sync",
+      "area": "recovery_login",
       "isFeature": 0.94,
       "interop": 0.93,
       "implements": [
         {
           "n": 78,
-          "p": 0.68,
+          "p": 0.54,
           "cited": true
         }
       ],
@@ -2648,12 +2827,14 @@
       ],
       "gap": {
         "uncovered": 0.9,
-        "needs": 0.46,
-        "kind": "extend_existing",
-        "kindP": 0.37,
+        "needs": 0.52,
+        "kind": "new_brc",
+        "kindP": 0.36,
         "closest": 78,
-        "closestP": 0.45,
-        "priority": 2.47
+        "closestP": 0.51,
+        "priority": 2.38,
+        "specified": 0.34,
+        "specifiedBy": null
       }
     },
     {
@@ -2661,8 +2842,8 @@
       "path": "src/wallet/deviceLockPrefs.ts",
       "kind": "module",
       "area": "recovery_login",
-      "isFeature": 0.64,
-      "interop": 0.16,
+      "isFeature": 0.65,
+      "interop": 0.15,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -2674,20 +2855,20 @@
       "name": "Device mesh",
       "path": "src/wallet/deviceMesh.ts",
       "kind": "module",
-      "area": "peer_sessions",
+      "area": "backup_sync",
       "isFeature": 0.73,
-      "interop": 0.71,
+      "interop": 0.67,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.87,
-        "needs": 0.43,
+        "uncovered": 0.88,
+        "needs": 0.47,
         "kind": "not_needed",
-        "kindP": 0.42,
+        "kindP": 0.38,
         "closest": 40,
-        "closestP": 0.89,
-        "priority": 2.08
+        "closestP": 0.94,
+        "priority": 2.12
       }
     },
     {
@@ -2695,19 +2876,19 @@
       "path": "src/wallet/devicePeer.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.78,
+      "isFeature": 0.79,
       "interop": 0.84,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.91,
+        "uncovered": 0.89,
         "needs": 0.39,
         "kind": "not_needed",
-        "kindP": 0.53,
-        "closest": 40,
-        "closestP": 0.8,
-        "priority": 2.07
+        "kindP": 0.48,
+        "closest": 182,
+        "closestP": 0.67,
+        "priority": 2.08
       }
     },
     {
@@ -2715,19 +2896,19 @@
       "path": "src/wallet/devicePeerHandler.ts",
       "kind": "module",
       "area": "peer_sessions",
-      "isFeature": 0.86,
-      "interop": 0.92,
+      "isFeature": 0.87,
+      "interop": 0.93,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.9,
-        "needs": 0.44,
+        "uncovered": 0.92,
+        "needs": 0.39,
         "kind": "not_needed",
-        "kindP": 0.53,
-        "closest": 109,
-        "closestP": 0.63,
-        "priority": 1.49
+        "kindP": 0.61,
+        "closest": 104,
+        "closestP": 0.44,
+        "priority": 1.33
       }
     },
     {
@@ -2736,7 +2917,7 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.88,
-      "interop": 0.88,
+      "interop": 0.86,
       "implements": [],
       "uses": [
         {
@@ -2753,14 +2934,14 @@
         39
       ],
       "gap": {
-        "uncovered": 0.78,
+        "uncovered": 0.79,
         "needs": 0.55,
         "kind": "covered",
-        "kindP": 0.64,
+        "kindP": 0.56,
         "closest": 40,
-        "closestP": 0.98,
-        "priority": 3.01,
-        "specified": 0.38,
+        "closestP": 0.97,
+        "priority": 2.94,
+        "specified": 0.33,
         "specifiedBy": null
       }
     },
@@ -2769,8 +2950,8 @@
       "path": "src/wallet/deviceWallets.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.89,
-      "interop": 0.94,
+      "isFeature": 0.88,
+      "interop": 0.93,
       "implements": [
         {
           "n": 100,
@@ -2783,13 +2964,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.85,
-        "needs": 0.48,
+        "uncovered": 0.87,
+        "needs": 0.46,
         "kind": "extend_existing",
-        "kindP": 0.41,
+        "kindP": 0.45,
         "closest": 100,
         "closestP": 0.56,
-        "priority": 2.54
+        "priority": 2.4
       }
     },
     {
@@ -2811,10 +2992,10 @@
         246
       ],
       "gap": {
-        "uncovered": 0.46,
-        "needs": 0.5,
+        "uncovered": 0.43,
+        "needs": 0.46,
         "kind": "covered",
-        "kindP": 0.65,
+        "kindP": 0.62,
         "closest": 246,
         "closestP": 1,
         "priority": 2.95
@@ -2839,13 +3020,13 @@
         246
       ],
       "gap": {
-        "uncovered": 0.29,
+        "uncovered": 0.3,
         "needs": 0.42,
         "kind": "covered",
-        "kindP": 0.73,
+        "kindP": 0.74,
         "closest": 246,
-        "closestP": 0.99,
-        "priority": 2.67
+        "closestP": 1,
+        "priority": 2.74
       }
     },
     {
@@ -2853,19 +3034,10 @@
       "path": "src/wallet/dualLayerSend.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.72,
-      "interop": 0.47,
+      "isFeature": 0.69,
+      "interop": 0.49,
       "implements": [],
-      "uses": [
-        {
-          "n": 100,
-          "p": 0.5599999999999999
-        },
-        {
-          "n": 29,
-          "p": 0.51
-        }
-      ],
+      "uses": [],
       "mentions": [
         29
       ],
@@ -2877,11 +3049,11 @@
       "kind": "module",
       "area": "handles",
       "isFeature": 0.8,
-      "interop": 0.65,
+      "interop": 0.66,
       "implements": [
         {
           "n": 169,
-          "p": 0.93,
+          "p": 0.88,
           "cited": true
         }
       ],
@@ -2893,13 +3065,13 @@
         169
       ],
       "gap": {
-        "uncovered": 0.5,
+        "uncovered": 0.49,
         "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.75,
+        "kindP": 0.77,
         "closest": 169,
-        "closestP": 0.96,
-        "priority": 2.97
+        "closestP": 0.97,
+        "priority": 3.05
       }
     },
     {
@@ -2907,8 +3079,8 @@
       "path": "src/wallet/handleCertificate.ts",
       "kind": "module",
       "area": "handles",
-      "isFeature": 0.71,
-      "interop": 0.9,
+      "isFeature": 0.67,
+      "interop": 0.91,
       "implements": [
         {
           "n": 169,
@@ -2922,12 +3094,12 @@
       ],
       "gap": {
         "uncovered": 0.19,
-        "needs": 0.25,
+        "needs": 0.24,
         "kind": "covered",
-        "kindP": 0.8,
+        "kindP": 0.81,
         "closest": 169,
         "closestP": 0.99,
-        "priority": 3.3
+        "priority": 3.26
       }
     },
     {
@@ -2935,41 +3107,7 @@
       "path": "src/wallet/handleClaim.ts",
       "kind": "module",
       "area": "handles",
-      "isFeature": 0.83,
-      "interop": 0.74,
-      "implements": [
-        {
-          "n": 169,
-          "p": 0.99,
-          "cited": true
-        }
-      ],
-      "uses": [
-        {
-          "n": 100,
-          "p": 0.64
-        }
-      ],
-      "mentions": [
-        100,
-        169
-      ],
-      "gap": {
-        "uncovered": 0.45,
-        "needs": 0.3,
-        "kind": "extend_existing",
-        "kindP": 0.54,
-        "closest": 100,
-        "closestP": 0.65,
-        "priority": 2.96
-      }
-    },
-    {
-      "name": "Handle format",
-      "path": "src/wallet/handleFormat.ts",
-      "kind": "module",
-      "area": "handles",
-      "isFeature": 0.28,
+      "isFeature": 0.81,
       "interop": 0.7,
       "implements": [
         {
@@ -2978,27 +3116,33 @@
           "cited": true
         }
       ],
-      "uses": [],
+      "uses": [
+        {
+          "n": 100,
+          "p": 0.6
+        }
+      ],
       "mentions": [
+        100,
         169
       ],
       "gap": {
-        "uncovered": 0.37,
+        "uncovered": 0.44,
         "needs": 0.31,
-        "kind": "covered",
-        "kindP": 0.65,
-        "closest": 169,
-        "closestP": 0.99,
-        "priority": 2.6
+        "kind": "extend_existing",
+        "kindP": 0.55,
+        "closest": 100,
+        "closestP": 0.6900000000000001,
+        "priority": 2.96
       }
     },
     {
-      "name": "Handle resolve",
-      "path": "src/wallet/handleResolve.ts",
+      "name": "Handle format",
+      "path": "src/wallet/handleFormat.ts",
       "kind": "module",
       "area": "handles",
-      "isFeature": 0.66,
-      "interop": 0.75,
+      "isFeature": 0.32,
+      "interop": 0.72,
       "implements": [
         {
           "n": 169,
@@ -3011,13 +3155,41 @@
         169
       ],
       "gap": {
-        "uncovered": 0.28,
+        "uncovered": 0.33,
+        "needs": 0.32,
+        "kind": "covered",
+        "kindP": 0.65,
+        "closest": 169,
+        "closestP": 0.99,
+        "priority": 2.62
+      }
+    },
+    {
+      "name": "Handle resolve",
+      "path": "src/wallet/handleResolve.ts",
+      "kind": "module",
+      "area": "handles",
+      "isFeature": 0.61,
+      "interop": 0.78,
+      "implements": [
+        {
+          "n": 169,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        169
+      ],
+      "gap": {
+        "uncovered": 0.26,
         "needs": 0.31,
         "kind": "covered",
-        "kindP": 0.82,
+        "kindP": 0.8,
         "closest": 169,
         "closestP": 1,
-        "priority": 3.26
+        "priority": 3.24
       }
     },
     {
@@ -3025,17 +3197,17 @@
       "path": "src/wallet/historyBackup.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.92,
+      "isFeature": 0.93,
       "interop": 0.93,
       "implements": [
         {
           "n": 39,
-          "p": 0.96,
+          "p": 0.97,
           "cited": true
         },
         {
           "n": 38,
-          "p": 0.51,
+          "p": 0.6,
           "cited": true
         }
       ],
@@ -3046,13 +3218,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.55,
-        "needs": 0.39,
+        "uncovered": 0.51,
+        "needs": 0.36,
         "kind": "extend_existing",
-        "kindP": 0.5,
+        "kindP": 0.68,
         "closest": 39,
-        "closestP": 0.64,
-        "priority": 3.09
+        "closestP": 0.67,
+        "priority": 2.89
       }
     },
     {
@@ -3060,21 +3232,21 @@
       "path": "src/wallet/historyBackupPrefs.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.82,
-      "interop": 0.57,
+      "isFeature": 0.8,
+      "interop": 0.58,
       "implements": [],
       "uses": [],
       "mentions": [
         39
       ],
       "gap": {
-        "uncovered": 0.83,
-        "needs": 0.34,
-        "kind": "not_needed",
-        "kindP": 0.39,
+        "uncovered": 0.84,
+        "needs": 0.35,
+        "kind": "covered",
+        "kindP": 0.41,
         "closest": 40,
-        "closestP": 0.85,
-        "priority": 1.84
+        "closestP": 0.81,
+        "priority": 1.77
       }
     },
     {
@@ -3082,12 +3254,12 @@
       "path": "src/wallet/historyCryptoSecret.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.69,
-      "interop": 0.61,
+      "isFeature": 0.7,
+      "interop": 0.6,
       "implements": [
         {
           "n": 39,
-          "p": 0.91,
+          "p": 0.88,
           "cited": true
         }
       ],
@@ -3097,12 +3269,12 @@
       ],
       "gap": {
         "uncovered": 0.48,
-        "needs": 0.44,
+        "needs": 0.49,
         "kind": "covered",
-        "kindP": 0.41,
+        "kindP": 0.42,
         "closest": 39,
-        "closestP": 0.94,
-        "priority": 2.5
+        "closestP": 0.93,
+        "priority": 2.56
       }
     },
     {
@@ -3110,19 +3282,19 @@
       "path": "src/wallet/historyDocumentBudget.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.47,
-      "interop": 0.41,
+      "isFeature": 0.52,
+      "interop": 0.39,
       "implements": [
         {
           "n": 38,
-          "p": 0.54,
+          "p": 0.55,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 39,
-          "p": 0.79
+          "p": 0.81
         }
       ],
       "mentions": [
@@ -3135,7 +3307,7 @@
       "path": "src/wallet/holdingFreshness.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.17,
+      "isFeature": 0.18,
       "interop": 0.05,
       "implements": [
         {
@@ -3151,33 +3323,65 @@
       "gap": null
     },
     {
+      "name": "HTTP etag",
+      "path": "src/wallet/httpEtag.ts",
+      "kind": "module",
+      "area": "other",
+      "isFeature": 0.14,
+      "interop": 0.89,
+      "implements": [
+        {
+          "n": 5,
+          "p": 0.92,
+          "cited": false
+        }
+      ],
+      "uses": [],
+      "mentions": [],
+      "gap": {
+        "uncovered": 0.59,
+        "needs": 0.33,
+        "kind": "extend_existing",
+        "kindP": 0.48,
+        "closest": 5,
+        "closestP": 0.93,
+        "priority": 2.16
+      }
+    },
+    {
       "name": "Identity card",
       "path": "src/wallet/identityCard.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.88,
+      "isFeature": 0.87,
       "interop": 0.95,
       "implements": [
         {
+          "n": 248,
+          "p": 0.91,
+          "cited": true
+        },
+        {
           "n": 3,
-          "p": 0.51,
+          "p": 0.81,
           "cited": true
         }
       ],
       "uses": [],
       "mentions": [
-        3
+        3,
+        248
       ],
       "gap": {
-        "uncovered": 0.89,
-        "needs": 0.67,
+        "uncovered": 0.88,
+        "needs": 0.62,
         "kind": "new_brc",
-        "kindP": 0.51,
+        "kindP": 0.45,
         "closest": 103,
-        "closestP": 0.52,
-        "priority": 3.06,
-        "specified": 0.36,
-        "specifiedBy": 3
+        "closestP": 0.5599999999999999,
+        "priority": 3.17,
+        "specified": 0.34,
+        "specifiedBy": null
       }
     },
     {
@@ -3191,20 +3395,20 @@
       "uses": [
         {
           "n": 33,
-          "p": 0.83
+          "p": 0.79
         }
       ],
       "mentions": [
         33
       ],
       "gap": {
-        "uncovered": 0.89,
-        "needs": 0.46,
+        "uncovered": 0.9,
+        "needs": 0.47,
         "kind": "extend_existing",
         "kindP": 0.5,
         "closest": 103,
-        "closestP": 0.57,
-        "priority": 2.56
+        "closestP": 0.54,
+        "priority": 2.55
       }
     },
     {
@@ -3212,12 +3416,12 @@
       "path": "src/wallet/identityImage.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.31,
-      "interop": 0.81,
+      "isFeature": 0.33,
+      "interop": 0.78,
       "implements": [
         {
           "n": 248,
-          "p": 0.94,
+          "p": 0.97,
           "cited": false
         }
       ],
@@ -3225,12 +3429,12 @@
       "mentions": [],
       "gap": {
         "uncovered": 0.48,
-        "needs": 0.4,
+        "needs": 0.43,
         "kind": "extend_existing",
-        "kindP": 0.5,
+        "kindP": 0.54,
         "closest": 248,
-        "closestP": 0.95,
-        "priority": 2.5
+        "closestP": 0.94,
+        "priority": 2.42
       }
     },
     {
@@ -3238,24 +3442,24 @@
       "path": "src/wallet/identityIssuance.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.75,
+      "isFeature": 0.77,
       "interop": 0.89,
       "implements": [
         {
           "n": 247,
-          "p": 1,
+          "p": 0.99,
           "cited": true
         },
         {
           "n": 163,
-          "p": 0.92,
+          "p": 0.79,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 100,
-          "p": 0.79
+          "p": 0.74
         }
       ],
       "mentions": [
@@ -3266,13 +3470,13 @@
         247
       ],
       "gap": {
-        "uncovered": 0.52,
-        "needs": 0.38,
+        "uncovered": 0.51,
+        "needs": 0.4,
         "kind": "extend_existing",
-        "kindP": 0.48,
+        "kindP": 0.47,
         "closest": 100,
-        "closestP": 0.5599999999999999,
-        "priority": 2.71
+        "closestP": 0.59,
+        "priority": 2.8
       }
     },
     {
@@ -3287,28 +3491,90 @@
           "n": 248,
           "p": 1,
           "cited": true
-        }
-      ],
-      "uses": [
+        },
         {
           "n": 77,
-          "p": 0.59
+          "p": 0.58,
+          "cited": true
         }
       ],
+      "uses": [],
       "mentions": [
         77,
         248
       ],
       "gap": {
-        "uncovered": 0.58,
+        "uncovered": 0.71,
         "needs": 0.53,
         "kind": "extend_existing",
-        "kindP": 0.67,
+        "kindP": 0.62,
         "closest": 248,
-        "closestP": 0.74,
-        "priority": 2.95,
-        "specified": 0.91,
+        "closestP": 0.72,
+        "priority": 2.93,
+        "specified": 0.9,
         "specifiedBy": 248
+      }
+    },
+    {
+      "name": "Identity profile",
+      "path": "src/wallet/identityProfile.ts",
+      "kind": "module",
+      "area": "identity",
+      "isFeature": 0.82,
+      "interop": 0.92,
+      "implements": [
+        {
+          "n": 248,
+          "p": 1,
+          "cited": true
+        },
+        {
+          "n": 52,
+          "p": 0.99,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        52,
+        248
+      ],
+      "gap": {
+        "uncovered": 0.41,
+        "needs": 0.36,
+        "kind": "extend_existing",
+        "kindP": 0.73,
+        "closest": 52,
+        "closestP": 0.62,
+        "priority": 2.91
+      }
+    },
+    {
+      "name": "Identity profiles",
+      "path": "src/wallet/identityProfiles.ts",
+      "kind": "module",
+      "area": "identity",
+      "isFeature": 0.54,
+      "interop": 0.54,
+      "implements": [
+        {
+          "n": 248,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        248
+      ],
+      "gap": {
+        "uncovered": 0.29,
+        "needs": 0.27,
+        "kind": "covered",
+        "kindP": 0.64,
+        "closest": 248,
+        "closestP": 0.98,
+        "priority": 2.51
       }
     },
     {
@@ -3316,8 +3582,8 @@
       "path": "src/wallet/identityPublish.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.88,
-      "interop": 0.9,
+      "isFeature": 0.87,
+      "interop": 0.89,
       "implements": [
         {
           "n": 248,
@@ -3328,7 +3594,7 @@
       "uses": [
         {
           "n": 100,
-          "p": 0.59
+          "p": 0.5
         }
       ],
       "mentions": [
@@ -3336,13 +3602,13 @@
         248
       ],
       "gap": {
-        "uncovered": 0.49,
-        "needs": 0.43,
+        "uncovered": 0.51,
+        "needs": 0.46,
         "kind": "extend_existing",
-        "kindP": 0.53,
+        "kindP": 0.5,
         "closest": 100,
-        "closestP": 0.78,
-        "priority": 2.78
+        "closestP": 0.82,
+        "priority": 2.77
       }
     },
     {
@@ -3350,12 +3616,12 @@
       "path": "src/wallet/identityRequestAuth.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.64,
+      "isFeature": 0.61,
       "interop": 0.96,
       "implements": [
         {
           "n": 138,
-          "p": 0.92,
+          "p": 0.94,
           "cited": false
         }
       ],
@@ -3364,13 +3630,13 @@
         33
       ],
       "gap": {
-        "uncovered": 0.21,
-        "needs": 0.39,
+        "uncovered": 0.25,
+        "needs": 0.41,
         "kind": "covered",
-        "kindP": 0.68,
+        "kindP": 0.64,
         "closest": 138,
-        "closestP": 0.87,
-        "priority": 2.61
+        "closestP": 0.86,
+        "priority": 2.65
       }
     },
     {
@@ -3378,19 +3644,19 @@
       "path": "src/wallet/import/discovery.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.57,
-      "interop": 0.69,
+      "isFeature": 0.55,
+      "interop": 0.7,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.68,
-        "needs": 0.33,
+        "uncovered": 0.61,
+        "needs": 0.29,
         "kind": "not_needed",
-        "kindP": 0.52,
+        "kindP": 0.7,
         "closest": 155,
-        "closestP": 0.53,
-        "priority": 2.08
+        "closestP": 0.63,
+        "priority": 1.97
       }
     },
     {
@@ -3398,12 +3664,12 @@
       "path": "src/wallet/import/handcashHandle.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.76,
+      "isFeature": 0.75,
       "interop": 0.88,
       "implements": [
         {
           "n": 169,
-          "p": 0.82,
+          "p": 0.78,
           "cited": true
         }
       ],
@@ -3412,13 +3678,13 @@
         169
       ],
       "gap": {
-        "uncovered": 0.7,
+        "uncovered": 0.71,
         "needs": 0.32,
         "kind": "covered",
-        "kindP": 0.46,
+        "kindP": 0.36,
         "closest": 169,
         "closestP": 0.96,
-        "priority": 2.01
+        "priority": 1.98
       }
     },
     {
@@ -3427,23 +3693,23 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.85,
-      "interop": 0.87,
+      "interop": 0.86,
       "implements": [],
       "uses": [
         {
           "n": 32,
-          "p": 0.55
+          "p": 0.61
         }
       ],
       "mentions": [],
       "gap": {
         "uncovered": 0.93,
-        "needs": 0.54,
+        "needs": 0.52,
         "kind": "not_needed",
-        "kindP": 0.42,
+        "kindP": 0.37,
         "closest": 140,
-        "closestP": 0.56,
-        "priority": 1.96
+        "closestP": 0.59,
+        "priority": 2.05
       }
     },
     {
@@ -3451,19 +3717,19 @@
       "path": "src/wallet/import/handcashUtxoSet.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.86,
+      "isFeature": 0.85,
       "interop": 0.94,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.96,
-        "needs": 0.38,
-        "kind": "not_needed",
-        "kindP": 0.47,
+        "uncovered": 0.95,
+        "needs": 0.41,
+        "kind": "new_brc",
+        "kindP": 0.33,
         "closest": 100,
-        "closestP": 0.6,
-        "priority": 1.36
+        "closestP": 0.73,
+        "priority": 1.5
       }
     },
     {
@@ -3471,12 +3737,12 @@
       "path": "src/wallet/import/importSource.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.53,
-      "interop": 0.72,
+      "isFeature": 0.57,
+      "interop": 0.73,
       "implements": [
         {
           "n": 75,
-          "p": 0.56,
+          "p": 0.63,
           "cited": true
         }
       ],
@@ -3486,13 +3752,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.7,
-        "needs": 0.33,
-        "kind": "covered",
-        "kindP": 0.43,
+        "uncovered": 0.64,
+        "needs": 0.31,
+        "kind": "not_needed",
+        "kindP": 0.5700000000000001,
         "closest": 100,
-        "closestP": 0.87,
-        "priority": 1.96
+        "closestP": 0.8,
+        "priority": 1.79
       }
     },
     {
@@ -3500,21 +3766,21 @@
       "path": "src/wallet/import/index.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.72,
-      "interop": 0.56,
+      "isFeature": 0.71,
+      "interop": 0.55,
       "implements": [],
       "uses": [],
       "mentions": [
         100
       ],
       "gap": {
-        "uncovered": 0.78,
-        "needs": 0.32,
+        "uncovered": 0.74,
+        "needs": 0.36,
         "kind": "covered",
-        "kindP": 0.47,
+        "kindP": 0.53,
         "closest": 100,
-        "closestP": 0.88,
-        "priority": 1.8
+        "closestP": 0.92,
+        "priority": 1.76
       }
     },
     {
@@ -3523,7 +3789,7 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.52,
-      "interop": 0.47,
+      "interop": 0.49,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -3537,18 +3803,18 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.64,
-      "interop": 0.64,
+      "interop": 0.63,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.86,
-        "needs": 0.2,
+        "uncovered": 0.87,
+        "needs": 0.22,
         "kind": "not_needed",
-        "kindP": 0.88,
-        "closest": null,
-        "closestP": 0.62,
-        "priority": 1.44
+        "kindP": 0.65,
+        "closest": 100,
+        "closestP": 0.86,
+        "priority": 1.41
       }
     },
     {
@@ -3556,7 +3822,7 @@
       "path": "src/wallet/import/store.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.63,
+      "isFeature": 0.66,
       "interop": 0.23,
       "implements": [],
       "uses": [],
@@ -3571,7 +3837,7 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.74,
-      "interop": 0.34,
+      "interop": 0.29,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -3584,7 +3850,7 @@
       "path": "src/wallet/import/tokenSweep.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.69,
+      "isFeature": 0.67,
       "interop": 0.67,
       "implements": [
         {
@@ -3601,13 +3867,13 @@
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.35,
+        "uncovered": 0.36,
         "needs": 0.27,
         "kind": "covered",
-        "kindP": 0.59,
+        "kindP": 0.58,
         "closest": 163,
-        "closestP": 0.8,
-        "priority": 2.68
+        "closestP": 0.76,
+        "priority": 2.74
       }
     },
     {
@@ -3616,11 +3882,11 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.81,
-      "interop": 0.91,
+      "interop": 0.9,
       "implements": [
         {
           "n": 100,
-          "p": 0.51,
+          "p": 0.53,
           "cited": true
         }
       ],
@@ -3629,13 +3895,13 @@
         100
       ],
       "gap": {
-        "uncovered": 0.61,
-        "needs": 0.36,
+        "uncovered": 0.55,
+        "needs": 0.33,
         "kind": "covered",
-        "kindP": 0.39,
+        "kindP": 0.43,
         "closest": 100,
-        "closestP": 0.5,
-        "priority": 2.45
+        "closestP": 0.42,
+        "priority": 2.55
       }
     },
     {
@@ -3643,12 +3909,12 @@
       "path": "src/wallet/ingestItemSettle.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.86,
+      "isFeature": 0.85,
       "interop": 0.84,
       "implements": [
         {
           "n": 150,
-          "p": 0.97,
+          "p": 0.98,
           "cited": true
         }
       ],
@@ -3657,14 +3923,39 @@
         150
       ],
       "gap": {
-        "uncovered": 0.44,
-        "needs": 0.38,
+        "uncovered": 0.42,
+        "needs": 0.35,
         "kind": "covered",
-        "kindP": 0.63,
+        "kindP": 0.66,
         "closest": 150,
         "closestP": 0.98,
-        "priority": 2.85
+        "priority": 2.88
       }
+    },
+    {
+      "name": "Ingest legacy address",
+      "path": "src/wallet/ingestLegacyAddress.ts",
+      "kind": "module",
+      "area": "import_migration",
+      "isFeature": 0.37,
+      "interop": 0.38,
+      "implements": [
+        {
+          "n": 162,
+          "p": 0.7,
+          "cited": true
+        }
+      ],
+      "uses": [
+        {
+          "n": 100,
+          "p": 0.5
+        }
+      ],
+      "mentions": [
+        162
+      ],
+      "gap": null
     },
     {
       "name": "Ingest payment by txid",
@@ -3672,23 +3963,24 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.88,
-      "interop": 0.57,
-      "implements": [],
-      "uses": [
+      "interop": 0.66,
+      "implements": [
         {
-          "n": 62,
-          "p": 0.57
+          "n": 9,
+          "p": 0.9,
+          "cited": false
         }
       ],
+      "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.84,
-        "needs": 0.39,
+        "uncovered": 0.66,
+        "needs": 0.45,
         "kind": "covered",
-        "kindP": 0.58,
+        "kindP": 0.52,
         "closest": 50,
-        "closestP": 0.87,
-        "priority": 2.66
+        "closestP": 0.86,
+        "priority": 2.79
       }
     },
     {
@@ -3696,13 +3988,13 @@
       "path": "src/wallet/inputCertainty.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.5,
-      "interop": 0.45,
+      "isFeature": 0.52,
+      "interop": 0.48,
       "implements": [],
       "uses": [
         {
           "n": 100,
-          "p": 0.55
+          "p": 0.54
         }
       ],
       "mentions": [
@@ -3715,24 +4007,24 @@
       "path": "src/wallet/internalizeBroadcast.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.29,
-      "interop": 0.72,
+      "isFeature": 0.28,
+      "interop": 0.73,
       "implements": [
         {
           "n": 100,
-          "p": 0.97,
+          "p": 0.94,
           "cited": true
         },
         {
           "n": 29,
-          "p": 0.81,
+          "p": 0.79,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 62,
-          "p": 0.5
+          "p": 0.6
         }
       ],
       "mentions": [
@@ -3740,12 +4032,12 @@
         100
       ],
       "gap": {
-        "uncovered": 0.35,
-        "needs": 0.28,
+        "uncovered": 0.36,
+        "needs": 0.3,
         "kind": "covered",
-        "kindP": 0.6,
+        "kindP": 0.63,
         "closest": 100,
-        "closestP": 0.7,
+        "closestP": 0.6799999999999999,
         "priority": 3.07
       }
     },
@@ -3754,8 +4046,8 @@
       "path": "src/wallet/internalizeItemPaint.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.48,
-      "interop": 0.64,
+      "isFeature": 0.46,
+      "interop": 0.61,
       "implements": [
         {
           "n": 163,
@@ -3764,12 +4056,12 @@
         },
         {
           "n": 100,
-          "p": 0.88,
+          "p": 0.87,
           "cited": true
         },
         {
           "n": 162,
-          "p": 0.6,
+          "p": 0.61,
           "cited": true
         }
       ],
@@ -3779,13 +4071,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.3,
+        "uncovered": 0.35,
         "needs": 0.3,
         "kind": "covered",
-        "kindP": 0.51,
+        "kindP": 0.54,
         "closest": 100,
-        "closestP": 0.78,
-        "priority": 2.94
+        "closestP": 0.8,
+        "priority": 3.07
       }
     },
     {
@@ -3793,20 +4085,16 @@
       "path": "src/wallet/internalizeMinerDeferral.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.47,
-      "interop": 0.58,
+      "isFeature": 0.45,
+      "interop": 0.63,
       "implements": [
         {
           "n": 29,
-          "p": 0.76,
+          "p": 0.82,
           "cited": true
         }
       ],
       "uses": [
-        {
-          "n": 62,
-          "p": 0.77
-        },
         {
           "n": 95,
           "p": 0.58
@@ -3817,12 +4105,12 @@
       ],
       "gap": {
         "uncovered": 0.53,
-        "needs": 0.27,
+        "needs": 0.29,
         "kind": "extend_existing",
-        "kindP": 0.44,
-        "closest": 50,
-        "closestP": 0.43,
-        "priority": 2.64
+        "kindP": 0.5,
+        "closest": 100,
+        "closestP": 0.53,
+        "priority": 2.77
       }
     },
     {
@@ -3830,34 +4118,38 @@
       "path": "src/wallet/issuerAttribution.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.15,
-      "interop": 0.55,
+      "isFeature": 0.14,
+      "interop": 0.61,
       "implements": [
         {
           "n": 247,
-          "p": 0.99,
-          "cited": false
+          "p": 1,
+          "cited": true
+        },
+        {
+          "n": 162,
+          "p": 0.56,
+          "cited": true
         }
       ],
       "uses": [
         {
-          "n": 70,
-          "p": 0.8
-        },
-        {
           "n": 62,
-          "p": 0.8
+          "p": 0.77
         }
       ],
-      "mentions": [],
+      "mentions": [
+        162,
+        247
+      ],
       "gap": {
-        "uncovered": 0.49,
-        "needs": 0.38,
-        "kind": "covered",
-        "kindP": 0.37,
+        "uncovered": 0.55,
+        "needs": 0.37,
+        "kind": "extend_existing",
+        "kindP": 0.36,
         "closest": 247,
-        "closestP": 0.63,
-        "priority": 2.51
+        "closestP": 0.57,
+        "priority": 2.64
       }
     },
     {
@@ -3865,8 +4157,8 @@
       "path": "src/wallet/issuerIdentities.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.6,
-      "interop": 0.82,
+      "isFeature": 0.62,
+      "interop": 0.75,
       "implements": [
         {
           "n": 248,
@@ -3879,13 +4171,13 @@
         248
       ],
       "gap": {
-        "uncovered": 0.32,
+        "uncovered": 0.36,
         "needs": 0.29,
         "kind": "covered",
-        "kindP": 0.71,
+        "kindP": 0.7,
         "closest": 248,
         "closestP": 0.98,
-        "priority": 2.86
+        "priority": 2.89
       }
     },
     {
@@ -3893,17 +4185,12 @@
       "path": "src/wallet/issuerIdentity.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.75,
+      "isFeature": 0.76,
       "interop": 0.93,
       "implements": [
         {
           "n": 248,
           "p": 1,
-          "cited": true
-        },
-        {
-          "n": 247,
-          "p": 0.57,
           "cited": true
         }
       ],
@@ -3914,13 +4201,13 @@
         248
       ],
       "gap": {
-        "uncovered": 0.47,
-        "needs": 0.45,
+        "uncovered": 0.39,
+        "needs": 0.42,
         "kind": "covered",
-        "kindP": 0.77,
+        "kindP": 0.81,
         "closest": 248,
         "closestP": 0.95,
-        "priority": 2.99
+        "priority": 3.01
       }
     },
     {
@@ -3928,8 +4215,8 @@
       "path": "src/wallet/issuerIdentityDelivery.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.72,
-      "interop": 0.86,
+      "isFeature": 0.74,
+      "interop": 0.91,
       "implements": [
         {
           "n": 248,
@@ -3943,12 +4230,12 @@
       ],
       "gap": {
         "uncovered": 0.28,
-        "needs": 0.31,
+        "needs": 0.35,
         "kind": "covered",
-        "kindP": 0.69,
+        "kindP": 0.7,
         "closest": 248,
         "closestP": 0.99,
-        "priority": 2.88
+        "priority": 2.9
       }
     },
     {
@@ -3956,30 +4243,36 @@
       "path": "src/wallet/issuerMetadata.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.34,
-      "interop": 0.9,
+      "isFeature": 0.52,
+      "interop": 0.92,
       "implements": [
         {
           "n": 247,
-          "p": 0.97,
+          "p": 0.98,
+          "cited": true
+        },
+        {
+          "n": 162,
+          "p": 0.78,
           "cited": true
         }
       ],
       "uses": [],
       "mentions": [
         77,
+        162,
         247
       ],
       "gap": {
-        "uncovered": 0.59,
+        "uncovered": 0.65,
         "needs": 0.51,
-        "kind": "extend_existing",
-        "kindP": 0.6,
-        "closest": 247,
-        "closestP": 0.52,
-        "priority": 2.63,
-        "specified": 0.8,
-        "specifiedBy": 247
+        "kind": "new_brc",
+        "kindP": 0.55,
+        "closest": 162,
+        "closestP": 0.47,
+        "priority": 2.68,
+        "specified": 0.78,
+        "specifiedBy": null
       }
     },
     {
@@ -3987,8 +4280,8 @@
       "path": "src/wallet/itemAccess.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.24,
-      "interop": 0.64,
+      "isFeature": 0.29,
+      "interop": 0.67,
       "implements": [
         {
           "n": 99,
@@ -4002,12 +4295,12 @@
         },
         {
           "n": 164,
-          "p": 0.95,
+          "p": 0.91,
           "cited": true
         },
         {
           "n": 100,
-          "p": 0.82,
+          "p": 0.88,
           "cited": true
         }
       ],
@@ -4022,13 +4315,13 @@
         165
       ],
       "gap": {
-        "uncovered": 0.45,
-        "needs": 0.41,
+        "uncovered": 0.54,
+        "needs": 0.46,
         "kind": "extend_existing",
-        "kindP": 0.56,
+        "kindP": 0.54,
         "closest": 100,
-        "closestP": 0.58,
-        "priority": 2.98
+        "closestP": 0.57,
+        "priority": 2.97
       }
     },
     {
@@ -4036,28 +4329,45 @@
       "path": "src/wallet/itemSendMachine.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.7,
-      "interop": 0.76,
+      "isFeature": 0.73,
+      "interop": 0.75,
       "implements": [
         {
           "n": 150,
-          "p": 0.68,
+          "p": 0.75,
           "cited": true
         }
       ],
-      "uses": [],
+      "uses": [
+        {
+          "n": 95,
+          "p": 0.58
+        }
+      ],
       "mentions": [
         150
       ],
       "gap": {
         "uncovered": 0.63,
-        "needs": 0.33,
+        "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.46,
-        "closest": 150,
-        "closestP": 0.9,
-        "priority": 2.71
+        "kindP": 0.48,
+        "closest": 95,
+        "closestP": 0.6,
+        "priority": 2.82
       }
+    },
+    {
+      "name": "Item settle path",
+      "path": "src/wallet/itemSettlePath.ts",
+      "kind": "module",
+      "area": "items",
+      "isFeature": 0.53,
+      "interop": 0.2,
+      "implements": [],
+      "uses": [],
+      "mentions": [],
+      "gap": null
     },
     {
       "name": "Journal replica",
@@ -4065,7 +4375,7 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.77,
-      "interop": 0.87,
+      "interop": 0.88,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -4073,13 +4383,13 @@
       ],
       "gap": {
         "uncovered": 0.91,
-        "needs": 0.56,
+        "needs": 0.52,
         "kind": "covered",
-        "kindP": 0.4,
+        "kindP": 0.39,
         "closest": 40,
-        "closestP": 0.9299999999999999,
-        "priority": 2.56,
-        "specified": 0.15,
+        "closestP": 0.91,
+        "priority": 2.6,
+        "specified": 0.14,
         "specifiedBy": 39
       }
     },
@@ -4088,8 +4398,8 @@
       "path": "src/wallet/kernel/chequeBroadcast.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.52,
-      "interop": 0.21,
+      "isFeature": 0.5,
+      "interop": 0.19,
       "implements": [
         {
           "n": 95,
@@ -4107,18 +4417,18 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.2,
-      "interop": 0.15,
+      "interop": 0.12,
       "implements": [
         {
           "n": 29,
-          "p": 0.72,
+          "p": 0.7,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 62,
-          "p": 0.78
+          "p": 0.76
         },
         {
           "n": 95,
@@ -4135,8 +4445,8 @@
       "path": "src/wallet/kernel/txFinality.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.31,
-      "interop": 0.25,
+      "isFeature": 0.33,
+      "interop": 0.24,
       "implements": [
         {
           "n": 67,
@@ -4145,7 +4455,7 @@
         },
         {
           "n": 9,
-          "p": 0.68,
+          "p": 0.7,
           "cited": true
         }
       ],
@@ -4161,20 +4471,25 @@
       "path": "src/wallet/keySliceShare.ts",
       "kind": "module",
       "area": "recovery_login",
-      "isFeature": 0.79,
+      "isFeature": 0.8,
       "interop": 0.56,
       "implements": [],
-      "uses": [],
+      "uses": [
+        {
+          "n": 140,
+          "p": 0.51
+        }
+      ],
       "mentions": [
         140
       ],
       "gap": {
-        "uncovered": 0.7,
-        "needs": 0.32,
+        "uncovered": 0.71,
+        "needs": 0.31,
         "kind": "not_needed",
-        "kindP": 0.46,
+        "kindP": 0.5,
         "closest": 140,
-        "closestP": 0.94,
+        "closestP": 0.95,
         "priority": 1.97
       }
     },
@@ -4183,32 +4498,27 @@
       "path": "src/wallet/layers.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.26,
-      "interop": 0.68,
+      "isFeature": 0.31,
+      "interop": 0.7,
       "implements": [
         {
           "n": 208,
-          "p": 0.94,
+          "p": 0.93,
           "cited": true
         },
         {
           "n": 249,
-          "p": 0.89,
-          "cited": true
-        },
-        {
-          "n": 162,
-          "p": 0.73,
+          "p": 0.91,
           "cited": true
         },
         {
           "n": 39,
-          "p": 0.65,
+          "p": 0.6,
           "cited": true
         },
         {
           "n": 157,
-          "p": 0.61,
+          "p": 0.51,
           "cited": true
         }
       ],
@@ -4219,6 +4529,7 @@
         38,
         39,
         48,
+        52,
         67,
         75,
         77,
@@ -4239,13 +4550,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.65,
-        "needs": 0.41,
+        "uncovered": 0.66,
+        "needs": 0.4,
         "kind": "not_needed",
         "kindP": 0.53,
         "closest": 100,
         "closestP": 0.81,
-        "priority": 2.62
+        "priority": 2.6
       }
     },
     {
@@ -4253,56 +4564,29 @@
       "path": "src/wallet/legacyBeef.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.54,
-      "interop": 0.85,
+      "isFeature": 0.55,
+      "interop": 0.84,
       "implements": [
         {
           "n": 62,
-          "p": 0.92,
+          "p": 0.94,
           "cited": false
         }
       ],
       "uses": [
         {
-          "n": 100,
-          "p": 0.62
-        },
-        {
           "n": 9,
-          "p": 0.55
+          "p": 0.51
         }
       ],
       "mentions": [],
       "gap": {
         "uncovered": 0.29,
-        "needs": 0.25,
+        "needs": 0.26,
         "kind": "covered",
         "kindP": 0.48,
         "closest": 62,
-        "closestP": 0.5,
-        "priority": 2.19
-      }
-    },
-    {
-      "name": "Legacy scan",
-      "path": "src/wallet/legacyScan.ts",
-      "kind": "module",
-      "area": "import_migration",
-      "isFeature": 0.51,
-      "interop": 0.82,
-      "implements": [],
-      "uses": [],
-      "mentions": [
-        29,
-        100
-      ],
-      "gap": {
-        "uncovered": 0.87,
-        "needs": 0.29,
-        "kind": "covered",
-        "kindP": 0.51,
-        "closest": 100,
-        "closestP": 0.8,
+        "closestP": 0.73,
         "priority": 2.19
       }
     },
@@ -4311,12 +4595,12 @@
       "path": "src/wallet/liveSendReceive.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.28,
-      "interop": 0.8,
+      "isFeature": 0.31,
+      "interop": 0.82,
       "implements": [
         {
           "n": 29,
-          "p": 0.55,
+          "p": 0.6,
           "cited": true
         }
       ],
@@ -4325,13 +4609,13 @@
         29
       ],
       "gap": {
-        "uncovered": 0.32,
-        "needs": 0.29,
+        "uncovered": 0.33,
+        "needs": 0.28,
         "kind": "covered",
-        "kindP": 0.8,
+        "kindP": 0.83,
         "closest": 29,
         "closestP": 0.98,
-        "priority": 2.17
+        "priority": 2.11
       }
     },
     {
@@ -4339,12 +4623,12 @@
       "path": "src/wallet/localItemArt.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.29,
-      "interop": 0.33,
+      "isFeature": 0.28,
+      "interop": 0.36,
       "implements": [
         {
           "n": 150,
-          "p": 0.74,
+          "p": 0.78,
           "cited": true
         }
       ],
@@ -4359,8 +4643,8 @@
       "path": "src/wallet/localTxReclaimPath.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.76,
-      "interop": 0.14,
+      "isFeature": 0.75,
+      "interop": 0.15,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -4371,67 +4655,64 @@
       "path": "src/wallet/marketInventory.ts",
       "kind": "module",
       "area": "market",
-      "isFeature": 0.48,
-      "interop": 0.59,
+      "isFeature": 0.24,
+      "interop": 0.45,
       "implements": [
         {
-          "n": 46,
-          "p": 0.93,
-          "cited": false
-        },
-        {
           "n": 100,
-          "p": 0.86,
+          "p": 0.56,
           "cited": true
         }
       ],
-      "uses": [],
+      "uses": [
+        {
+          "n": 37,
+          "p": 0.65
+        }
+      ],
       "mentions": [
         100,
         150,
         165
       ],
-      "gap": {
-        "uncovered": 0.43,
-        "needs": 0.3,
-        "kind": "covered",
-        "kindP": 0.56,
-        "closest": 100,
-        "closestP": 0.64,
-        "priority": 2.41
-      }
+      "gap": null
     },
     {
       "name": "Market listing",
       "path": "src/wallet/marketListing.ts",
       "kind": "module",
       "area": "market",
-      "isFeature": 0.83,
+      "isFeature": 0.85,
       "interop": 0.94,
       "implements": [
         {
           "n": 176,
-          "p": 0.91,
+          "p": 0.92,
           "cited": true
         },
         {
+          "n": 197,
+          "p": 0.9,
+          "cited": false
+        },
+        {
           "n": 150,
-          "p": 0.87,
+          "p": 0.82,
           "cited": true
         },
         {
           "n": 159,
-          "p": 0.71,
+          "p": 0.76,
           "cited": true
         },
         {
           "n": 163,
-          "p": 0.62,
+          "p": 0.59,
           "cited": true
         },
         {
           "n": 147,
-          "p": 0.6,
+          "p": 0.58,
           "cited": true
         }
       ],
@@ -4445,14 +4726,14 @@
         176
       ],
       "gap": {
-        "uncovered": 0.84,
-        "needs": 0.57,
+        "uncovered": 0.78,
+        "needs": 0.55,
         "kind": "new_brc",
-        "kindP": 0.44,
+        "kindP": 0.33,
         "closest": 197,
-        "closestP": 0.8,
-        "priority": 2.96,
-        "specified": 0.42,
+        "closestP": 0.6799999999999999,
+        "priority": 3.03,
+        "specified": 0.46,
         "specifiedBy": null
       }
     },
@@ -4461,12 +4742,12 @@
       "path": "src/wallet/marketListingPath.ts",
       "kind": "module",
       "area": "market",
-      "isFeature": 0.8,
-      "interop": 0.57,
+      "isFeature": 0.81,
+      "interop": 0.56,
       "implements": [
         {
           "n": 162,
-          "p": 0.88,
+          "p": 0.81,
           "cited": true
         }
       ],
@@ -4475,13 +4756,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.56,
-        "needs": 0.32,
-        "kind": "not_needed",
-        "kindP": 0.43,
+        "uncovered": 0.61,
+        "needs": 0.3,
+        "kind": "extend_existing",
+        "kindP": 0.53,
         "closest": 162,
-        "closestP": 0.95,
-        "priority": 2.68
+        "closestP": 0.88,
+        "priority": 2.57
       }
     },
     {
@@ -4494,7 +4775,7 @@
       "implements": [
         {
           "n": 48,
-          "p": 0.72,
+          "p": 0.7,
           "cited": true
         }
       ],
@@ -4503,13 +4784,13 @@
         48
       ],
       "gap": {
-        "uncovered": 0.69,
+        "uncovered": 0.71,
         "needs": 0.42,
         "kind": "extend_existing",
-        "kindP": 0.6799999999999999,
+        "kindP": 0.66,
         "closest": 48,
-        "closestP": 0.97,
-        "priority": 2.92
+        "closestP": 0.95,
+        "priority": 2.9
       }
     },
     {
@@ -4517,12 +4798,12 @@
       "path": "src/wallet/marketOverlayProtocol.ts",
       "kind": "module",
       "area": "market",
-      "isFeature": 0.78,
+      "isFeature": 0.76,
       "interop": 0.94,
       "implements": [
         {
           "n": 48,
-          "p": 0.89,
+          "p": 0.85,
           "cited": true
         }
       ],
@@ -4532,13 +4813,13 @@
         150
       ],
       "gap": {
-        "uncovered": 0.87,
-        "needs": 0.54,
-        "kind": "extend_existing",
-        "kindP": 0.45,
+        "uncovered": 0.88,
+        "needs": 0.53,
+        "kind": "new_brc",
+        "kindP": 0.51,
         "closest": 48,
-        "closestP": 0.82,
-        "priority": 2.36,
+        "closestP": 0.8200000000000001,
+        "priority": 2.47,
         "specified": 0.16,
         "specifiedBy": null
       }
@@ -4549,21 +4830,21 @@
       "kind": "module",
       "area": "market",
       "isFeature": 0.62,
-      "interop": 0.69,
+      "interop": 0.66,
       "implements": [],
       "uses": [],
       "mentions": [
         33
       ],
       "gap": {
-        "uncovered": 0.87,
+        "uncovered": 0.88,
         "needs": 0.56,
-        "kind": "extend_existing",
-        "kindP": 0.48,
+        "kind": "new_brc",
+        "kindP": 0.5,
         "closest": 197,
-        "closestP": 0.47,
-        "priority": 3.13,
-        "specified": 0.15,
+        "closestP": 0.48,
+        "priority": 3.06,
+        "specified": 0.17,
         "specifiedBy": 33
       }
     },
@@ -4573,7 +4854,7 @@
       "kind": "module",
       "area": "market",
       "isFeature": 0.8,
-      "interop": 0.88,
+      "interop": 0.89,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -4584,13 +4865,13 @@
         153
       ],
       "gap": {
-        "uncovered": 0.89,
-        "needs": 0.47,
+        "uncovered": 0.91,
+        "needs": 0.49,
         "kind": "covered",
-        "kindP": 0.36,
+        "kindP": 0.33,
         "closest": 178,
-        "closestP": 0.34,
-        "priority": 2.78
+        "closestP": 0.4,
+        "priority": 2.73
       }
     },
     {
@@ -4598,14 +4879,30 @@
       "path": "src/wallet/marketSettlementPath.ts",
       "kind": "module",
       "area": "market",
-      "isFeature": 0.77,
-      "interop": 0.48,
-      "implements": [],
+      "isFeature": 0.79,
+      "interop": 0.53,
+      "implements": [
+        {
+          "n": 197,
+          "p": 0.9,
+          "cited": false
+        }
+      ],
       "uses": [],
       "mentions": [
         22
       ],
-      "gap": null
+      "gap": {
+        "uncovered": 0.55,
+        "needs": 0.54,
+        "kind": "new_brc",
+        "kindP": 0.39,
+        "closest": 197,
+        "closestP": 0.56,
+        "priority": 2.93,
+        "specified": 0.23,
+        "specifiedBy": 22
+      }
     },
     {
       "name": "Market sold announce",
@@ -4613,16 +4910,16 @@
       "kind": "module",
       "area": "market",
       "isFeature": 0.67,
-      "interop": 0.9,
+      "interop": 0.91,
       "implements": [
         {
           "n": 62,
-          "p": 0.93,
+          "p": 0.9299999999999999,
           "cited": false
         },
         {
           "n": 22,
-          "p": 0.86,
+          "p": 0.85,
           "cited": true
         }
       ],
@@ -4631,13 +4928,13 @@
         22
       ],
       "gap": {
-        "uncovered": 0.43,
-        "needs": 0.27,
+        "uncovered": 0.47,
+        "needs": 0.26,
         "kind": "covered",
-        "kindP": 0.53,
+        "kindP": 0.6,
         "closest": 22,
-        "closestP": 0.88,
-        "priority": 2.3
+        "closestP": 0.89,
+        "priority": 2.35
       }
     },
     {
@@ -4645,22 +4942,22 @@
       "path": "src/wallet/messageEnvelope.ts",
       "kind": "module",
       "area": "messaging",
-      "isFeature": 0.87,
+      "isFeature": 0.86,
       "interop": 0.96,
       "implements": [
         {
           "n": 169,
-          "p": 1,
+          "p": 0.99,
           "cited": true
         },
         {
           "n": 33,
-          "p": 0.96,
+          "p": 0.95,
           "cited": true
         },
         {
           "n": 78,
-          "p": 0.73,
+          "p": 0.76,
           "cited": true
         }
       ],
@@ -4671,13 +4968,13 @@
         169
       ],
       "gap": {
-        "uncovered": 0.54,
-        "needs": 0.43,
+        "uncovered": 0.55,
+        "needs": 0.44,
         "kind": "extend_existing",
-        "kindP": 0.53,
+        "kindP": 0.6,
         "closest": 169,
-        "closestP": 0.43,
-        "priority": 3.13
+        "closestP": 0.48,
+        "priority": 3.12
       }
     },
     {
@@ -4686,7 +4983,7 @@
       "kind": "module",
       "area": "messaging",
       "isFeature": 0.78,
-      "interop": 0.49,
+      "interop": 0.52,
       "implements": [
         {
           "n": 218,
@@ -4706,14 +5003,22 @@
         169,
         218
       ],
-      "gap": null
+      "gap": {
+        "uncovered": 0.62,
+        "needs": 0.39,
+        "kind": "covered",
+        "kindP": 0.37,
+        "closest": 169,
+        "closestP": 0.45,
+        "priority": 3.03
+      }
     },
     {
       "name": "Message transport",
       "path": "src/wallet/messageTransport.ts",
       "kind": "module",
       "area": "messaging",
-      "isFeature": 0.93,
+      "isFeature": 0.94,
       "interop": 0.97,
       "implements": [
         {
@@ -4722,8 +5027,8 @@
           "cited": true
         },
         {
-          "n": 78,
-          "p": 0.88,
+          "n": 246,
+          "p": 0.9,
           "cited": true
         },
         {
@@ -4732,15 +5037,15 @@
           "cited": true
         },
         {
-          "n": 246,
-          "p": 0.88,
+          "n": 78,
+          "p": 0.87,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 150,
-          "p": 0.63
+          "p": 0.73
         }
       ],
       "mentions": [
@@ -4752,16 +5057,17 @@
         169,
         176,
         246,
-        249
+        249,
+        251
       ],
       "gap": {
-        "uncovered": 0.74,
-        "needs": 0.38,
+        "uncovered": 0.77,
+        "needs": 0.37,
         "kind": "extend_existing",
         "kindP": 0.47,
         "closest": 33,
-        "closestP": 0.5,
-        "priority": 3.28
+        "closestP": 0.66,
+        "priority": 3.3
       }
     },
     {
@@ -4769,8 +5075,8 @@
       "path": "src/wallet/messageboxAuth.ts",
       "kind": "module",
       "area": "messaging",
-      "isFeature": 0.69,
-      "interop": 0.96,
+      "isFeature": 0.66,
+      "interop": 0.95,
       "implements": [
         {
           "n": 33,
@@ -4779,7 +5085,7 @@
         },
         {
           "n": 103,
-          "p": 0.57,
+          "p": 0.61,
           "cited": true
         }
       ],
@@ -4789,14 +5095,14 @@
         103
       ],
       "gap": {
-        "uncovered": 0.74,
+        "uncovered": 0.73,
         "needs": 0.54,
-        "kind": "extend_existing",
-        "kindP": 0.58,
+        "kind": "new_brc",
+        "kindP": 0.6,
         "closest": 33,
-        "closestP": 0.63,
-        "priority": 2.67,
-        "specified": 0.25,
+        "closestP": 0.62,
+        "priority": 2.76,
+        "specified": 0.27,
         "specifiedBy": null
       }
     },
@@ -4805,7 +5111,7 @@
       "path": "src/wallet/migration.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.79,
+      "isFeature": 0.77,
       "interop": 0.93,
       "implements": [
         {
@@ -4820,12 +5126,12 @@
       ],
       "gap": {
         "uncovered": 0.77,
-        "needs": 0.33,
+        "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.57,
+        "kindP": 0.53,
         "closest": 100,
         "closestP": 0.98,
-        "priority": 2.33
+        "priority": 2.4
       }
     },
     {
@@ -4833,18 +5139,26 @@
       "path": "src/wallet/minerSubmit.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.69,
-      "interop": 0.87,
+      "isFeature": 0.68,
+      "interop": 0.89,
       "implements": [
         {
           "n": 29,
-          "p": 0.64,
+          "p": 0.6,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 62,
+          "p": 0.56
+        },
+        {
+          "n": 100,
+          "p": 0.55
+        },
+        {
+          "n": 95,
           "p": 0.53
         }
       ],
@@ -4852,13 +5166,13 @@
         29
       ],
       "gap": {
-        "uncovered": 0.61,
-        "needs": 0.37,
+        "uncovered": 0.66,
+        "needs": 0.38,
         "kind": "covered",
-        "kindP": 0.48,
+        "kindP": 0.49,
         "closest": 29,
-        "closestP": 0.7,
-        "priority": 3.05
+        "closestP": 0.65,
+        "priority": 3.11
       }
     },
     {
@@ -4872,18 +5186,18 @@
       "uses": [
         {
           "n": 46,
-          "p": 0.5599999999999999
+          "p": 0.51
         }
       ],
       "mentions": [],
       "gap": {
-        "uncovered": 0.93,
-        "needs": 0.36,
-        "kind": "extend_existing",
-        "kindP": 0.37,
+        "uncovered": 0.9,
+        "needs": 0.34,
+        "kind": "covered",
+        "kindP": 0.44,
         "closest": 100,
-        "closestP": 0.7,
-        "priority": 2.22
+        "closestP": 0.72,
+        "priority": 2.37
       }
     },
     {
@@ -4891,26 +5205,26 @@
       "path": "src/wallet/mneeTip.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.62,
+      "isFeature": 0.61,
       "interop": 0.95,
       "implements": [
         {
-          "n": 161,
-          "p": 0.96,
+          "n": 160,
+          "p": 0.92,
           "cited": false
         }
       ],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.88,
-        "needs": 0.56,
-        "kind": "extend_existing",
-        "kindP": 0.49,
-        "closest": 161,
-        "closestP": 0.64,
-        "priority": 2.39,
-        "specified": 0.22,
+        "uncovered": 0.91,
+        "needs": 0.58,
+        "kind": "new_brc",
+        "kindP": 0.38,
+        "closest": 160,
+        "closestP": 0.66,
+        "priority": 2.23,
+        "specified": 0.16,
         "specifiedBy": null
       }
     },
@@ -4924,14 +5238,14 @@
       "implements": [
         {
           "n": 29,
-          "p": 0.73,
+          "p": 0.7,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 39,
-          "p": 0.62
+          "p": 0.68
         }
       ],
       "mentions": [
@@ -4939,13 +5253,13 @@
         39
       ],
       "gap": {
-        "uncovered": 0.88,
-        "needs": 0.46,
+        "uncovered": 0.86,
+        "needs": 0.45,
         "kind": "not_needed",
-        "kindP": 0.46,
+        "kindP": 0.45,
         "closest": 29,
-        "closestP": 0.82,
-        "priority": 2.77
+        "closestP": 0.85,
+        "priority": 2.82
       }
     },
     {
@@ -4953,22 +5267,22 @@
       "path": "src/wallet/oneSatAsBsv21.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.3,
+      "isFeature": 0.34,
       "interop": 0.84,
       "implements": [
         {
-          "n": 163,
-          "p": 0.96,
+          "n": 161,
+          "p": 0.95,
           "cited": false
         },
         {
-          "n": 161,
-          "p": 0.92,
+          "n": 163,
+          "p": 0.94,
           "cited": false
         },
         {
           "n": 162,
-          "p": 0.84,
+          "p": 0.87,
           "cited": true
         }
       ],
@@ -4977,13 +5291,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.39,
+        "uncovered": 0.46,
         "needs": 0.4,
         "kind": "extend_existing",
-        "kindP": 0.49,
+        "kindP": 0.59,
         "closest": 163,
-        "closestP": 0.58,
-        "priority": 2.95
+        "closestP": 0.75,
+        "priority": 2.86
       }
     },
     {
@@ -4991,7 +5305,7 @@
       "path": "src/wallet/oneSatAuthenticity.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.52,
+      "isFeature": 0.5,
       "interop": 0.69,
       "implements": [
         {
@@ -5008,10 +5322,10 @@
         "uncovered": 0.37,
         "needs": 0.33,
         "kind": "covered",
-        "kindP": 0.61,
+        "kindP": 0.64,
         "closest": 150,
-        "closestP": 0.96,
-        "priority": 2.74
+        "closestP": 0.97,
+        "priority": 2.64
       }
     },
     {
@@ -5020,11 +5334,16 @@
       "kind": "module",
       "area": "items",
       "isFeature": 0.47,
-      "interop": 0.4,
+      "interop": 0.41,
       "implements": [
         {
+          "n": 147,
+          "p": 0.97,
+          "cited": false
+        },
+        {
           "n": 150,
-          "p": 0.88,
+          "p": 0.87,
           "cited": true
         }
       ],
@@ -5040,8 +5359,8 @@
       "path": "src/wallet/oneSatGenesisProof.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.74,
-      "interop": 0.82,
+      "isFeature": 0.72,
+      "interop": 0.84,
       "implements": [
         {
           "n": 150,
@@ -5054,13 +5373,13 @@
         150
       ],
       "gap": {
-        "uncovered": 0.38,
-        "needs": 0.39,
+        "uncovered": 0.45,
+        "needs": 0.37,
         "kind": "extend_existing",
-        "kindP": 0.43,
+        "kindP": 0.51,
         "closest": 150,
         "closestP": 0.98,
-        "priority": 2.85
+        "priority": 2.82
       }
     },
     {
@@ -5068,17 +5387,17 @@
       "path": "src/wallet/oneSatImport.ts",
       "kind": "module",
       "area": "import_migration",
-      "isFeature": 0.71,
+      "isFeature": 0.73,
       "interop": 0.82,
       "implements": [
         {
           "n": 147,
-          "p": 0.99,
+          "p": 0.98,
           "cited": false
         },
         {
           "n": 150,
-          "p": 0.98,
+          "p": 0.97,
           "cited": true
         },
         {
@@ -5090,7 +5409,7 @@
       "uses": [
         {
           "n": 100,
-          "p": 0.58
+          "p": 0.55
         }
       ],
       "mentions": [
@@ -5100,13 +5419,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.52,
+        "uncovered": 0.53,
         "needs": 0.42,
         "kind": "extend_existing",
-        "kindP": 0.42,
+        "kindP": 0.43,
         "closest": 100,
-        "closestP": 0.72,
-        "priority": 2.93
+        "closestP": 0.63,
+        "priority": 2.85
       }
     },
     {
@@ -5124,7 +5443,7 @@
         },
         {
           "n": 96,
-          "p": 0.77,
+          "p": 0.76,
           "cited": true
         }
       ],
@@ -5132,16 +5451,17 @@
       "mentions": [
         96,
         99,
-        150
+        150,
+        252
       ],
       "gap": {
-        "uncovered": 0.38,
-        "needs": 0.41,
+        "uncovered": 0.58,
+        "needs": 0.44,
         "kind": "covered",
-        "kindP": 0.6,
+        "kindP": 0.65,
         "closest": 150,
-        "closestP": 0.9,
-        "priority": 3.05
+        "closestP": 0.69,
+        "priority": 2.99
       }
     },
     {
@@ -5149,7 +5469,7 @@
       "path": "src/wallet/ordScriptPush.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.16,
+      "isFeature": 0.17,
       "interop": 0.95,
       "implements": [
         {
@@ -5159,20 +5479,20 @@
         },
         {
           "n": 14,
-          "p": 0.9400000000000001,
+          "p": 0.95,
           "cited": false
         }
       ],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.64,
-        "needs": 0.38,
+        "uncovered": 0.68,
+        "needs": 0.37,
         "kind": "covered",
-        "kindP": 0.59,
+        "kindP": 0.6,
         "closest": 14,
-        "closestP": 0.78,
-        "priority": 2.51
+        "closestP": 0.74,
+        "priority": 2.48
       }
     },
     {
@@ -5181,20 +5501,20 @@
       "kind": "module",
       "area": "items",
       "isFeature": 0.8,
-      "interop": 0.83,
+      "interop": 0.81,
       "implements": [
         {
-          "n": 147,
-          "p": 0.99,
-          "cited": false
-        },
-        {
-          "n": 159,
+          "n": 160,
           "p": 0.98,
           "cited": false
         },
         {
-          "n": 160,
+          "n": 147,
+          "p": 0.98,
+          "cited": false
+        },
+        {
+          "n": 159,
           "p": 0.97,
           "cited": false
         }
@@ -5202,13 +5522,13 @@
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.5,
-        "needs": 0.42,
+        "uncovered": 0.51,
+        "needs": 0.39,
         "kind": "extend_existing",
-        "kindP": 0.47,
+        "kindP": 0.43,
         "closest": 147,
-        "closestP": 0.52,
-        "priority": 2.88
+        "closestP": 0.63,
+        "priority": 2.94
       }
     },
     {
@@ -5216,12 +5536,12 @@
       "path": "src/wallet/ordinalOwnership.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.49,
-      "interop": 0.89,
+      "isFeature": 0.51,
+      "interop": 0.9,
       "implements": [
         {
           "n": 160,
-          "p": 0.99,
+          "p": 0.98,
           "cited": true
         }
       ],
@@ -5231,13 +5551,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.29,
-        "needs": 0.39,
+        "uncovered": 0.35,
+        "needs": 0.42,
         "kind": "covered",
-        "kindP": 0.43,
+        "kindP": 0.48,
         "closest": 160,
-        "closestP": 0.76,
-        "priority": 2.84
+        "closestP": 0.73,
+        "priority": 2.89
       }
     },
     {
@@ -5245,12 +5565,12 @@
       "path": "src/wallet/paymentFilters.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.08,
+      "isFeature": 0.09,
       "interop": 0.08,
       "implements": [
         {
           "n": 114,
-          "p": 0.8,
+          "p": 0.82,
           "cited": true
         }
       ],
@@ -5265,12 +5585,12 @@
       "path": "src/wallet/paymentNotice.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.9,
+      "isFeature": 0.89,
       "interop": 0.92,
       "implements": [
         {
           "n": 29,
-          "p": 0.94,
+          "p": 0.96,
           "cited": true
         }
       ],
@@ -5280,14 +5600,14 @@
         39
       ],
       "gap": {
-        "uncovered": 0.78,
-        "needs": 0.5,
+        "uncovered": 0.81,
+        "needs": 0.54,
         "kind": "extend_existing",
-        "kindP": 0.56,
+        "kindP": 0.59,
         "closest": 29,
         "closestP": 0.95,
-        "priority": 3.21,
-        "specified": 0.59,
+        "priority": 3.24,
+        "specified": 0.61,
         "specifiedBy": 249
       }
     },
@@ -5296,12 +5616,12 @@
       "path": "src/wallet/paymentReconcile.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.67,
-      "interop": 0.78,
+      "isFeature": 0.68,
+      "interop": 0.81,
       "implements": [
         {
           "n": 29,
-          "p": 0.59,
+          "p": 0.55,
           "cited": true
         }
       ],
@@ -5310,13 +5630,13 @@
         29
       ],
       "gap": {
-        "uncovered": 0.55,
-        "needs": 0.22,
+        "uncovered": 0.53,
+        "needs": 0.23,
         "kind": "not_needed",
-        "kindP": 0.63,
+        "kindP": 0.61,
         "closest": 29,
-        "closestP": 0.92,
-        "priority": 2.29
+        "closestP": 0.91,
+        "priority": 2.34
       }
     },
     {
@@ -5324,26 +5644,26 @@
       "path": "src/wallet/peerDeviceSpends.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.52,
-      "interop": 0.88,
+      "isFeature": 0.55,
+      "interop": 0.85,
       "implements": [],
       "uses": [
         {
           "n": 39,
-          "p": 0.77
+          "p": 0.76
         }
       ],
       "mentions": [
         39
       ],
       "gap": {
-        "uncovered": 0.88,
-        "needs": 0.34,
+        "uncovered": 0.85,
+        "needs": 0.35,
         "kind": "covered",
-        "kindP": 0.5,
+        "kindP": 0.51,
         "closest": 40,
-        "closestP": 0.96,
-        "priority": 1.74
+        "closestP": 0.95,
+        "priority": 1.85
       }
     },
     {
@@ -5351,17 +5671,12 @@
       "path": "src/wallet/peerPayUri.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.8,
+      "isFeature": 0.79,
       "interop": 0.93,
       "implements": [
         {
           "n": 125,
           "p": 1,
-          "cited": true
-        },
-        {
-          "n": 29,
-          "p": 0.53,
           "cited": true
         }
       ],
@@ -5371,13 +5686,13 @@
         125
       ],
       "gap": {
-        "uncovered": 0.2,
-        "needs": 0.32,
-        "kind": "covered",
-        "kindP": 0.48,
+        "uncovered": 0.17,
+        "needs": 0.33,
+        "kind": "new_brc",
+        "kindP": 0.44,
         "closest": 125,
-        "closestP": 0.75,
-        "priority": 2.88
+        "closestP": 0.77,
+        "priority": 2.9
       }
     },
     {
@@ -5386,16 +5701,16 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.26,
-      "interop": 0.48,
+      "interop": 0.45,
       "implements": [
         {
           "n": 38,
-          "p": 0.96,
+          "p": 0.97,
           "cited": true
         },
         {
           "n": 39,
-          "p": 0.5,
+          "p": 0.54,
           "cited": true
         }
       ],
@@ -5411,7 +5726,7 @@
       "path": "src/wallet/peerTokenCapability.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.74,
+      "isFeature": 0.77,
       "interop": 0.74,
       "implements": [],
       "uses": [],
@@ -5419,13 +5734,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.9,
-        "needs": 0.33,
-        "kind": "covered",
-        "kindP": 0.49,
-        "closest": 163,
-        "closestP": 0.49,
-        "priority": 2.41
+        "uncovered": 0.87,
+        "needs": 0.45,
+        "kind": "extend_existing",
+        "kindP": 0.41,
+        "closest": 251,
+        "closestP": 0.57,
+        "priority": 2.64
       }
     },
     {
@@ -5433,8 +5748,8 @@
       "path": "src/wallet/permissions.ts",
       "kind": "module",
       "area": "app_bridge",
-      "isFeature": 0.78,
-      "interop": 0.51,
+      "isFeature": 0.77,
+      "interop": 0.56,
       "implements": [
         {
           "n": 116,
@@ -5443,12 +5758,17 @@
         },
         {
           "n": 100,
-          "p": 0.9,
+          "p": 0.91,
           "cited": true
         },
         {
+          "n": 163,
+          "p": 0.91,
+          "cited": false
+        },
+        {
           "n": 165,
-          "p": 0.51,
+          "p": 0.55,
           "cited": true
         }
       ],
@@ -5462,13 +5782,13 @@
         247
       ],
       "gap": {
-        "uncovered": 0.58,
+        "uncovered": 0.5,
         "needs": 0.41,
-        "kind": "extend_existing",
-        "kindP": 0.44,
+        "kind": "covered",
+        "kindP": 0.48,
         "closest": 100,
-        "closestP": 0.58,
-        "priority": 3.21
+        "closestP": 0.62,
+        "priority": 3.22
       }
     },
     {
@@ -5477,16 +5797,20 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.9,
-      "interop": 0.82,
+      "interop": 0.81,
       "implements": [],
       "uses": [
         {
           "n": 75,
-          "p": 0.76
+          "p": 0.75
         },
         {
           "n": 100,
-          "p": 0.73
+          "p": 0.72
+        },
+        {
+          "n": 147,
+          "p": 0.5
         }
       ],
       "mentions": [
@@ -5495,13 +5819,33 @@
       ],
       "gap": {
         "uncovered": 0.82,
-        "needs": 0.35,
+        "needs": 0.36,
         "kind": "covered",
-        "kindP": 0.37,
+        "kindP": 0.36,
         "closest": 100,
-        "closestP": 0.84,
-        "priority": 2.43
+        "closestP": 0.83,
+        "priority": 2.48
       }
+    },
+    {
+      "name": "Proof frontier",
+      "path": "src/wallet/proofFrontier.ts",
+      "kind": "module",
+      "area": "chain",
+      "isFeature": 0.29,
+      "interop": 0.33,
+      "implements": [
+        {
+          "n": 252,
+          "p": 0.93,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        252
+      ],
+      "gap": null
     },
     {
       "name": "Proven cache",
@@ -5509,11 +5853,11 @@
       "kind": "module",
       "area": "items",
       "isFeature": 0.08,
-      "interop": 0.3,
+      "interop": 0.29,
       "implements": [
         {
           "n": 150,
-          "p": 0.9,
+          "p": 0.82,
           "cited": true
         }
       ],
@@ -5530,11 +5874,11 @@
       "kind": "module",
       "area": "local_state",
       "isFeature": 0.2,
-      "interop": 0.13,
+      "interop": 0.14,
       "implements": [
         {
           "n": 38,
-          "p": 0.87,
+          "p": 0.88,
           "cited": true
         }
       ],
@@ -5549,24 +5893,24 @@
       "path": "src/wallet/publicIdentities.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.85,
-      "interop": 0.81,
+      "isFeature": 0.86,
+      "interop": 0.86,
       "implements": [
         {
           "n": 248,
-          "p": 0.97,
+          "p": 0.98,
           "cited": true
         },
         {
           "n": 247,
-          "p": 0.95,
+          "p": 0.77,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 77,
-          "p": 0.68
+          "p": 0.52
         }
       ],
       "mentions": [
@@ -5576,13 +5920,13 @@
         248
       ],
       "gap": {
-        "uncovered": 0.51,
-        "needs": 0.42,
+        "uncovered": 0.47,
+        "needs": 0.39,
         "kind": "covered",
-        "kindP": 0.43,
-        "closest": 100,
-        "closestP": 0.42,
-        "priority": 3.1
+        "kindP": 0.6,
+        "closest": 248,
+        "closestP": 0.63,
+        "priority": 3.01
       }
     },
     {
@@ -5590,8 +5934,8 @@
       "path": "src/wallet/qrFrames.ts",
       "kind": "module",
       "area": "other",
-      "isFeature": 0.71,
-      "interop": 0.94,
+      "isFeature": 0.69,
+      "interop": 0.93,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -5599,11 +5943,11 @@
         "uncovered": 0.95,
         "needs": 0.58,
         "kind": "covered",
-        "kindP": 0.54,
+        "kindP": 0.58,
         "closest": 225,
         "closestP": 0.84,
-        "priority": 2.5,
-        "specified": 0.15,
+        "priority": 2.54,
+        "specified": 0.17,
         "specifiedBy": null
       }
     },
@@ -5613,9 +5957,14 @@
       "kind": "module",
       "area": "backup_sync",
       "isFeature": 0.56,
-      "interop": 0.42,
+      "interop": 0.37,
       "implements": [],
-      "uses": [],
+      "uses": [
+        {
+          "n": 39,
+          "p": 0.52
+        }
+      ],
       "mentions": [
         39,
         100
@@ -5628,11 +5977,11 @@
       "kind": "module",
       "area": "import_migration",
       "isFeature": 0.9,
-      "interop": 0.8,
+      "interop": 0.83,
       "implements": [
         {
           "n": 162,
-          "p": 0.82,
+          "p": 0.83,
           "cited": true
         }
       ],
@@ -5642,13 +5991,13 @@
         176
       ],
       "gap": {
-        "uncovered": 0.73,
-        "needs": 0.44,
-        "kind": "covered",
-        "kindP": 0.34,
+        "uncovered": 0.69,
+        "needs": 0.45,
+        "kind": "extend_existing",
+        "kindP": 0.39,
         "closest": 50,
-        "closestP": 0.49,
-        "priority": 2.75
+        "closestP": 0.44,
+        "priority": 2.83
       }
     },
     {
@@ -5656,17 +6005,17 @@
       "path": "src/wallet/reimportDerivedChange.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.63,
-      "interop": 0.19,
+      "isFeature": 0.66,
+      "interop": 0.23,
       "implements": [],
       "uses": [
         {
-          "n": 29,
+          "n": 100,
           "p": 0.78
         },
         {
-          "n": 100,
-          "p": 0.77
+          "n": 29,
+          "p": 0.75
         }
       ],
       "mentions": [
@@ -5695,12 +6044,12 @@
       ],
       "gap": {
         "uncovered": 0.52,
-        "needs": 0.34,
+        "needs": 0.32,
         "kind": "covered",
-        "kindP": 0.61,
+        "kindP": 0.62,
         "closest": 29,
         "closestP": 0.93,
-        "priority": 2.7
+        "priority": 2.68
       }
     },
     {
@@ -5708,24 +6057,24 @@
       "path": "src/wallet/sendPayment.ts",
       "kind": "module",
       "area": "payments",
-      "isFeature": 0.86,
-      "interop": 0.69,
+      "isFeature": 0.88,
+      "interop": 0.72,
       "implements": [],
       "uses": [
         {
           "n": 100,
-          "p": 0.59
+          "p": 0.7
         }
       ],
       "mentions": [],
       "gap": {
-        "uncovered": 0.76,
-        "needs": 0.24,
+        "uncovered": 0.81,
+        "needs": 0.23,
         "kind": "covered",
-        "kindP": 0.61,
+        "kindP": 0.6,
         "closest": 100,
-        "closestP": 0.67,
-        "priority": 2.67
+        "closestP": 0.49,
+        "priority": 2.62
       }
     },
     {
@@ -5734,11 +6083,11 @@
       "kind": "module",
       "area": "payments",
       "isFeature": 0.81,
-      "interop": 0.55,
+      "interop": 0.54,
       "implements": [
         {
           "n": 29,
-          "p": 0.53,
+          "p": 0.55,
           "cited": true
         }
       ],
@@ -5747,13 +6096,13 @@
         29
       ],
       "gap": {
-        "uncovered": 0.33,
-        "needs": 0.33,
+        "uncovered": 0.31,
+        "needs": 0.3,
         "kind": "covered",
-        "kindP": 0.59,
-        "closest": 50,
-        "closestP": 0.57,
-        "priority": 2.28
+        "kindP": 0.69,
+        "closest": 29,
+        "closestP": 0.97,
+        "priority": 2.17
       }
     },
     {
@@ -5761,23 +6110,23 @@
       "path": "src/wallet/session.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.5,
-      "interop": 0.3,
+      "isFeature": 0.49,
+      "interop": 0.31,
       "implements": [
         {
           "n": 208,
-          "p": 0.75,
+          "p": 0.68,
           "cited": true
         }
       ],
       "uses": [
         {
-          "n": 42,
-          "p": 0.62
+          "n": 100,
+          "p": 0.58
         },
         {
-          "n": 100,
-          "p": 0.61
+          "n": 42,
+          "p": 0.51
         }
       ],
       "mentions": [
@@ -5785,7 +6134,8 @@
         42,
         100,
         112,
-        208
+        208,
+        250
       ],
       "gap": null
     },
@@ -5794,8 +6144,8 @@
       "path": "src/wallet/signedChequeArchive.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.6,
-      "interop": 0.32,
+      "isFeature": 0.61,
+      "interop": 0.34,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -5806,19 +6156,19 @@
       "path": "src/wallet/signedSendLifecycle.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.58,
-      "interop": 0.71,
+      "isFeature": 0.62,
+      "interop": 0.74,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.82,
-        "needs": 0.31,
+        "uncovered": 0.81,
+        "needs": 0.3,
         "kind": "not_needed",
-        "kindP": 0.44,
+        "kindP": 0.43,
         "closest": 100,
         "closestP": 0.79,
-        "priority": 2.47
+        "priority": 2.52
       }
     },
     {
@@ -5826,8 +6176,8 @@
       "path": "src/wallet/spendAttempt.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.59,
-      "interop": 0.46,
+      "isFeature": 0.61,
+      "interop": 0.48,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -5837,18 +6187,18 @@
       "name": "Spend guard",
       "path": "src/wallet/spendGuard.ts",
       "kind": "module",
-      "area": "payments",
-      "isFeature": 0.66,
-      "interop": 0.29,
+      "area": "local_state",
+      "isFeature": 0.62,
+      "interop": 0.28,
       "implements": [
         {
           "n": 249,
-          "p": 0.52,
+          "p": 0.6,
           "cited": true
         },
         {
           "n": 100,
-          "p": 0.5,
+          "p": 0.51,
           "cited": true
         }
       ],
@@ -5865,7 +6215,7 @@
       "kind": "module",
       "area": "app_bridge",
       "isFeature": 0.9,
-      "interop": 0.69,
+      "interop": 0.68,
       "implements": [
         {
           "n": 73,
@@ -5884,13 +6234,13 @@
         116
       ],
       "gap": {
-        "uncovered": 0.34,
-        "needs": 0.36,
+        "uncovered": 0.37,
+        "needs": 0.38,
         "kind": "covered",
-        "kindP": 0.73,
+        "kindP": 0.76,
         "closest": 116,
-        "closestP": 0.71,
-        "priority": 2.89
+        "closestP": 0.78,
+        "priority": 2.92
       }
     },
     {
@@ -5898,12 +6248,12 @@
       "path": "src/wallet/spvFinality.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.57,
-      "interop": 0.44,
+      "isFeature": 0.59,
+      "interop": 0.39,
       "implements": [
         {
           "n": 9,
-          "p": 0.93,
+          "p": 0.94,
           "cited": false
         },
         {
@@ -5926,12 +6276,12 @@
       "path": "src/wallet/token/broadcastValidity.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.4,
-      "interop": 0.31,
+      "isFeature": 0.39,
+      "interop": 0.3,
       "implements": [
         {
           "n": 176,
-          "p": 0.64,
+          "p": 0.69,
           "cited": true
         }
       ],
@@ -5947,35 +6297,7 @@
       "kind": "module",
       "area": "tokens",
       "isFeature": 0.76,
-      "interop": 0.66,
-      "implements": [
-        {
-          "n": 162,
-          "p": 0.98,
-          "cited": true
-        }
-      ],
-      "uses": [],
-      "mentions": [
-        162
-      ],
-      "gap": {
-        "uncovered": 0.36,
-        "needs": 0.3,
-        "kind": "covered",
-        "kindP": 0.52,
-        "closest": 162,
-        "closestP": 0.53,
-        "priority": 2.68
-      }
-    },
-    {
-      "name": "Decode162",
-      "path": "src/wallet/token/decode162.ts",
-      "kind": "module",
-      "area": "tokens",
-      "isFeature": 0.68,
-      "interop": 0.97,
+      "interop": 0.72,
       "implements": [
         {
           "n": 162,
@@ -5988,12 +6310,41 @@
         162
       ],
       "gap": {
-        "uncovered": 0.19,
-        "needs": 0.35,
-        "kind": "covered",
-        "kindP": 0.8,
+        "uncovered": 0.33,
+        "needs": 0.31,
+        "kind": "extend_existing",
+        "kindP": 0.52,
         "closest": 162,
-        "closestP": 0.98,
+        "closestP": 0.6,
+        "priority": 2.69
+      }
+    },
+    {
+      "name": "Decode162",
+      "path": "src/wallet/token/decode162.ts",
+      "kind": "module",
+      "area": "tokens",
+      "isFeature": 0.66,
+      "interop": 0.96,
+      "implements": [
+        {
+          "n": 162,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        162,
+        251
+      ],
+      "gap": {
+        "uncovered": 0.49,
+        "needs": 0.49,
+        "kind": "extend_existing",
+        "kindP": 0.69,
+        "closest": 162,
+        "closestP": 0.49,
         "priority": 3.17
       }
     },
@@ -6002,46 +6353,103 @@
       "path": "src/wallet/token/deployDisplay.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.12,
-      "interop": 0.85,
+      "isFeature": 0.18,
+      "interop": 0.82,
       "implements": [
         {
-          "n": 162,
-          "p": 1,
+          "n": 161,
+          "p": 0.95,
           "cited": true
         },
         {
-          "n": 161,
-          "p": 1,
+          "n": 162,
+          "p": 0.95,
           "cited": true
         }
       ],
       "uses": [],
       "mentions": [
         161,
-        162
+        162,
+        251
       ],
       "gap": {
-        "uncovered": 0.15,
-        "needs": 0.24,
+        "uncovered": 0.51,
+        "needs": 0.44,
         "kind": "covered",
-        "kindP": 0.61,
-        "closest": 162,
-        "closestP": 0.53,
-        "priority": 2.65
+        "kindP": 0.34,
+        "closest": 251,
+        "closestP": 0.34,
+        "priority": 2.56
       }
+    },
+    {
+      "name": "Filing",
+      "path": "src/wallet/token/filing.ts",
+      "kind": "module",
+      "area": "tokens",
+      "isFeature": 0.43,
+      "interop": 0.81,
+      "implements": [
+        {
+          "n": 46,
+          "p": 0.98,
+          "cited": false
+        },
+        {
+          "n": 251,
+          "p": 0.98,
+          "cited": false
+        },
+        {
+          "n": 163,
+          "p": 0.95,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        163
+      ],
+      "gap": {
+        "uncovered": 0.32,
+        "needs": 0.33,
+        "kind": "extend_existing",
+        "kindP": 0.55,
+        "closest": 46,
+        "closestP": 0.47,
+        "priority": 2.81
+      }
+    },
+    {
+      "name": "Filing store",
+      "path": "src/wallet/token/filingStore.ts",
+      "kind": "module",
+      "area": "tokens",
+      "isFeature": 0.52,
+      "interop": 0.28,
+      "implements": [
+        {
+          "n": 251,
+          "p": 0.98,
+          "cited": false
+        }
+      ],
+      "uses": [],
+      "mentions": [],
+      "gap": null
     },
     {
       "name": "Genesis store",
       "path": "src/wallet/token/genesisStore.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.59,
-      "interop": 0.35,
+      "isFeature": 0.6,
+      "interop": 0.34,
       "implements": [
         {
           "n": 161,
-          "p": 0.95,
+          "p": 0.9,
           "cited": false
         }
       ],
@@ -6054,35 +6462,37 @@
       "path": "src/wallet/token/icons/resolve.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.27,
-      "interop": 0.83,
+      "isFeature": 0.33,
+      "interop": 0.91,
       "implements": [
         {
           "n": 163,
-          "p": 0.99,
-          "cited": false
-        },
-        {
-          "n": 161,
           "p": 0.98,
           "cited": false
         },
         {
-          "n": 160,
-          "p": 0.93,
+          "n": 162,
+          "p": 0.91,
+          "cited": true
+        },
+        {
+          "n": 161,
+          "p": 0.9,
           "cited": false
         }
       ],
       "uses": [],
-      "mentions": [],
+      "mentions": [
+        162
+      ],
       "gap": {
-        "uncovered": 0.51,
-        "needs": 0.39,
+        "uncovered": 0.28,
+        "needs": 0.33,
         "kind": "extend_existing",
-        "kindP": 0.48,
-        "closest": 62,
-        "closestP": 0.44,
-        "priority": 2.87
+        "kindP": 0.51,
+        "closest": 162,
+        "closestP": 0.49,
+        "priority": 2.81
       }
     },
     {
@@ -6090,7 +6500,7 @@
       "path": "src/wallet/token/importProof.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.56,
+      "isFeature": 0.57,
       "interop": 0.79,
       "implements": [
         {
@@ -6104,13 +6514,13 @@
         176
       ],
       "gap": {
-        "uncovered": 0.49,
-        "needs": 0.33,
+        "uncovered": 0.5,
+        "needs": 0.35,
         "kind": "covered",
-        "kindP": 0.66,
+        "kindP": 0.68,
         "closest": 176,
-        "closestP": 0.96,
-        "priority": 2.88
+        "closestP": 0.95,
+        "priority": 2.87
       }
     },
     {
@@ -6119,21 +6529,36 @@
       "kind": "module",
       "area": "tokens",
       "isFeature": 0.83,
-      "interop": 0.92,
+      "interop": 0.9,
       "implements": [
-        {
-          "n": 163,
-          "p": 1,
-          "cited": true
-        },
         {
           "n": 162,
           "p": 1,
           "cited": true
         },
         {
+          "n": 163,
+          "p": 1,
+          "cited": true
+        },
+        {
+          "n": 161,
+          "p": 0.94,
+          "cited": false
+        },
+        {
+          "n": 251,
+          "p": 0.91,
+          "cited": false
+        },
+        {
+          "n": 176,
+          "p": 0.72,
+          "cited": true
+        },
+        {
           "n": 100,
-          "p": 0.55,
+          "p": 0.68,
           "cited": true
         }
       ],
@@ -6145,13 +6570,13 @@
         176
       ],
       "gap": {
-        "uncovered": 0.53,
-        "needs": 0.43,
-        "kind": "covered",
-        "kindP": 0.55,
+        "uncovered": 0.34,
+        "needs": 0.47,
+        "kind": "extend_existing",
+        "kindP": 0.47,
         "closest": 100,
-        "closestP": 0.81,
-        "priority": 3.12
+        "closestP": 0.65,
+        "priority": 3.11
       }
     },
     {
@@ -6169,22 +6594,17 @@
         },
         {
           "n": 247,
-          "p": 0.98,
+          "p": 0.97,
           "cited": true
         },
         {
           "n": 162,
-          "p": 0.56,
+          "p": 0.73,
           "cited": true
         },
         {
           "n": 77,
-          "p": 0.55,
-          "cited": true
-        },
-        {
-          "n": 100,
-          "p": 0.51,
+          "p": 0.69,
           "cited": true
         }
       ],
@@ -6196,16 +6616,18 @@
         162,
         163,
         176,
-        247
+        207,
+        247,
+        251
       ],
       "gap": {
-        "uncovered": 0.39,
-        "needs": 0.48,
+        "uncovered": 0.37,
+        "needs": 0.45,
         "kind": "extend_existing",
-        "kindP": 0.62,
+        "kindP": 0.59,
         "closest": 247,
-        "closestP": 0.38,
-        "priority": 2.95
+        "closestP": 0.43,
+        "priority": 2.98
       }
     },
     {
@@ -6213,12 +6635,12 @@
       "path": "src/wallet/token/ledger.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.19,
-      "interop": 0.34,
+      "isFeature": 0.17,
+      "interop": 0.31,
       "implements": [
         {
           "n": 162,
-          "p": 0.77,
+          "p": 0.95,
           "cited": true
         }
       ],
@@ -6234,16 +6656,16 @@
       "kind": "module",
       "area": "tokens",
       "isFeature": 0.77,
-      "interop": 0.95,
+      "interop": 0.96,
       "implements": [
         {
           "n": 161,
-          "p": 1,
+          "p": 0.99,
           "cited": false
         },
         {
           "n": 160,
-          "p": 0.82,
+          "p": 0.92,
           "cited": true
         }
       ],
@@ -6252,13 +6674,13 @@
         160
       ],
       "gap": {
-        "uncovered": 0.27,
-        "needs": 0.35,
+        "uncovered": 0.29,
+        "needs": 0.38,
         "kind": "covered",
-        "kindP": 0.73,
-        "closest": 160,
-        "closestP": 0.63,
-        "priority": 2.99
+        "kindP": 0.6,
+        "closest": 161,
+        "closestP": 0.46,
+        "priority": 2.93
       }
     },
     {
@@ -6266,8 +6688,8 @@
       "path": "src/wallet/token/lineage.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.72,
-      "interop": 0.88,
+      "isFeature": 0.73,
+      "interop": 0.89,
       "implements": [
         {
           "n": 176,
@@ -6278,17 +6700,18 @@
       "uses": [],
       "mentions": [
         150,
-        176
+        176,
+        252
       ],
       "gap": {
-        "uncovered": 0.63,
-        "needs": 0.5,
+        "uncovered": 0.61,
+        "needs": 0.53,
         "kind": "extend_existing",
-        "kindP": 0.51,
+        "kindP": 0.54,
         "closest": 176,
-        "closestP": 0.83,
-        "priority": 3.01,
-        "specified": 0.65,
+        "closestP": 0.48,
+        "priority": 3.08,
+        "specified": 0.6,
         "specifiedBy": 176
       }
     },
@@ -6297,27 +6720,27 @@
       "path": "src/wallet/token/list.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.42,
-      "interop": 0.82,
+      "isFeature": 0.47,
+      "interop": 0.81,
       "implements": [
         {
-          "n": 163,
-          "p": 1,
+          "n": 251,
+          "p": 0.98,
           "cited": true
         },
         {
           "n": 162,
-          "p": 0.99,
+          "p": 0.98,
           "cited": true
         },
         {
-          "n": 161,
-          "p": 0.91,
-          "cited": false
+          "n": 163,
+          "p": 0.93,
+          "cited": true
         },
         {
           "n": 176,
-          "p": 0.82,
+          "p": 0.69,
           "cited": true
         }
       ],
@@ -6326,16 +6749,17 @@
         150,
         162,
         163,
-        176
+        176,
+        251
       ],
       "gap": {
-        "uncovered": 0.37,
-        "needs": 0.33,
+        "uncovered": 0.52,
+        "needs": 0.41,
         "kind": "covered",
-        "kindP": 0.47,
+        "kindP": 0.38,
         "closest": 163,
-        "closestP": 0.73,
-        "priority": 2.86
+        "closestP": 0.44,
+        "priority": 2.89
       }
     },
     {
@@ -6343,22 +6767,22 @@
       "path": "src/wallet/token/listTips.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.56,
-      "interop": 0.86,
+      "isFeature": 0.55,
+      "interop": 0.85,
       "implements": [
         {
-          "n": 163,
-          "p": 0.99,
+          "n": 162,
+          "p": 0.98,
           "cited": true
         },
         {
-          "n": 162,
+          "n": 163,
           "p": 0.96,
           "cited": true
         },
         {
           "n": 161,
-          "p": 0.73,
+          "p": 0.9,
           "cited": true
         }
       ],
@@ -6370,13 +6794,13 @@
         176
       ],
       "gap": {
-        "uncovered": 0.36,
-        "needs": 0.34,
+        "uncovered": 0.57,
+        "needs": 0.43,
         "kind": "covered",
-        "kindP": 0.54,
-        "closest": 163,
-        "closestP": 0.7,
-        "priority": 2.67
+        "kindP": 0.47,
+        "closest": 251,
+        "closestP": 0.49,
+        "priority": 2.86
       }
     },
     {
@@ -6384,28 +6808,35 @@
       "path": "src/wallet/token/mintWire.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.62,
-      "interop": 0.93,
+      "isFeature": 0.61,
+      "interop": 0.9,
       "implements": [
         {
           "n": 162,
-          "p": 0.98,
+          "p": 0.99,
+          "cited": true
+        },
+        {
+          "n": 161,
+          "p": 0.83,
           "cited": true
         }
       ],
       "uses": [],
       "mentions": [
+        161,
         162,
-        176
+        176,
+        251
       ],
       "gap": {
-        "uncovered": 0.39,
-        "needs": 0.44,
+        "uncovered": 0.49,
+        "needs": 0.41,
         "kind": "extend_existing",
         "kindP": 0.51,
         "closest": 162,
-        "closestP": 0.63,
-        "priority": 3.12
+        "closestP": 0.57,
+        "priority": 3.14
       }
     },
     {
@@ -6413,7 +6844,7 @@
       "path": "src/wallet/token/prove176.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.72,
+      "isFeature": 0.79,
       "interop": 0.92,
       "implements": [
         {
@@ -6429,6 +6860,11 @@
         {
           "n": 162,
           "p": 1,
+          "cited": true
+        },
+        {
+          "n": 251,
+          "p": 0.89,
           "cited": true
         }
       ],
@@ -6437,16 +6873,46 @@
         150,
         161,
         162,
-        176
+        176,
+        251,
+        252
       ],
       "gap": {
-        "uncovered": 0.4,
-        "needs": 0.28,
+        "uncovered": 0.41,
+        "needs": 0.32,
         "kind": "covered",
-        "kindP": 0.73,
+        "kindP": 0.66,
         "closest": 176,
-        "closestP": 0.92,
-        "priority": 2.99
+        "closestP": 0.63,
+        "priority": 2.94
+      }
+    },
+    {
+      "name": "Required processing",
+      "path": "src/wallet/token/requiredProcessing.ts",
+      "kind": "module",
+      "area": "tokens",
+      "isFeature": 0.22,
+      "interop": 0.63,
+      "implements": [
+        {
+          "n": 251,
+          "p": 1,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        251
+      ],
+      "gap": {
+        "uncovered": 0.2,
+        "needs": 0.23,
+        "kind": "covered",
+        "kindP": 0.62,
+        "closest": 251,
+        "closestP": 0.91,
+        "priority": 2.11
       }
     },
     {
@@ -6454,22 +6920,22 @@
       "path": "src/wallet/token/send.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.86,
+      "isFeature": 0.87,
       "interop": 0.92,
       "implements": [
         {
-          "n": 163,
-          "p": 1,
+          "n": 162,
+          "p": 0.99,
           "cited": true
         },
         {
-          "n": 162,
-          "p": 0.98,
+          "n": 163,
+          "p": 0.99,
           "cited": true
         },
         {
           "n": 176,
-          "p": 0.98,
+          "p": 0.93,
           "cited": true
         }
       ],
@@ -6480,13 +6946,13 @@
         176
       ],
       "gap": {
-        "uncovered": 0.37,
-        "needs": 0.32,
+        "uncovered": 0.33,
+        "needs": 0.34,
         "kind": "covered",
-        "kindP": 0.52,
+        "kindP": 0.45999999999999996,
         "closest": 163,
-        "closestP": 0.66,
-        "priority": 3.23
+        "closestP": 0.83,
+        "priority": 3.15
       }
     },
     {
@@ -6494,12 +6960,12 @@
       "path": "src/wallet/token/sendEntry.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.69,
-      "interop": 0.66,
+      "isFeature": 0.72,
+      "interop": 0.62,
       "implements": [
         {
           "n": 162,
-          "p": 0.99,
+          "p": 1,
           "cited": true
         }
       ],
@@ -6508,13 +6974,13 @@
         162
       ],
       "gap": {
-        "uncovered": 0.29,
-        "needs": 0.33,
-        "kind": "covered",
-        "kindP": 0.59,
+        "uncovered": 0.26,
+        "needs": 0.29,
+        "kind": "extend_existing",
+        "kindP": 0.44,
         "closest": 162,
-        "closestP": 0.94,
-        "priority": 2.63
+        "closestP": 0.65,
+        "priority": 2.61
       }
     },
     {
@@ -6522,12 +6988,12 @@
       "path": "src/wallet/token/sendMachine.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.79,
-      "interop": 0.2,
+      "isFeature": 0.82,
+      "interop": 0.22,
       "implements": [
         {
           "n": 161,
-          "p": 0.92,
+          "p": 0.93,
           "cited": false
         }
       ],
@@ -6540,8 +7006,8 @@
       "path": "src/wallet/token/sendPlan.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.76,
-      "interop": 0.94,
+      "isFeature": 0.77,
+      "interop": 0.95,
       "implements": [
         {
           "n": 162,
@@ -6554,8 +7020,13 @@
           "cited": true
         },
         {
+          "n": 251,
+          "p": 0.99,
+          "cited": true
+        },
+        {
           "n": 176,
-          "p": 0.78,
+          "p": 0.51,
           "cited": true
         }
       ],
@@ -6563,16 +7034,18 @@
       "mentions": [
         162,
         163,
-        176
+        176,
+        251,
+        252
       ],
       "gap": {
-        "uncovered": 0.59,
-        "needs": 0.48,
+        "uncovered": 0.57,
+        "needs": 0.49,
         "kind": "extend_existing",
-        "kindP": 0.45,
+        "kindP": 0.6900000000000001,
         "closest": 163,
-        "closestP": 0.86,
-        "priority": 3.29
+        "closestP": 0.54,
+        "priority": 3.32
       }
     },
     {
@@ -6580,43 +7053,44 @@
       "path": "src/wallet/token/settle.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.82,
-      "interop": 0.9,
+      "isFeature": 0.83,
+      "interop": 0.89,
       "implements": [
         {
-          "n": 163,
-          "p": 0.99,
-          "cited": false
+          "n": 251,
+          "p": 1,
+          "cited": true
         },
         {
           "n": 161,
-          "p": 0.98,
+          "p": 0.97,
           "cited": false
         },
         {
           "n": 162,
-          "p": 0.79,
+          "p": 0.96,
           "cited": true
         },
         {
           "n": 176,
-          "p": 0.65,
+          "p": 0.72,
           "cited": true
         }
       ],
       "uses": [],
       "mentions": [
         162,
-        176
+        176,
+        251
       ],
       "gap": {
-        "uncovered": 0.4,
-        "needs": 0.32,
-        "kind": "covered",
+        "uncovered": 0.43,
+        "needs": 0.4,
+        "kind": "extend_existing",
         "kindP": 0.52,
-        "closest": 163,
-        "closestP": 0.51,
-        "priority": 3.36
+        "closest": 251,
+        "closestP": 0.58,
+        "priority": 3.18
       }
     },
     {
@@ -6624,8 +7098,8 @@
       "path": "src/wallet/token/tipKind.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.45,
-      "interop": 0.77,
+      "isFeature": 0.48,
+      "interop": 0.75,
       "implements": [
         {
           "n": 163,
@@ -6638,13 +7112,13 @@
         163
       ],
       "gap": {
-        "uncovered": 0.74,
-        "needs": 0.4,
+        "uncovered": 0.75,
+        "needs": 0.41,
         "kind": "extend_existing",
-        "kindP": 0.45,
+        "kindP": 0.51,
         "closest": 163,
         "closestP": 0.94,
-        "priority": 2.96
+        "priority": 2.92
       }
     },
     {
@@ -6652,8 +7126,8 @@
       "path": "src/wallet/token/types.ts",
       "kind": "module",
       "area": "tokens",
-      "isFeature": 0.42,
-      "interop": 0.92,
+      "isFeature": 0.32,
+      "interop": 0.94,
       "implements": [
         {
           "n": 161,
@@ -6662,7 +7136,17 @@
         },
         {
           "n": 163,
-          "p": 0.99,
+          "p": 0.98,
+          "cited": true
+        },
+        {
+          "n": 251,
+          "p": 0.89,
+          "cited": true
+        },
+        {
+          "n": 162,
+          "p": 0.63,
           "cited": true
         }
       ],
@@ -6671,16 +7155,18 @@
         48,
         161,
         162,
-        163
+        163,
+        176,
+        251
       ],
       "gap": {
-        "uncovered": 0.54,
-        "needs": 0.4,
+        "uncovered": 0.53,
+        "needs": 0.42,
         "kind": "covered",
-        "kindP": 0.48,
+        "kindP": 0.49,
         "closest": 163,
-        "closestP": 0.81,
-        "priority": 3.16
+        "closestP": 0.5599999999999999,
+        "priority": 3.09
       }
     },
     {
@@ -6688,8 +7174,8 @@
       "path": "src/wallet/token/verifiableInputBeef.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.37,
-      "interop": 0.78,
+      "isFeature": 0.39,
+      "interop": 0.76,
       "implements": [
         {
           "n": 62,
@@ -6700,13 +7186,13 @@
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.59,
-        "needs": 0.45,
-        "kind": "covered",
+        "uncovered": 0.57,
+        "needs": 0.47,
+        "kind": "extend_existing",
         "kindP": 0.33,
         "closest": 62,
-        "closestP": 0.59,
-        "priority": 2.3
+        "closestP": 0.48,
+        "priority": 2.39
       }
     },
     {
@@ -6714,12 +7200,12 @@
       "path": "src/wallet/tokenAddressScan.ts",
       "kind": "module",
       "area": "items",
-      "isFeature": 0.76,
-      "interop": 0.84,
+      "isFeature": 0.78,
+      "interop": 0.85,
       "implements": [
         {
           "n": 159,
-          "p": 0.91,
+          "p": 0.9,
           "cited": false
         }
       ],
@@ -6727,12 +7213,12 @@
       "mentions": [],
       "gap": {
         "uncovered": 0.72,
-        "needs": 0.36,
+        "needs": 0.38,
         "kind": "extend_existing",
-        "kindP": 0.36,
+        "kindP": 0.41,
         "closest": 46,
-        "closestP": 0.5,
-        "priority": 2.51
+        "closestP": 0.53,
+        "priority": 2.56
       }
     },
     {
@@ -6740,8 +7226,8 @@
       "path": "src/wallet/txLifecycleMachine.ts",
       "kind": "module",
       "area": "chain",
-      "isFeature": 0.53,
-      "interop": 0.2,
+      "isFeature": 0.52,
+      "interop": 0.24,
       "implements": [],
       "uses": [],
       "mentions": [],
@@ -6752,8 +7238,8 @@
       "path": "src/wallet/utxoLifecycle.ts",
       "kind": "module",
       "area": "local_state",
-      "isFeature": 0.29,
-      "interop": 0.62,
+      "isFeature": 0.31,
+      "interop": 0.67,
       "implements": [
         {
           "n": 38,
@@ -6766,13 +7252,13 @@
         38
       ],
       "gap": {
-        "uncovered": 0.52,
-        "needs": 0.3,
+        "uncovered": 0.51,
+        "needs": 0.29,
         "kind": "covered",
-        "kindP": 0.5700000000000001,
+        "kindP": 0.54,
         "closest": 38,
-        "closestP": 0.98,
-        "priority": 2.7
+        "closestP": 0.99,
+        "priority": 2.69
       }
     },
     {
@@ -6780,29 +7266,29 @@
       "path": "src/wallet/vault.ts",
       "kind": "module",
       "area": "keys_crypto",
-      "isFeature": 0.9,
-      "interop": 0.71,
+      "isFeature": 0.91,
+      "interop": 0.65,
       "implements": [
         {
           "n": 208,
-          "p": 0.99,
+          "p": 0.98,
           "cited": true
         },
         {
           "n": 157,
-          "p": 0.92,
+          "p": 0.95,
           "cited": true
         },
         {
           "n": 75,
-          "p": 0.81,
+          "p": 0.84,
           "cited": true
         }
       ],
       "uses": [
         {
           "n": 42,
-          "p": 0.55
+          "p": 0.52
         }
       ],
       "mentions": [
@@ -6811,16 +7297,17 @@
         100,
         140,
         157,
-        208
+        208,
+        250
       ],
       "gap": {
         "uncovered": 0.78,
-        "needs": 0.43,
-        "kind": "covered",
-        "kindP": 0.37,
+        "needs": 0.45,
+        "kind": "extend_existing",
+        "kindP": 0.35,
         "closest": 100,
-        "closestP": 0.45,
-        "priority": 2.97
+        "closestP": 0.42,
+        "priority": 3
       }
     },
     {
@@ -6828,8 +7315,8 @@
       "path": "src/wallet/vaultAccountDiscovery.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.82,
-      "interop": 0.24,
+      "isFeature": 0.83,
+      "interop": 0.26,
       "implements": [
         {
           "n": 208,
@@ -6848,8 +7335,8 @@
       "path": "src/wallet/vaultAccountHolding.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.71,
-      "interop": 0.27,
+      "isFeature": 0.7,
+      "interop": 0.26,
       "implements": [
         {
           "n": 249,
@@ -6866,8 +7353,8 @@
       "path": "src/wallet/vaultAccounts.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.83,
-      "interop": 0.73,
+      "isFeature": 0.79,
+      "interop": 0.71,
       "implements": [
         {
           "n": 208,
@@ -6876,23 +7363,18 @@
         },
         {
           "n": 100,
-          "p": 0.63,
-          "cited": true
-        },
-        {
-          "n": 44,
-          "p": 0.53,
+          "p": 0.62,
           "cited": true
         }
       ],
       "uses": [
         {
-          "n": 157,
-          "p": 0.63
+          "n": 42,
+          "p": 0.68
         },
         {
-          "n": 42,
-          "p": 0.57
+          "n": 157,
+          "p": 0.61
         }
       ],
       "mentions": [
@@ -6904,13 +7386,13 @@
         208
       ],
       "gap": {
-        "uncovered": 0.53,
+        "uncovered": 0.69,
         "needs": 0.33,
         "kind": "covered",
-        "kindP": 0.48,
+        "kindP": 0.58,
         "closest": 100,
-        "closestP": 0.5,
-        "priority": 2.94
+        "closestP": 0.54,
+        "priority": 2.84
       }
     },
     {
@@ -6919,7 +7401,7 @@
       "kind": "module",
       "area": "peer_sessions",
       "isFeature": 0.91,
-      "interop": 0.91,
+      "interop": 0.9,
       "implements": [
         {
           "n": 249,
@@ -6933,13 +7415,13 @@
         249
       ],
       "gap": {
-        "uncovered": 0.5,
-        "needs": 0.49,
+        "uncovered": 0.44,
+        "needs": 0.51,
         "kind": "extend_existing",
-        "kindP": 0.58,
+        "kindP": 0.5,
         "closest": 249,
-        "closestP": 0.86,
-        "priority": 2.96
+        "closestP": 0.84,
+        "priority": 2.94
       }
     },
     {
@@ -6947,7 +7429,7 @@
       "path": "src/wallet/vaultMaster.ts",
       "kind": "module",
       "area": "keys_crypto",
-      "isFeature": 0.76,
+      "isFeature": 0.74,
       "interop": 0.68,
       "implements": [
         {
@@ -6962,12 +7444,7 @@
         },
         {
           "n": 42,
-          "p": 0.81,
-          "cited": true
-        },
-        {
-          "n": 100,
-          "p": 0.62,
+          "p": 0.77,
           "cited": true
         }
       ],
@@ -6981,13 +7458,13 @@
         208
       ],
       "gap": {
-        "uncovered": 0.34,
-        "needs": 0.39,
+        "uncovered": 0.33,
+        "needs": 0.36,
         "kind": "covered",
-        "kindP": 0.42,
+        "kindP": 0.44,
         "closest": 208,
-        "closestP": 0.55,
-        "priority": 3.09
+        "closestP": 0.67,
+        "priority": 3.07
       }
     },
     {
@@ -6996,11 +7473,11 @@
       "kind": "module",
       "area": "keys_crypto",
       "isFeature": 0.81,
-      "interop": 0.55,
+      "interop": 0.57,
       "implements": [
         {
           "n": 157,
-          "p": 0.56,
+          "p": 0.58,
           "cited": true
         }
       ],
@@ -7011,13 +7488,13 @@
         157
       ],
       "gap": {
-        "uncovered": 0.67,
-        "needs": 0.45,
+        "uncovered": 0.69,
+        "needs": 0.49,
         "kind": "not_needed",
-        "kindP": 0.39999999999999997,
+        "kindP": 0.38,
         "closest": 157,
-        "closestP": 0.89,
-        "priority": 3.26
+        "closestP": 0.88,
+        "priority": 3.3
       }
     },
     {
@@ -7025,7 +7502,7 @@
       "path": "src/wallet/verifiedIssuers.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.59,
+      "isFeature": 0.61,
       "interop": 0.93,
       "implements": [],
       "uses": [],
@@ -7033,13 +7510,13 @@
         3
       ],
       "gap": {
-        "uncovered": 0.93,
-        "needs": 0.33,
+        "uncovered": 0.95,
+        "needs": 0.29,
         "kind": "not_needed",
-        "kindP": 0.41,
+        "kindP": 0.42,
         "closest": 189,
-        "closestP": 0.73,
-        "priority": 1.24
+        "closestP": 0.67,
+        "priority": 1.14
       }
     },
     {
@@ -7047,40 +7524,65 @@
       "path": "src/wallet/walletConfig.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.78,
-      "interop": 0.62,
+      "isFeature": 0.79,
+      "interop": 0.61,
       "implements": [],
-      "uses": [],
+      "uses": [
+        {
+          "n": 140,
+          "p": 0.51
+        }
+      ],
       "mentions": [
         100,
         140
       ],
       "gap": {
-        "uncovered": 0.87,
-        "needs": 0.26,
+        "uncovered": 0.83,
+        "needs": 0.25,
         "kind": "covered",
-        "kindP": 0.43,
+        "kindP": 0.46,
         "closest": 100,
-        "closestP": 0.54,
-        "priority": 1.73
+        "closestP": 0.72,
+        "priority": 1.81
       }
+    },
+    {
+      "name": "Wallet health",
+      "path": "src/wallet/walletHealth.ts",
+      "kind": "module",
+      "area": "chain",
+      "isFeature": 0.19,
+      "interop": 0.14,
+      "implements": [
+        {
+          "n": 208,
+          "p": 0.6,
+          "cited": true
+        }
+      ],
+      "uses": [],
+      "mentions": [
+        208
+      ],
+      "gap": null
     },
     {
       "name": "Wallet identity proof",
       "path": "src/wallet/walletIdentityProof.ts",
       "kind": "module",
       "area": "identity",
-      "isFeature": 0.81,
-      "interop": 0.89,
+      "isFeature": 0.83,
+      "interop": 0.9,
       "implements": [
         {
           "n": 100,
-          "p": 0.76,
+          "p": 0.73,
           "cited": true
         },
         {
           "n": 3,
-          "p": 0.7,
+          "p": 0.67,
           "cited": true
         }
       ],
@@ -7091,12 +7593,14 @@
       ],
       "gap": {
         "uncovered": 0.84,
-        "needs": 0.48,
+        "needs": 0.55,
         "kind": "extend_existing",
-        "kindP": 0.39,
+        "kindP": 0.41,
         "closest": 100,
-        "closestP": 0.42,
-        "priority": 2.48
+        "closestP": 0.36,
+        "priority": 2.57,
+        "specified": 0.26,
+        "specifiedBy": null
       }
     },
     {
@@ -7104,12 +7608,12 @@
       "path": "src/wallet/walletPool.ts",
       "kind": "module",
       "area": "devices_accounts",
-      "isFeature": 0.14,
-      "interop": 0.09,
+      "isFeature": 0.16,
+      "interop": 0.08,
       "implements": [
         {
           "n": 208,
-          "p": 0.91,
+          "p": 0.89,
           "cited": true
         }
       ],
@@ -7124,8 +7628,8 @@
       "path": "src/wallet/walletSetupApply.ts",
       "kind": "module",
       "area": "backup_sync",
-      "isFeature": 0.55,
-      "interop": 0.38,
+      "isFeature": 0.57,
+      "interop": 0.37,
       "implements": [],
       "uses": [],
       "mentions": [
@@ -7138,24 +7642,24 @@
       "path": "src/wallet/brc100Handler.ts",
       "kind": "bridge",
       "area": "app_bridge",
-      "isFeature": 0.79,
-      "interop": 0.73,
+      "isFeature": 0.78,
+      "interop": 0.71,
       "implements": [],
       "uses": [
         {
           "n": 2,
-          "p": 0.69
+          "p": 0.62
         }
       ],
       "mentions": [],
       "gap": {
-        "uncovered": 0.91,
-        "needs": 0.36,
+        "uncovered": 0.92,
+        "needs": 0.4,
         "kind": "not_needed",
-        "kindP": 0.62,
-        "closest": 100,
-        "closestP": 0.48,
-        "priority": 1.02
+        "kindP": 0.67,
+        "closest": 2,
+        "closestP": 0.52,
+        "priority": 1.23
       }
     },
     {
@@ -7164,18 +7668,18 @@
       "kind": "bridge",
       "area": "app_bridge",
       "isFeature": 0.83,
-      "interop": 0.78,
+      "interop": 0.76,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
         "uncovered": 0.93,
-        "needs": 0.24,
+        "needs": 0.25,
         "kind": "not_needed",
-        "kindP": 0.77,
+        "kindP": 0.84,
         "closest": 100,
-        "closestP": 0.83,
-        "priority": 0.26
+        "closestP": 0.8200000000000001,
+        "priority": 0.28
       }
     },
     {
@@ -7183,19 +7687,19 @@
       "path": "src/wallet/brc100Handler.ts",
       "kind": "bridge",
       "area": "import_migration",
-      "isFeature": 0.84,
-      "interop": 0.77,
+      "isFeature": 0.85,
+      "interop": 0.78,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
         "uncovered": 0.91,
-        "needs": 0.29,
+        "needs": 0.28,
         "kind": "not_needed",
         "kindP": 0.81,
         "closest": 100,
-        "closestP": 0.85,
-        "priority": 0.41
+        "closestP": 0.87,
+        "priority": 0.42
       }
     },
     {
@@ -7203,19 +7707,19 @@
       "path": "src/wallet/brc100Handler.ts",
       "kind": "bridge",
       "area": "market",
-      "isFeature": 0.88,
-      "interop": 0.88,
+      "isFeature": 0.87,
+      "interop": 0.89,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.95,
-        "needs": 0.45,
+        "uncovered": 0.94,
+        "needs": 0.36,
         "kind": "not_needed",
         "kindP": 0.76,
         "closest": 100,
-        "closestP": 0.62,
-        "priority": 0.9
+        "closestP": 0.66,
+        "priority": 0.83
       }
     },
     {
@@ -7223,19 +7727,19 @@
       "path": "src/wallet/brc100Handler.ts",
       "kind": "bridge",
       "area": "app_bridge",
-      "isFeature": 0.8,
+      "isFeature": 0.79,
       "interop": 0.73,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.91,
-        "needs": 0.32,
+        "uncovered": 0.93,
+        "needs": 0.31,
         "kind": "not_needed",
-        "kindP": 0.83,
+        "kindP": 0.79,
         "closest": 100,
-        "closestP": 0.63,
-        "priority": 0.29
+        "closestP": 0.74,
+        "priority": 0.24
       }
     },
     {
@@ -7243,19 +7747,19 @@
       "path": "src/wallet/brc100Handler.ts",
       "kind": "bridge",
       "area": "app_bridge",
-      "isFeature": 0.84,
-      "interop": 0.72,
+      "isFeature": 0.83,
+      "interop": 0.74,
       "implements": [],
       "uses": [],
       "mentions": [],
       "gap": {
-        "uncovered": 0.91,
-        "needs": 0.29,
+        "uncovered": 0.9,
+        "needs": 0.32,
         "kind": "not_needed",
-        "kindP": 0.82,
+        "kindP": 0.77,
         "closest": 100,
-        "closestP": 0.67,
-        "priority": 0.46
+        "closestP": 0.73,
+        "priority": 0.57
       }
     }
   ],
@@ -7268,6 +7772,7 @@
     "electron/brokenPipe.ts",
     "electron/cameraPermissions.ts",
     "electron/deviceAuth.ts",
+    "electron/durableStore.ts",
     "electron/macUpdateRelease.ts",
     "electron/omarchyTheme.ts",
     "electron/preload.ts",
@@ -7311,7 +7816,9 @@
     "src/wallet/beefSubset.ts",
     "src/wallet/blockHeaders.ts",
     "src/wallet/brc100ActivitySideEffects.ts",
+    "src/wallet/brc112.ts",
     "src/wallet/brc114.ts",
+    "src/wallet/brc250/types.ts",
     "src/wallet/brc38HistoryRepair.ts",
     "src/wallet/browserPolyfills.ts",
     "src/wallet/bsvLogoPreference.ts",
@@ -7336,7 +7843,6 @@
     "src/wallet/collectableSearch.ts",
     "src/wallet/collectableSelection.ts",
     "src/wallet/collectableSendReady.ts",
-    "src/wallet/collectableSendRun.ts",
     "src/wallet/collectableSendRunExecutor.ts",
     "src/wallet/collectableSendRunMachine.ts",
     "src/wallet/collectionView.ts",
@@ -7362,7 +7868,6 @@
     "src/wallet/headlessDom.setup.ts",
     "src/wallet/headlessDom.ts",
     "src/wallet/hexBinary.ts",
-    "src/wallet/historyDocumentBudget.ts",
     "src/wallet/historyEmptyGuard.ts",
     "src/wallet/historyRemoteProbe.ts",
     "src/wallet/holdingFreshness.ts",
@@ -7389,17 +7894,16 @@
     "src/wallet/internalizeBroadcast.ts",
     "src/wallet/internalizeItemPaint.ts",
     "src/wallet/internalizeMinerDeferral.ts",
+    "src/wallet/inventoryProjection.ts",
     "src/wallet/isCompactShell.ts",
     "src/wallet/isMobilePlatform.ts",
     "src/wallet/issuerAttribution.ts",
-    "src/wallet/issuerMetadata.ts",
     "src/wallet/issuerTrust.ts",
     "src/wallet/itemAccess.ts",
     "src/wallet/itemArrivalToast.ts",
     "src/wallet/itemHistory.ts",
     "src/wallet/itemMigrateBundle.ts",
     "src/wallet/itemScriptFill.ts",
-    "src/wallet/itemSettlePath.ts",
     "src/wallet/kernel/abandonedSpendFate.ts",
     "src/wallet/kernel/arcadePinFate.ts",
     "src/wallet/kernel/chainedChangeHeal.ts",
@@ -7422,6 +7926,7 @@
     "src/wallet/legacyAssetScript.ts",
     "src/wallet/legacyImportGuard.ts",
     "src/wallet/legacyReceiptActivity.ts",
+    "src/wallet/legacyScan.ts",
     "src/wallet/legacyStuckSweep.ts",
     "src/wallet/legacySweepPath.ts",
     "src/wallet/liveIdbPersist.ts",
@@ -7444,7 +7949,6 @@
     "src/wallet/oneSatImportGuard.ts",
     "src/wallet/openAppInWalletBrowser.ts",
     "src/wallet/ordScriptPush.ts",
-    "src/wallet/ordinalOwnership.ts",
     "src/wallet/originSigners.ts",
     "src/wallet/outpointFormat.ts",
     "src/wallet/passwordPolicy.ts",
@@ -7461,6 +7965,7 @@
     "src/wallet/pendingSend.ts",
     "src/wallet/pinnedWallet.ts",
     "src/wallet/postBeefResult.ts",
+    "src/wallet/proofFrontier.ts",
     "src/wallet/protocolValidate.ts",
     "src/wallet/provenCache.ts",
     "src/wallet/provenTxReqPurge.ts",
@@ -7477,6 +7982,7 @@
     "src/wallet/sentItemGuard.ts",
     "src/wallet/serialQueue.ts",
     "src/wallet/serviceOrder.ts",
+    "src/wallet/session.ts",
     "src/wallet/sessionBackupAuth.ts",
     "src/wallet/settlementCopy.ts",
     "src/wallet/signTipInputs.ts",
@@ -7496,6 +8002,7 @@
     "src/wallet/toast.ts",
     "src/wallet/token/broadcastValidity.ts",
     "src/wallet/token/deployDisplay.ts",
+    "src/wallet/token/filing.ts",
     "src/wallet/token/icons/cache.ts",
     "src/wallet/token/icons/resolve.ts",
     "src/wallet/token/inboundLineage.ts",
@@ -7503,6 +8010,7 @@
     "src/wallet/token/list.ts",
     "src/wallet/token/marketView.ts",
     "src/wallet/token/preSignDeadline.ts",
+    "src/wallet/token/requiredProcessing.ts",
     "src/wallet/token/tipKind.ts",
     "src/wallet/token/types.ts",
     "src/wallet/token/verifiableInputBeef.ts",
@@ -7532,6 +8040,7 @@
     "src/wallet/walletCoordinator.ts",
     "src/wallet/walletCoordinatorMachine.ts",
     "src/wallet/walletEffects.ts",
+    "src/wallet/walletEngineMigration.ts",
     "src/wallet/walletHealth.ts",
     "src/wallet/walletJobs.ts",
     "src/wallet/walletPool.ts",

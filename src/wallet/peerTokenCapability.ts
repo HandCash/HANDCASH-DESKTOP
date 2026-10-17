@@ -1,8 +1,8 @@
 import { getActiveWallet } from './session'
 
 /**
- * Peer BSV-21 capability — warn before token sends when the recipient may not
- * settle tips into basket `bsv21` (and could sweep them as ordinary 1-sat dust).
+ * Peer P2P-FT capability — warn before token sends when the recipient may not
+ * settle tips into basket `p2pft` (and could sweep them as ordinary 1-sat dust).
  *
  * ## How information is stored and fetched (plain map)
  *

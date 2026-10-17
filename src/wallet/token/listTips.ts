@@ -620,7 +620,7 @@ export async function listBsv21BinaryTipsForToken(
 const HELD_PAGE_SIZE = 1000
 
 /**
- * Every row of basket `bsv21`, all pages, or a throw.
+ * Every row of the token filing baskets (`p2pft`, legacy `bsv21`), all pages, or a throw.
  *
  * The token list is a projection of this answer, so a failed or truncated read
  * must never look like a smaller wallet: an error propagates and a page count

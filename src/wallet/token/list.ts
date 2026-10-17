@@ -13,7 +13,7 @@ import { getActiveWallet } from '../session'
 import { storageRegistry } from '../../storage/registry'
 
 /**
- * Tokens list: basket `bsv21` BRC-162 value tips, aggregated by deploy outpoint.
+ * Tokens list: basket `p2pft` BRC-162 value tips (BRC-251), aggregated by deploy outpoint.
  * Never included in fetchBalanceSats / Pay.
  */
 
@@ -1430,7 +1430,7 @@ function withLiveReadTimeout<T>(work: Promise<T>): Promise<T> {
 }
 
 /**
- * List live BSV-21 tips from basket `bsv21` and aggregate by token id.
+ * List live P2P-FT tips from the filing baskets and aggregate by token id.
  */
 async function listFungiblesNow(
   active?: ActiveWallet | null,
@@ -1853,7 +1853,7 @@ export function fungibleFromImport(
 }
 
 /**
- * Internalize BSV-21 tips into basket `bsv21`.
+ * Internalize P2P-FT tips into basket `p2pft`.
  * Same 1-sat gate as collectables — amount lives in the inscription, not satoshis.
  */
 export async function importBsv21Tokens(
