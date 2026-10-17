@@ -4,7 +4,7 @@ import { countersignMachine } from '../../machines/countersignMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
 import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid, rememberBeefTree } from '../beefCache'
 import { scheduleHistoryBackupPush } from '../deviceSync'
-import { COUNTERSIGNED_SCHEMES, countersignedSchemeFor, stampBrc164Id } from '../itemAccess'
+import { COUNTERSIGNED_SCHEMES, countersignedSchemeFor, stampBrc164Id, type CountersignedScheme } from '../itemAccess'
 import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { runExclusiveSpend } from '../spendGuard'
@@ -301,6 +301,34 @@ export async function listCountersignedHoldings(
     if (assetId && id !== assetId) return []
     return [{ outpoint: o.outpoint.replace('_', '.'), assetId: id, amount: read.amount, lockingScript: o.lockingScript }]
   })
+}
+
+/** The profile of a countersigned deploy this wallet has read, without a basket read. */
+export function knownCountersignedProfile(assetId: string): CountersignedScheme | null {
+  const deploy = readCountersignState().deploys[underscore(assetId)]
+  return deploy ? countersignedSchemeFor(deploy.kind) : null
+}
+
+/**
+ * The countersigned profile (`csft` / `csnft`) of an asset id or held outpoint,
+ * or null when it is neither. Market and direct-offer paths refuse by this
+ * name instead of reporting a held asset as missing.
+ */
+export async function countersignedProfileOf(
+  active: ActiveWallet,
+  idOrOutpoint: string,
+): Promise<CountersignedScheme | null> {
+  const id = underscore(idOrOutpoint)
+  const known = knownCountersignedProfile(id)
+  if (known) return known
+  for (const scheme of COUNTERSIGNED_SCHEMES) {
+    const page = await active.wallet.listOutputs({ basket: scheme, includeTags: true, limit: 1000 })
+    const hit = (page.outputs ?? []).some(
+      (o) => underscore(o.outpoint) === id || (o.tags ?? []).includes(`${scheme}:${id}`),
+    )
+    if (hit) return scheme
+  }
+  return null
 }
 
 function countersignedTags(assetId: string | null, deploy: Pick<CountersignDeploy, 'kind'>, amount: bigint): string[] {

@@ -263,11 +263,17 @@ export async function createDirectOffer(args: {
       selected.length > 0 &&
       (tips.some((t) => t.cosigned && selected.some((s) => s.outpoint === t.outpoint)) ||
         !(await plainValueTips(selected)))
+    const { countersignedProfileOf, knownCountersignedProfile } = await import('./countersign/wallet')
+    const wantTokenId = normalizeTokenId(String((args.want as { tokenId?: unknown } | null)?.tokenId ?? ''))
+    const countersigned =
+      Boolean(wantTokenId && knownCountersignedProfile(wantTokenId)) ||
+      Boolean(tokenId && tips.length === 0 && (await countersignedProfileOf(active, tokenId).catch(() => null)))
     const path = chooseDirectOfferListPath({
       tokenId,
       amount: args.give?.amount,
       want: args.want,
       cosigned,
+      countersigned,
     })
     const chart = createActor(offerMachine).start()
     chart.send({ type: 'LIST', venue: 'direct', path })

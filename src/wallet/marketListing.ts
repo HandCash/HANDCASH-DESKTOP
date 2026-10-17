@@ -1248,6 +1248,15 @@ async function loadListedOutput(
   }
   mark(`basket read ${output ? how : 'not held'}`)
   if (!output) {
+    const { countersignedProfileOf } = await import('./countersign/wallet')
+    const profile = await countersignedProfileOf(active, outpoint).catch(() => null)
+    if (profile) {
+      console.warn(`[market-list] refuse countersigned-asset ${profile} ${outpoint}`)
+      throw new MarketListingError(
+        'COUNTERSIGNED_NOT_LISTABLE',
+        `This is a countersigned ${profile === 'csnft' ? 'item' : 'token'} (${profile}). Its issuer accepts every transfer, so it cannot be listed on the market.`,
+      )
+    }
     throw new MarketListingError(
       'ITEM_NOT_HELD',
       'The listed item is no longer held by this wallet.'

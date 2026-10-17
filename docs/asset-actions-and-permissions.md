@@ -4,6 +4,25 @@ Every permission an app can hold, and every item, token, market and BSV action t
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
+## 0. The four asset profiles
+
+Every asset the wallet holds belongs to exactly one profile. A profile is a storage basket, an app permission scheme, a tag prefix and a set of actions. Granting one profile never grants another, and no asset changes profile, not even a released countersigned one.
+
+| | `1sat` | `p2pft` | `csft` | `csnft` |
+|---|---|---|---|---|
+| Holds | Items (one-sat ordinals) | Tokens (BRC-162, P2P-FT) | Countersigned tokens | Countersigned items (a supply-1 deploy) |
+| Spec | BRC-147, BRC-150, BRC-165 | BRC-162, BRC-251, BRC-252 | BRC-253 draft | BRC-253 draft |
+| Authenticity | BRC-150 proof to the origin | BRC-176 lineage to the deploy | The issuer's countersignature in each transfer | Same as `csft` |
+| Who signs a transfer | Owner | Owner | Owner, then the issuer (or m of n cosigners); after release, the owner with the published keys | Same as `csft` |
+| App view (section 2) | `p 1sat all \| collection \| app \| creator \| id` | `p p2pft all \| token \| id` | `p csft all \| asset \| id` | `p csnft all \| asset \| collection \| id` |
+| App spend label | `p 1sat input id <key>` | `p p2pft input id <key>` | None: wallet only | None: wallet only |
+| Send | `sendCollectable` (section 3) | `sendFungible` (section 4) | `transferCountersignedAsset` (section 9) | `transferCountersignedAsset` |
+| Market listing (section 5) | `ordinal-v2` | `token-v2` | Refused: `COUNTERSIGNED_NOT_LISTABLE` | Refused: `COUNTERSIGNED_NOT_LISTABLE` |
+| Direct offer (section 8) | Not yet (section 7) | Give, or ask for | Refused: `countersigned-asset` | Refused: `countersigned-asset` |
+| App actions, each prompted | Mint; `createAction` spend by label; list, cancel, buy | Deploy; `createAction` spend by label; list, cancel, buy; direct offers | `issue`, `transfer`, `join`, `retire`, `releaseCountersignedAsset` | Same as `csft` |
+
+The two left profiles are open: only the chain and the proof decide. The two right profiles carry the issuer's control in the lock, so a sats price or a market signature alone cannot move them. That is why their market and offer paths refuse by name rather than reporting the asset as missing.
+
 ## 1. Bridge methods
 
 The bridge listens on `https://127.0.0.1:2121`, with an HTTP fallback on `http://127.0.0.1:3321` (`electron/httpServer.ts`). Gate sets live in `src/contracts/brc100.ts`. A method must also be in the handler manifest `src/contracts/brc100Handlers.ts`, or the bridge answers 404.
@@ -136,6 +155,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Feature | State | Builds on |
 |---|---|---|
 | Item direct offers | Missing; token for sats and token for token ship (section 8) | Ordinal pads from `ordinal-v2` |
+| Countersigned listings and swaps | Refused by name (`COUNTERSIGNED_NOT_LISTABLE`, `countersigned-asset`) | One countersigned transfer with both holders and the acceptor; BRC-253 open question |
 | Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
 | Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `direct-offer` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
@@ -184,8 +204,8 @@ Run every bridge asset action in one pass, direct offers included, at `https://b
 |---|---|---|
 | Token → BSV | P2PKH sats | Same as a market token listing, minus fee and overlay |
 | Token → token | A BRC-162 output of the wanted token | The buyer adds its token inputs and change; each token sums exactly |
-| Item → token or BSV | Same as above | Ordinal satoshi placement: the item sits behind buyer pads, as in `ordinal-v2` |
-| Countersigned assets | One transaction, both holders sign `0xC1`, the acceptor countersigns | Same issuer only (open question in that draft) |
+| Item → token or BSV | Not built (section 7) | Would need ordinal satoshi placement: the item behind buyer pads, as in `ordinal-v2` |
+| Countersigned assets (`csft`, `csnft`) | Refused, `countersigned-asset`, as give or want | A `SINGLE\|ANYONECANPAY` seller signature cannot carry the issuer's acceptance. A swap would be one countersigned transfer, both holders signing `0xC1` and the acceptor countersigning; the BRC-253 draft leaves it open (same issuer only) |
 
 Every offer transaction goes through `signedSendLifecycle`. Delivery of the seller's proceeds rides the messagebox and never gates broadcast.
 

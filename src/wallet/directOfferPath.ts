@@ -59,6 +59,7 @@ export type DirectOfferRefusal =
   | 'same-token'
   | 'bad-amount'
   | 'cosigned-token'
+  | 'countersigned-asset'
   | 'want-layout-mismatch'
   | 'not-seller'
   | 'offer-not-listed'
@@ -73,6 +74,8 @@ const REFUSAL_MESSAGE: Record<DirectOfferRefusal, string> = {
   'bad-amount': 'Offer amounts must be positive whole units.',
   'cosigned-token':
     'Issuer-cosigned tokens need the issuer’s signature on every transfer and cannot be listed.',
+  'countersigned-asset':
+    'Countersigned tokens and items (csft, csnft) move only with their issuer’s acceptance, so they cannot be offered or asked for.',
   'want-layout-mismatch':
     'Your tokens use a different token format from the one this offer asks for.',
   'not-seller': 'Only the wallet that listed this offer can do that.',
@@ -161,6 +164,8 @@ export function chooseDirectOfferListPath(args: {
   amount: unknown
   want: unknown
   cosigned: boolean
+  /** The given or wanted asset is a `csft` / `csnft` asset. */
+  countersigned?: boolean
 }): DirectOfferListPath {
   const tokenId = normalizeTokenId(String(args.tokenId ?? ''))
   const amount = positiveUnits(args.amount)
@@ -169,6 +174,7 @@ export function chooseDirectOfferListPath(args: {
   const want = wantOf(args.want)
   if (!want) return refuseDirectOffer('bad-amount')
   if (want.kind === 'token' && want.tokenId === tokenId) return refuseDirectOffer('same-token')
+  if (args.countersigned) return refuseDirectOffer('countersigned-asset')
   if (args.cosigned) return refuseDirectOffer('cosigned-token')
   return { path: 'list', tokenId, amount, want }
 }
