@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.588] - 2026-10-18
+
+### Fixed
+
+- The Collect slice-read test no longer depends on a failing indexer call to trigger its read, and no longer logs after the file ends. That late log failed the Mac release build for 1.3.586 and 1.3.587 with `EnvironmentTeardownError`.
+
 ## [1.3.587] - 2026-10-18
 
 ### Fixed

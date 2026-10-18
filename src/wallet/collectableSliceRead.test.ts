@@ -83,6 +83,13 @@ vi.mock('./legacyScan', async (importOriginal) => ({
   }),
 }))
 
+vi.mock('./tokenAddressScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tokenAddressScan')>()),
+  scanLiveTipUtxos: async () => {
+    throw new Error('offline')
+  },
+}))
+
 beforeEach(() => {
   vi.resetModules()
   store.clear()
@@ -99,6 +106,7 @@ describe('a Collect read under contention', () => {
     answers.push(async () => ({ outputs: [row(HELD, 'held', OUR_LOCK)] }))
     await listCollectables(active)
     expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([HELD])
+    await new Promise((resolve) => setImmediate(resolve))
 
     const foreign = Array.from({ length: 98 }, (_, i) =>
       row(`${String(i).padStart(64, 'e')}.0`, `foreign-${i}`, THEIR_LOCK),
