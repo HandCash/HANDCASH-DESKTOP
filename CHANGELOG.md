@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.607] - 2026-10-18
+
+### Added
+
+- Developer keys opens with a BRC Wørker banner. It opens HandCash apps on BRC-CLOUD in an app tab, or in the system browser where tabs are not available.
+- `npm run wltc:probe` compares this Mac's wLTC deposit record against a Litecoin explorer. It fails if the wallet claims more confirmations than the chain shows; running behind the chain is fine.
+
+### Changed
+
+- The web-app launcher in Connected apps is now a single URL bar, styled like the search bar. It takes URLs only: `example.com`, an https link or `host:port`. A bare word such as `poker` or a phrase is refused, where before `poker` opened `https://poker/`.
+- For 2 hours after the wallet hands out the Litecoin deposit address, it checks for new deposits once a minute. A deposit sent after the deposit page closed now appears in Activity and Collections. With no deposit expected or waiting, the watcher touches no network.
+
+### Fixed
+
+- While the wallet was locked, every BRC-100 call except public ones failed with "Wallet storage requested without a bound runtime". It now answers `WALLET_LOCKED` and asks you to unlock. The bridge used to read the app's connection channel before checking for a lock.
+- A wLTC deposit dropped its Litecoin block number once it could move. Its details now show the block, and deposits proven before this release read it from their stored proof.
+
 ## [1.3.606] - 2026-10-18
 
 ### Added

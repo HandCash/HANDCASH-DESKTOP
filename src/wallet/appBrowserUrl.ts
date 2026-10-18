@@ -23,7 +23,9 @@ export function decideAppBrowserTarget(raw: string): AppBrowserTarget {
     return { kind: 'refuse', reason: 'empty', message: 'Enter a web address' }
   }
   // A bare host is the common case when typing on a phone.
-  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`
+  // `host:port` is a bare host too, not a scheme.
+  const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !/^[^/:]+:\d+(?:[/?#]|$)/.test(trimmed)
+  const candidate = hasScheme ? trimmed : `https://${trimmed}`
   let parsed: URL
   try {
     parsed = new URL(candidate)
@@ -37,10 +39,12 @@ export function decideAppBrowserTarget(raw: string): AppBrowserTarget {
       message: `The wallet browser only opens https pages, not ${parsed.protocol}`,
     }
   }
-  if (!parsed.hostname) {
-    return { kind: 'refuse', reason: 'unparsable', message: 'That is not a web address' }
+  const hostname = parsed.hostname.toLowerCase()
+  // A word with no dot is a search, not a site; only loopback goes without one.
+  if (!hostname || /\s/.test(trimmed) || (!hostname.includes('.') && !LOOPBACK_HOSTS.has(hostname))) {
+    return { kind: 'refuse', reason: 'unparsable', message: 'Enter a URL, like example.com' }
   }
-  if (parsed.protocol === 'http:' && !LOOPBACK_HOSTS.has(parsed.hostname.toLowerCase())) {
+  if (parsed.protocol === 'http:' && !LOOPBACK_HOSTS.has(hostname)) {
     return {
       kind: 'refuse',
       reason: 'insecure-host',

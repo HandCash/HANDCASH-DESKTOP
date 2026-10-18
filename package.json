@@ -48,7 +48,8 @@
     "version:check": "node scripts/require-version-bump.mjs",
     "icons:tray": "node scripts/build-tray-icons.mjs",
     "icons:tray:check": "node scripts/build-tray-icons.mjs --check",
-    "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs"
+    "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs",
+    "wltc:probe": "node scripts/wltc-probe.mjs"
   },
   "dependencies": {
     "@1sat/templates": "^0.0.2",

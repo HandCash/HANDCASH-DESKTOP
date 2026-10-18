@@ -1,6 +1,6 @@
 import { LitecoinIcon } from './icons'
 import { LtcDepositProgress } from './LtcDepositProgress'
-import { useLtcDepositByMint } from '../features/ltcDeposits'
+import { useLtcDepositBlock, useLtcDepositByMint } from '../features/ltcDeposits'
 import { activityEntryTitle, type ActivityEntry } from '../wallet/appActivity'
 import { formatLtc } from '../wallet/wltc/litecoin'
 import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
@@ -21,15 +21,7 @@ const short = (txid: string) => `${txid.slice(0, 10)}…${txid.slice(-6)}`
  */
 export function LtcDepositDetails({ entry, chain }: { entry: ActivityEntry; chain: Chain }) {
   const deposit = useLtcDepositByMint(entry.txid)
-  const height = deposit
-    ? deposit.phase.kind === 'confirming'
-      ? deposit.phase.height
-      : deposit.phase.kind === 'movable'
-        ? deposit.phase.height
-        : deposit.phase.kind === 'unchecked'
-          ? deposit.phase.last?.height
-          : undefined
-    : undefined
+  const height = useLtcDepositBlock(deposit)
   return (
     <div className="nav-child-panel payment-details" data-aeon-scope="payment-details" data-aeon-state="ltc-deposit">
       <div className="payment-details-hero">

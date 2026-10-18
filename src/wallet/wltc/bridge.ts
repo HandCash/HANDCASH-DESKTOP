@@ -123,6 +123,8 @@ type WltcState = {
   backedAssetId?: string
   deposits: Record<string, DepositRecord>
   withdrawals: Record<string, WithdrawalRecord>
+  /** Until when the watcher looks for new deposits: set each time the deposit address is handed out. */
+  expectUntil?: number
 }
 
 const stateKey = () => accountLocalKey(storageRegistry.wltc.key)
@@ -133,6 +135,7 @@ function readState(): WltcState {
     return {
       ...(parsed.assetId ? { assetId: parsed.assetId } : {}),
       ...(parsed.backedAssetId ? { backedAssetId: parsed.backedAssetId } : {}),
+      ...(typeof parsed.expectUntil === 'number' ? { expectUntil: parsed.expectUntil } : {}),
       deposits: parsed.deposits ?? {},
       withdrawals: parsed.withdrawals ?? {},
     }
@@ -157,7 +160,7 @@ export function subscribeLtcDeposits(listener: () => void): () => void {
 }
 
 const outpointKey = (txid: string, vout: number) => `${txid}:${vout}`
-/** A deposit the explorers have not known for this long is void: its wLTC stays locked for good. */
+/** A deposit the explorers have not known for this long is shown void; its wLTC moves only if it later reaches a block. */
 const VOID_AFTER_MS = 30 * 60_000
 const isProven = (d: DepositRecord) => d.status === 'credited' && d.proven !== false
 
@@ -242,6 +245,7 @@ export type LtcDepositAddress = {
 export async function getLtcDepositAddress(): Promise<LtcDepositAddress> {
   const active = requireActive()
   const state = readState()
+  writeState({ ...state, expectUntil: Date.now() + EXPECT_DEPOSIT_MS })
   return {
     network: 'litecoin',
     address: reserveOf(active).address,
@@ -578,7 +582,7 @@ async function provePass(active: ActiveWallet, opts: { skipAbandoned?: boolean }
 
 /** A deposit's phase as the record holds it; deposits credited before 1.3.601, or already proven, can move. */
 function phaseOf(d: DepositRecord): LtcDepositPhase {
-  if (d.proven !== false) return { kind: 'movable' }
+  if (d.proven !== false) return d.phase?.kind === 'movable' ? d.phase : { kind: 'movable' }
   return d.phase ?? { kind: 'unchecked', since: d.at }
 }
 
@@ -674,22 +678,46 @@ export function readLtcDepositViews(): LtcDepositView[] {
 const WATCH_MS = 60_000
 let watchTimer: ReturnType<typeof setInterval> | null = null
 
-function hasWaitingDeposit(): boolean {
-  return Object.values(readState().deposits).some((d) => d.status === 'credited' && d.proven === false && d.phase?.kind !== 'abandoned')
+/** How long after the deposit address is handed out the watcher looks for a new deposit. */
+export const EXPECT_DEPOSIT_MS = 2 * 60 * 60_000
+
+function hasWaitingDeposit(state: WltcState): boolean {
+  return Object.values(state.deposits).some((d) => d.status === 'credited' && d.proven === false && d.phase?.kind !== 'abandoned')
 }
 
 /**
- * While the wallet is open and a deposit waits, count its confirmations about
- * once a minute so activity and collections move without an app polling.
- * Idle when nothing waits or the page is hidden.
+ * One watcher pass. `scanned`: the deposit address was read for new deposits
+ * (only while expecting one) and waiting ones counted. `counted`: only waiting
+ * deposits were counted, on the wallet's own chain once each has its proof.
+ * `idle`: nothing waits, no deposit is expected, so nothing touched the network.
+ */
+export async function watchLtcDeposits(): Promise<'idle' | 'counted' | 'scanned'> {
+  const active = getWalletRuntime()?.instance
+  if (!active) return 'idle'
+  const state = readState()
+  const expecting = (state.expectUntil ?? 0) > Date.now()
+  if (!expecting && !hasWaitingDeposit(state)) return 'idle'
+  return serial(async () => {
+    if (expecting) {
+      await healCredits(active)
+      await creditPass(active, await deps.chain.addressUtxos(reserveOf(active).address))
+    }
+    await provePass(active, { skipAbandoned: true })
+    return expecting ? 'scanned' : 'counted'
+  })
+}
+
+/**
+ * While the wallet is open, run {@link watchLtcDeposits} about once a minute
+ * so activity and collections move without an app polling, and a deposit
+ * sent after the deposit page closed still appears. Paused while the page is
+ * hidden.
  */
 export function startWltcWatcher(): void {
   if (watchTimer) return
   const tick = () => {
     if (typeof document !== 'undefined' && document.hidden) return
-    const active = getWalletRuntime()?.instance
-    if (!active || !hasWaitingDeposit()) return
-    void serial(() => provePass(active, { skipAbandoned: true })).catch((err: unknown) => {
+    void watchLtcDeposits().catch((err: unknown) => {
       console.warn(`[wltc] watch pass failed — ${err instanceof Error ? err.message : String(err)}`)
     })
   }

@@ -7565,23 +7565,16 @@ html[data-aeon-mode='light']
   margin-bottom: 16px;
 }
 
-/* Apps → open a BRC-100 app in the wallet's own browser (mobile shells only). */
+/* Apps → one URL bar into the wallet's own browser; it wears the search bar's chrome. */
 .app-browser-launcher {
   display: grid;
-  gap: 8px;
-  margin: 4px 0 18px;
-  padding: 12px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--hc-radius);
-  background: hsl(var(--secondary) / 0.85);
+  gap: 4px;
+  margin: 4px 0 12px;
 }
 
-.app-browser-launcher .actions {
-  margin-top: 0;
-}
-
-.app-browser-launcher[data-aeon-state='handedOff'] {
-  border-color: color-mix(in srgb, var(--hc-accent) 40%, transparent);
+.app-browser-launcher [data-aeon-part='error'] {
+  margin: 0;
+  font-size: 0.75rem;
 }
 
 .friends-add-form .actions {
@@ -16271,6 +16264,51 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
 [data-aeon-scope='dev-keys'] .settings-hint {
   margin: 0;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal'] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 35%, hsl(var(--border)));
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-accent) 10%, hsl(var(--secondary)));
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal']:hover,
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal']:focus-visible {
+  border-color: color-mix(in srgb, var(--hc-accent) 60%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 16%, hsl(var(--secondary)));
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal'] > svg {
+  flex-shrink: 0;
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal-copy'] {
+  display: grid;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal-copy'] > span {
+  font-size: 0.78rem;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='dev-keys'] [data-aeon-part='portal-go'] {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--hc-accent);
 }
 
 [data-aeon-scope='dev-keys'] [data-aeon-part='head'] {

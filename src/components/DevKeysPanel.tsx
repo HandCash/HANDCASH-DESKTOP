@@ -37,7 +37,10 @@ import {
 } from "../wallet/walletRuntime";
 import { AsyncActionPrompt } from "./AsyncActionPrompt";
 import { EmptyState } from "./EmptyState";
-import { KeyIcon, WalletScopeIcon } from "./icons";
+import { AppsIcon, KeyIcon, WalletScopeIcon } from "./icons";
+import { launchConnectedApp } from "../wallet/openAppInWalletBrowser";
+
+const BRC_WORKER_ORIGIN = "https://brc-cloud.bcryderman.workers.dev";
 import { Skeleton } from "./Skeleton";
 
 type DevKeyAction =
@@ -575,6 +578,24 @@ export function DevKeysPanel() {
       data-aeon-scope="dev-keys"
       data-aeon-state={stateToAttr(snapshot.value)}
     >
+      <button
+        type="button"
+        className="dev-keys-portal"
+        data-aeon-part="portal"
+        onClick={() => {
+          playWalletSound("soft");
+          launchConnectedApp(BRC_WORKER_ORIGIN, `${BRC_WORKER_ORIGIN}/`, "in-app");
+        }}
+      >
+        <AppsIcon size={20} />
+        <span data-aeon-part="portal-copy">
+          <strong>BRC Wørker</strong>
+          <span>HandCash apps on BRC-CLOUD</span>
+        </span>
+        <span data-aeon-part="portal-go" aria-hidden>
+          Open
+        </span>
+      </button>
       <p className="settings-hint">
         Keys you give your own server. Each one can sign as your identity, hold
         a wallet your server spends, or both. None of them can reveal your

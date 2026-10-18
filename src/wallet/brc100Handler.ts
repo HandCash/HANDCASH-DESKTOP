@@ -1010,6 +1010,21 @@ async function handleBrc100RequestInner(
   }
   const originator = bridgeCallerHost(caller)
   const channel: BridgeChannel = event.channel === 'in-app' ? 'in-app' : 'socket'
+
+  // Grants live in account storage, which a locked wallet has not bound.
+  const active = runtime?.instance ?? null
+  if (!active) {
+    requestUnlockForBridge()
+    return {
+      status: 503,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'WALLET_LOCKED',
+        description: 'Unlock HandCash to use the BRC-100 interface.',
+      }),
+    }
+  }
+
   if (
     originator &&
     !isPublicMethod(method) &&
@@ -1023,19 +1038,6 @@ async function handleBrc100RequestInner(
         code: 'ORIGIN_BOUND_IN_APP',
         description:
           'This app was connected in the HandCash browser. Open it there, or disconnect it in HandCash to connect from another browser.',
-      }),
-    }
-  }
-
-  const active = runtime?.instance ?? null
-  if (!active) {
-    requestUnlockForBridge()
-    return {
-      status: 503,
-      body: JSON.stringify({
-        status: 'error',
-        code: 'WALLET_LOCKED',
-        description: 'Unlock HandCash to use the BRC-100 interface.',
       }),
     }
   }

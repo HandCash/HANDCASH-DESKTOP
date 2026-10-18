@@ -24,7 +24,7 @@ export function AppBrowserLauncher() {
 
 function Launcher() {
   const [state, send] = useMachine(appBrowserMachine, { input: { open: openTab } })
-  const { input, error, host } = state.context
+  const { input, error } = state.context
   const busy = state.matches('opening')
 
   const onSubmit = (e: FormEvent) => {
@@ -35,42 +35,36 @@ function Launcher() {
 
   return (
     <form
-      className="app-browser-launcher"
+      className="root-search friends-search app-browser-launcher"
+      role="search"
+      noValidate
       data-aeon-scope="app-browser"
       data-aeon-state={stateToAttr(state.value)}
       onSubmit={onSubmit}
     >
-      <div className="field">
-        <label htmlFor="app-browser-url">Open a web app</label>
-        <input
-          id="app-browser-url"
-          className="mono"
-          value={input}
-          onChange={(e) => send({ type: 'TYPE', value: e.target.value })}
-          placeholder="lilpoker.com"
-          inputMode="url"
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          disabled={busy}
-        />
-      </div>
+      <label className="sr-only" htmlFor="app-browser-url">
+        Open a web app by URL
+      </label>
+      <input
+        id="app-browser-url"
+        type="url"
+        value={input}
+        onChange={(e) => send({ type: 'TYPE', value: e.target.value })}
+        placeholder="Enter a URL"
+        inputMode="url"
+        enterKeyHint="go"
+        autoComplete="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        disabled={busy}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? 'app-browser-url-error' : undefined}
+      />
       {error ? (
-        <p className="error" role="status">
+        <p id="app-browser-url-error" className="error" role="status" data-aeon-part="error">
           {error}
         </p>
-      ) : (
-        <p className="settings-row-desc" data-aeon-part="hint">
-          {state.matches('handedOff') && host
-            ? `${host} is open in a tab. Payment requests come back here for approval.`
-            : 'Opens in a tab inside HandCash. Apps still ask here before anything moves.'}
-        </p>
-      )}
-      <div className="actions">
-        <button type="submit" className="btn btn-primary" disabled={busy || !input.trim()}>
-          {busy ? 'Opening…' : 'Open'}
-        </button>
-      </div>
+      ) : null}
     </form>
   )
 }

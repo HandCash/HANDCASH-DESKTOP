@@ -18,6 +18,7 @@ let sightings = new Map<string, DepositSighting>()
 let locations = new Map<string, DepositLocation>()
 let depths = new Map<string, BurialCheck>()
 let locates = 0
+let scans = 0
 let utxos: Array<{ txid: string; vout: number; value: number; confirmed: boolean }> = []
 const broadcasts: string[] = []
 let broadcastFails = false
@@ -123,7 +124,10 @@ const chain: LtcChain = {
     throw new Error('not found')
   },
   merkleProof: async () => ({ blockHeight: 1, merkle: [], pos: 0 }),
-  addressUtxos: async () => utxos,
+  addressUtxos: async () => {
+    scans += 1
+    return utxos
+  },
   broadcast: async (hex) => {
     if (broadcastFails) throw new Error('explorer down')
     broadcasts.push(hex)
@@ -166,6 +170,7 @@ beforeEach(() => {
   locations = new Map()
   depths = new Map()
   locates = 0
+  scans = 0
   utxos = []
   bridge.setWltcDepsForTest({ chain })
 })
@@ -272,7 +277,35 @@ describe('wLTC bridge', () => {
     depths.delete(tx(14))
     const buried = await bridge.listLtcDeposits()
     expect(buried.deposits[0]).toMatchObject({ status: 'credited', proven: true })
-    expect(bridge.readLtcDepositViews()[0]!.phase).toEqual({ kind: 'movable' })
+    expect(bridge.readLtcDepositViews()[0]!.phase).toEqual({ kind: 'movable', height: 1, checkedAt: expect.any(Number) })
+  })
+
+  it('watches without an app polling: scans for new deposits only while one is expected, and is idle otherwise', async () => {
+    expect(await bridge.watchLtcDeposits()).toBe('idle')
+    expect(scans).toBe(0)
+
+    await bridge.getLtcDepositAddress()
+    deposit(21, 50_000n, false)
+    expect(await bridge.watchLtcDeposits()).toBe('scanned')
+    expect(scans).toBe(1)
+    expect(bridge.readLtcDepositViews()).toEqual([expect.objectContaining({ txid: tx(21), phase: expect.objectContaining({ kind: 'unconfirmed' }) })])
+
+    vi.useFakeTimers({ now: Date.now() + bridge.EXPECT_DEPOSIT_MS + 1 })
+    try {
+      locations.set(tx(21), { kind: 'in-block', proof: PROOF })
+      depths.set(tx(21), { ok: false, reason: 'shallow', detail: '2 of 6', missing: true, confirmations: 2 })
+      expect(await bridge.watchLtcDeposits()).toBe('counted')
+      expect(scans).toBe(1)
+      expect(bridge.readLtcDepositViews()[0]!.phase).toMatchObject({ kind: 'confirming', confirmations: 2 })
+
+      depths.delete(tx(21))
+      expect(await bridge.watchLtcDeposits()).toBe('counted')
+      expect(bridge.readLtcDepositViews()[0]!.phase).toMatchObject({ kind: 'movable', height: 1 })
+      expect(await bridge.watchLtcDeposits()).toBe('idle')
+      expect(scans).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reports refused deposits and mints nothing for them', async () => {

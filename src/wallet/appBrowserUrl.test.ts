@@ -49,4 +49,20 @@ describe('decideAppBrowserTarget', () => {
     const bare = decideAppBrowserTarget('https://')
     expect(bare.kind === 'refuse' && bare.reason).toBe('unparsable')
   })
+
+  it('takes only URLs: a word or a phrase is not a site', () => {
+    for (const raw of ['poker', 'lil poker', 'https://poker', 'play lilpoker.com']) {
+      const target = decideAppBrowserTarget(raw)
+      expect(target.kind === 'refuse' && target.reason).toBe('unparsable')
+    }
+  })
+
+  it('reads host:port as a host, not a scheme', () => {
+    expect(decideAppBrowserTarget('localhost:5173')).toMatchObject({ kind: 'open', url: 'https://localhost:5173/' })
+    expect(decideAppBrowserTarget('lil.example:8443/table')).toEqual({
+      kind: 'open',
+      url: 'https://lil.example:8443/table',
+      host: 'lil.example:8443',
+    })
+  })
 })
