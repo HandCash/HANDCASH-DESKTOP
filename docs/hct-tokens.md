@@ -67,7 +67,7 @@ A capped authority states the units and members issued so far. Every reader chec
 | Proof package (§6) and validated-transaction store | `src/wallet/hct/proof.ts`, `store.ts` |
 | Issue, mint, transfer, receive (box `hct`), durable outbox, per-peer frontier | `src/wallet/hct/wallet.ts`, `state.ts`, chart `hctMachine` |
 | Collectables shelf and send form | `src/components/HctShelf.tsx`, chart `hctHoldingsMachine` |
-| BRC-100 methods `issueHctAsset`, `mintHctAsset`, `transferHctAsset`, `listHctAssets` | `src/wallet/brc100Handler.ts` |
+| BRC-100 methods `issueHctAsset`, `mintHctAsset`, `transferHctAsset`, `listHctAssets` (wallet-internal `burnHctUnits` for wLTC) | `src/wallet/brc100Handler.ts` |
 | App views (`p p2pft token`, `p p2pnft …` under the item grant) | `src/wallet/itemAccess.ts` |
 
 Rules the code holds to:
@@ -77,6 +77,21 @@ Rules the code holds to:
 - Apps view HCT rows and never write, spend or relinquish them. Every spend is built and signed by the wallet, re-checked against §4 before and after `signAction`, and aborted on any mismatch.
 - Code written for BRC-162, 1Sat or change never heals, consolidates, sweeps or counts an HCT row (`isAssetFilingBasket`).
 - Every send goes through `signedSendLifecycle`.
+
+## Wrapped LTC (wLTC), proof of concept
+
+wLTC is litecoin carried as an open HCT token (`sym: wLTC`, 8 decimals, open supply). One unit is one litoshi held at a Litecoin reserve address. BSV script cannot release LTC, so someone must hold the LTC key; in this proof of concept that is the wallet itself, a 1-of-1 federation. Nobody else can mint wLTC for that reserve, and only that wallet can pay its LTC out.
+
+| Step | What the wallet does |
+|---|---|
+| Address | `getLtcDepositAddress` returns the P2WPKH address of the `[2, "wltc reserve"]` key (counterparty `self`). Apps can never derive or sign with that protocol (`reservedKeyRefusal` → `asset-protocol`). |
+| Credit | `listLtcDeposits` lists the reserve's outputs and proves each one itself: the raw transaction hashes to its txid and pays the reserve script, the merkle proof reaches the block's merkle root, and the block is buried under linked headers that each meet their own scrypt target and are no easier than 2^200. The depth is 6 headers plus one per whole LTC (at most 576), so forging the chain costs more work than the deposit is worth. A proven deposit mints wLTC to this wallet: the first one issues the token, later ones mint. |
+| Once only | Each mint carries the label `wltc deposit <txid>.<vout>`, which rides the BRC-39 history. A mint interrupted mid-flight is resolved by that label, never by minting again. |
+| Withdraw | `withdrawLtc({ address, litoshi })` (prompted) pays from deposits it credited, using the amounts it recorded, never the explorer's. It signs the LTC payout and keeps it unsent, burns the amount plus the Litecoin fee to a key nobody can sign for, then broadcasts. A failed burn sends nothing. A failed broadcast after the burn is retried on every refresh, and the payout is never burned twice. |
+
+The explorer (`litecoinspace.org`, Esplora API) is untrusted. It can hide or delay a deposit, but it cannot make the wallet mint one. Code: `src/wallet/wltc/` and chart `wltcMachine`. Try it at `https://brc-cloud.bcryderman.workers.dev/ltc-deposit`.
+
+Not built: a multi-party federation (k-of-n LTC multisig with HCT countersigned mode), and Runes-style open minting. Open minting needs a mint output that anyone can spend, but only if they re-create it with a lower counter. Plain HCT locks cannot hold that rule without a covenant or a change to the spec.
 
 ## Phases
 

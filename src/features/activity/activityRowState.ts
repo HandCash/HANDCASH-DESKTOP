@@ -131,6 +131,7 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   issueHctAsset: 'asset issue',
   mintHctAsset: 'asset mint',
   transferHctAsset: 'asset transfer',
+  withdrawLtc: 'LTC withdrawal',
 }
 
 /** What the row is called before a description or txid exists. */

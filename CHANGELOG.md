@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.586] - 2026-10-18
+
+### Added
+- **wLTC: deposit litecoin and get a BSV token for it (proof of concept).** Your wallet gets its own Litecoin deposit address. Send LTC to it, and once the deposit is buried deep enough your wallet mints the same amount of wLTC, an open HCT token, to you. The wallet holds the LTC key itself, so in this proof of concept you are a federation of one.
+  - **The wallet proves every deposit itself.** It checks the merkle proof and the chain of Litecoin headers, each with real scrypt proof of work. The explorer only supplies bytes, so it can hide or delay a deposit but never make the wallet mint one. Deposits need 6 confirmations, plus one per whole LTC.
+  - **Each deposit is minted exactly once.** The mint is labelled with its LTC outpoint, so a restore or an interrupted mint never mints it twice.
+  - **`withdrawLtc` pays LTC back out.** The wallet signs the payout, burns the same wLTC plus the Litecoin fee, and only then broadcasts. If the burn fails, nothing is sent. If the broadcast fails, it is retried until it lands.
+  - New BRC-100 methods: `getLtcDepositAddress`, `listLtcDeposits`, and `withdrawLtc` (which needs your approval). Apps can never derive or sign with the reserve key.
+  - Try it at `https://brc-cloud.bcryderman.workers.dev/ltc-deposit`.
+
+### Fixed
+- **A site is always shown as itself.** The cloud reference apps, App Lab pages included, were shown, granted and logged as `handcash.io`. That also let one of them request an operator proof naming `handcash.io`. Prompts, grants and activity now always name the caller's real host. Only view grants are shared between the market hosts under `handcash.io`.
+
 ## [1.3.585] - 2026-10-18
 
 ### Added

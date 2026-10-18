@@ -41,6 +41,7 @@ export const ACTION_BRC100_METHODS = [
   'issueHctAsset',
   'mintHctAsset',
   'transferHctAsset',
+  'withdrawLtc',
   'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',

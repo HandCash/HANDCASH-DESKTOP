@@ -49,6 +49,7 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
 import type { IssuanceAttestation } from './identityIssuance'
+import { formatLtc } from './wltc/litecoin'
 
 const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
@@ -375,9 +376,13 @@ export function clearPermissionSession(origin?: string): void {
   }
 }
 
+/**
+ * The host every grant, prompt and activity row is keyed and shown by. It is
+ * the caller's own host, never an alias: renaming one host to another would
+ * show the user a site they are not on and hand it that site's grants.
+ */
 export function normalizeOrigin(origin: string | undefined): string {
-  const host = normalizeAppHost(origin)
-  return isHandCashCatalogOrigin(host) ? 'handcash.io' : host
+  return normalizeAppHost(origin)
 }
 
 export function isOriginAllowed(origin: string | undefined): boolean {
@@ -645,6 +650,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'issueHctAsset',
         'mintHctAsset',
         'transferHctAsset',
+        'withdrawLtc',
       ].includes(prompt.method)
     ) {
       return
@@ -1402,6 +1408,22 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
         recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
+      ],
+    }
+  }
+
+  if (method === 'withdrawLtc') {
+    const raw = String(body.litoshi ?? '')
+    const ltc = /^\d+$/.test(raw) ? formatLtc(BigInt(raw)) : '?'
+    const address = typeof body.address === 'string' ? body.address : ''
+    return {
+      title: `Withdraw ${ltc} LTC`,
+      summary: 'Pay litecoin out of your wLTC reserve. The same amount of wLTC, plus the Litecoin fee, is burned first.',
+      previewKind: 'token',
+      details: [
+        address ? `To: ${address}` : 'Unknown address',
+        'The Litecoin network fee is paid in wLTC',
+        'Your wallet broadcasts the payout only after the burn is signed; it retries until it lands',
       ],
     }
   }

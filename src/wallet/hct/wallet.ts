@@ -609,6 +609,12 @@ export type IssueHctArgs = {
   mode?: unknown
 }
 
+/** Wallet-internal options; the BRC-100 dispatcher never passes them, so an app cannot set them. */
+export type HctWalletOptions = {
+  /** Extra action labels, written atomically with the transaction (they ride the BRC-39 history). */
+  labels?: readonly string[]
+}
+
 export type IssueHctResult = { assetId: string; txid: string; kind: 'token' | 'item'; supply: string; basket: string }
 
 /** Plain checks of issue arguments, before anything is staged. */
@@ -713,7 +719,7 @@ function carryBack(active: ActiveWallet, row: HctRow, deploy: HctDeploy, prefix:
  * by this wallet in `p2pft` (token) or `p2pnft` (item). An item in a
  * collection spends that collection's authority and gets it back.
  */
-export async function issueHctAsset(args: IssueHctArgs): Promise<IssueHctResult> {
+export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions = {}): Promise<IssueHctResult> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
     const active = requireActive()
@@ -760,7 +766,7 @@ export async function issueHctAsset(args: IssueHctArgs): Promise<IssueHctResult>
       let deploy: HctDeploy | null = null
       const signed = await signHctAction(active, {
         description: `Issue ${label} (HCT)`,
-        labels: [LABEL, 'hct-issue'],
+        labels: [LABEL, 'hct-issue', ...(opts.labels ?? [])],
         inputs,
         outputs,
         check: (tx) => {
@@ -805,7 +811,7 @@ export type MintHctResult = { assetId: string; txid: string; amount: string; iss
  * The new units and the authority come back to this wallet; a capped
  * token's authority states the new total, and the cap is never passed.
  */
-export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }): Promise<MintHctResult> {
+export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }, opts: HctWalletOptions = {}): Promise<MintHctResult> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
     const active = requireActive()
@@ -853,7 +859,7 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
       const label = `${amount} ${deploy.fields.sym ?? 'units'}`
       const signed = await signHctAction(active, {
         description: `Mint ${label} (HCT)`,
-        labels: [LABEL, 'hct-mint'],
+        labels: [LABEL, 'hct-mint', ...(opts.labels ?? [])],
         inputs: [{ outpoint: authority.outpoint, description: 'HCT mint authority', key: hctHolderPrivateKey(root, authority.remittance), scope: HCT_HOLDER_SCOPE }],
         outputs,
         check: (tx) => {
@@ -1001,6 +1007,89 @@ export async function transferHctAsset(args: { assetId?: unknown; recipient?: un
       scheduleHistoryBackupPush('hct')
       log('transfer', startedAt)
       return { assetId, txid: signed.txid, amount: amount.toString(), recipient, delivered }
+    } catch (err) {
+      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      throw err
+    } finally {
+      chart.stop()
+    }
+  }, undefined, { promote: false })
+}
+
+export type BurnHctResult = { assetId: string; txid: string; amount: string }
+
+/**
+ * Lock units of a token this wallet holds to `holder`, a key nobody can sign
+ * for, so they can never move again (conservation forbids destroying units).
+ * Wallet-internal: the wLTC bridge burns what it redeems. `memo` rides an
+ * OP_RETURN output so the burn names what it paid for.
+ */
+export async function burnHctUnits(
+  args: { assetId: string; amount: bigint; holder: string; memo: string },
+  opts: HctWalletOptions = {},
+): Promise<BurnHctResult> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const chart = createActor(hctMachine).start()
+    chart.send({ type: 'BURN' })
+    try {
+      const assetId = args.assetId.trim().toLowerCase()
+      if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
+      if (!KEY_RE.test(args.holder)) refuse('bad-asset-args', 'The burn holder is a compressed public key.')
+      if (args.amount <= 0n || args.amount > HCT_MAX_AMOUNT) refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+      const deploy = await deployOf(active, assetId)
+      if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+      if (deploy.fields.mode !== 'open' || deploy.fields.kind !== 'token') refuse('unsupported-mode', 'Only open HCT tokens are burned.')
+      const rows = await heldRows(active, HCT_TOKEN_BASKET, assetId)
+      const chosen = pickRows(rows, args.amount)
+      if (!chosen) refuse('insufficient', `This wallet holds less than ${args.amount} of that asset in at most ${MAX_INPUTS} outputs.`)
+      const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
+      const root = rootOf(active)
+      const prefix = freshDerivationString()
+      const memo = Utils.toArray(args.memo, 'utf8')
+      if (memo.length === 0 || memo.length > 75) refuse('bad-asset-args', 'The burn memo is 1 to 75 bytes.')
+      const outputs: PlannedOutput[] = [
+        {
+          lockingScript: hctHeldLock({ assetId, amount: args.amount, clause: { mode: 'open', holder: args.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: 'HCT burned units',
+        },
+        { lockingScript: `006a${Utils.toHex([memo.length])}${Utils.toHex(memo)}`, satoshis: 0, outputDescription: 'HCT burn memo' },
+      ]
+      if (total > args.amount) {
+        const change = freshHolder(active, selfOf(active), prefix)
+        outputs.push({
+          lockingScript: hctHeldLock({ assetId, amount: total - args.amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: 'HCT change',
+          basket: HCT_TOKEN_BASKET,
+          tags: rowTags(assetId, deploy, 'held', total - args.amount),
+          customInstructions: rowInstructions(assetId, deploy.fields, 'held', total - args.amount, change.remittance),
+        })
+      }
+      chart.send({ type: 'BUILT' })
+      const label = `${args.amount} ${deploy.fields.sym ?? 'units'}`
+      const signed = await signHctAction(active, {
+        description: `Burn ${label} (HCT)`,
+        labels: [LABEL, 'hct-burn', ...(opts.labels ?? [])],
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'HCT units', key: hctHolderPrivateKey(root, row.remittance), scope: HCT_HOLDER_SCOPE })),
+        outputs,
+        check: (tx) => {
+          const check = checkHctTx(tx, deploy)
+          if (!check.ok) return `${check.reason}: ${check.detail}`
+          if (tx.outputs[0]?.lockingScript?.toHex() !== outputs[0]!.lockingScript) return 'the burn is not output 0'
+          return null
+        },
+      })
+      chart.send({ type: 'SIGNED', txid: signed.txid })
+      await commitSigned(signed, [assetId], true)
+      chart.send({ type: 'BROADCASTED' })
+      chart.send({ type: 'DELIVERED' })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-burn', note: `Burned ${label} (HCT)`, txid: signed.txid })
+      scheduleHistoryBackupPush('hct')
+      log('burn', startedAt)
+      return { assetId, txid: signed.txid, amount: args.amount.toString() }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
       throw err

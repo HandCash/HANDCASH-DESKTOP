@@ -345,6 +345,10 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Sending…',
     detail: 'Signing the transfer and delivering its proof',
   },
+  withdrawLtc: {
+    label: 'Withdrawing…',
+    detail: 'Signing the LTC payout, burning wLTC, then broadcasting',
+  },
 }
 
 /** Copy for a market method that keeps the wallet busy after approval. */

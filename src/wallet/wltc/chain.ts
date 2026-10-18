@@ -1,0 +1,94 @@
+import { fromHex } from './litecoin'
+
+/**
+ * What the bridge asks a Litecoin explorer. Nothing it answers is trusted:
+ * every deposit is re-checked against headers and proof of work in
+ * `verify.ts`, so a lying explorer can only hide a deposit or delay it.
+ */
+export type LtcChain = {
+  tipHeight(): Promise<number>
+  blockHashAt(height: number): Promise<string>
+  header(blockHash: string): Promise<Uint8Array>
+  txHex(txid: string): Promise<string>
+  txStatus(txid: string): Promise<{ confirmed: boolean; blockHeight?: number }>
+  merkleProof(txid: string): Promise<{ blockHeight: number; merkle: string[]; pos: number }>
+  addressUtxos(address: string): Promise<Array<{ txid: string; vout: number; value: number; confirmed: boolean }>>
+  broadcast(rawHex: string): Promise<string>
+  /** Litoshi per virtual byte for confirmation within about an hour. */
+  feeRate(): Promise<number>
+}
+
+export const LITECOINSPACE_API = 'https://litecoinspace.org/api'
+const TIMEOUT_MS = 15_000
+const HASH_RE = /^[0-9a-f]{64}$/
+
+async function call(base: string, path: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  try {
+    const res = await fetch(`${base}${path}`, { ...init, signal: controller.signal })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      throw new Error(`Litecoin explorer ${path.split('/').slice(0, 3).join('/')} ${res.status}${body ? `: ${body.slice(0, 160)}` : ''}`)
+    }
+    return res
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+const text = async (base: string, path: string) => (await (await call(base, path)).text()).trim()
+const json = async <T>(base: string, path: string) => (await (await call(base, path)).json()) as T
+
+function hash(value: string, what: string): string {
+  const v = value.trim().toLowerCase()
+  if (!HASH_RE.test(v)) throw new Error(`The Litecoin explorer returned a bad ${what}`)
+  return v
+}
+
+/** An Esplora-compatible Litecoin explorer (litecoinspace.org by default). */
+export function esploraLtcChain(base = LITECOINSPACE_API): LtcChain {
+  return {
+    async tipHeight() {
+      const height = Number(await text(base, '/blocks/tip/height'))
+      if (!Number.isSafeInteger(height) || height <= 0) throw new Error('The Litecoin explorer returned a bad tip height')
+      return height
+    },
+    async blockHashAt(height) {
+      return hash(await text(base, `/block-height/${height}`), 'block hash')
+    },
+    async header(blockHash) {
+      return fromHex(await text(base, `/block/${hash(blockHash, 'block hash')}/header`))
+    },
+    async txHex(txid) {
+      return text(base, `/tx/${hash(txid, 'txid')}/hex`)
+    },
+    async txStatus(txid) {
+      const s = await json<{ confirmed?: boolean; block_height?: number }>(base, `/tx/${hash(txid, 'txid')}/status`)
+      return { confirmed: s.confirmed === true, ...(typeof s.block_height === 'number' ? { blockHeight: s.block_height } : {}) }
+    },
+    async merkleProof(txid) {
+      const p = await json<{ block_height?: number; merkle?: string[]; pos?: number }>(base, `/tx/${hash(txid, 'txid')}/merkle-proof`)
+      if (typeof p.block_height !== 'number' || !Array.isArray(p.merkle) || typeof p.pos !== 'number') {
+        throw new Error('The Litecoin explorer returned a bad merkle proof')
+      }
+      return { blockHeight: p.block_height, merkle: p.merkle.map((m) => hash(m, 'merkle sibling')), pos: p.pos }
+    },
+    async addressUtxos(address) {
+      const rows = await json<Array<{ txid: string; vout: number; value: number; status?: { confirmed?: boolean } }>>(
+        base,
+        `/address/${encodeURIComponent(address)}/utxo`,
+      )
+      return rows.map((r) => ({ txid: hash(r.txid, 'txid'), vout: r.vout, value: r.value, confirmed: r.status?.confirmed === true }))
+    },
+    async broadcast(rawHex) {
+      const res = await call(base, '/tx', { method: 'POST', body: rawHex, headers: { 'content-type': 'text/plain' } })
+      return hash(await res.text(), 'broadcast txid')
+    },
+    async feeRate() {
+      const fees = await json<{ hourFee?: number; halfHourFee?: number }>(base, '/v1/fees/recommended').catch(() => ({}) as { hourFee?: number })
+      const rate = Number(fees.hourFee ?? 0)
+      return Number.isFinite(rate) && rate >= 1 ? Math.ceil(rate) : 1
+    },
+  }
+}

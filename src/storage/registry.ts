@@ -402,6 +402,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** wLTC bridge: credited Litecoin deposits, the wLTC asset id and withdrawals awaiting their LTC broadcast. */
+  wltc: defineStorage({
+    key: 'handcash.wltc.v1',
+    owner: 'tokens',
+    scope: 'wallet',
+    version: 1,
+  }),
   importItems: defineStorage({
     key: 'handcash.import-items',
     owner: 'legacy-import',

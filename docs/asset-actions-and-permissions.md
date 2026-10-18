@@ -54,12 +54,12 @@ Bridge-wide rules:
 
 ## 2. Permissions
 
-All grants are stored per account (`accountLocalKey`). Every HandCash catalog host folds to `handcash.io`, so one grant covers them all.
+All grants are stored per account (`accountLocalKey`). Grants, prompts and activity name the caller's own host; no host is ever shown or granted as another. View grants alone are shared across the market hosts under `handcash.io` (`viewGrantOriginAliases`), never with a domain HandCash does not own.
 
 | Grant | What it allows | Granted by | Ends |
 |---|---|---|---|
 | **Connect** | Connected methods; opens a 20 s fresh-connect window | Connect prompt (`allowOrigin`) | Disconnect |
-| **Item view** | `listOutputs` on `p 1sat all \| collection \| app \| creator \| id`; filtered to the granted collections, apps, creators or ids | View prompt (`requestItemViewApproval`); `id` lookups are silent and cover only that id; catalog hosts get `all` | Disconnect |
+| **Item view** | `listOutputs` on `p 1sat all \| collection \| app \| creator \| id`; filtered to the granted collections, apps, creators or ids | View prompt (`requestItemViewApproval`); `id` lookups are silent and cover only that id; handcash.io market hosts get `all` | Disconnect |
 | **Token view** | `listOutputs` on `p p2pft all \| token \| id`; a filtered grant stays an allowlist | View prompt (`requestTokenViewApproval`) | Disconnect |
 | **Countersigned token view** | `listOutputs` on `p csft all \| asset \| id` | View prompt (`requestCountersignedViewApproval`), one grant per profile; `id` lookups are silent | Disconnect |
 | **Countersigned item view** | `listOutputs` on `p csnft all \| asset \| collection \| id` | Same, its own grant | Disconnect |

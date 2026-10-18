@@ -32,8 +32,9 @@ export type ReservedKeyRefusal = 'account-protocol' | 'asset-protocol' | 'self-l
 
 /**
  * Keys only wallet code signs with: HCT holder, issuer and fee keys (BRC-255
- * moves only through the wallet), and countersign decision and release keys.
- * A signature under any of them spends or accepts an asset the app never had.
+ * moves only through the wallet), countersign decision and release keys, and
+ * the wLTC reserve key that holds deposited litecoin. A signature under any of
+ * them spends or accepts an asset the app never had.
  */
 const WALLET_ASSET_PROTOCOLS = new Set([
   'hct holder',
@@ -41,6 +42,7 @@ const WALLET_ASSET_PROTOCOLS = new Set([
   'hct fee',
   'countersign decision',
   'countersign release',
+  'wltc reserve',
 ])
 
 /**

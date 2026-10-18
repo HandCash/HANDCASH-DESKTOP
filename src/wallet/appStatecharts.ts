@@ -599,6 +599,7 @@ const HCT = `stateDiagram-v2
   idle --> building : ISSUE (issuer coin P2PK, ALL|FORKID)
   idle --> building : MINT (authority row; fixed supply refused, cap never passed)
   idle --> building : TRANSFER (p2pft / p2pnft rows, wallet-only)
+  idle --> building : BURN (wallet-internal: units to an unspendable holder + OP_RETURN memo)
   building --> signing : BUILT
   building --> failed : FAIL (abortAction, outputs stay put)
   signing --> signed : SIGNED txid
@@ -620,6 +621,31 @@ const HCT = `stateDiagram-v2
     the deploy, checks every claimed source
     against its parent, files p2pft / p2pnft,
     and ACKs only once filed or invalid.
+  end note
+`
+
+const WLTC = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> verifying : CREDIT (reserve UTXO not yet credited)
+  verifying --> minting : VERIFIED (merkle + linked scrypt headers)
+  verifying --> pending : PENDING (confirmations below 6 + 1 per LTC)
+  verifying --> refused : REFUSED tx-mismatch | wrong-script | merkle | header-hash | chain-link | pow | difficulty-floor
+  minting --> credited : MINTED (issue wLTC once, then mint; label wltc deposit outpoint)
+  idle --> building : WITHDRAW (credited reserve outputs, recorded amounts)
+  building --> burning : LTC_SIGNED (BIP143 P2WPKH, kept unsent)
+  burning --> broadcasting : BURNED (amount + fee to the wLTC burn key)
+  broadcasting --> withdrawn : BROADCASTED
+  broadcasting --> queued : BROADCAST_QUEUED (retried every pass)
+  idle --> broadcasting : RESUME_BROADCAST
+  verifying --> failed : FAIL
+  minting --> failed : FAIL
+  building --> failed : FAIL
+  burning --> failed : FAIL (payout dropped, reserve untouched)
+  note right of verifying
+    1-of-1 federation: this wallet holds the
+    LTC reserve key. The explorer only supplies
+    bytes; the wallet proves each deposit.
   end note
 `
 
@@ -1799,6 +1825,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'hctMachine — open BRC-255 tokens and items: wallet builds and signs, the §6 package rides box hct, receive walks to the deploy',
     source: HCT,
+  },
+  {
+    id: 'wltc',
+    label: 'wLTC',
+    caption:
+      'wltcMachine — LTC deposits proven by SPV mint wLTC (HCT); withdrawals sign LTC, burn wLTC, then broadcast',
+    source: WLTC,
   },
   {
     id: 'marketPurchase',

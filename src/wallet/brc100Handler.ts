@@ -642,6 +642,14 @@ export async function dispatchWalletMethod(
       )
     case 'listHctAssets':
       return (await import('./hct/wallet')).listHctAssets()
+    case 'getLtcDepositAddress':
+      return (await import('./wltc/bridge')).getLtcDepositAddress()
+    case 'listLtcDeposits':
+      return (await import('./wltc/bridge')).listLtcDeposits()
+    case 'withdrawLtc':
+      return (await import('./wltc/bridge')).withdrawLtc(
+        (args ?? {}) as Parameters<typeof import('./wltc/bridge').withdrawLtc>[0],
+      )
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -1131,12 +1139,7 @@ async function handleBrc100RequestInner(
   }
 
   if (method === 'createSignature') {
-    // The real requesting host, not `normalizeOrigin`. That collapses every
-    // HandCash catalog host onto `handcash.io` so one view grant covers the
-    // market, which is the opposite of what an identity proof needs: binding
-    // to the origin *is* the proof. Aliasing rejected honest proofs from
-    // catalog hosts and would have let a proof minted for one of them verify
-    // as another.
+    // Binding to the requesting host *is* the proof: no alias, ever.
     const proof = validateWalletIdentityProofRequest(
       args,
       normalizeAppHost(originator),
@@ -1484,13 +1487,15 @@ async function handleBrc100RequestInner(
         setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
       } catch (err) {
         const hct = await import('./hct/wallet')
-        if (!(err instanceof hct.HctRefusal)) throw err
+        const wltc = await import('./wltc/bridge')
+        const prefix = err instanceof hct.HctRefusal ? 'HCT' : err instanceof wltc.WltcRefusal ? 'WLTC' : null
+        if (!prefix) throw err
         return {
           status: 400,
           body: JSON.stringify({
             status: 'error',
-            code: `HCT_${err.reason.toUpperCase().replace(/-/g, '_')}`,
-            description: err.message,
+            code: `${prefix}_${(err as { reason: string }).reason.toUpperCase().replace(/-/g, '_')}`,
+            description: (err as Error).message,
           }),
         }
       } finally {

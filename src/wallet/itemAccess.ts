@@ -1066,17 +1066,16 @@ export function itemAccessOriginKey(origin: string | undefined): string {
   return normalizeAppHost(origin)
 }
 
+/** Only hosts under handcash.io: a grant never crosses to a domain HandCash does not own. */
 const HANDCASH_CATALOG_HOSTS = [
   'handcash.io',
   'www.handcash.io',
   'market.handcash.io',
   'preprod-market.handcash.io',
   'market-v2.handcash.io',
-  'brc-cloud.bcryderman.workers.dev',
-  'handcash-market-v2.pages.dev',
 ]
 
-/** Market catalog hosts share one view-grant row so Allow sticks across reloads. */
+/** handcash.io market hosts share one view-grant row so Allow sticks across reloads. */
 export function isHandCashCatalogOrigin(origin: string | undefined): boolean {
   const host = normalizeAppHost(origin)
   const bare = (host.split(':')[0] ?? host).toLowerCase().replace(/^www\./, '')

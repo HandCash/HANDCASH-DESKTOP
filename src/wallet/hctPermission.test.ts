@@ -16,4 +16,10 @@ describe('HCT permission summary', () => {
     expect(summary.title).toBe('Mint 25')
     expect(summary.tokenId).toBe('ab'.repeat(20))
   })
+
+  it('names the LTC amount and destination of a withdrawal', () => {
+    const summary = summarizeAction('withdrawLtc', { address: 'ltc1qexample', litoshi: '12500000' })
+    expect(summary.title).toBe('Withdraw 0.125 LTC')
+    expect(summary.details).toContain('To: ltc1qexample')
+  })
 })

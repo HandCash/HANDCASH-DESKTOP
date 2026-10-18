@@ -1,7 +1,7 @@
 import { Beef, LockingScript, P2PKH, PrivateKey, Random, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hctHolderPublicKey } from './keys'
-import { hctHeldLock } from './script'
+import { hctHeldLock, readHct } from './script'
 
 type Row = {
   outpoint: string
@@ -180,7 +180,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueHctAsset, mintHctAsset, transferHctAsset, listHctAssets, serveHctBox, HctRefusal } = await import('./wallet')
+const { issueHctAsset, mintHctAsset, transferHctAsset, burnHctUnits, listHctAssets, serveHctBox, HctRefusal } = await import('./wallet')
 const { readHctState, writeHctState } = await import('./state')
 
 const alice = makeInstall()
@@ -268,6 +268,22 @@ describe('open HCT wallet', () => {
     await as(dave, () => serveHctBox({ force: true }))
     expect(await balanceOf(dave, cap.assetId)).toBe('100')
     expect((await as(dave, () => listHctAssets())).assets.find((a) => a.assetId === cap.assetId)?.supply).toEqual({ policy: 'capped', max: '100' })
+  })
+
+  it('burns units to a holder nobody signs for and keeps the change and authority', async () => {
+    const erin = makeInstall()
+    const token = await as(erin, () => issueHctAsset({ kind: 'token', sym: 'BRN', supply: '50', auth: true }))
+    await as(erin, () => mintHctAsset({ assetId: token.assetId, amount: '25' }))
+    const burnHolder = PrivateKey.fromRandom().toPublicKey().toString()
+    const burned = await as(erin, () => burnHctUnits({ assetId: token.assetId, amount: 30n, holder: burnHolder, memo: 'wltc-redeem test' }))
+    const listed = (await as(erin, () => listHctAssets())).assets.find((a) => a.assetId === token.assetId)
+    expect(listed).toMatchObject({ balance: '45', authority: true })
+    const tx = erin.txs.get(burned.txid)!
+    const read = readHct(tx.outputs[0]!.lockingScript)
+    expect(read).toMatchObject({ form: 'held', amount: 30n, clause: { mode: 'open', holder: burnHolder } })
+    expect(tx.outputs[1]!.lockingScript.toHex()).toBe(`006a10${Utils.toHex(Utils.toArray('wltc-redeem test', 'utf8'))}`)
+    expect(erin.rows.some((r) => r.outpoint === `${burned.txid}.0`)).toBe(false)
+    await expect(as(erin, () => burnHctUnits({ assetId: token.assetId, amount: 46n, holder: burnHolder, memo: 'x' }))).rejects.toMatchObject({ reason: 'insufficient' })
   })
 
   it('refuses supply caps that cannot hold, before anything is staged', async () => {

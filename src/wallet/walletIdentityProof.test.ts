@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { normalizeAppHost } from './appIdentity'
+import { isHandCashCatalogOrigin, viewGrantOriginAliases } from './itemAccess'
 import { normalizeOrigin } from './permissions'
 import {
   serializeWalletIdentityChallenge,
@@ -105,17 +106,25 @@ describe('wallet identity proof validation', () => {
   })
 
   /**
-   * `normalizeOrigin` collapses every HandCash catalog host onto `handcash.io`
-   * so one view grant covers the market. Handing that alias to the proof
-   * validator rejected honest proofs from those hosts
-   * (`code=INVALID_IDENTITY_PROOF` from brc-cloud) and would have let a proof
-   * minted for one catalog host verify as another. Identity proofs bind to the
-   * requesting host — `normalizeAppHost`.
+   * Identity proofs bind to the requesting host. `normalizeOrigin` used to
+   * fold catalog hosts onto `handcash.io`, which rejected honest proofs and
+   * let one host pass as another; it now returns the host itself.
    */
-  it('binds a catalog host to itself, never to the shared view-grant alias', () => {
+  it('never renames a host and never shares a grant outside handcash.io', () => {
+    for (const host of ['brc-cloud.bcryderman.workers.dev', 'handcash-market-v2.pages.dev', 'market.handcash.io', 'evil-handcash.io']) {
+      expect(normalizeOrigin(`https://${host}`)).toBe(host)
+    }
+    expect(isHandCashCatalogOrigin('brc-cloud.bcryderman.workers.dev')).toBe(false)
+    expect(isHandCashCatalogOrigin('handcash-market-v2.pages.dev')).toBe(false)
+    expect(isHandCashCatalogOrigin('evil-handcash.io')).toBe(false)
+    expect(isHandCashCatalogOrigin('market.handcash.io')).toBe(true)
+    expect(viewGrantOriginAliases('brc-cloud.bcryderman.workers.dev')).toEqual(['brc-cloud.bcryderman.workers.dev'])
+  })
+
+  it('binds a cloud host to itself, never to handcash.io', () => {
     const CATALOG = 'brc-cloud.bcryderman.workers.dev'
     expect(normalizeAppHost(CATALOG)).toBe(CATALOG)
-    expect(normalizeOrigin(CATALOG)).toBe('handcash.io')
+    expect(normalizeOrigin(CATALOG)).toBe(CATALOG)
 
     const proof = {
       data: Array.from(
@@ -140,7 +149,7 @@ describe('wallet identity proof validation', () => {
       validateWalletIdentityProofRequest(proof, normalizeAppHost(CATALOG), NOW),
     ).toMatchObject({ kind: 'valid' })
     expect(
-      validateWalletIdentityProofRequest(proof, normalizeOrigin(CATALOG), NOW),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/keyID/i) })
+      validateWalletIdentityProofRequest(proof, 'handcash.io', NOW),
+    ).toMatchObject({ kind: 'invalid' })
   })
 })
