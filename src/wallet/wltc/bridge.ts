@@ -19,7 +19,7 @@ import {
   toHex,
   type LtcTx,
 } from './litecoin'
-import { confirmationsFor, fetchLtcBurial, readLtcDeposit, type DepositRefusal } from './verify'
+import { fetchLtcBurial, LTC_BURIAL_DEPTH, readLtcDeposit, type DepositRefusal } from './verify'
 
 /**
  * wLTC: Litecoin wrapped as an open, backed BRC-255 token, with this wallet as
@@ -232,7 +232,7 @@ export async function getLtcDepositAddress(): Promise<LtcDepositAddress> {
     asset: WLTC_SYM,
     assetId: await backedAssetId(active, state),
     decimals: WLTC_DECIMALS,
-    minConfirmations: confirmationsFor(1n),
+    minConfirmations: LTC_BURIAL_DEPTH,
   }
 }
 
@@ -385,7 +385,7 @@ async function creditPass(active: ActiveWallet, utxos: Awaited<ReturnType<LtcCha
         if (dropped.deposits[key]?.status === 'minting') delete dropped.deposits[key]
         writeState(dropped)
         chart.send({ type: 'AWAITING' })
-        statuses.push({ txid: utxo.txid, vout: utxo.vout, litoshi: sighting.litoshi.toString(), status: 'waiting', needed: confirmationsFor(sighting.litoshi) })
+        statuses.push({ txid: utxo.txid, vout: utxo.vout, litoshi: sighting.litoshi.toString(), status: 'waiting', needed: LTC_BURIAL_DEPTH })
         continue
       }
       chart.send({ type: 'MINTED', bsvTxid })
@@ -396,7 +396,7 @@ async function creditPass(active: ActiveWallet, utxos: Awaited<ReturnType<LtcCha
         kind: 'event',
         sats: 0,
         method: 'wltc-credit',
-        note: `Credited ${formatLtc(sighting.litoshi)} wLTC for LTC deposit ${utxo.txid.slice(0, 12)}… (moves after ${confirmationsFor(sighting.litoshi)} confirmations)`,
+        note: `Credited ${formatLtc(sighting.litoshi)} wLTC for LTC deposit ${utxo.txid.slice(0, 12)}… (moves after ${LTC_BURIAL_DEPTH} Litecoin confirmations)`,
         txid: bsvTxid,
       })
     } catch (err) {
@@ -414,11 +414,31 @@ async function creditPass(active: ActiveWallet, utxos: Awaited<ReturnType<LtcCha
 type ProofProgress = Map<string, { confirmations: number; needed: number }>
 
 /**
+ * A deposit proven before 1.3.604 holds a header-run proof that no wallet
+ * reads now (burials are anchored to each reader's own Litecoin chain).
+ * Its wLTC is locked again until the anchored proof is fetched.
+ */
+async function reopenUnreadableProofs(): Promise<void> {
+  const { getHctBacking } = await import('../hct/store')
+  const state = readState()
+  let changed = false
+  for (const [key, d] of Object.entries(state.deposits)) {
+    if (d.status !== 'credited' || d.proven !== true || !d.bsvTxid) continue
+    if (await getHctBacking(d.bsvTxid)) continue
+    d.proven = false
+    changed = true
+    console.info(`[wltc] proof of ${key} is in the old header-run form — fetching the anchored proof`)
+  }
+  if (changed) writeState(state)
+}
+
+/**
  * Unproven deposits: once deep enough, fetch and record the burial proof,
  * which frees their wLTC. One status call per deposit per pass until mined.
  */
 async function provePass(active: ActiveWallet): Promise<ProofProgress> {
   const progress: ProofProgress = new Map()
+  await reopenUnreadableProofs()
   const state = readState()
   const assetId = await backedAssetId(active, state)
   for (const [key, d] of Object.entries(state.deposits)) {
@@ -428,7 +448,7 @@ async function provePass(active: ActiveWallet): Promise<ProofProgress> {
     chart.send({ type: 'PROVE' })
     try {
       const startedAt = Date.now()
-      const fetched = await fetchLtcBurial(deps.chain, txid, BigInt(d.litoshi))
+      const fetched = await fetchLtcBurial(deps.chain, txid)
       const next = readState()
       const record = next.deposits[key]
       if (!record) continue
@@ -492,7 +512,7 @@ function report(
         ...base,
         status: 'credited',
         proven: d.proven !== false,
-        ...(d.proven === false ? { confirmations: step?.confirmations ?? 0, needed: step?.needed ?? confirmationsFor(BigInt(d.litoshi)) } : {}),
+        ...(d.proven === false ? { confirmations: step?.confirmations ?? 0, needed: step?.needed ?? LTC_BURIAL_DEPTH } : {}),
       }
     })
   const withdrawals: LtcWithdrawalStatus[] = Object.entries(state.withdrawals)

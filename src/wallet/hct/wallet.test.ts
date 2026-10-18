@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hctHolderPublicKey } from './keys'
 import { hctHeldLock, readHct } from './script'
 import ltcDeposit from '../wltc/fixtures/deposit.json'
+import { setLtcAnchorForTest } from '../wltc/headers'
 import { fromHex, parseLtcTx, toHex } from '../wltc/litecoin'
 
 type Row = {
@@ -216,6 +217,7 @@ const boxOf = (install: Install) => boxes.get(install.identityKey) ?? []
 describe('open HCT wallet', () => {
   beforeEach(() => {
     registered.length = 0
+    setLtcAnchorForTest({ check: async () => ({ kind: 'buried' }) })
   })
 
   it('issues a token into p2pft and an item into p2pnft, issuer coin first', async () => {
@@ -463,7 +465,7 @@ describe('open HCT wallet', () => {
   it('credits backed units at once, moves them only once their deposit is proven, and ships the proof', async () => {
     const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
     const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
-    const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, headers: ltcDeposit.headers.slice(0, 2) }
+    const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
     const frank = makeInstall()
     const gina = makeInstall()
     const token = await as(frank, () =>
@@ -475,7 +477,9 @@ describe('open HCT wallet', () => {
     await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '5' }, { backing: { deposit } }))).rejects.toMatchObject({ reason: 'awaiting-backing' })
     await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '5' }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
 
-    await expect(as(frank, () => proveHctBacking(token.assetId, token.txid, { ...proof, headers: proof.headers.slice(0, 1) }))).rejects.toThrow(/shallow/)
+    setLtcAnchorForTest({ check: async () => ({ kind: 'shallow', confirmations: 5 }) })
+    await expect(as(frank, () => proveHctBacking(token.assetId, token.txid, proof))).rejects.toThrow(/shallow/)
+    setLtcAnchorForTest({ check: async () => ({ kind: 'buried' }) })
     await as(frank, () => proveHctBacking(token.assetId, token.txid, proof))
     expect((await listed())?.locked).toBeUndefined()
 

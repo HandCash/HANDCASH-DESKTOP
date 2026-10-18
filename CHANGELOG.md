@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.604] - 2026-10-18
+
+### Changed
+
+- wLTC units move after 6 Litecoin confirmations, checked against the wallet's own Litecoin header chain. The wallet starts that chain from a shipped checkpoint and syncs it only when a check needs it. Each header must link to the one before, carry Litecoin's exact difficulty and meet its scrypt proof of work. The chain with the most work wins a reorg. Explorers (litecoinspace, then BRC-CLOUD's `/v1/ltc`) only supply bytes. Before this release, a proof carried its own headers and the confirmations required scaled with value, so a dishonest issuer could mine a short fake chain at low difficulty. A proof now names one block, and every receiver checks that block on its own chain.
+- Burial proofs are now `{tx, path, pos, height, header}`. Proofs in the old header-run form no longer check. The bridge locks its own deposits that only have one and proves them again in the new form.
+- Only block hashes are stored, about 18 KB per day of blocks, and a check whose block is already deep needs no network.
+
 ## [1.3.603] - 2026-10-18
 
 ### Fixed

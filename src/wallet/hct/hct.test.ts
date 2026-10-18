@@ -1,5 +1,5 @@
 import { LockingScript, OP, PrivateKey, Script, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { inputScriptValid, signInput } from '../countersign/script'
 import { hctHolderPrivateKey, hctHolderPublicKey, hctIssuerKeyOf, hctIssuerPrivateKey } from './keys'
 import { decodeHctPayload, encodeHctPayload, HCT_MIN_SILENCE_SECONDS, hctSupplyPolicy, type HctDeployFields } from './payload'
@@ -24,6 +24,7 @@ import {
 import { checkHctTx, readHctDeploy, walkHct, type HctDeploy } from './validity'
 import { hctBackingScript, readBackingOutputs, type HctBackingProof } from './backing'
 import ltcDeposit from '../wltc/fixtures/deposit.json'
+import { setLtcAnchorForTest, type LtcBurialAnchor } from '../wltc/headers'
 import { fromHex, parseLtcTx, toHex } from '../wltc/litecoin'
 
 const pub = (key: PrivateKey) => key.toPublicKey().toString()
@@ -527,7 +528,10 @@ describe('hct backed tokens', () => {
   const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
   const bk = { chain: 'ltc' as const, reserve }
   const backedFields: HctDeployFields = { ...tokenFields, sym: 'wLTC', dec: 8, auth: true, bk }
-  const proof: HctBackingProof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, headers: ltcDeposit.headers.slice(0, 2) }
+  const proof: HctBackingProof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
+  const anchorSays = (answer: LtcBurialAnchor) => setLtcAnchorForTest({ check: async () => answer })
+  anchorSays({ kind: 'buried' })
+  afterEach(() => anchorSays({ kind: 'buried' }))
   const backingLock = (assetId: string | null) => LockingScript.fromHex(hctBackingScript(deposit, assetId))
   const authority = (assetId: string, holder: PrivateKey) => hctAuthorityLock({ assetId, clause: openClause(holder) })
   const sources = (proofs: Record<string, HctBackingProof>) => ({ proven: () => false, proofOf: async (txid: string) => proofs[txid] ?? null })
@@ -582,8 +586,11 @@ describe('hct backed tokens', () => {
     const walked = await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))
     expect(walked).toMatchObject({ ok: true })
     expect(walked.ok && walked.backed.map((b) => b.txid).sort()).toEqual([m, d].sort())
-    const shallow = { ...proof, headers: proof.headers.slice(0, 1) }
-    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: shallow, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+    anchorSays({ kind: 'shallow', confirmations: 5 })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'missing' })
+    anchorSays({ kind: 'off-chain' })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+    anchorSays({ kind: 'buried' })
     const otherReserve = { ...deploy, fields: { ...deploy.fields, bk: { chain: 'ltc' as const, reserve: `0014${'11'.repeat(20)}` } } }
     expect(await walkHct(subject, otherReserve, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
   })
@@ -602,6 +609,8 @@ describe('hct backed tokens', () => {
     const { pkg } = buildHctPackage(m1, [], [dTx], undefined, new Map([[m, proof]]))
     const read = readHctPackage(JSON.parse(JSON.stringify(pkg)))
     expect(read?.backing.get(m)).toEqual(proof)
-    expect(readHctPackage({ ...pkg, bk: { [m]: { ...proof, headers: ['zz'] } } })).toBeNull()
+    expect(readHctPackage({ ...pkg, bk: { [m]: { ...proof, header: 'zz' } } })).toBeNull()
+    const { height: _height, header: _header, ...rest } = proof
+    expect(readHctPackage({ ...pkg, bk: { [m]: { ...rest, headers: [ltcDeposit.headers[0], ltcDeposit.headers[1]] } } })).toBeNull()
   })
 })

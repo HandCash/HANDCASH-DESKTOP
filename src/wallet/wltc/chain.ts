@@ -1,5 +1,5 @@
 import { PUBLIC_BRC_CLOUD_ORIGIN } from '../walletConfig'
-import { fromHex } from './litecoin'
+import { fromHex, parseLtcHeader } from './litecoin'
 
 /**
  * What the bridge asks a Litecoin explorer. Nothing it answers is trusted:
@@ -10,6 +10,8 @@ export type LtcChain = {
   tipHeight(): Promise<number>
   blockHashAt(height: number): Promise<string>
   header(blockHash: string): Promise<Uint8Array>
+  /** The headers of blocks `top` down to `top - 9`, each rebuilt and checked to hash to the block the explorer named. */
+  headerPage(top: number): Promise<Array<{ height: number; header: Uint8Array }>>
   txHex(txid: string): Promise<string>
   txStatus(txid: string): Promise<{ confirmed: boolean; blockHeight?: number }>
   merkleProof(txid: string): Promise<{ blockHeight: number; merkle: string[]; pos: number }>
@@ -49,6 +51,41 @@ function hash(value: string, what: string): string {
   return v
 }
 
+type EsploraBlock = {
+  id?: string
+  height?: number
+  version?: number
+  previousblockhash?: string
+  merkle_root?: string
+  timestamp?: number
+  bits?: number
+  nonce?: number
+}
+
+const u32le = (n: number) => {
+  const v = n >>> 0
+  return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]
+}
+
+/** The 80-byte header an Esplora block row describes field by field, refused unless it hashes to the row's id. */
+export function headerFromEsplora(row: EsploraBlock): Uint8Array {
+  const prev = row.previousblockhash ?? '0'.repeat(64)
+  const ints = [row.version, row.timestamp, row.bits, row.nonce, row.height]
+  if (!HASH_RE.test(String(row.id)) || !HASH_RE.test(prev) || !HASH_RE.test(String(row.merkle_root)) || !ints.every((n) => Number.isSafeInteger(n))) {
+    throw new Error('The Litecoin explorer returned a bad block row')
+  }
+  const raw = Uint8Array.from([
+    ...u32le(row.version!),
+    ...fromHex(prev).reverse(),
+    ...fromHex(row.merkle_root!).reverse(),
+    ...u32le(row.timestamp!),
+    ...u32le(row.bits!),
+    ...u32le(row.nonce!),
+  ])
+  if (parseLtcHeader(raw).hash !== row.id) throw new Error(`The Litecoin explorer's block ${row.height} does not hash to its id`)
+  return raw
+}
+
 /** An Esplora-compatible Litecoin explorer (litecoinspace.org by default). */
 export function esploraLtcChain(base = LITECOINSPACE_API): LtcChain {
   return {
@@ -62,6 +99,12 @@ export function esploraLtcChain(base = LITECOINSPACE_API): LtcChain {
     },
     async header(blockHash) {
       return fromHex(await text(base, `/block/${hash(blockHash, 'block hash')}/header`))
+    },
+    async headerPage(top) {
+      if (!Number.isSafeInteger(top) || top < 0) throw new Error('bad block height')
+      const rows = await json<EsploraBlock[]>(base, `/blocks/${top}`)
+      if (!Array.isArray(rows)) throw new Error('The Litecoin explorer returned a bad block page')
+      return rows.map((row) => ({ height: Number(row.height), header: headerFromEsplora(row) }))
     },
     async txHex(txid) {
       return text(base, `/tx/${hash(txid, 'txid')}/hex`)
@@ -118,6 +161,7 @@ export function failoverLtcChain(chains: readonly LtcChain[]): LtcChain {
     tipHeight: first('tipHeight'),
     blockHashAt: first('blockHashAt'),
     header: first('header'),
+    headerPage: first('headerPage'),
     txHex: first('txHex'),
     txStatus: first('txStatus'),
     merkleProof: first('merkleProof'),

@@ -1,4 +1,5 @@
 import type { LtcChain } from './chain'
+import { getLtcAnchor, type LtcAnchor } from './headers'
 import {
   fromHex,
   isCoinbase,
@@ -8,43 +9,22 @@ import {
   parseLtcHeader,
   parseLtcTx,
   sameBytes,
-  scryptPowHash,
   serializeLtcTxNoWitness,
-  targetFromBits,
   toHex,
   type Bytes,
-  type LtcHeader,
 } from './litecoin'
 
 /**
  * Litecoin facts behind wLTC. A deposit is credited when it is first seen
  * paying the reserve, as BSV credits an unproven payment. Its wLTC cannot move
- * until a burial proof exists (BRC-255 backed tokens): the deposit sits in a
- * block by merkle proof, under enough linked scrypt headers that forging them
- * costs more than the deposit is worth. Every receiver checks that proof
- * offline; the explorer only supplies bytes.
+ * until a burial proof exists (BRC-255 backed tokens): the deposit sits by
+ * merkle proof in a block that the checker's own header chain (`headers.ts`)
+ * holds at least {@link LTC_BURIAL_DEPTH} deep. The explorer only supplies
+ * bytes; every receiver checks the proof against its own chain.
  */
 
-/**
- * Easiest target any header may claim. Mainnet sits near 2^198; a forged
- * header must still carry about a fifth of a real block's work, and a
- * difficulty drop past this stalls proofs rather than trusting cheaper headers.
- */
-export const LTC_TARGET_FLOOR = 1n << 200n
-export const LTC_MIN_CONFIRMATIONS = 2
-/** About a day of Litecoin blocks: the most headers one proof may carry. */
-export const LTC_MAX_CONFIRMATIONS = 576
-const LITOSHI_PER_LTC = 100_000_000n
-
-/**
- * Headers a deposit must be buried under before its wLTC moves: two, or one
- * per whole LTC if that is more, so a forged chain (each header at least a
- * fifth of a block's work, a block paying 6.25 LTC) costs more than the deposit.
- */
-export function confirmationsFor(litoshi: bigint): number {
-  const perLtc = Number((litoshi + LITOSHI_PER_LTC - 1n) / LITOSHI_PER_LTC)
-  return Math.min(LTC_MAX_CONFIRMATIONS, Math.max(LTC_MIN_CONFIRMATIONS, perLtc))
-}
+/** Blocks a deposit must be buried under, its own included, before its wLTC moves. */
+export const LTC_BURIAL_DEPTH = 6
 
 export type DepositRefusal =
   | 'tx-mismatch'
@@ -53,33 +33,20 @@ export type DepositRefusal =
   | 'wrong-script'
   | 'coinbase'
   | 'under-backed'
-  | 'shallow'
   | 'merkle'
   | 'header-hash'
-  | 'chain-link'
-  | 'pow'
-  | 'difficulty-floor'
+  | 'shallow'
+  | 'off-chain'
+  | 'unanchored'
 
-/** A deposit's burial: the raw transaction, its merkle path (display-hex siblings), and the headers from its block up, oldest first. */
-export type LtcBurialProof = { tx: string; path: string[]; pos: number; headers: string[] }
-
-export type BurialCheck = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string }
+/** A deposit's burial: the raw transaction, its merkle path (display-hex siblings), its block's height and 80-byte header. */
+export type LtcBurialProof = { tx: string; path: string[]; pos: number; height: number; header: string }
 
 /**
- * Check `headers` (consecutive, oldest first) carry real work: each links to
- * the one before, meets its own bits, and claims no easier target than `floor`.
+ * `missing`: the proof may still check later (the block is not deep yet on
+ * this chain, or the chain could not be read). Otherwise it never will.
  */
-export function checkHeaderRun(headers: readonly LtcHeader[], floor = LTC_TARGET_FLOOR): { ok: true } | { ok: false; reason: DepositRefusal; detail: string } {
-  for (let i = 0; i < headers.length; i++) {
-    const h = headers[i]!
-    if (i > 0 && h.prevHash !== headers[i - 1]!.hash) return { ok: false, reason: 'chain-link', detail: `header ${i} does not build on header ${i - 1}` }
-    const target = targetFromBits(h.bits)
-    if (target === null) return { ok: false, reason: 'pow', detail: `header ${h.hash} has invalid bits` }
-    if (target > floor) return { ok: false, reason: 'difficulty-floor', detail: `header ${h.hash} claims a target easier than the floor` }
-    if (scryptPowHash(h.raw) > target) return { ok: false, reason: 'pow', detail: `header ${h.hash} does not meet its target` }
-  }
-  return { ok: true }
-}
+export type BurialCheck = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string; missing: boolean }
 
 type DepositOutput = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string }
 
@@ -102,43 +69,50 @@ function depositOutput(raw: Bytes, outpoint: { txid: string; vout: number }, res
   return { ok: true, litoshi: output.value }
 }
 
+const refused = (reason: DepositRefusal, detail: string, missing = false): BurialCheck => ({ ok: false, reason, detail, missing })
+
 /**
- * Offline check of a burial proof: the deposit pays the reserve at least
- * `minted` litoshi, the merkle path reaches the first header's root, and the
- * headers carry the depth `confirmationsFor` asks of its value.
+ * Check a burial proof: the deposit pays the reserve at least `minted`
+ * litoshi, the merkle path reaches the root of the proof's header, and
+ * `anchor` holds that header at its height, {@link LTC_BURIAL_DEPTH} deep.
  */
-export function checkLtcBurial(
+export async function checkLtcBurial(
   proof: LtcBurialProof,
   outpoint: { txid: string; vout: number },
   reserveScript: Bytes,
   minted: bigint,
-  floor = LTC_TARGET_FLOOR,
-): BurialCheck {
+  anchor: LtcAnchor = getLtcAnchor(),
+): Promise<BurialCheck> {
   let raw: Bytes
   try {
     raw = fromHex(proof.tx)
   } catch {
-    return { ok: false, reason: 'malformed', detail: 'the deposit is not hex' }
+    return refused('malformed', 'the deposit is not hex')
   }
   const output = depositOutput(raw, outpoint, reserveScript)
-  if (!output.ok) return output
-  if (output.litoshi < minted) return { ok: false, reason: 'under-backed', detail: `the deposit holds ${output.litoshi} litoshi, under the ${minted} minted` }
-  const needed = confirmationsFor(output.litoshi)
-  if (proof.headers.length < needed) return { ok: false, reason: 'shallow', detail: `the proof carries ${proof.headers.length} headers; ${needed} are needed` }
-  if (proof.headers.length > LTC_MAX_CONFIRMATIONS) return { ok: false, reason: 'malformed', detail: `a proof carries at most ${LTC_MAX_CONFIRMATIONS} headers` }
+  if (!output.ok) return refused(output.reason, output.detail)
+  if (output.litoshi < minted) return refused('under-backed', `the deposit holds ${output.litoshi} litoshi, under the ${minted} minted`)
+  let header
   let root: Bytes
-  const headers: LtcHeader[] = []
   try {
+    header = parseLtcHeader(fromHex(proof.header))
     root = merkleRootFromProof(outpoint.txid, proof.path, proof.pos)
-    for (const hex of proof.headers) headers.push(parseLtcHeader(fromHex(hex)))
   } catch (err) {
-    if (err instanceof LtcFormatError) return { ok: false, reason: 'merkle', detail: err.message }
-    return { ok: false, reason: 'malformed', detail: err instanceof Error ? err.message : String(err) }
+    if (err instanceof LtcFormatError) return refused('merkle', err.message)
+    return refused('malformed', err instanceof Error ? err.message : String(err))
   }
-  if (!sameBytes(headers[0]!.merkleRoot, root)) return { ok: false, reason: 'merkle', detail: "the path does not reach the block's merkle root" }
-  const run = checkHeaderRun(headers, floor)
-  if (!run.ok) return run
-  return { ok: true, litoshi: output.litoshi }
+  if (!sameBytes(header.merkleRoot, root)) return refused('merkle', "the path does not reach the block's merkle root")
+  const anchored = await anchor.check(proof.height, header.hash, LTC_BURIAL_DEPTH)
+  switch (anchored.kind) {
+    case 'buried':
+      return { ok: true, litoshi: output.litoshi }
+    case 'shallow':
+      return refused('shallow', `the deposit has ${anchored.confirmations} of ${LTC_BURIAL_DEPTH} confirmations on this wallet's Litecoin chain`, true)
+    case 'off-chain':
+      return refused('off-chain', `block ${proof.height} on this wallet's Litecoin chain is not the proof's block`)
+    case 'unavailable':
+      return refused('unanchored', `this wallet's Litecoin chain could not be read: ${anchored.detail}`, true)
+  }
 }
 
 export type DepositSighting =
@@ -169,12 +143,13 @@ export type BurialFetch =
   | { kind: 'gone' }
 
 /**
- * Gather the burial proof of a deposit once it is deep enough. The caller
- * checks it with `checkLtcBurial`; nothing here is trusted. `gone` means the
- * explorer no longer knows the transaction (replaced or reorganized away).
+ * Gather the burial proof of a deposit once the explorer reports it deep
+ * enough. The caller checks it with `checkLtcBurial`; nothing here is
+ * trusted. `gone` means the explorer no longer knows the transaction
+ * (replaced or reorganized away).
  */
-export async function fetchLtcBurial(chain: LtcChain, txid: string, litoshi: bigint): Promise<BurialFetch> {
-  const needed = confirmationsFor(litoshi)
+export async function fetchLtcBurial(chain: LtcChain, txid: string): Promise<BurialFetch> {
+  const needed = LTC_BURIAL_DEPTH
   const status = await chain.txStatus(txid).catch((err: unknown) => {
     if (err instanceof Error && /\b404\b|not found/i.test(err.message)) return null
     throw err
@@ -185,12 +160,11 @@ export async function fetchLtcBurial(chain: LtcChain, txid: string, litoshi: big
   const tip = await chain.tipHeight()
   const confirmations = tip - merkle.blockHeight + 1
   if (confirmations < needed) return { kind: 'pending', confirmations: Math.max(0, confirmations), needed }
-  const headers: string[] = []
-  for (let i = 0; i < needed; i++) {
-    const hash = await chain.blockHashAt(merkle.blockHeight + i)
-    const raw = await chain.header(hash)
-    if (parseLtcHeader(raw).hash !== hash) throw new Error(`the header at ${merkle.blockHeight + i} does not hash to its block`)
-    headers.push(toHex(raw))
+  const hash = await chain.blockHashAt(merkle.blockHeight)
+  const raw = await chain.header(hash)
+  if (parseLtcHeader(raw).hash !== hash) throw new Error(`the header at ${merkle.blockHeight} does not hash to its block`)
+  return {
+    kind: 'buried',
+    proof: { tx: (await chain.txHex(txid)).toLowerCase(), path: merkle.merkle, pos: merkle.pos, height: merkle.blockHeight, header: toHex(raw) },
   }
-  return { kind: 'buried', proof: { tx: (await chain.txHex(txid)).toLowerCase(), path: merkle.merkle, pos: merkle.pos, headers } }
 }

@@ -378,7 +378,8 @@ export async function walkHct(
       if (need.kind === 'needed') {
         const proof = await backing.proofOf(txid)
         if (!proof) return { ok: false, reason: 'missing', txid, detail: `the burial proof of the deposit behind ${txid} is not available` }
-        const check = checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
+        const check = await checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
+        if (!check.ok && check.missing) return { ok: false, reason: 'missing', txid, detail: `the burial proof of the deposit behind ${txid} does not check yet (${check.detail})` }
         if (!check.ok) return { ok: false, reason: 'invalid', txid: claims[0]!.child, detail: `it moves units of ${txid} without a valid burial proof (${check.detail})` }
         backed.push({ txid, proof })
         buried.add(txid)

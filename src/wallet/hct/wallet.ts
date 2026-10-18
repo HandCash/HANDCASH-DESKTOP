@@ -483,7 +483,7 @@ export async function proveHctBacking(assetId: string, txid: string, proof: HctB
   if (!tx) throw new Error(`Transaction ${txid} is not available`)
   const need = hctBackingNeed(tx, txid.toLowerCase(), deploy, tx.outputs.map((_, vout) => vout))
   if (need.kind !== 'needed') throw new Error(need.kind === 'invalid' ? need.detail : `${txid} is not a backed mint of ${assetId}`)
-  const check = checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
+  const check = await checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
   if (!check.ok) throw new Error(`The burial proof does not check: ${check.detail}`)
   await putHctBacking(txid, proof)
 }

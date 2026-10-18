@@ -402,6 +402,14 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** IndexedDB: the wallet's Litecoin header chain from the shipped checkpoint (hashes only), for BRC-255 burial checks. Chain facts. */
+  ltcHeaders: defineStorage({
+    key: 'handcash-ltc-headers',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
   /** wLTC bridge: credited Litecoin deposits, the wLTC asset id and withdrawals awaiting their LTC broadcast. */
   wltc: defineStorage({
     key: 'handcash.wltc.v1',

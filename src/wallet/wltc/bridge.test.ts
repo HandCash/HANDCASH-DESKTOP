@@ -21,7 +21,9 @@ const broadcasts: string[] = []
 let broadcastFails = false
 
 const ASSET = 'ab'.repeat(20)
-const PROOF = { tx: '00', path: [], pos: 0, headers: ['00'.repeat(80)] }
+const PROOF = { tx: '00', path: [], pos: 0, height: 1, header: '00'.repeat(80) }
+/** Mints whose burial proof the HCT store holds. */
+const proved = new Set<string>()
 
 vi.mock('../walletRuntime', () => ({
   getWalletRuntime: () => ({
@@ -45,7 +47,10 @@ vi.mock('../appActivity', () => ({ recordAppActivity: () => {}, WALLET_ACTIVITY_
 vi.mock('./verify', async (load) => ({
   ...(await load<typeof import('./verify')>()),
   readLtcDeposit: async (_chain: unknown, o: { txid: string; vout: number }) => sightings.get(`${o.txid}:${o.vout}`)!,
-  fetchLtcBurial: async (_chain: unknown, txid: string) => burials.get(txid) ?? { kind: 'pending', confirmations: 0, needed: 2 },
+  fetchLtcBurial: async (_chain: unknown, txid: string) => burials.get(txid) ?? { kind: 'pending', confirmations: 0, needed: 6 },
+}))
+vi.mock('../hct/store', () => ({
+  getHctBacking: async (txid: string) => (proved.has(txid) ? PROOF : null),
 }))
 vi.mock('../hct/wallet', () => {
   class HctRefusal extends Error {
@@ -91,6 +96,7 @@ vi.mock('../hct/wallet', () => {
     proveHctBacking: async (assetId: string, txid: string) => {
       hctCalls.push({ op: 'prove', args: { assetId, txid }, labels: [] })
       lockedBy.delete(txid)
+      proved.add(txid)
     },
     burnHctUnits: async (args: { amount: bigint }, opts: { labels: string[] }) => {
       if (burnFails) throw new Error('burn refused')
@@ -104,6 +110,7 @@ const chain: LtcChain = {
   tipHeight: async () => 100,
   blockHashAt: async () => '00'.repeat(32),
   header: async () => new Uint8Array(80),
+  headerPage: async () => [],
   txHex: async () => '',
   txStatus: async (txid) => {
     if (broadcasts.some((hex) => ltcTxid(parseLtcTx(fromHex(hex))) === txid)) return { confirmed: false }
@@ -144,6 +151,7 @@ beforeEach(() => {
   hctCalls.length = 0
   broadcasts.length = 0
   lockedBy.clear()
+  proved.clear()
   balance = 0n
   assetKnown = false
   burnFails = false
@@ -158,7 +166,7 @@ describe('wLTC bridge', () => {
   it('derives a reserve address apps cannot sign for', async () => {
     const addr = await bridge.getLtcDepositAddress()
     expect(addr.address).toMatch(/^ltc1q[02-9ac-hj-np-z]{38}$/)
-    expect(addr).toMatchObject({ network: 'litecoin', asset: 'wLTC', decimals: 8, minConfirmations: 2, assetId: null })
+    expect(addr).toMatchObject({ network: 'litecoin', asset: 'wLTC', decimals: 8, minConfirmations: 6, assetId: null })
     expect(reservedKeyRefusal('createSignature', { protocolID: [2, 'wLTC  Reserve'], keyID: '1' }, identityKey)).toBe('asset-protocol')
   })
 
@@ -171,7 +179,7 @@ describe('wLTC bridge', () => {
     const { scriptHex } = { scriptHex: toHex(ltcOutputScript(result.address)) }
     expect(hctCalls[0]!.backing).toEqual({ deposit: { txid: tx(1), vout: 0 }, bk: { chain: 'ltc', reserve: scriptHex } })
     expect(result).toMatchObject({ assetId: ASSET, balance: '50000000', locked: '50000000' })
-    expect(result.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: false, needed: 2 })])
+    expect(result.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: false, needed: 6 })])
     burials.set(tx(1), { kind: 'buried', proof: PROOF })
     const after = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove'])
@@ -179,12 +187,28 @@ describe('wLTC bridge', () => {
     expect(after.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: true })])
   })
 
+  it('locks a deposit proven in the old header-run form again until its anchored proof is fetched', async () => {
+    deposit(1, 50_000_000n)
+    await settle()
+    expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove'])
+    const minted = hctCalls[0]!.labels[0]!
+    proved.clear()
+    burials.delete(tx(1))
+    const reopened = await bridge.listLtcDeposits()
+    expect(reopened.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: false, needed: 6 })])
+    burials.set(tx(1), { kind: 'buried', proof: PROOF })
+    const after = await bridge.listLtcDeposits()
+    expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove', 'prove'])
+    expect(after.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: true })])
+    expect(minted).toBe(`wltc deposit ${tx(1)}.0`)
+  })
+
   it('holds later deposits while the first is unproven, then mints each once with its backing', async () => {
     deposit(1, 50_000_000n, false)
     deposit(2, 1_000n, false)
     const first = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue'])
-    expect(first.deposits).toEqual(expect.arrayContaining([expect.objectContaining({ txid: tx(2), status: 'waiting', needed: 2 })]))
+    expect(first.deposits).toEqual(expect.arrayContaining([expect.objectContaining({ txid: tx(2), status: 'waiting', needed: 6 })]))
     burials.set(tx(1), { kind: 'buried', proof: PROOF })
     await bridge.listLtcDeposits()
     await bridge.listLtcDeposits()

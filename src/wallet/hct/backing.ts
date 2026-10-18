@@ -20,8 +20,8 @@ export type HctBackingProof = LtcBurialProof
 const PREFIX = '006a0468637462'
 const TXID = /^[0-9a-f]{64}$/
 const HEX = /^(?:[0-9a-f]{2})*$/
-/** Most headers plus a deposit transaction a proof may carry, as hex characters. */
-const MAX_PROOF_HEX = 600 * 160 + 200_000
+/** Largest deposit transaction a proof may carry, as hex characters. */
+const MAX_TX_HEX = 200_000
 
 export function hctBackingScript(deposit: BackingOutpoint, assetId: string | null): string {
   const txid = Utils.toHex(Utils.toArray(deposit.txid, 'hex').reverse())
@@ -63,26 +63,26 @@ export function backingCount(tx: Transaction, txid: string, assetId: string, dep
   return readBackingOutputs(tx).filter((b) => b.assetId === assetId || (b.assetId === null && txid === deployTxid)).length
 }
 
-/** Strict read of a proof from a package or a store; null when malformed. */
+/** Strict read of a proof from a package or a store; null when malformed, or in the header-run form before 1.3.604. */
 export function readBackingProof(value: unknown): HctBackingProof | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const v = value as Record<string, unknown>
-  if (typeof v.tx !== 'string' || !HEX.test(v.tx) || v.tx.length === 0) return null
+  if (typeof v.tx !== 'string' || !HEX.test(v.tx) || v.tx.length === 0 || v.tx.length > MAX_TX_HEX) return null
   if (!Number.isSafeInteger(v.pos) || (v.pos as number) < 0) return null
-  if (!Array.isArray(v.path) || v.path.length > 64 || !v.path.every((p) => typeof p === 'string' && TXID.test(p))) return null
-  if (!Array.isArray(v.headers) || v.headers.length === 0 || !v.headers.every((h) => typeof h === 'string' && /^[0-9a-f]{160}$/.test(h))) return null
-  const size = v.tx.length + (v.headers as string[]).length * 160
-  if (size > MAX_PROOF_HEX) return null
-  return { tx: v.tx, path: v.path as string[], pos: v.pos as number, headers: v.headers as string[] }
+  if (!Number.isSafeInteger(v.height) || (v.height as number) <= 0) return null
+  if (!Array.isArray(v.path) || v.path.length > 32 || !v.path.every((p) => typeof p === 'string' && TXID.test(p))) return null
+  if (typeof v.header !== 'string' || !/^[0-9a-f]{160}$/.test(v.header)) return null
+  return { tx: v.tx, path: v.path as string[], pos: v.pos as number, height: v.height as number, header: v.header }
 }
 
-export type BackingCheck = { ok: true } | { ok: false; detail: string }
+/** `missing`: the proof may check later (not deep yet on this wallet's chain, or the chain was unreachable). */
+export type BackingCheck = { ok: true } | { ok: false; detail: string; missing: boolean }
 
-/** Offline check that `proof` buries `deposit`, paying the reserve at least `minted` units. */
-export function checkBackingProof(bk: HctBacking, proof: HctBackingProof, deposit: BackingOutpoint, minted: bigint): BackingCheck {
+/** Check that `proof` buries `deposit` on this wallet's own chain of the backing, paying the reserve at least `minted` units. */
+export async function checkBackingProof(bk: HctBacking, proof: HctBackingProof, deposit: BackingOutpoint, minted: bigint): Promise<BackingCheck> {
   if (bk.chain === 'ltc') {
-    const check = checkLtcBurial(proof, deposit, Uint8Array.from(Utils.toArray(bk.reserve, 'hex')), minted)
-    return check.ok ? { ok: true } : { ok: false, detail: `${check.reason}: ${check.detail}` }
+    const check = await checkLtcBurial(proof, deposit, Uint8Array.from(Utils.toArray(bk.reserve, 'hex')), minted)
+    return check.ok ? { ok: true } : { ok: false, detail: `${check.reason}: ${check.detail}`, missing: check.missing }
   }
-  return { ok: false, detail: `no reader for chain ${String(bk.chain)}` }
+  return { ok: false, detail: `no reader for chain ${String(bk.chain)}`, missing: false }
 }

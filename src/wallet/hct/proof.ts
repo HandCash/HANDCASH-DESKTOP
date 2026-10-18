@@ -77,7 +77,7 @@ export function buildHctPackage(
   let complete = true
   const seen = new Set<string>([pkg.subject])
   for (const [txid, proof] of backing) {
-    const cost = 80 + proof.tx.length + proof.headers.length * 163 + proof.path.length * 67
+    const cost = 120 + proof.tx.length + proof.header.length + proof.path.length * 67
     if (size + cost > budget) {
       complete = false
       continue
