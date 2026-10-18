@@ -10,7 +10,11 @@ All new tokens and issuer items use one HandCash format. It is not built on BRC-
 - **Countersigned mode.** The issuer accepts every transfer, and custodians can release the asset when the issuer is gone. It replaces `csft` and `csnft`.
 - **Items.** An item is a supply-1 deploy in either mode. One transaction can deploy up to 256 of them.
 
-1Sat ordinals (`1sat`, BRC-147/150/165) are unchanged. BRC-162 tokens already held are converted by their issuer (BRC-255 §13). Until then they show read-only.
+New HandCash items are HCT items too. 1Sat ordinals (`1sat`, BRC-147/150/165) stay fully supported as an outside format: receive, hold, send, market (`ordinal-v2`) and BRC-150 provenance, so items keep moving to and from 1Sat wallets and markets. HandCash minting stops creating them.
+
+An item is never both formats at once. Keeping a 1Sat view in step would tie every HCT item transfer to ordinal satoshi positions, which brings back market pads and lost-satoshi risk.
+
+BRC-162 tokens already held are converted by their issuer (BRC-255 §13). Until then they show read-only.
 
 BRC-251 and BRC-252 ([#320](https://github.com/bsv-blockchain/BRCs/pull/320), [#321](https://github.com/bsv-blockchain/BRCs/pull/321)) stay as drafts. BRC-253 is rewritten as BRC-255's acceptance protocol, and BRC-254's `token-v2` layout moves to HCT outputs.
 
@@ -64,7 +68,8 @@ Every send goes through `signedSendLifecycle`, as today. Each wallet-layer path 
 3. **Open mode end to end.** Deploy, send, receive, checkpoint request, `p hct` access and inventory.
 4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections.
 5. **Market.** BRC-254 on HCT outputs; BRC-CLOUD index and storefront read `hct` and `hcti`.
-6. **Convert.** Issuers convert BRC-162 holdings. `p2pft`, `csft` and `csnft` become read-only, then are removed along with the BRC-162 code, after a release in which no device reports a holding.
+6. **Items.** `hcti` inventory and detail. Mint-studio and issuers mint HCT items. The market sells `hcti` on the token layout, with no pads. `1sat` stays as the outside-format path.
+7. **Convert.** Issuers convert BRC-162 holdings. `p2pft`, `csft` and `csnft` become read-only, then are removed along with the BRC-162 code, after a release in which no device reports a holding.
 
 ## Open decisions
 
