@@ -9,6 +9,7 @@ vi.mock('./yieldToUi', () => ({
 }))
 
 import { ledgerActivityRows, ledgerActivityRowsSliced } from './activityLedger'
+import { p2pkhSweepDescription } from './p2pkhSweepDescription'
 
 const tx = (n: number) => n.toString(16).padStart(64, '0')
 const baskets = [
@@ -32,6 +33,20 @@ describe('ledgerActivityRows', () => {
       expect.objectContaining({ id: `ledger:${tx(1)}`, kind: 'spent', sats: 1_500, method: 'send', note: 'Pay coffee', at: at.getTime(), txid: tx(1) }),
       expect.objectContaining({ id: `ledger:${tx(2)}`, kind: 'earned', sats: 55_000, method: 'receive', note: 'Deposit' }),
     ])
+  })
+
+  it('draws no coin row for a sweep of coins already received at an address', () => {
+    const at = new Date('2026-10-18T10:50:00Z')
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: tx(1), satoshis: 4_100, isOutgoing: true, description: p2pkhSweepDescription(1, tx(9)), created_at: at },
+        { transactionId: 2, txid: tx(2), satoshis: -9_000, isOutgoing: true, description: p2pkhSweepDescription(3, tx(9)), created_at: at },
+        { transactionId: 3, txid: tx(3), satoshis: -1_500, isOutgoing: true, description: 'Import notes', created_at: at },
+      ],
+      [],
+      baskets,
+    )
+    expect(rows.map((r) => r.id)).toEqual([`ledger:${tx(3)}`])
   })
 
   it('never invents a time or an amount', () => {

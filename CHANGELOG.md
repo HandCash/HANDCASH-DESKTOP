@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.593] - 2026-10-18
+
+### Fixed
+
+- Activity no longer shows a phantom "Sent coins" row after coins arrive at the legacy address. The wallet sweeps those coins into its own change, and the ledger drew that sweep as an outgoing payment beside the real "Received coins" row. A sweep pays nobody, so it gets no coin row; the deposit (or the sale it settles) keeps its own.
+- Cancelling a market listing no longer fails with "The outpoint parameter must be a 32-byte txid and canonical numeric output index joined with '.'". The cancel passed `txid_vout` outpoints to `createAction`, which now accepts only `txid.vout`.
+
 ## [1.3.592] - 2026-10-18
 
 ### Fixed

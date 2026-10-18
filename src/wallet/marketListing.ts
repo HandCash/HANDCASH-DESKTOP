@@ -3546,12 +3546,12 @@ async function createCancelMarketListingAdvertExclusive(args: {
       inputBEEF: listingBeef.toBinary(),
       inputs: [
         {
-          outpoint: normalizeOutpoint(listing.outpoint),
+          outpoint: normalizeOutpoint(listing.outpoint).replace('_', '.'),
           inputDescription: 'Listed market item returning',
           unlockingScriptLength: 108,
         },
         {
-          outpoint: normalizeOutpoint(listing.offerOutpoint),
+          outpoint: normalizeOutpoint(listing.offerOutpoint).replace('_', '.'),
           inputDescription: 'Cancelled market offer',
           unlockingScriptLength: 73,
         },

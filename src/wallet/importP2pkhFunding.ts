@@ -9,6 +9,7 @@ import { Beef, PrivateKey, type BEEF, type WalletInterface } from '@bsv/sdk'
 import { SetupClient } from '@handcash/wallet-engine'
 
 import { withVisibleOnChainBeef } from './legacyBeef'
+import { p2pkhSweepDescription } from './p2pkhSweepDescription'
 import type { ActiveWallet } from './session'
 
 export type P2pkhSweepResult = {
@@ -131,10 +132,7 @@ async function sweepCoins(
       inputDescription: 'fund wallet from P2PKH',
     })),
     labels: ['p2pkh-funding'],
-    description:
-      coins.length === 1
-        ? `Import P2PKH UTXO ${first.txid.slice(0, 16)}...`
-        : `Import ${coins.length} P2PKH UTXOs`,
+    description: p2pkhSweepDescription(coins.length, first.txid),
     options: { trustSelf: 'known', signAndProcess: false },
   })
 

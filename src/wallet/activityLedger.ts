@@ -16,6 +16,7 @@ import { withStorageLockLabel } from './storageLockTrace'
 import { foregroundSpendWaiting } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 import { isTokenFilingBasket } from './token/filing'
+import { isP2pkhSweepDescription } from './p2pkhSweepDescription'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 const WALLET_ORIGIN: typeof WALLET_ACTIVITY_ORIGIN = 'handcash'
@@ -242,6 +243,7 @@ function* ledgerRowSteps(
       }
       continue
     }
+    if (isP2pkhSweepDescription(description)) continue
     const kind = outgoing ? 'spent' : 'earned'
     const sats = Math.abs(net)
     if (sats === 0) continue
