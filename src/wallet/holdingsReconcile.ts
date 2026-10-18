@@ -22,6 +22,7 @@
  * re-claimed, and a seal alone never closes an entry.
  * Mutations run only while every wallet region is idle.
  */
+import { relinquishTokenFiling } from './token/filingStore'
 import { Transaction } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
@@ -489,11 +490,10 @@ async function reconcileDue(): Promise<void> {
         }
         markItemsConsumed([current.outpoint])
         // A row left spendable is a dead coin the next send can choose.
-        await active.wallet
-          .relinquishOutput({
-            basket: current.asset === 'item' ? '1sat' : 'bsv21',
-            output: current.outpoint,
-          })
+        await (current.asset === 'item'
+          ? active.wallet.relinquishOutput({ basket: '1sat', output: current.outpoint })
+          : relinquishTokenFiling(active.wallet, current.outpoint)
+        )
           .catch((err: unknown) =>
             console.warn(
               `[holdings] ${describe(current)} relinquish failed — ${err instanceof Error ? err.message : String(err)}`,

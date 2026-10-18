@@ -20,7 +20,7 @@ const holdingsMachine = hctHoldingsMachine.provide({
   actors: { load: fromPromise(async () => (await listHctAssets()).assets) },
 })
 
-type Holdings = {
+export type Holdings = {
   snapshot: SnapshotFrom<typeof hctHoldingsMachine>
   send: ReturnType<typeof useMachine<typeof holdingsMachine>>[1]
 }
@@ -43,57 +43,69 @@ function amountOf(asset: HctAssetSummary): string {
   return formatFungibleAmount(asset.balance, asset.dec ?? 0)
 }
 
+export type HctChipActions = {
+  /** The asset whose send form is open. */
+  composing: string | null
+  open: (assetId: string) => void
+}
+
+/** One HCT token or item in an issuer's strip; tapping opens its send form. */
+export function HctChip({ asset, view, actions }: { asset: HctAssetSummary; view: CollectionView; actions: HctChipActions }) {
+  const amount = asset.kind === 'item' ? (asset.collection ? 'Collection item' : 'Item') : amountOf(asset)
+  return (
+    <li
+      className="token-chip"
+      data-aeon-part="token"
+      data-aeon-state={asset.assetId === actions.composing ? 'composing' : 'idle'}
+    >
+      <button
+        type="button"
+        className="token-chip-main"
+        onClick={() => {
+          playWalletSound('soft')
+          actions.open(asset.assetId)
+        }}
+        title={`${label(asset)} · HCT`}
+        aria-label={`${label(asset)}, ${amount}, HCT. Send`}
+      >
+        <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
+          <FungibleTokenFace tokenId={asset.assetId} sym={label(asset)} iconUrl={asset.imageUrl} size={view === 'grid' ? 72 : 56} />
+        </span>
+        <strong className="token-chip-sym" title={label(asset)}>
+          {label(asset)}
+        </strong>
+        <span className="fungible-card-amount token-chip-amount">{amount}</span>
+      </button>
+    </li>
+  )
+}
+
+export function hctChipActions(holdings: Holdings): HctChipActions {
+  return {
+    composing: holdings.snapshot.context.composing,
+    open: (assetId) => holdings.send({ type: 'OPEN', assetId }),
+  }
+}
+
 /**
- * Open HCT (BRC-255) holdings inside Collectables: items beside 1Sat items,
- * tokens beside P2P-FT tokens. They move only through `transferHctAsset`.
+ * Panel-level HCT surface: the read failure, assets with no usable issuer,
+ * and the one send form. Assets with an issuer render on that issuer's shelf.
  */
-export function HctShelf({ holdings, view }: { holdings: Holdings; view: CollectionView }) {
+export function HctShelf({
+  holdings,
+  view,
+  ungrouped,
+}: {
+  holdings: Holdings
+  view: CollectionView
+  ungrouped: readonly HctAssetSummary[]
+}) {
   const { snapshot, send } = holdings
   const { assets, composing, error } = snapshot.context
-  const tokens = assets.filter((a) => a.kind === 'token')
-  const items = assets.filter((a) => a.kind === 'item')
   const open = composing ? assets.find((a) => a.assetId === composing) ?? null : null
   const failed = snapshot.matches('failed')
-
-  if (assets.length === 0 && !failed) return null
-
-  const shelf = (title: string, list: HctAssetSummary[]) =>
-    list.length > 0 ? (
-      <section className="collect-tokens-section" aria-label={title}>
-        <h3 className="collect-section-title">{title}</h3>
-        <ul className="token-strip" role="list" aria-label={title} data-aeon-part="token-strip" data-aeon-state={view}>
-          {list.map((asset) => (
-            <li
-              key={asset.assetId}
-              className="token-chip"
-              data-aeon-part="token"
-              data-aeon-state={asset.assetId === composing ? 'composing' : 'idle'}
-            >
-              <button
-                type="button"
-                className="token-chip-main"
-                onClick={() => {
-                  playWalletSound('soft')
-                  send({ type: 'OPEN', assetId: asset.assetId })
-                }}
-                title={`${label(asset)} · HCT`}
-                aria-label={`${label(asset)}, ${asset.kind === 'item' ? 'item' : amountOf(asset)}, HCT. Send`}
-              >
-                <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
-                  <FungibleTokenFace tokenId={asset.assetId} sym={label(asset)} size={view === 'grid' ? 72 : 56} />
-                </span>
-                <strong className="token-chip-sym" title={label(asset)}>
-                  {label(asset)}
-                </strong>
-                <span className="fungible-card-amount token-chip-amount">
-                  {asset.kind === 'item' ? asset.collection ? 'Collection item' : 'Item' : amountOf(asset)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-    ) : null
+  if (!failed && !open && ungrouped.length === 0) return null
+  const actions = hctChipActions(holdings)
 
   return (
     <div data-aeon-scope="hct-holdings" data-aeon-state={stateToAttr(snapshot.value)}>
@@ -105,8 +117,16 @@ export function HctShelf({ holdings, view }: { holdings: Holdings; view: Collect
           </button>
         </div>
       ) : null}
-      {shelf('HCT items', items)}
-      {shelf('HCT tokens', tokens)}
+      {ungrouped.length > 0 ? (
+        <section className="collect-tokens-section" aria-label="HCT assets without an issuer">
+          <h3 className="collect-section-title">HCT assets without an issuer</h3>
+          <ul className="token-strip" role="list" data-aeon-part="token-strip" data-aeon-state={view}>
+            {ungrouped.map((asset) => (
+              <HctChip key={asset.assetId} asset={asset} view={view} actions={actions} />
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {open ? <HctSendForm key={open.assetId} asset={open} onClose={() => send({ type: 'CLOSE' })} /> : null}
     </div>
   )

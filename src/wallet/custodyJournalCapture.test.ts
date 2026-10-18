@@ -145,4 +145,30 @@ describe('custody journal capture', () => {
     const { journalAllToolboxOutputs } = await import('./custodyJournalCapture')
     expect(await journalAllToolboxOutputs(walletOver(sp), owner)).toEqual({ added: 2, rows: 3 })
   })
+
+  it('keeps an oversized HCT row\'s holder derivation and asset, dropping display text', async () => {
+    const { replayableCustomInstructions } = await import('./custodyJournalCapture')
+    const row = {
+      asset: 'ab'.repeat(20),
+      kind: 'item',
+      mode: 'open',
+      form: 'held',
+      amt: '1',
+      name: 'n'.repeat(1200),
+      derivationPrefix: 'p',
+      derivationSuffix: 's',
+      senderIdentityKey: '02'.padEnd(66, '1'),
+    }
+    const kept = JSON.parse(replayableCustomInstructions(JSON.stringify(row)))
+    expect(kept).toEqual({
+      asset: row.asset,
+      kind: 'item',
+      mode: 'open',
+      form: 'held',
+      amt: '1',
+      derivationPrefix: 'p',
+      derivationSuffix: 's',
+      senderIdentityKey: row.senderIdentityKey,
+    })
+  })
 })

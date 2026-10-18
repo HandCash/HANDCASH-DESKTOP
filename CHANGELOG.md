@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.584] - 2026-10-18
+
+### Changed
+- **HCT assets appear under their issuer, like collectables.** Each asset's deploy is signed by its issuer key, so Collectables groups HCT tokens and items with that issuer's 1Sat items and P2P-FT tokens. The group shows the same profile name, trust badge and fingerprint. The handle written in the deploy is never used as a label. HCT tokens sit in the issuer's token strip, and HCT items get their own section with their image, if the deploy carries one. An asset with no usable issuer key is listed apart.
+
+### Fixed
+- HCT rows can no longer be listed on the market, read as payment notices, or retired into the wrong basket when reconciling holdings. An app's `createAction` that spends an HCT input is refused with `HCT_WALLET_ONLY`.
+- An oversized HCT row keeps its holder derivation and asset id in the custody journal, so it can still be replayed.
+
 ## [1.3.583] - 2026-10-18
 
 ### Added

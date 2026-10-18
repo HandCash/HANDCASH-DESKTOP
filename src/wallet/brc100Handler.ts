@@ -373,6 +373,39 @@ async function verifyHeldRowSpendLabels(
   }
 }
 
+const HCT_TOKEN_FILING = 'p2pft'
+const HCT_ITEM_FILING = 'p2pnft'
+const HCT_INPUT_PAGE = 1000
+
+/**
+ * The first app input that is a wallet HCT row, or null. An app cannot sign
+ * for one, but naming it would still reserve the holder's output.
+ */
+async function hctInputOf(wallet: WalletInterface, args: unknown): Promise<string | null> {
+  const inputs = args && typeof args === 'object' && !Array.isArray(args)
+    ? ((args as { inputs?: unknown[] }).inputs ?? [])
+    : []
+  const wanted = new Set(
+    inputs.flatMap((raw) => {
+      if (!raw || typeof raw !== 'object') return []
+      const outpoint = normalizeOutpoint((raw as { outpoint?: unknown }).outpoint)
+      return outpoint ? [outpoint] : []
+    }),
+  )
+  if (wanted.size === 0) return null
+  for (const basket of [HCT_TOKEN_FILING, HCT_ITEM_FILING]) {
+    for (let offset = 0; ; offset += HCT_INPUT_PAGE) {
+      const page = await wallet.listOutputs({ basket, tags: ['hct'], limit: HCT_INPUT_PAGE, offset, seekPermission: false })
+      for (const row of page.outputs ?? []) {
+        const outpoint = normalizeOutpoint(row.outpoint)
+        if (outpoint && wanted.has(outpoint)) return outpoint
+      }
+      if ((page.outputs ?? []).length < HCT_INPUT_PAGE) break
+    }
+  }
+  return null
+}
+
 /**
  * Run an app spend, freeing change held behind an unfinished app parent first
  * if the toolbox cannot fund it.
@@ -1120,6 +1153,17 @@ async function handleBrc100RequestInner(
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction') {
+      const hctInput = await hctInputOf(active.wallet, args)
+      if (hctInput) {
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: 'HCT_WALLET_ONLY',
+            description: `Input ${hctInput} is an HCT output; HCT moves only through transferHctAsset.`,
+          }),
+        }
+      }
       for (const [ids, basket, code] of [
         [p1SatSpendIds(args), '1sat', 'INVALID_P1SAT_SPEND'],
         [p2pftSpendIds(args), 'p2pft', 'INVALID_P2PFT_SPEND'],

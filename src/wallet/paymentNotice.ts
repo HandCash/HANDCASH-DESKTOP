@@ -71,6 +71,8 @@ export function parsePaymentOutputInstructions(raw: unknown): PaymentOutputInstr
     return null
   }
   if (!parsed || typeof parsed !== 'object') return null
+  // Asset rows (HCT, tokens) carry their own remittance; rewriting it as a payment notice would lose the asset.
+  if ('asset' in parsed || 'kind' in parsed || 'form' in parsed) return null
   const { derivationPrefix, derivationSuffix, payee, notice, chatRef } = parsed
   if (typeof derivationPrefix !== 'string' || !derivationPrefix.trim()) return null
   if (typeof derivationSuffix !== 'string' || !derivationSuffix.trim()) return null

@@ -1,4 +1,5 @@
 import { getActiveWallet } from './session'
+import { looksLikeHct } from './hct/script'
 import { storageRegistry } from '../storage/registry'
 
 import {
@@ -259,6 +260,14 @@ export type MarketListingAuthorization = {
   proceedsInternalized?: boolean
   itemRetired?: boolean
   listing?: MarketListingAdvert
+}
+
+/** HCT shares the p2pft / p2pnft filings but is neither an ordinal nor a BRC-162 tip. */
+function isHctRow(row: { tags?: string[]; lockingScript?: unknown }): boolean {
+  return (
+    (row.tags ?? []).includes('hct') ||
+    (typeof row.lockingScript === 'string' && looksLikeHct(row.lockingScript))
+  )
 }
 
 export class MarketListingError extends Error {
@@ -1267,6 +1276,12 @@ async function loadListedOutput(
     throw new MarketListingError(
       'ITEM_NOT_HELD',
       'The listed item is no longer held by this wallet.'
+    )
+  }
+  if (isHctRow(output)) {
+    throw new MarketListingError(
+      'UNSUPPORTED_TOKEN_FORMAT',
+      'HCT assets cannot be listed on the market yet.',
     )
   }
   // Basket rows lag the chain. A tip still listed locally but spent elsewhere

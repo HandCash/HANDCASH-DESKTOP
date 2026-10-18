@@ -10,6 +10,7 @@ import {
 import type { Collectable } from './collectables'
 import { issuerTrustFrom } from './issuerTrust'
 import type { FungibleToken } from './token/types'
+import type { HctAssetSummary } from './hct/wallet'
 
 function item(
   partial: Partial<Collectable> & Pick<Collectable, 'outpoint'>,
@@ -91,6 +92,54 @@ describe('groupCollectables', () => {
     expect(result.issuers[0]?.items).toHaveLength(2)
     expect(result.issuers[0]?.tokens).toHaveLength(1)
     expect(result.issuers[0]?.collections[0]?.quantity).toBe(1)
+  })
+
+  it('shelves HCT assets with the same issuer as its items and tokens, named by the same profile', () => {
+    const f = bapIdentityFixture({ name: 'Example Studio', linked: true })
+    const identity = verifyIssuerIdentityPackage(f.pkg)!
+    const identityKey = f.master.toPublicKey().toString()
+    const hct = (assetId: string, kind: 'token' | 'item'): HctAssetSummary => ({
+      assetId,
+      kind,
+      mode: 'open',
+      ...(kind === 'token' ? { sym: 'GOLD' } : { name: 'Member' }),
+      issuers: [identityKey],
+      balance: kind === 'item' ? '1' : '100',
+      outputs: 1,
+      authority: false,
+      deploy: `${'d'.repeat(64)}_0`,
+      imageUrl: 'data:image/png;base64,AA==',
+    })
+    const seen: unknown[] = []
+    const result = groupCollectables(
+      [item({ outpoint: 'cc.0', issuer: identityKey })],
+      [token({ tokenId: 'bb', sym: 'FT', issuer: identityKey })],
+      (asset) => {
+        seen.push(asset)
+        return asset.issuer === identityKey ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) } : null
+      },
+      undefined,
+      undefined,
+      [hct('1'.repeat(40), 'token'), hct('2'.repeat(40), 'item')],
+    )
+    expect(seen).toContainEqual({ issuer: identityKey, origin: `${'d'.repeat(64)}_0` })
+    expect(result.issuers).toHaveLength(1)
+    expect(result.issuers[0]).toMatchObject({
+      key: `issuer:pubkey:${identityKey}`,
+      label: 'Example Studio',
+      profile: { id: f.bapId, state: 'verified' },
+      issuerAttested: true,
+    })
+    expect(result.issuers[0]?.hct.map((a) => a.kind).sort()).toEqual(['item', 'token'])
+    expect(groupQuantityLabel(result.issuers[0]!)).toBe('2 tokens · 2 items · 1 verified')
+  })
+
+  it('shelves an HCT asset without a usable issuer key apart', () => {
+    const result = groupCollectables([], [], () => null, undefined, undefined, [
+      { assetId: '3'.repeat(40), kind: 'token', mode: 'open', issuers: ['not-a-key'], balance: '1', outputs: 1, authority: false, deploy: `${'e'.repeat(64)}_0` },
+    ])
+    expect(result.issuers).toHaveLength(0)
+    expect(result.ungroupedHct).toHaveLength(1)
   })
 
   it('never shows an identity for an unattested asset or one the resolver refuses', () => {

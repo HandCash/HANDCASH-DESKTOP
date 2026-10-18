@@ -69,7 +69,8 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { HctShelf, useHctHoldings } from './HctShelf'
+import { HctChip, HctShelf, hctChipActions, useHctHoldings, type HctChipActions } from './HctShelf'
+import type { HctAssetSummary } from '../wallet/hct/wallet'
 import { CloseIcon, CollectablesIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
@@ -395,13 +396,17 @@ function IssuerGroupItem({
   verification,
   selected,
   onSelectionChange,
+  hctActions,
 }: {
   issuer: CollectableIssuer
   view: CollectionView
   verification: VerificationProgress
   selected: ReadonlySet<string>
   onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
+  hctActions: HctChipActions
 }) {
+  const hctTokens = issuer.hct.filter((asset) => asset.kind === 'token')
+  const hctItems = issuer.hct.filter((asset) => asset.kind === 'item')
   const sendingHere = issuer.items.some((item) => isOutpointSending(item.outpoint))
   const available = issuer.items.filter((item) => !isOutpointSending(item.outpoint))
   const state = selectionState(selected, available)
@@ -484,9 +489,9 @@ function IssuerGroupItem({
         />
       </div>
       <Accordion.ItemContent value={issuer.key} className="collect-collection-body-content">
-        {issuer.tokens.length > 0 ? (
+        {issuer.tokens.length + hctTokens.length > 0 ? (
           <section className="collect-nested-collection" data-aeon-part="issuer-tokens">
-            {issuer.items.length > 0 ? (
+            {issuer.items.length + hctItems.length > 0 ? (
               <h4 className="collect-section-title collect-nested-title">Tokens</h4>
             ) : null}
             <TokenShelf
@@ -494,7 +499,20 @@ function IssuerGroupItem({
               view={view}
               label={`${issuer.label} tokens`}
               issuerLabel={issuer.profile ? issuer.label : undefined}
+              hct={{ assets: hctTokens, actions: hctActions }}
             />
+          </section>
+        ) : null}
+        {hctItems.length > 0 ? (
+          <section className="collect-nested-collection" data-aeon-part="issuer-hct-items">
+            <h4 className="collect-section-title collect-nested-title">
+              {issuer.items.length + issuer.tokens.length + hctTokens.length > 0 ? 'HCT items' : 'Items'}
+            </h4>
+            <ul className="token-strip" role="list" aria-label={`${issuer.label} HCT items`} data-aeon-part="token-strip" data-aeon-state={view}>
+              {hctItems.map((asset) => (
+                <HctChip key={asset.assetId} asset={asset} view={view} actions={hctActions} />
+              ))}
+            </ul>
           </section>
         ) : null}
         {issuer.collections.map((collection) => (
@@ -619,11 +637,14 @@ function TokenShelf({
   view,
   label,
   issuerLabel,
+  hct,
 }: {
   tokens: readonly FungibleToken[]
   view: CollectionView
   label: string
   issuerLabel?: string
+  /** HCT tokens of the same issuer, in the same strip. */
+  hct?: { assets: readonly HctAssetSummary[]; actions: HctChipActions }
 }) {
   return (
     <ul
@@ -641,6 +662,9 @@ function TokenShelf({
           view={view}
           issuerLabel={issuerLabel}
         />
+      ))}
+      {hct?.assets.map((asset) => (
+        <HctChip key={asset.assetId} asset={asset} view={view} actions={hct.actions} />
       ))}
     </ul>
   )
@@ -890,7 +914,9 @@ export function InventoryPanel() {
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const searching = deferredQuery.trim().length > 0
-  const { issuers, ungrouped, ungroupedTokens, pendingTokens } = useMemo(
+  const hctAssets = hct.snapshot.context.assets
+  const hctActions = hctChipActions(hct)
+  const { issuers, ungrouped, ungroupedHct, ungroupedTokens, pendingTokens } = useMemo(
     () =>
       groupCollectables(
         visibleItems,
@@ -898,8 +924,9 @@ export function InventoryPanel() {
         currentIssuerResolver(),
         currentIssuerTrust(),
         tokenIssuerPending,
+        searching ? [] : hctAssets,
       ),
-    [visibleItems, tokens, searching, identityGeneration, issuerReads],
+    [visibleItems, tokens, searching, identityGeneration, issuerReads, hctAssets],
   )
   const empty =
     items.filter((item) => !collectableIsFungible(item)).length === 0 &&
@@ -965,6 +992,7 @@ export function InventoryPanel() {
                   verification={verification}
                   selected={selected}
                   onSelectionChange={selectionChange}
+                  hctActions={hctActions}
                 />
               ))}
             </Accordion.Root>
@@ -1025,7 +1053,7 @@ export function InventoryPanel() {
         </section>
       ) : null}
 
-      {searching ? null : <HctShelf holdings={hct} view={view} />}
+      <HctShelf holdings={hct} view={view} ungrouped={ungroupedHct} />
 
       {showLoading ? (
         <EmptyState

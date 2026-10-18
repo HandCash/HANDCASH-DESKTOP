@@ -12,6 +12,7 @@ import {
 } from './issuerTrust'
 import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
 import type { FungibleToken } from './token/types'
+import type { HctAssetSummary } from './hct/wallet'
 
 /**
  * Collect hierarchy is issuer → collections → assets. A signed asset shelves
@@ -62,6 +63,8 @@ export type CollectableIssuer = {
   signerVerified?: boolean
   /** Fungibles this identity issued — one horizontal shelf. */
   tokens: FungibleToken[]
+  /** HCT tokens and items this identity issued (BRC-255). */
+  hct: HctAssetSummary[]
   collections: CollectableGroup[]
   loose: Collectable[]
   /** One-sat items only; `tokens` are not repeated here. */
@@ -75,6 +78,8 @@ export type CollectableIssuer = {
 export type GroupedCollectables = {
   issuers: CollectableIssuer[]
   ungrouped: Collectable[]
+  /** HCT assets whose deploy names no usable issuer key. */
+  ungroupedHct: HctAssetSummary[]
   /** Fungibles whose issuer is unknown — shown on the last shelf. */
   ungroupedTokens: FungibleToken[]
   /** Fungibles whose issuer is still being read; never shown as issuer-less. */
@@ -271,12 +276,39 @@ function issuerKeyFor(
  * A cached handle is not certified by the token, so it never labels a shelf;
  * the deploy outpoint is the origin whose height judges the signer.
  */
+/**
+ * A held HCT asset's deploy is valid only when signed by the key its `iss`
+ * identities derive (BRC-255 §3), so the first issuer is attested. The deploy
+ * handle (`hdl`) is a claim and never labels a shelf.
+ */
+export function hctIssuerViewFor(
+  asset: Pick<HctAssetSummary, 'issuers' | 'deploy'>,
+  identityFor: IssuerIdentityResolver,
+  trust: IssuerTrust = NO_ISSUER_TRUST,
+): IssuerView | null {
+  return issuerViewFor({ issuer: asset.issuers[0], issuerAttested: true, origin: asset.deploy }, identityFor, trust)
+}
+
 export function tokenIssuerViewFor(
   token: FungibleToken,
   identityFor: IssuerIdentityResolver,
   trust: IssuerTrust = NO_ISSUER_TRUST,
 ): IssuerView | null {
   return issuerViewFor({ ...token, origin: token.tokenId }, identityFor, trust)
+}
+
+function hctLabel(asset: HctAssetSummary): string {
+  return asset.sym || asset.name || asset.assetId
+}
+
+function hctFaces(assets: readonly HctAssetSummary[], seen: Set<string>): CollectableFace[] {
+  const faces: CollectableFace[] = []
+  for (const asset of assets) {
+    if (!asset.imageUrl || seen.has(asset.imageUrl)) continue
+    seen.add(asset.imageUrl)
+    faces.push({ outpoint: asset.deploy, imageUrl: asset.imageUrl, name: hctLabel(asset) })
+  }
+  return faces
 }
 
 function tokenFaces(
@@ -302,12 +334,14 @@ export function groupCollectables(
   identityFor: IssuerIdentityResolver = () => null,
   trust: IssuerTrust = NO_ISSUER_TRUST,
   issuerPending: (token: FungibleToken) => boolean = () => false,
+  hct: readonly HctAssetSummary[] = [],
 ): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
-    { meta: IssuerMeta; items: Collectable[]; tokens: FungibleToken[] }
+    { meta: IssuerMeta; items: Collectable[]; tokens: FungibleToken[]; hct: HctAssetSummary[] }
   >()
   const ungrouped: Collectable[] = []
+  const ungroupedHct: HctAssetSummary[] = []
   const ungroupedTokens: FungibleToken[] = []
   const pendingTokens: FungibleToken[] = []
 
@@ -319,7 +353,7 @@ export function groupCollectables(
     }
     const bucket = issuerBuckets.get(meta.key)
     if (bucket) bucket.items.push(item)
-    else issuerBuckets.set(meta.key, { meta, items: [item], tokens: [] })
+    else issuerBuckets.set(meta.key, { meta, items: [item], tokens: [], hct: [] })
   }
 
   for (const token of tokens) {
@@ -332,7 +366,18 @@ export function groupCollectables(
     const bucket = issuerBuckets.get(meta.key)
     if (bucket) {
       bucket.tokens.push(token)
-    } else issuerBuckets.set(meta.key, { meta, items: [], tokens: [token] })
+    } else issuerBuckets.set(meta.key, { meta, items: [], tokens: [token], hct: [] })
+  }
+
+  for (const asset of hct) {
+    const meta = hctIssuerViewFor(asset, identityFor, trust)
+    if (!meta) {
+      ungroupedHct.push(asset)
+      continue
+    }
+    const bucket = issuerBuckets.get(meta.key)
+    if (bucket) bucket.hct.push(asset)
+    else issuerBuckets.set(meta.key, { meta, items: [], tokens: [], hct: [asset] })
   }
 
   const issuers: CollectableIssuer[] = []
@@ -377,14 +422,15 @@ export function groupCollectables(
       bucket.items.map((item) => item.imageUrl).filter(Boolean),
     )
     const { faces: itemFaces } = facesFor(bucket.items)
-    const faces = [...itemFaces, ...tokenFaces(bucket.tokens, seenFaces)].slice(
+    const faces = [...itemFaces, ...tokenFaces(bucket.tokens, seenFaces), ...hctFaces(bucket.hct, seenFaces)].slice(
       0,
       FACE_LIMIT,
     )
     const overflow = Math.max(
       0,
-      bucket.items.length + bucket.tokens.length - faces.length,
+      bucket.items.length + bucket.tokens.length + bucket.hct.length - faces.length,
     )
+    bucket.hct.sort((a, b) => hctLabel(a).localeCompare(hctLabel(b), undefined, { sensitivity: 'base' }))
     bucket.tokens.sort((a, b) =>
       a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }),
     )
@@ -410,6 +456,7 @@ export function groupCollectables(
           }
         : {}),
       tokens: bucket.tokens,
+      hct: bucket.hct,
       collections,
       loose,
       items: bucket.items,
@@ -425,7 +472,7 @@ export function groupCollectables(
       issuerPublisherRank(a) - issuerPublisherRank(b) ||
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
   )
-  return { issuers, ungrouped, ungroupedTokens, pendingTokens, groups, singles: [] }
+  return { issuers, ungrouped, ungroupedHct, ungroupedTokens, pendingTokens, groups, singles: [] }
 }
 
 /**
@@ -446,20 +493,25 @@ export function groupQuantityLabel(group: {
   quantity: number
   provenCount: number
   tokens?: readonly unknown[]
+  hct?: readonly Pick<HctAssetSummary, 'kind'>[]
 }): string {
   const parts: string[] = []
-  const tokenCount = group.tokens?.length ?? 0
+  const hctItems = group.hct?.filter((a) => a.kind === 'item').length ?? 0
+  const tokenCount = (group.tokens?.length ?? 0) + (group.hct?.length ?? 0) - hctItems
+  const quantity = group.quantity + hctItems
   if (tokenCount > 0) {
     parts.push(
       `${tokenCount.toLocaleString()} ${tokenCount === 1 ? 'token' : 'tokens'}`,
     )
   }
-  if (group.quantity > 0 || tokenCount === 0) {
+  if (quantity > 0 || tokenCount === 0) {
     parts.push(
-      `${group.quantity.toLocaleString()} ${group.quantity === 1 ? 'item' : 'items'}`,
+      `${quantity.toLocaleString()} ${quantity === 1 ? 'item' : 'items'}`,
     )
   }
-  if (group.provenCount > 0)
-    parts.push(`${group.provenCount.toLocaleString()} verified`)
+  // A held HCT item was walked to its deploy, so it counts as verified.
+  const verified = group.provenCount + hctItems
+  if (verified > 0)
+    parts.push(`${verified.toLocaleString()} verified`)
   return parts.join(' · ')
 }

@@ -96,6 +96,12 @@ describe('payment output instructions', () => {
     expect(parsePaymentOutputInstructions(JSON.stringify({ ...owed(), derivationSuffix: '' }))).toBeNull()
     expect(parsePaymentOutputInstructions(JSON.stringify({ ...owed(), notice: 'lost' }))).toBeNull()
   })
+
+  it('never reads an asset row as a payment, so its remittance is never rewritten', () => {
+    for (const extra of [{ asset: 'ab'.repeat(20) }, { kind: 'token' }, { form: 'held' }]) {
+      expect(parsePaymentOutputInstructions(JSON.stringify({ ...owed(), ...extra }))).toBeNull()
+    }
+  })
 })
 
 describe('the notice ledger', () => {

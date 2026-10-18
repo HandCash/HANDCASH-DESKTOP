@@ -359,6 +359,24 @@ export type HctAssetSummary = {
   outputs: number
   authority: boolean
   deploy: string
+  /** Token icon, or an image item's content, from the deploy. */
+  imageUrl?: string
+}
+
+const IMAGE_ITEM_MAX_BYTES = 512 * 1024
+
+function dataUrl(mediaType: string, bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return `data:${mediaType};base64,${btoa(binary)}`
+}
+
+function deployImage(fields: HctDeployFields): string | undefined {
+  if (fields.icon && /^image\//i.test(fields.icon.mediaType)) return dataUrl(fields.icon.mediaType, fields.icon.bytes)
+  if (fields.kind === 'item' && fields.c && fields.ctype && /^image\//i.test(fields.ctype) && fields.c.length <= IMAGE_ITEM_MAX_BYTES) {
+    return dataUrl(fields.ctype, fields.c)
+  }
+  return undefined
 }
 
 /** Open HCT assets this wallet holds, from validated rows only. */
@@ -373,6 +391,7 @@ export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
     const deploy = await deployOf(active, assetId)
     if (!deploy) continue
     if (list.some((r) => r.basket !== hctFilingOf(deploy.fields.kind))) continue
+    const image = deployImage(deploy.fields)
     assets.push({
       assetId,
       kind: deploy.fields.kind,
@@ -386,6 +405,7 @@ export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
       outputs: list.length,
       authority: list.some((r) => r.authority),
       deploy: `${deploy.txid}_${deploy.vout}`,
+      ...(image ? { imageUrl: image } : {}),
     })
   }
   log('list', startedAt)
