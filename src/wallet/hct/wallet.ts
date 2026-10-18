@@ -18,7 +18,7 @@ import {
   readHctRemittance,
   type HctRemittance,
 } from './keys'
-import { checkBackingProof, hctBackingScript, type BackingOutpoint, type HctBackingProof } from './backing'
+import { backingDepositKey, checkBackingProof, hctBackingScript, type BackingOutpoint, type HctBackingProof } from './backing'
 import {
   encodeHctPayload,
   HCT_MAX_CONTENT_BYTES,
@@ -54,6 +54,7 @@ import {
 } from './state'
 import {
   getHctBacking,
+  getHctDepositIssuance,
   getHctDeployRecord,
   getHctTx,
   hasHctBackingSync,
@@ -460,12 +461,13 @@ function backingSource(pkgBacking?: ReadonlyMap<string, HctBackingProof>): Backi
   return {
     proven: (txid) => hasHctBackingSync(txid),
     proofOf: async (txid) => pkgBacking?.get(txid) ?? suppliedBacking.get(txid) ?? (await getHctBacking(txid)),
+    issuanceOf: getHctDepositIssuance,
   }
 }
 
-async function keepBacked(backed: ReadonlyArray<{ txid: string; proof: HctBackingProof }>): Promise<void> {
-  for (const { txid, proof } of backed) {
-    await putHctBacking(txid, proof)
+async function keepBacked(backed: ReadonlyArray<{ txid: string; proof: HctBackingProof; deposit: string }>): Promise<void> {
+  for (const { txid, proof, deposit } of backed) {
+    await putHctBacking(txid, proof, deposit)
     suppliedBacking.delete(txid)
   }
 }
@@ -483,9 +485,12 @@ export async function proveHctBacking(assetId: string, txid: string, proof: HctB
   if (!tx) throw new Error(`Transaction ${txid} is not available`)
   const need = hctBackingNeed(tx, txid.toLowerCase(), deploy, tx.outputs.map((_, vout) => vout))
   if (need.kind !== 'needed') throw new Error(need.kind === 'invalid' ? need.detail : `${txid} is not a backed mint of ${assetId}`)
+  const deposit = backingDepositKey(deploy.fields.bk, need.deposit)
+  const prior = await getHctDepositIssuance(deposit)
+  if (prior && prior !== txid.toLowerCase()) throw new Error(`Deposit ${need.deposit.txid}:${need.deposit.vout} already backs ${prior}`)
   const check = await checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
   if (!check.ok) throw new Error(`The burial proof does not check: ${check.detail}`)
-  await putHctBacking(txid, proof)
+  await putHctBacking(txid, proof, deposit)
 }
 
 export type HctAssetSummary = {
@@ -1049,6 +1054,8 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
       if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
       if (deploy.fields.bk) {
         if (!opts.backing) refuse('bad-asset-args', 'A backed token mints only against a deposit.')
+        const backs = await getHctDepositIssuance(backingDepositKey(deploy.fields.bk, opts.backing.deposit))
+        if (backs) refuse('bad-asset-args', `That deposit already backs ${backs}.`)
         if (authority.amount > 0n) {
           // Spending the deploy moves its units; they wait for the first deposit's proof.
           if (authority.locked) refuse('awaiting-backing', 'The first deposit has no burial proof yet; this mint waits for it.')

@@ -4,7 +4,7 @@ import { hctHolderPublicKey } from './keys'
 import { hctHeldLock, readHct } from './script'
 import ltcDeposit from '../wltc/fixtures/deposit.json'
 import { setLtcAnchorForTest } from '../wltc/headers'
-import { fromHex, parseLtcTx, toHex } from '../wltc/litecoin'
+import { fromHex, ltcTxid, parseLtcTx, reversed, serializeLtcTxNoWitness, toHex } from '../wltc/litecoin'
 
 type Row = {
   outpoint: string
@@ -119,6 +119,7 @@ function makeInstall() {
     valid: new Set<string>(),
     deploys: new Map<string, { assetId: string; txid: string; vout: number }>(),
     backing: new Map<string, unknown>(),
+    deposits: new Map<string, string>(),
   }
   return { root, identityKey, address, txs, rows, chain, active: { wallet, rootKeyHex: root.toHex(), identityKey, address, chain: 'main', txs } }
 }
@@ -177,9 +178,13 @@ vi.mock('./store', () => ({
   },
   putHctDeployRecord: async (r: { assetId: string; txid: string; vout: number }) => void current.chain.deploys.set(r.assetId, r),
   getHctDeployRecord: async (assetId: string) => current.chain.deploys.get(assetId) ?? null,
-  putHctBacking: async (txid: string, proof: unknown) => void current.chain.backing.set(txid, proof),
+  putHctBacking: async (txid: string, proof: unknown, deposit: string) => {
+    current.chain.backing.set(txid, proof)
+    current.chain.deposits.set(deposit, txid)
+  },
   hasHctBackingSync: (txid: string) => current.chain.backing.has(txid),
   getHctBacking: async (txid: string) => current.chain.backing.get(txid) ?? null,
+  getHctDepositIssuance: async (deposit: string) => current.chain.deposits.get(deposit) ?? null,
 }))
 vi.mock('../messageTransport', () => ({
   sendSealedToPeerBox: async (rootKeyHex: string, to: string, _box: string, plaintext: string) => {
@@ -466,6 +471,12 @@ describe('open HCT wallet', () => {
     const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
     const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
     const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
+    const secondTx = parseLtcTx(fromHex(ltcDeposit.hex))
+    secondTx.outputs[1] = { ...secondTx.outputs[0]!, value: 1n }
+    const second = { txid: ltcTxid(secondTx), vout: 0 }
+    const soleTxHeader = fromHex(ltcDeposit.headers[0]!)
+    soleTxHeader.set(reversed(fromHex(second.txid)), 36)
+    const secondProof = { tx: toHex(serializeLtcTxNoWitness(secondTx)), path: [], pos: 0, height: ltcDeposit.height + 1, header: toHex(soleTxHeader) }
     const frank = makeInstall()
     const gina = makeInstall()
     const token = await as(frank, () =>
@@ -483,7 +494,8 @@ describe('open HCT wallet', () => {
     await as(frank, () => proveHctBacking(token.assetId, token.txid, proof))
     expect((await listed())?.locked).toBeUndefined()
 
-    const minted = await as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '500' }, { backing: { deposit } }))
+    await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '500' }, { backing: { deposit } }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
+    const minted = await as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '500' }, { backing: { deposit: second } }))
     expect(await listed()).toMatchObject({ balance: '1500', locked: '500' })
     await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1001' }))).rejects.toMatchObject({ reason: 'insufficient' })
     await as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '400' }))
@@ -491,7 +503,8 @@ describe('open HCT wallet', () => {
     expect(await balanceOf(gina, token.assetId)).toBe('400')
     expect(gina.chain.backing.has(token.txid)).toBe(true)
 
-    await as(frank, () => proveHctBacking(token.assetId, minted.txid, proof))
+    await expect(as(frank, () => proveHctBacking(token.assetId, minted.txid, proof))).rejects.toThrow(/does not check/)
+    await as(frank, () => proveHctBacking(token.assetId, minted.txid, secondProof))
     expect((await listed())?.locked).toBeUndefined()
     await as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1100' }))
     await as(gina, () => serveHctBox({ force: true }))

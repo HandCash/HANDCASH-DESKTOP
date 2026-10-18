@@ -52,6 +52,11 @@ export function readBackingOutputs(tx: Transaction): Array<{ vout: number; depos
   return out
 }
 
+/** One deposit backs one issuance across every asset sharing a chain and reserve (BRC-212 §1); this names it. */
+export function backingDepositKey(bk: HctBacking, deposit: BackingOutpoint): string {
+  return `${bk.chain}:${bk.reserve.toLowerCase()}:${deposit.txid.toLowerCase()}:${deposit.vout}`
+}
+
 /** The deposit behind `tx` for asset `assetId` whose deploy is `deployTxid`, or null when `tx` names none. */
 export function backingDepositOf(tx: Transaction, txid: string, assetId: string, deployTxid: string): BackingOutpoint | null {
   const hits = readBackingOutputs(tx).filter((b) => b.assetId === assetId || (b.assetId === null && txid === deployTxid))

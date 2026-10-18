@@ -1,6 +1,6 @@
 import { Transaction } from '@bsv/sdk'
 import { inputScriptValid, sourceOutputOf, sourceTxidOf } from '../countersign/script'
-import { backingCount, backingDepositOf, checkBackingProof, type BackingOutpoint, type HctBackingProof } from './backing'
+import { backingCount, backingDepositKey, backingDepositOf, checkBackingProof, type BackingOutpoint, type HctBackingProof } from './backing'
 import { hctIssuerKeyOf } from './keys'
 import { decodeHctPayload, hctSupplyPolicy, type HctDeployFields } from './payload'
 import {
@@ -283,7 +283,7 @@ export function checkHctTx(tx: Transaction, deploy: HctDeploy): TxCheck {
 }
 
 export type WalkResult =
-  | { ok: true; validated: string[]; backed: Array<{ txid: string; proof: HctBackingProof }> }
+  | { ok: true; validated: string[]; backed: Array<{ txid: string; proof: HctBackingProof; deposit: string }> }
   | { ok: false; reason: 'missing'; txid: string; detail: string }
   | { ok: false; reason: 'invalid'; txid: string; detail: string }
 
@@ -315,10 +315,15 @@ export function hctBackingNeed(tx: Transaction, txid: string, deploy: HctDeploy,
   return { kind: 'needed', deposit, minted: check.minted }
 }
 
-/** Where a walk finds burial proofs: ones this device already checked, and unchecked ones a package or history supplied. */
+/**
+ * Where a walk finds burial proofs: ones this device already checked, and
+ * unchecked ones a package or history supplied. `issuanceOf` names the
+ * transaction a deposit (`backingDepositKey`) already backs on this device.
+ */
 export type BackingSource = {
   proven: (txid: string) => boolean
   proofOf: (txid: string) => Promise<HctBackingProof | null>
+  issuanceOf?: (deposit: string) => Promise<string | null>
 }
 
 const NO_BACKING: BackingSource = { proven: () => false, proofOf: async () => null }
@@ -348,8 +353,9 @@ export async function walkHct(
   const loaded = new Map<string, Transaction>()
   const checked = new Set<string>()
   const validated: string[] = []
-  const backed: Array<{ txid: string; proof: HctBackingProof }> = []
+  const backed: Array<{ txid: string; proof: HctBackingProof; deposit: string }> = []
   const buried = new Set<string>()
+  const depositsBacking = new Map<string, string>()
   const load = async (txid: string): Promise<Transaction | null> => {
     const known = loaded.get(txid)
     if (known) return known
@@ -376,13 +382,19 @@ export async function walkHct(
       const need = hctBackingNeed(tx, txid, deploy, claims.map((c) => c.vout))
       if (need.kind === 'invalid') return { ok: false, reason: 'invalid', txid, detail: need.detail }
       if (need.kind === 'needed') {
+        const deposit = backingDepositKey(deploy.fields.bk, need.deposit)
+        const prior = depositsBacking.get(deposit) ?? (await backing.issuanceOf?.(deposit)) ?? null
+        if (prior && prior !== txid) {
+          return { ok: false, reason: 'invalid', txid, detail: `its deposit ${need.deposit.txid}:${need.deposit.vout} already backs ${prior}` }
+        }
         const proof = await backing.proofOf(txid)
         if (!proof) return { ok: false, reason: 'missing', txid, detail: `the burial proof of the deposit behind ${txid} is not available` }
         const check = await checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
         if (!check.ok && check.missing) return { ok: false, reason: 'missing', txid, detail: `the burial proof of the deposit behind ${txid} does not check yet (${check.detail})` }
         if (!check.ok) return { ok: false, reason: 'invalid', txid: claims[0]!.child, detail: `it moves units of ${txid} without a valid burial proof (${check.detail})` }
-        backed.push({ txid, proof })
+        backed.push({ txid, proof, deposit })
         buried.add(txid)
+        depositsBacking.set(deposit, txid)
       }
     }
     if (checked.has(txid)) continue

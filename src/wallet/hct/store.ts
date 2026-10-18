@@ -11,20 +11,23 @@ import { storageRegistry } from '../../storage/registry'
 import { readBackingProof, type HctBackingProof } from './backing'
 
 export const HCT_CHAIN_DB = storageRegistry.hctChain.key
-const DB_VERSION = 2
+const DB_VERSION = 3
 const TXS = 'txs'
 const VALID = 'valid'
 const DEPLOYS = 'deploys'
 const BACKING = 'backing'
+const DEPOSITS = 'deposits'
 
 type TxRecord = { txid: string; ef: string }
 type ValidRecord = { key: string }
 type BackingRecord = { txid: string; proof: HctBackingProof }
+type DepositRecord = { deposit: string; txid: string }
 export type DeployRecord = { assetId: string; txid: string; vout: number }
 
 const memoryTxs = new Map<string, Transaction>()
 const memoryValid = new Set<string>()
 const memoryBacking = new Map<string, HctBackingProof>()
+const memoryDeposits = new Map<string, string>()
 let opening: Promise<IDBDatabase> | null = null
 
 function open(): Promise<IDBDatabase> {
@@ -41,6 +44,7 @@ function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(VALID)) db.createObjectStore(VALID, { keyPath: 'key' })
       if (!db.objectStoreNames.contains(DEPLOYS)) db.createObjectStore(DEPLOYS, { keyPath: 'assetId' })
       if (!db.objectStoreNames.contains(BACKING)) db.createObjectStore(BACKING, { keyPath: 'txid' })
+      if (!db.objectStoreNames.contains(DEPOSITS)) db.createObjectStore(DEPOSITS, { keyPath: 'deposit' })
     }
     req.onsuccess = () => {
       const db = req.result
@@ -140,11 +144,22 @@ export async function getHctDeployRecord(assetId: string): Promise<DeployRecord 
   return (await request<DeployRecord>(DEPLOYS, 'readonly', (s) => s.get(assetId.toLowerCase())).catch(() => undefined)) ?? null
 }
 
-/** Keep a burial proof the caller has checked against the backed transaction `txid`. */
-export async function putHctBacking(txid: string, proof: HctBackingProof): Promise<void> {
+/** Keep a burial proof the caller has checked against the backed transaction `txid`, and the deposit (`backingDepositKey`) it backs. */
+export async function putHctBacking(txid: string, proof: HctBackingProof, deposit: string): Promise<void> {
   const key = txid.toLowerCase()
   memoryBacking.set(key, proof)
+  memoryDeposits.set(deposit, key)
   await request(BACKING, 'readwrite', (s) => s.put({ txid: key, proof } satisfies BackingRecord)).catch(() => {})
+  await request(DEPOSITS, 'readwrite', (s) => s.put({ deposit, txid: key } satisfies DepositRecord)).catch(() => {})
+}
+
+/** The backed transaction a deposit (`backingDepositKey`) already backs on this device, if any. */
+export async function getHctDepositIssuance(deposit: string): Promise<string | null> {
+  const cached = memoryDeposits.get(deposit)
+  if (cached) return cached
+  const record = await request<DepositRecord>(DEPOSITS, 'readonly', (s) => s.get(deposit)).catch(() => undefined)
+  if (record) memoryDeposits.set(deposit, record.txid)
+  return record?.txid ?? null
 }
 
 export function hasHctBackingSync(txid: string): boolean {
@@ -166,4 +181,5 @@ export function resetHctStoreForTests(): void {
   memoryTxs.clear()
   memoryValid.clear()
   memoryBacking.clear()
+  memoryDeposits.clear()
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.605] - 2026-10-18
+
+### Changed
+
+- One Litecoin deposit backs one wLTC issuance. The wallet keeps the deposit behind every burial proof it checks. It refuses received units whose mint names a deposit that already backs another issuance, whether both appear in one transfer's history or were checked earlier. It also refuses to mint, or record a proof, against a deposit already used (BRC-212 §1, BRC-255 §15).
+
 ## [1.3.604] - 2026-10-18
 
 ### Changed

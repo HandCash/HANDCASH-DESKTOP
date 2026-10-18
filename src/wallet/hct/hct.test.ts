@@ -576,23 +576,39 @@ describe('hct backed tokens', () => {
     expect(checkHctTx(t1, deploy)).toMatchObject({ ok: false, reason: 'backing' })
   })
 
-  it('moves minted units only with the burial proof of every deposit they came through', async () => {
+  it('moves minted units only with the burial proof of their deposit', async () => {
+    const { dTx, deploy, d } = chain()
+    const t0 = transfer([{ tx: dTx, vout: 0, holder: alice }], [{ script: held(deploy.assetId, 1_000n, bob) }])
+    const store = storeOf(dTx, t0)
+    const subject = String(t0.id('hex'))
+    expect(await walkHct(subject, deploy, store, () => false, sources({}))).toMatchObject({ ok: false, reason: 'missing', txid: d })
+    const walked = await walkHct(subject, deploy, store, () => false, sources({ [d]: proof }))
+    expect(walked).toMatchObject({ ok: true })
+    expect(walked.ok && walked.backed).toEqual([{ txid: d, proof, deposit: `ltc:${reserve}:${deposit.txid}:${deposit.vout}` }])
+    anchorSays({ kind: 'shallow', confirmations: 5 })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [d]: proof }))).toMatchObject({ ok: false, reason: 'missing' })
+    anchorSays({ kind: 'off-chain' })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+    anchorSays({ kind: 'buried' })
+    const otherReserve = { ...deploy, fields: { ...deploy.fields, bk: { chain: 'ltc' as const, reserve: `0014${'11'.repeat(20)}` } } }
+    expect(await walkHct(subject, otherReserve, store, () => false, sources({ [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+  })
+
+  it('refuses a mint whose deposit already backs another issuance, in one walk or across walks', async () => {
     const { dTx, deploy, m1, d, m } = chain()
     const t1 = transfer([{ tx: m1, vout: 1, holder: alice }], [{ script: held(deploy.assetId, 500n, bob) }])
     const store = storeOf(dTx, m1, t1)
     const subject = String(t1.id('hex'))
     expect(await walkHct(subject, deploy, store, () => false, sources({}))).toMatchObject({ ok: false, reason: 'missing', txid: m })
-    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof }))).toMatchObject({ ok: false, reason: 'missing', txid: d })
-    const walked = await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))
-    expect(walked).toMatchObject({ ok: true })
-    expect(walked.ok && walked.backed.map((b) => b.txid).sort()).toEqual([m, d].sort())
-    anchorSays({ kind: 'shallow', confirmations: 5 })
-    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'missing' })
-    anchorSays({ kind: 'off-chain' })
-    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
-    anchorSays({ kind: 'buried' })
-    const otherReserve = { ...deploy, fields: { ...deploy.fields, bk: { chain: 'ltc' as const, reserve: `0014${'11'.repeat(20)}` } } }
-    expect(await walkHct(subject, otherReserve, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({
+      ok: false,
+      reason: 'invalid',
+      txid: d,
+      detail: expect.stringContaining(`already backs ${m}`),
+    })
+    const t0 = transfer([{ tx: dTx, vout: 0, holder: alice }], [{ script: held(deploy.assetId, 1_000n, bob) }])
+    const known = { ...sources({ [d]: proof }), issuanceOf: async () => m }
+    expect(await walkHct(String(t0.id('hex')), deploy, storeOf(dTx, t0), () => false, known)).toMatchObject({ ok: false, reason: 'invalid', txid: d })
   })
 
   it('lets the authority mint again before an earlier mint is proven', async () => {
