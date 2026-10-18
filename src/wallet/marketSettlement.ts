@@ -6,6 +6,7 @@ import {
   Hash,
   LockingScript,
   P2PKH,
+  PrivateKey,
   PublicKey,
   Transaction,
   UnlockingScript,
@@ -34,6 +35,7 @@ import {
   getMarketListingAuthorization,
   isCountersignedMarketAsset,
   marketFeePayToAddress,
+  markMarketPayoutCollected,
   markMarketSettlementProgress,
   marketListingKey,
   MarketListingError,
@@ -89,7 +91,8 @@ import {
 import { runExclusiveSpend } from './spendGuard'
 import type { HolderRemittance } from './countersign/holderKeys'
 import { rememberTipKey, selfTokenOutput } from './token/tipKeys'
-import type { Remittance } from './brc29Keys'
+import { brc29PrivateKey, type Remittance } from './brc29Keys'
+import { cloudAddressUnspent } from './chainProbeClient'
 import { heldItemRow } from './itemRecipientKey'
 import { checkCountersignedListing, parseCountersignedListingProof } from './marketCountersigned'
 import { signTipInputs } from './signTipInputs'
@@ -1498,9 +1501,15 @@ export async function executeMarketPurchase(
   }, undefined, { promote: false })
 }
 
+/** Market maintenance: finish this wallet's pending purchases, then collect sales no buyer reported. */
 export async function recoverPendingMarketPurchases(): Promise<void> {
   const active = getActiveWallet()
   if (!active) return
+  await recoverPendingPurchasesFor(active).catch(() => {})
+  await collectUnreceiptedMarketProceeds(active)
+}
+
+async function recoverPendingPurchasesFor(active: ActiveWallet): Promise<void> {
   const { isGhostTxSuppressed } = await import('./ghostTxSuppress')
   for (const record of readJson<PendingPurchase[]>(pendingStorageKey(), [])) {
     const receiptPath = choosePendingMarketReceiptPath({
@@ -1799,6 +1808,157 @@ async function internalizeMarketProceeds(
   }
 }
 
+/** Retire a sold listing's item and offer token; returns the failures that are not "already gone". */
+async function retireSoldListingInputs(active: ActiveWallet, listing: MarketListingAdvert): Promise<string[]> {
+  const retireErrors: string[] = []
+  if (listing.assetType === 'bsv21') {
+    const { relinquishTokenFiling } = await import('./token/filingStore')
+    await relinquishTokenFiling(active.wallet, listing.outpoint.replace('_', '.'))
+  }
+  for (const spend of [
+    ...(listing.assetType === 'bsv21'
+      ? []
+      : [
+          {
+            basket: isCountersignedMarketAsset(listing.assetType ?? 'ordinal') ? listing.assetType! : '1sat',
+            output: listing.outpoint.replace('_', '.'),
+          },
+        ]),
+    { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
+  ]) {
+    try {
+      await active.wallet.relinquishOutput(spend)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/not found|already|missing|must exist/i.test(msg)) {
+        retireErrors.push(msg)
+      }
+    }
+  }
+  return retireErrors
+}
+
+/** A cancelled listing may still have lost the race to a buyer; its payout is watched this long after. */
+const UNRECEIPTED_CANCEL_WATCH_MS = 7 * 24 * 60 * 60_000
+const UNRECEIPTED_PROCEEDS_POLL_MS = 10 * 60_000
+let unreceiptedProceedsCheckedAt = 0
+const unreceiptedProceedsFiled = new Set<string>()
+
+/** Whether a v2 listing's payout child may still receive a sale nobody told us about. */
+export function payoutMayHoldUnreceiptedSale(record: MarketListingAuthorization, now: number): boolean {
+  if (!record.sellerKeys || record.proceedsInternalized) return false
+  if (record.state === 'active' || record.state === 'reserved' || record.state === 'settled') return true
+  return now - record.updatedAt <= UNRECEIPTED_CANCEL_WATCH_MS
+}
+
+/** One payout child to read: from a listing authorization, or from an offer output alone after a restore. */
+type PayoutWatch = {
+  sellerKeys: MarketSellerKeys
+  record?: MarketListingAuthorization
+  offerOutpoint?: string
+}
+
+function remittanceId(remittance: Remittance): string {
+  return `${remittance.derivationPrefix} ${remittance.derivationSuffix}`
+}
+
+/**
+ * Authorizations are local preferences, which a history restore does not
+ * bring back; the offer output in basket `market-offers` is toolbox state and
+ * carries the same seller keys, so a restored install still watches its sales.
+ */
+async function payoutWatches(active: ActiveWallet, now: number): Promise<PayoutWatch[]> {
+  const records = listMarketListingAuthorizations()
+  const watches: PayoutWatch[] = records
+    .filter((record) => payoutMayHoldUnreceiptedSale(record, now))
+    .map((record) => ({ sellerKeys: record.sellerKeys!, record }))
+  const known = new Set(records.flatMap((record) => (record.sellerKeys ? [remittanceId(record.sellerKeys.payout)] : [])))
+  const offers = await active.wallet
+    .listOutputs({ basket: 'market-offers', include: 'locking scripts', includeCustomInstructions: true, limit: 1000, seekPermission: false })
+    .catch(() => ({ outputs: [] as Array<{ outpoint: string; customInstructions?: string }> }))
+  for (const output of offers.outputs) {
+    let sellerKeys: MarketSellerKeys | undefined
+    try {
+      sellerKeys = (JSON.parse(output.customInstructions ?? '{}') as { sellerKeys?: MarketSellerKeys }).sellerKeys
+    } catch {
+      continue
+    }
+    if (!sellerKeys?.payout || known.has(remittanceId(sellerKeys.payout))) continue
+    known.add(remittanceId(sellerKeys.payout))
+    watches.push({ sellerKeys, offerOutpoint: output.outpoint })
+  }
+  return watches
+}
+
+/**
+ * A buyer may settle a v2 listing and never send the receipt. The sale still
+ * paid the listing's payout child, whose remittance the seller has kept since
+ * it listed, but no address scan finds a BRC-29 child, so the seller reads
+ * each payout address itself and files what is there. A coin there that does
+ * not settle the listing is still the seller's and is filed the same way.
+ */
+export async function collectUnreceiptedMarketProceeds(
+  active: ActiveWallet,
+  now = Date.now(),
+): Promise<number> {
+  if (now - unreceiptedProceedsCheckedAt < UNRECEIPTED_PROCEEDS_POLL_MS) return 0
+  unreceiptedProceedsCheckedAt = now
+  const root = PrivateKey.fromHex(active.rootKeyHex)
+  const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+  let filed = 0
+  for (const watch of await payoutWatches(active, now)) {
+    const address = brc29PrivateKey(root, watch.sellerKeys.payout).toAddress()
+    const unspent = await cloudAddressUnspent(address, active.chain).catch(() => null)
+    for (const utxo of unspent?.utxos ?? []) {
+      if (unreceiptedProceedsFiled.has(utxo.outpoint)) continue
+      let atomic: number[]
+      try {
+        atomic = await getAtomicBeefBinaryForTxid(active, utxo.txid)
+      } catch {
+        continue
+      }
+      const saleId = watch.record?.reservationSaleId ?? watch.record?.key ?? utxo.txid
+      const ingested = await internalizeMarketProceeds(active, atomic, utxo.vout, watch.sellerKeys, saleId)
+      if (!ingested.success && !/already|duplicate|exists/i.test(ingested.error ?? '')) {
+        console.warn(`[market] unreceipted proceeds not filed — ${ingested.error}`, `tx=${utxo.txid.slice(0, 12)}`)
+        continue
+      }
+      unreceiptedProceedsFiled.add(utxo.outpoint)
+      if (ingested.success) filed += 1
+      const tx = Beef.fromBinary(atomic).findTxid(utxo.txid)?.tx
+      const spent = new Set(
+        (tx?.inputs ?? []).map((input) => `${String(input.sourceTXID).toLowerCase()}.${input.sourceOutputIndex}`),
+      )
+      const listing = watch.record?.listing
+      if (
+        watch.record &&
+        listing &&
+        spent.has(normalizeOutpoint(listing.outpoint)) &&
+        spent.has(normalizeOutpoint(listing.offerOutpoint))
+      ) {
+        const retireErrors = await retireSoldListingInputs(active, listing)
+        markMarketPayoutCollected({
+          outpoint: watch.record.outpoint,
+          nonce: watch.record.nonce,
+          settlementTxid: utxo.txid,
+          itemRetired: retireErrors.length === 0,
+        })
+        console.info('[market] seller proceeds filed without a receipt', `tx=${utxo.txid.slice(0, 12)}`)
+      } else if (watch.offerOutpoint && spent.has(normalizeOutpoint(watch.offerOutpoint))) {
+        await active.wallet
+          .relinquishOutput({ basket: 'market-offers', output: watch.offerOutpoint.replace('_', '.') })
+          .catch(() => {})
+        console.info('[market] restored seller proceeds filed from the offer output', `tx=${utxo.txid.slice(0, 12)}`)
+      }
+    }
+  }
+  if (filed > 0) {
+    bumpBalanceAfterHeal()
+    scheduleHistoryBackupPush('market-sale')
+  }
+  return filed
+}
+
 /** Per-settlement backoff for compact receipts whose tx is not visible yet. */
 const receiptBeefRetryAt = new Map<string, number>()
 const RECEIPT_BEEF_RETRY_MS = 5 * 60_000
@@ -2044,31 +2204,7 @@ export async function handleInboundMarketSettlementWire(args: {
     }
     chart.send({ type: 'PROCEEDS_INTERNALIZED' })
     if (!progress.itemRetired) {
-      const retireErrors: string[] = []
-      if (listing.assetType === 'bsv21') {
-        const { relinquishTokenFiling } = await import('./token/filingStore')
-        await relinquishTokenFiling(active.wallet, listing.outpoint.replace('_', '.'))
-      }
-      for (const spend of [
-        ...(listing.assetType === 'bsv21'
-          ? []
-          : [
-              {
-                basket: isCountersignedMarketAsset(listing.assetType ?? 'ordinal') ? listing.assetType! : '1sat',
-                output: listing.outpoint.replace('_', '.'),
-              },
-            ]),
-        { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
-      ]) {
-        try {
-          await active.wallet.relinquishOutput(spend)
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          if (!/not found|already|missing|must exist/i.test(msg)) {
-            retireErrors.push(msg)
-          }
-        }
-      }
+      const retireErrors = await retireSoldListingInputs(active, listing)
       if (retireErrors.length) {
         chart.send({ type: 'FAIL', error: retireErrors[0]! })
         chart.stop()

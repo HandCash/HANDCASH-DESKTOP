@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.598] - 2026-10-18
+
+### Fixed
+
+- A market sale is collected even when the buyer never sends its receipt. Since 1.3.597 a listing's payout goes to a BRC-29 child of the seller, which the identity-address scan cannot see, so a silent buyer's payment sat uncollected. The wallet now reads each open listing's payout address every 10 minutes, files what it finds with the payout remittance it kept at listing time, and marks the listing sold. A cancelled listing is watched for a week in case the cancel lost the race to a buyer. After a restore from backup, the seller keys on the offer output are used, so a sale is still found.
+
 ## [1.3.597] - 2026-10-18
 
 ### Fixed

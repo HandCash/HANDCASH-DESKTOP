@@ -997,6 +997,26 @@ function saveAuthorization(record: MarketListingAuthorization): void {
   writeAuthorizations([...records, record])
 }
 
+/** A sale found on the listing's payout child with no receipt: settled and collected. */
+export function markMarketPayoutCollected(args: {
+  outpoint: string
+  nonce: string
+  settlementTxid: string
+  itemRetired: boolean
+}): void {
+  const current = getMarketListingAuthorization(args)
+  if (!current) return
+  saveAuthorization({
+    ...current,
+    state: 'settled',
+    reason: args.settlementTxid.toLowerCase(),
+    settlementTxid: current.settlementTxid ?? args.settlementTxid.toLowerCase(),
+    proceedsInternalized: true,
+    itemRetired: current.itemRetired || args.itemRetired || undefined,
+    updatedAt: Date.now(),
+  })
+}
+
 export function updateMarketListingAuthorization(args: {
   outpoint: string
   nonce: string
