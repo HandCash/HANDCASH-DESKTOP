@@ -491,6 +491,23 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(issuerMetadataFromScript(tx.outputs[0]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
   })
 
+  it('mints when the anchor package carries an unproven body whose parents are absent', async () => {
+    const h = await fundedWallet()
+    const createAction = h.active.wallet.createAction.bind(h.active.wallet)
+    vi.spyOn(h.active.wallet, 'createAction').mockImplementation(async (args) => {
+      const result = await createAction(args)
+      if (args.description !== 'Sigma issuer anchor' || !result.tx) return result
+      const beef = Beef.fromBinary(result.tx)
+      for (const btx of beef.txs) {
+        if (btx.tx?.merklePath) btx.tx.merklePath = undefined
+      }
+      beef.bumps.length = 0
+      return { ...result, tx: Array.from(beef.toBinaryAtomic(result.txid!)) }
+    })
+    const { tx } = await mint(h, [itemOutput(walletLock(h))])
+    expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(true)
+  })
+
   it('mints an item and a token signed by the identity key, never a BAP key, and sends the anchor with them', async () => {
     const h = await fundedWallet()
     await publish(h)

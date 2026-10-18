@@ -13,6 +13,7 @@ import {
   sigmaSignDeployLockingScript,
   completeBsv21SignableWithRootP2pkh,
 } from './token/issuer'
+import { framedInputBeef } from './token/verifiableInputBeef'
 
 type Args = Parameters<typeof enrichCreateActionForBsv21Issuer>[1]
 
@@ -85,7 +86,9 @@ export async function withSigmaAnchor(
         unlockingScriptLength: 108,
       },
     ],
-    inputBEEF: Array.from(anchor.tx),
+    // A package whose change ancestry lacks a proof would refuse the whole
+    // mint; that ancestry is storage-held, so it rides as txid-only.
+    inputBEEF: framedInputBeef(Array.from(anchor.tx), 'identity-issuance', [anchor.txid]),
     options: {
       ...args.options,
       randomizeOutputs: false,

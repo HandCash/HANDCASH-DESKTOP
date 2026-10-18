@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.589] - 2026-10-18
+
+### Fixed
+
+- Minting a signed 1Sat item no longer fails with "inputBEEF must be valid Beef when factoring options.trustSelf" when the issuer anchor is funded from change whose ancestry has no local proof. The anchor's package keeps the anchor body (signing needs it) and carries that ancestry txid-only, which storage already holds. The token issuer's unproven fallback is framed the same way, and both log `inputBEEF framed` for triage.
+
 ## [1.3.588] - 2026-10-18
 
 ### Fixed

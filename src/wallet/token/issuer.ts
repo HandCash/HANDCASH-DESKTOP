@@ -18,6 +18,7 @@ import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import type { ActiveWallet } from '../session'
 import { tipSigningKey } from './tipKeys'
+import { framedInputBeef } from './verifiableInputBeef'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
 
@@ -903,7 +904,7 @@ async function ensureBsv21InputBeef(
   const shaped = await hydrateWithinBudget(active, merged)
   if (shaped) {
     for (const txid of txids) rememberBeefBinary(txid, shaped)
-    return shaped
+    return framedInputBeef(shaped, 'bsv21-issuer', txids)
   }
 
   const raw = rawBeefBinary(merged)
@@ -912,7 +913,7 @@ async function ensureBsv21InputBeef(
       '[bsv21-issuer] no proofs for the tip ancestry yet (unmined genesis) — signing against raw inputBEEF; monitor broadcasts when headers land',
     )
     for (const txid of txids) rememberBeefBinary(txid, raw)
-    return raw
+    return framedInputBeef(raw, 'bsv21-issuer', txids)
   }
 
   console.warn(

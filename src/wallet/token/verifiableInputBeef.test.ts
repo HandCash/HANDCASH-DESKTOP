@@ -55,6 +55,22 @@ describe('verifiableInputBeef — the package the Toolbox verifies before readin
     expect(frame.roots).toEqual({ 900000: mined.id('hex') })
   })
 
+  it('keeps a signable spend body and sends its unprovable parent txid-only', () => {
+    const funding = txSpending('11'.repeat(32), 5)
+    const anchor = child(funding, 5)
+    const beef = new Beef()
+    beef.mergeRawTx(funding.toBinary())
+    beef.mergeRawTx(anchor.toBinary())
+
+    const frame = verifiableInputBeef(beef.toBinary(), [anchor.id('hex')])
+    const kept = Beef.fromBinary(frame.inputBEEF)
+
+    expect(frame.dropped).toEqual([funding.id('hex')])
+    expect(kept.findTxid(anchor.id('hex'))?.tx).toBeTruthy()
+    expect(kept.findTxid(funding.id('hex'))?.isTxidOnly).toBe(true)
+    expect(kept.isValid(true)).toBe(true)
+  })
+
   it('leaves txid-only parents to trustSelf', () => {
     const parentTxid = '44'.repeat(32)
     const tip = txSpending(parentTxid, 4)

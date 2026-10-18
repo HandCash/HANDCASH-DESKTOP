@@ -2165,7 +2165,7 @@ function tokenSendFacts(events) {
     else if ((r = /^\[stale-output\] restore done .* restored proven-unspent asset ([0-9a-f]{64}\.\d+)/.exec(t))) {
       if (!facts.restoredAssets.includes(r[1])) facts.restoredAssets.push(r[1])
     }
-    else if ((r = /^\[bsv21(?:-burn)?\] inputBEEF framed — dropped (\d+)/.exec(t))) {
+    else if ((r = /^\[(?:bsv21(?:-burn|-issuer)?|identity-issuance)\] inputBEEF framed — dropped (\d+)/.exec(t))) {
       facts.inputBeef.framed += 1
       facts.inputBeef.dropped += Number(r[1])
     }
