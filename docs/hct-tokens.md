@@ -34,13 +34,13 @@ Where the bytes go:
 - **Prefix.** A 3-byte marker plus a 20-byte hashed asset id (23 bytes) replaces the 36-byte BRC-162 id.
 - **Holder.** The holder's public key sits in the lock, so the unlock carries only the signature.
 - **Release.** A 20-byte hash lock replaces the release key set. Revealing the secret is the release, so release-branch spends cannot be private.
-- **Acceptor fee coins.** These are P2PK, at 114 bytes per input against 148. Each fee input also checkpoints the transfer.
+- **Acceptor fee coins.** These are P2PK, at 114 bytes per input against 148.
 - **Beacon.** There is one per issuer key set, not one per asset.
 
-The larger gain is proof size. Checkpoints (BRC-255 §7) end every validity walk at the last transaction the issuer signed `ALL`:
+Proof trust is fixed per mode, with nothing in between:
 
-- **Countersigned transfer:** the package is one Extended Format transaction, about 0.8 KB.
-- **Open transfer:** the package reaches back only to the last checkpoint. A holder asks for a free checkpoint with a self-transfer whenever its history grows. Today's BRC-176 proofs grow with every hop back to the deploy.
+- **Open transfer:** the recipient checks every hop back to the deploy and trusts no one, not even the issuer. The sender ships only the hops this recipient has not already checked, so repeat receipts are small. A first receipt of an old, busy asset is the largest case, at about 0.5 KB per hop.
+- **Countersigned transfer:** the issuer checked the history before signing, so the package is one Extended Format transaction, about 0.8 KB. A transfer after a release is not issuer-checked, so it walks back to the last transaction the issuer accepted.
 
 ## Module plan
 
@@ -49,10 +49,10 @@ The larger gain is proof size. Checkpoints (BRC-255 §7) end every validity walk
 | Script encode/parse: deploy, held, authority, both clauses, beacon | `src/wallet/hct/script.ts` | `countersign/script.ts` sighash helpers |
 | Deploy payload (DAG-CBOR, `crit`) | `src/wallet/hct/payload.ts` | `token/decode162.ts` CBOR reader, moved to a neutral module |
 | Issuer key derivation (`[2, "hct issuer"]`, counterparty `anyone`) | `src/wallet/hct/issuerKey.ts` | — |
-| Validity walk, checkpoints, validated-txid cache | `src/wallet/hct/validity.ts` | `countersign/resolve.ts` checks, generalized |
+| Validity walk (open to the deploy, countersigned to the last accepted transfer), validated-txid cache | `src/wallet/hct/validity.ts` | `countersign/resolve.ts` checks, generalized |
 | Proof package: build, delta per peer, `need` | `src/wallet/hct/proof.ts` | `token/inboundLineage.ts` frontier idea |
-| Send / receive / checkpoint request (chart) | `src/wallet/hct/wallet.ts`, `hctSendMachine` | `countersign/wallet.ts` acceptor and requester paths |
-| Acceptor (accept-once, P2PK fee coins, checkpoints) | `src/wallet/hct/acceptor.ts` | `countersign/store.ts`, policy (`checkAcceptorPolicy`) |
+| Send / receive (chart) | `src/wallet/hct/wallet.ts`, `hctSendMachine` | `countersign/wallet.ts` acceptor and requester paths |
+| Acceptor (accept-once, P2PK fee coins) | `src/wallet/hct/acceptor.ts` | `countersign/store.ts`, policy (`checkAcceptorPolicy`) |
 | Beacon, lapse and hash-lock release | `src/wallet/hct/beacon.ts` | `countersign/beacon.ts`, `beaconSource.ts` |
 | Holder keys (`[2, "hct holder"]`) | `src/wallet/hct/holderKeys.ts` | `countersign/holderKeys.ts` |
 | Filing `hct` / `hcti`, `p hct …` / `p hcti …` scopes | `src/wallet/hct/access.ts`, `itemAccess.ts` | `countersign/access` model |
@@ -65,7 +65,7 @@ Every send goes through `signedSendLifecycle`, as today. Each wallet-layer path 
 
 1. **Spec review.** Review BRC-255 and settle the name, marker, filing names and protocol IDs.
 2. **Core.** `hct/script`, `payload`, `issuerKey`, `validity` and `proof`, with unit tests and the BRC test script vectors.
-3. **Open mode end to end.** Deploy, send, receive, checkpoint request, `p hct` access and inventory.
+3. **Open mode end to end.** Deploy, send, receive, `p hct` access and inventory.
 4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections.
 5. **Market.** BRC-254 on HCT outputs; BRC-CLOUD index and storefront read `hct` and `hcti`.
 6. **Items.** `hcti` inventory and detail. Mint-studio and issuers mint HCT items. The market sells `hcti` on the token layout, with no pads. `1sat` stays as the outside-format path.
