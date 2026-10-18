@@ -756,6 +756,10 @@ describe('162 market list createAction lock', () => {
       )
       expect(listingHarness.startSignedSendPropagation).toHaveBeenCalledTimes(1)
       expect(listingHarness.abortAction).not.toHaveBeenCalled()
+      // A cover still queued for miners must not fail an inline broadcast.
+      expect(listingHarness.signAction).toHaveBeenCalledWith(
+        expect.objectContaining({ reference: 'split-ref', options: { noSend: true } }),
+      )
     })
 
     it('aborts a split that never signed', async () => {

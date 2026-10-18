@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.590] - 2026-10-18
+
+### Fixed
+
+- Listing BSV-21 tokens on the market no longer fails with `WERR_REVIEW_ACTIONS` when the lot is split from a deploy or transfer still queued for miners. The split (and a listing cancel) now sign without an inline broadcast and the signed send outbox propagates them once the parent lands.
+- BRC-150 genesis walks through batch transfers no longer re-serialize the shared parent once per input. A 16-item Pixel Foxes batch spends one 1.77 MB mint; each fox walk drops from about 667 ms to 48 ms, which removes most of the collectables-read lag on large inventories.
+
 ## [1.3.589] - 2026-10-18
 
 ### Fixed

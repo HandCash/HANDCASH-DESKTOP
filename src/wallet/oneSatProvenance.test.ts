@@ -46,6 +46,31 @@ import {
   type ProvenanceV2,
 } from './oneSatProvenance'
 
+describe('deriving a path through a batch transfer', () => {
+  it('reads the shared mint once, not once per input', () => {
+    const origin = new Transaction()
+    origin.addInput({ sourceTXID: '11'.repeat(32), sourceOutputIndex: 0, unlockingScript: new UnlockingScript() })
+    for (let i = 0; i < 16; i++) {
+      origin.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(`0063036f7264510a746578742f706c61696e0001${(i + 0x41).toString(16)}6851`) })
+    }
+    const originTxid = origin.id('hex')
+    origin.merklePath = new MerklePath(800_000, [[{ offset: 0, hash: originTxid, txid: true }]])
+    const batch = new Transaction()
+    for (let i = 0; i < 16; i++) {
+      batch.addInput({ sourceTransaction: origin, sourceOutputIndex: i, unlockingScript: UnlockingScript.fromHex('00') })
+      batch.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    }
+    const beef = new Beef()
+    beef.mergeTransaction(batch)
+    const merge = vi.spyOn(beef, 'mergeRawTx')
+
+    const path = deriveOneSatPathFromBeef(beef, `${batch.id('hex')}_9`, `${originTxid}_9`)
+
+    expect(path).toEqual([`${batch.id('hex')}_9`, `${originTxid}_9`])
+    expect(merge).not.toHaveBeenCalled()
+  })
+})
+
 describe('durable remittance retention', () => {
   it('keeps the newest complete cache entries within its byte budget', () => {
     const source = Object.fromEntries(

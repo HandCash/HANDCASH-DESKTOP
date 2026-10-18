@@ -1508,10 +1508,13 @@ export async function splitBsv21CoverToExactAmt(args: {
     if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
     if (changeKey) rememberTipKey(args.active, changeKey.key)
     args.onSigned?.()
+    // The cover may be a deploy still queued for miners. An inline broadcast
+    // then fails "missing inputs" and the toolbox throws review; the signed
+    // send outbox below retries until the parent lands.
     const signed = await args.active.wallet.signAction({
       reference,
       spends,
-      options: { acceptDelayedBroadcast: false },
+      options: { noSend: true },
     })
     // Signed: the toolbox holds this spend, so it is never aborted from here.
     reference = null
@@ -3610,10 +3613,12 @@ async function createCancelMarketListingAdvertExclusive(args: {
       spends[vin] = { unlockingScript }
     }
     chart.send({ type: 'SIGNED_UNKNOWN' })
+    // The listing may still be queued for miners; the signed send outbox
+    // propagates the cancel after it, never an inline broadcast.
     const signed = await active.wallet.signAction({
       reference,
       spends,
-      options: { acceptDelayedBroadcast: false },
+      options: { noSend: true },
     })
     const txid = signed.txid?.toLowerCase() ?? ''
     const beefBytes = signed.tx ? Array.from(signed.tx) : []

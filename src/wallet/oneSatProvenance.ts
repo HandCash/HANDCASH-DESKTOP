@@ -115,7 +115,13 @@ function vinSpendingParent(
   )
 }
 
-/** Merge source txs for vin `0..upToVin` into `beef` when present on `from`. */
+/**
+ * Merge source txs for vin `0..upToVin` into `beef` when present on `from`.
+ *
+ * A source `beef` already holds as a body is skipped: a batch transfer spends
+ * one multi-MB mint from every input, and re-serializing it per input cost a
+ * Pixel Foxes walk 16 × 42ms of blocked thread for nothing.
+ */
 export function mergePrecedingInputSources(
   beef: Beef,
   tx: Transaction,
@@ -125,13 +131,10 @@ export function mergePrecedingInputSources(
   for (let i = 0; i <= upToVin; i++) {
     const input = tx.inputs[i]
     const linked = input?.sourceTransaction
-    if (linked) {
-      beef.mergeRawTx(linked.toBinary())
-      continue
-    }
-    const sourceTxid = String(input?.sourceTXID ?? '').toLowerCase()
+    const sourceTxid = String(input?.sourceTXID ?? linked?.id('hex') ?? '').toLowerCase()
     if (!/^[0-9a-f]{64}$/.test(sourceTxid)) continue
-    const src = from?.findTxid(sourceTxid)?.tx ?? beef.findTxid(sourceTxid)?.tx
+    if (beef.findTxid(sourceTxid)?.tx) continue
+    const src = linked ?? from?.findTxid(sourceTxid)?.tx
     if (src) beef.mergeRawTx(src.toBinary())
   }
 }
