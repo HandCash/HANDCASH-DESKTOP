@@ -85,6 +85,9 @@ vi.mock('../hct/wallet', () => {
       lockedBy.set(txid, BigInt(args.amount))
       return { assetId: ASSET, txid, amount: args.amount }
     },
+    adoptSignedHctAction: async (txid: string) => {
+      hctCalls.push({ op: 'adopt', args: { txid }, labels: [] })
+    },
     proveHctBacking: async (assetId: string, txid: string) => {
       hctCalls.push({ op: 'prove', args: { assetId, txid }, labels: [] })
       lockedBy.delete(txid)
@@ -226,7 +229,28 @@ describe('wLTC bridge', () => {
     durable.set('acct:handcash.wltc.v1', JSON.stringify({ ...failed, deposits: { ...failed.deposits, [`${tx(4)}:0`]: { litoshi: '10000', status: 'credited', at: 1 } } }))
     labelled.set(`wltc deposit ${tx(5)}.0`, { status: 'failed', txid: 'ef'.repeat(32) })
     await bridge.listLtcDeposits()
+    expect(hctCalls.map((c) => c.op)).toEqual(['adopt', 'issue', 'prove'])
+    expect(hctCalls[0]!.args).toEqual({ txid: 'cd'.repeat(32) })
+  })
+
+  it('drops a credit whose mint never signed and mints the deposit again', async () => {
+    deposit(12, 839_066n)
+    durable.set('acct:handcash.wltc.v1', JSON.stringify({ deposits: { [`${tx(12)}:0`]: { litoshi: '839066', status: 'credited', at: 1 } }, withdrawals: {} }))
+    labelled.set(`wltc deposit ${tx(12)}.0`, { status: 'unsigned', txid: '' })
+    const result = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove'])
+    expect(hctCalls[0]!.args).toMatchObject({ supply: '839066' })
+    expect(result).toMatchObject({ balance: '839066', locked: '0' })
+    expect(result.deposits).toEqual([expect.objectContaining({ txid: tx(12), status: 'credited', proven: true, bsvTxid: expect.stringMatching(/^issue/) })])
+  })
+
+  it('adopts a mint an earlier session signed once, and keeps its credit', async () => {
+    deposit(13, 10_000n)
+    const earlier = '13'.repeat(32)
+    durable.set('acct:handcash.wltc.v1', JSON.stringify({ deposits: { [`${tx(13)}:0`]: { litoshi: '10000', status: 'credited', bsvTxid: earlier, at: 1 } }, withdrawals: {} }))
+    await bridge.listLtcDeposits()
+    await bridge.listLtcDeposits()
+    expect(hctCalls).toEqual([{ op: 'adopt', args: { txid: earlier }, labels: [] }])
   })
 
   it('signs the payout from proven deposits only, burns amount plus fee, then broadcasts it', async () => {

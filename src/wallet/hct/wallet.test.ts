@@ -45,14 +45,18 @@ function makeInstall() {
   }
 
   const wallet = {
-    async createAction(args: { inputs?: Array<{ outpoint: string }>; outputs: Pending['outputs'] }) {
+    async createAction(args: { inputs?: Array<{ outpoint: string }>; outputs: Pending['outputs']; inputBEEF?: number[] }) {
       const tx = new Transaction()
       const inputs = (args.inputs ?? []).map((i) => i.outpoint)
+      const supplied = args.inputBEEF ? Beef.fromBinary(args.inputBEEF) : new Beef()
       for (const outpoint of inputs) {
         const row = rows.find((r) => r.outpoint === outpoint && r.spendable)
         if (!row) throw new Error(`unknown input ${outpoint}`)
         const [txid, vout] = outpoint.split('.')
-        tx.addInput({ sourceTransaction: txs.get(txid!)!, sourceOutputIndex: Number(vout), unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+        // The engine builds the signable transaction from inputBEEF alone for inputs it does not sign.
+        const source = supplied.findTxid(txid!)?.tx
+        if (!source) throw new Error('Every signableTransaction input must have a sourceTransaction')
+        tx.addInput({ sourceTransaction: source, sourceOutputIndex: Number(vout), unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
       }
       const funding = fundingTx()
       tx.addInput({ sourceTransaction: funding, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), unlockingScriptTemplate: new P2PKH().unlock(root), sequence: 0xffffffff })
@@ -190,7 +194,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueHctAsset, mintHctAsset, transferHctAsset, burnHctUnits, listHctAssets, serveHctBox, proveHctBacking, HctRefusal } = await import('./wallet')
+const { issueHctAsset, mintHctAsset, transferHctAsset, burnHctUnits, listHctAssets, serveHctBox, proveHctBacking, adoptSignedHctAction, HctRefusal } = await import('./wallet')
 const { readHctState, writeHctState } = await import('./state')
 
 const alice = makeInstall()
@@ -418,6 +422,24 @@ describe('open HCT wallet', () => {
     alice.chain.valid.add(`${token.txid}:${token.assetId}`)
     deployRow.customInstructions = JSON.stringify({ derivationPrefix: 'x', derivationSuffix: 'y', senderIdentityKey: alice.identityKey })
     expect(await balanceOf(alice, token.assetId)).toBeUndefined()
+  })
+
+  it('adopts a deploy and a mint signed but never committed, and lists them again', async () => {
+    const token = await as(alice, () => issueHctAsset({ kind: 'token', sym: 'ASH', supply: '5', auth: true }))
+    const minted = await as(alice, () => mintHctAsset({ assetId: token.assetId, amount: '3' }))
+    for (const txid of [token.txid, minted.txid]) {
+      alice.chain.txs.delete(txid)
+      alice.chain.valid.delete(`${txid}:${token.assetId}`)
+    }
+    alice.chain.deploys.delete(token.assetId)
+    expect(await balanceOf(alice, token.assetId)).toBeUndefined()
+    registered.length = 0
+    await as(alice, () => adoptSignedHctAction(token.txid))
+    await as(alice, () => adoptSignedHctAction(minted.txid))
+    expect(registered).toEqual([token.txid, minted.txid])
+    expect(await balanceOf(alice, token.assetId)).toBe('8')
+    await as(alice, () => adoptSignedHctAction(minted.txid))
+    expect(registered).toHaveLength(2)
   })
 
   it('queues a delivery the box refuses and retries it from the outbox', async () => {

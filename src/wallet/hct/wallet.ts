@@ -7,7 +7,6 @@ import { scheduleHistoryBackupPush } from '../deviceSync'
 import { stampBrc164Id } from '../itemAccess'
 import type { ActiveWallet } from '../session'
 import { runExclusiveSpend } from '../spendGuard'
-import { EMPTY_INPUT_BEEF } from '../token/verifiableInputBeef'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { getWalletRuntime } from '../walletRuntime'
 import { signInput, sourceTxidOf } from '../countersign/script'
@@ -235,6 +234,23 @@ async function atomicBeefFor(active: ActiveWallet, tx: Transaction): Promise<num
     if (!added) break
   }
   return Array.from(beef.toBinaryAtomic(txid))
+}
+
+/**
+ * Input BEEF holding the source transaction of every outpoint an action
+ * names. The engine signs only its own change, so it builds the signable
+ * transaction from this BEEF; an input missing here fails `createAction` after
+ * storage has already staged (and locked) the action.
+ */
+async function inputBeefFor(active: ActiveWallet, outpoints: readonly string[]): Promise<{ binary: number[]; txids: string[] }> {
+  const beef = new Beef()
+  for (const txid of new Set(outpoints.map((op) => op.replace('_', '.').split('.')[0]!.toLowerCase()))) {
+    if (beef.findTxid(txid)?.tx) continue
+    const tx = await rawTx(active, txid)
+    if (!tx) refuse('invalid-build', `Transaction ${txid} that holds an input is not available. Nothing was signed.`)
+    beef.mergeBeef(Beef.fromBinary(await atomicBeefFor(active, tx)))
+  }
+  return { binary: Array.from(beef.toBinary()), txids: beef.txs.map((entry) => entry.txid.toLowerCase()) }
 }
 
 // ── Deploys ────────────────────────────────────────────────────────────────
@@ -603,13 +619,14 @@ async function signHctAction(
     check: (tx: Transaction) => string | null
   },
 ): Promise<SignedHct> {
+  const inputBEEF = await inputBeefFor(active, args.inputs.map((i) => i.outpoint))
   const created = await active.wallet.createAction({
     description: args.description.slice(0, 50),
     labels: args.labels,
-    inputBEEF: EMPTY_INPUT_BEEF,
+    inputBEEF: inputBEEF.binary,
     inputs: args.inputs.map((i) => ({ outpoint: i.outpoint, inputDescription: i.description, unlockingScriptLength: SIG_LENGTH })),
     outputs: args.outputs,
-    options: { trustSelf: 'known', noSend: true, randomizeOutputs: false, signAndProcess: true },
+    options: { trustSelf: 'known', knownTxids: inputBEEF.txids, noSend: true, randomizeOutputs: false, signAndProcess: true },
   })
   const signable = created.signableTransaction
   if (!signable?.reference) throw new Error('The HCT action returned nothing to sign')
@@ -672,6 +689,43 @@ async function commitSigned(signed: SignedHct, assetIds: readonly string[], awai
   await propagateSignedSend(handle).catch((err) => {
     console.warn('[hct] propagation queued', err instanceof Error ? err.message : String(err))
   })
+}
+
+/**
+ * Finish an HCT action this wallet signed but never committed, because the
+ * app stopped between `signAction` and `commitSigned`: re-check every asset it
+ * carries against its deploy, then validate and propagate it as the build
+ * would have. A committed action is left alone.
+ */
+export async function adoptSignedHctAction(txid: string): Promise<void> {
+  const active = requireActive()
+  const id = txid.toLowerCase()
+  if (await getHctTx(id)) return
+  const tx = await linkedTx(active, id)
+  if (!tx) throw new Error(`Transaction ${id} is not in this wallet`)
+  const assetIds = new Set<string>()
+  const deployed = new Set<string>()
+  tx.outputs.forEach((output, vout) => {
+    const read = readHct(output.lockingScript)
+    if (!read) return
+    if (read.form === 'deploy') deployed.add(hctAssetId(id, vout))
+    else assetIds.add(read.assetId)
+  })
+  for (const assetId of deployed) {
+    const vout = tx.outputs.findIndex((_, i) => hctAssetId(id, i) === assetId)
+    if (!(await deployOf(active, assetId, { txid: id, vout }, tx))) throw new Error(`${id} does not read back as the deploy of ${assetId}`)
+    await putHctDeployRecord({ assetId, txid: id, vout })
+  }
+  for (const assetId of assetIds) {
+    if (deployed.has(assetId)) continue
+    const deploy = await deployOf(active, assetId)
+    if (!deploy) throw new Error(`No deploy of ${assetId} for ${id}`)
+    const check = checkHctTx(tx, deploy)
+    if (!check.ok) throw new Error(`${id} fails BRC-255: ${check.reason}: ${check.detail}`)
+  }
+  if (deployed.size + assetIds.size === 0) throw new Error(`${id} carries no HCT asset`)
+  await commitSigned({ txid: id, atomic: await atomicBeefFor(active, tx), tx }, [...deployed, ...assetIds], false)
+  console.info(`[hct] adopted ${id.slice(0, 12)} (${[...deployed, ...assetIds].length} asset(s))`)
 }
 
 // ── Issue ──────────────────────────────────────────────────────────────────

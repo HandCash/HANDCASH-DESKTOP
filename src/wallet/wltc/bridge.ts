@@ -177,11 +177,14 @@ function serial<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-/** The txid of the live action carrying `label`, or null. */
+/** An action in these states is signed; `unsigned` is a build that may still abort, never a mint. */
+const SIGNED_ACTION_STATUSES = new Set(['completed', 'unproven', 'sending', 'nosend', 'unprocessed'])
+
+/** The txid of the signed, live action carrying `label`, or null. */
 async function labelledAction(active: ActiveWallet, label: string): Promise<string | null> {
   const page = await active.wallet.listActions({ labels: [label], labelQueryMode: 'any', limit: 10 })
-  const hit = (page.actions ?? []).find((a) => a.status !== 'failed')
-  return hit ? String(hit.txid ?? '').toLowerCase() : null
+  const hit = (page.actions ?? []).find((a) => SIGNED_ACTION_STATUSES.has(a.status) && /^[0-9a-f]{64}$/i.test(String(a.txid ?? '')))
+  return hit ? String(hit.txid).toLowerCase() : null
 }
 
 async function hasLabelledAction(active: ActiveWallet, label: string): Promise<boolean> {
@@ -269,6 +272,9 @@ export type LtcDepositsResult = {
   withdrawals: LtcWithdrawalStatus[]
 }
 
+/** Mints this session wrote or saw committed to the HCT store. */
+const committedMints = new Set<string>()
+
 /**
  * Mint one deposit against the backed wLTC, naming it in a backing output so
  * every receiver can demand its burial proof. The label names the outpoint
@@ -305,11 +311,46 @@ async function mintDeposit(active: ActiveWallet, txid: string, vout: number, lit
     state.backedAssetId = issued.assetId
     writeState(state)
   }
+  committedMints.add(bsvTxid)
   state = readState()
   if (!state.backedAssetId && assetId) state.backedAssetId = assetId
   state.deposits[key] = { litoshi: litoshi.toString(), status: 'credited', bsvTxid, at: Date.now(), proven: false }
   writeState(state)
   return bsvTxid
+}
+
+/**
+ * Every credit must name a signed mint the HCT store holds. Before 1.3.602 a
+ * mint interrupted while still unsigned counted as credited without a txid;
+ * such a credit is dropped so the deposit mints again. A signed mint the app
+ * stopped before committing is adopted.
+ */
+async function healCredits(active: ActiveWallet): Promise<void> {
+  const { adoptSignedHctAction } = await import('../hct/wallet')
+  for (const [key, d] of Object.entries(readState().deposits)) {
+    if (d.status !== 'credited' || (d.bsvTxid && committedMints.has(d.bsvTxid))) continue
+    const [txid, vout] = key.split(':') as [string, string]
+    const minted = d.bsvTxid ?? (await labelledAction(active, `${DEPOSIT_LABEL} ${txid}.${vout}`))
+    if (!minted) {
+      const state = readState()
+      delete state.deposits[key]
+      writeState(state)
+      console.warn(`[wltc] credit ${key} had no signed mint — minting again`)
+      continue
+    }
+    try {
+      await adoptSignedHctAction(minted)
+      committedMints.add(minted)
+      if (!d.bsvTxid) {
+        const state = readState()
+        const record = state.deposits[key]
+        if (record) record.bsvTxid = minted
+        writeState(state)
+      }
+    } catch (err) {
+      console.warn(`[wltc] mint ${minted.slice(0, 12)} of ${key} not adopted — ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
 }
 
 /** New deposits paying the reserve: minted at first sight, or `waiting` while the first deposit is unproven. */
@@ -488,6 +529,7 @@ export function listLtcDeposits(): Promise<LtcDepositsResult> {
   return serial(async () => {
     const active = requireActive()
     await settleWithdrawals(active)
+    await healCredits(active)
     const utxos = await deps.chain.addressUtxos(reserveOf(active).address)
     const live = await creditPass(active, utxos)
     const progress = await provePass(active)
