@@ -69,6 +69,7 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
+import { HctShelf, useHctHoldings } from './HctShelf'
 import { CloseIcon, CollectablesIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
@@ -664,6 +665,8 @@ export function InventoryPanel() {
     getVerificationProgress(),
   )
   const [, bumpInFlight] = useState(0)
+  const hct = useHctHoldings()
+  const hctHeld = hct.snapshot.context.assets.length > 0
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
   useEffect(() => subscribeVerificationProgress(setVerification), [])
@@ -901,6 +904,7 @@ export function InventoryPanel() {
   const empty =
     items.filter((item) => !collectableIsFungible(item)).length === 0 &&
     tokens.length === 0 &&
+    !hctHeld &&
     ready &&
     tokensReady
   const searchEmpty = !empty && !showLoading && visibleItems.length === 0 && searching
@@ -1020,6 +1024,8 @@ export function InventoryPanel() {
           <TokenShelf tokens={ungroupedTokens} view={view} label="Tokens without an issuer" />
         </section>
       ) : null}
+
+      {searching ? null : <HctShelf holdings={hct} view={view} />}
 
       {showLoading ? (
         <EmptyState

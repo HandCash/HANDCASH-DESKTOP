@@ -1,4 +1,4 @@
-# HCT tokens: design (draft)
+# HCT tokens
 
 Spec: BRC-255 draft, in `BRCs-255/tokens/0255.md` until it is reviewed. "HCT" is a working name.
 
@@ -6,9 +6,11 @@ Spec: BRC-255 draft, in `BRCs-255/tokens/0255.md` until it is reviewed. "HCT" is
 
 All new tokens and issuer items use one HandCash format. It is not built on BRC-162:
 
-- **Open mode.** The holder's signature alone moves an output. It replaces `p2pft`.
-- **Countersigned mode.** The issuer accepts every transfer, and custodians can release the asset when the issuer is gone. It replaces `csft` and `csnft`.
+- **Open mode.** The holder's signature alone moves an output. Open tokens file in `p2pft`, open items in `p2pnft`.
+- **Countersigned mode.** The issuer accepts every transfer, and custodians can release the asset when the issuer is gone. Countersigned tokens file in `csft`, items in `csnft`.
 - **Items.** An item is a supply-1 deploy in either mode. One transaction can deploy up to 256 of them.
+
+An asset's mode and kind are fixed at deploy, so it never changes filing. HCT shares each filing with the older format of the same mode (BRC-162 in `p2pft`, BRC-253 in `csft` / `csnft`), so one view shows a holder's tokens or items whatever their format. Readers tell them apart by the `hct` tag and the 40-hex asset id, never by the filing.
 
 New HandCash items are HCT items too. 1Sat ordinals (`1sat`, BRC-147/150/165) stay fully supported as an outside format: receive, hold, send, market (`ordinal-v2`) and BRC-150 provenance, so items keep moving to and from 1Sat wallets and markets. HandCash minting stops creating them.
 
@@ -42,37 +44,40 @@ Proof trust is fixed per mode, with nothing in between:
 - **Open transfer:** the recipient checks every hop back to the deploy and trusts no one, not even the issuer. The sender ships only the hops this recipient has not already checked, so repeat receipts are small. A first receipt of an old, busy asset is the largest case, at about 0.5 KB per hop.
 - **Countersigned transfer:** the issuer checked the history before signing, so the package is one Extended Format transaction, about 0.8 KB. A transfer after a release is not issuer-checked, so it walks back to the last transaction the issuer accepted.
 
-## Module plan
+## Modules (open mode, shipped)
 
-| Concern | Module | Reuses |
-|---|---|---|
-| Script encode/parse: deploy, held, authority, both clauses, beacon | `src/wallet/hct/script.ts` | `countersign/script.ts` sighash helpers |
-| Deploy payload (DAG-CBOR, `crit`) | `src/wallet/hct/payload.ts` | `token/decode162.ts` CBOR reader, moved to a neutral module |
-| Issuer key derivation (`[2, "hct issuer"]`, counterparty `anyone`) | `src/wallet/hct/issuerKey.ts` | — |
-| Validity walk (open to the deploy, countersigned to the last accepted transfer), validated-txid cache | `src/wallet/hct/validity.ts` | `countersign/resolve.ts` checks, generalized |
-| Proof package: build, delta per peer, `need` | `src/wallet/hct/proof.ts` | `token/inboundLineage.ts` frontier idea |
-| Send / receive (chart) | `src/wallet/hct/wallet.ts`, `hctSendMachine` | `countersign/wallet.ts` acceptor and requester paths |
-| Acceptor (accept-once, P2PK fee coins) | `src/wallet/hct/acceptor.ts` | `countersign/store.ts`, policy (`checkAcceptorPolicy`) |
-| Beacon, lapse and hash-lock release | `src/wallet/hct/beacon.ts` | `countersign/beacon.ts`, `beaconSource.ts` |
-| Holder keys (`[2, "hct holder"]`) | `src/wallet/hct/holderKeys.ts` | `countersign/holderKeys.ts` |
-| Filing `hct` / `hcti`, `p hct …` / `p hcti …` scopes | `src/wallet/hct/access.ts`, `itemAccess.ts` | `countersign/access` model |
-| Market `token-v2` on HCT outputs | `marketListing.ts`, `marketSettlement.ts` | settlement v2 layouts |
-| Convert from BRC-162 | `src/wallet/hct/convert.ts` | `token/send.ts` (outbound legacy leg only) |
+| Concern | Module |
+|---|---|
+| Script encode/parse: deploy, held, authority, both clauses, beacon | `src/wallet/hct/script.ts` |
+| Deploy payload (DAG-CBOR, `crit`) | `src/wallet/hct/payload.ts` |
+| Issuer and holder keys (`[2, "hct issuer"]` counterparty `anyone`; `[2, "hct holder"]`) | `src/wallet/hct/keys.ts` |
+| Deploy read, per-transaction conservation check, walk to the deploy | `src/wallet/hct/validity.ts` |
+| Proof package (§6) and validated-transaction store | `src/wallet/hct/proof.ts`, `store.ts` |
+| Issue, transfer, receive (box `hct`), durable outbox, per-peer frontier | `src/wallet/hct/wallet.ts`, `state.ts`, chart `hctMachine` |
+| Collectables shelf and send form | `src/components/HctShelf.tsx`, chart `hctHoldingsMachine` |
+| BRC-100 methods `issueHctAsset`, `transferHctAsset`, `listHctAssets` | `src/wallet/brc100Handler.ts` |
+| App views (`p p2pft token`, `p p2pnft …` under the item grant) | `src/wallet/itemAccess.ts` |
 
-Every send goes through `signedSendLifecycle`, as today. Each wallet-layer path is a tagged union plus an XState chart registered in `machineManifest.ts`, with Settings statecharts kept accurate.
+Rules the code holds to:
+
+- A row counts only when its (txid, asset) pair was validated by the walk **and** the remittance derives the key in its lock. A conjured or mis-filed row is never listed or spent.
+- Receive checks that the box sender is the remittance sender and that every claimed output is a held output or authority of the named asset, never a deploy. History the package lacks is asked for with `need`; the message is not ACKed until filing succeeds. An invalid transfer is ACKed and refused.
+- Apps view HCT rows and never write, spend or relinquish them. Every spend is built and signed by the wallet, re-checked against §4 before and after `signAction`, and aborted on any mismatch.
+- Code written for BRC-162, 1Sat or change never heals, consolidates, sweeps or counts an HCT row (`isAssetFilingBasket`).
+- Every send goes through `signedSendLifecycle`.
 
 ## Phases
 
-1. **Spec review.** Review BRC-255 and settle the name, marker, filing names and protocol IDs.
-2. **Core.** `hct/script`, `payload`, `issuerKey`, `validity` and `proof`, with unit tests and the BRC test script vectors.
-3. **Open mode end to end.** Deploy, send, receive, `p hct` access and inventory.
-4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections.
-5. **Market.** BRC-254 on HCT outputs; BRC-CLOUD index and storefront read `hct` and `hcti`.
-6. **Items.** `hcti` inventory and detail. Mint-studio and issuers mint HCT items. The market sells `hcti` on the token layout, with no pads. `1sat` stays as the outside-format path.
-7. **Convert.** Issuers convert BRC-162 holdings. `p2pft`, `csft` and `csnft` become read-only, then are removed along with the BRC-162 code, after a release in which no device reports a holding.
+1. **Spec review.** BRC-255 draft open; name, marker and protocol IDs still movable.
+2. **Core.** Done: script, payload, keys, validity, proof, with adversarial tests.
+3. **Open mode end to end.** Done: issue, send, receive, `p2pft` / `p2pnft` filing, app access, Collectables shelf.
+4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections. Until it lands, a countersigned HCT transfer stays unacknowledged in box `hct` so nothing is lost.
+5. **Market.** BRC-254 on HCT outputs; BRC-CLOUD index and storefront read HCT rows in `p2pft` / `p2pnft`.
+6. **Items.** Mint-studio and issuers mint HCT items. The market sells them on the token layout, with no pads. `1sat` stays as the outside-format path.
+7. **Convert.** Issuers convert BRC-162 holdings; BRC-162 code is removed after a release in which no device reports a holding.
 
 ## Open decisions
 
-- The final protocol name, which is mechanical to change before phase 2.
+- The final protocol name.
 - Whether mint-studio issues HCT only from phase 3 on.
 - How long read-only BRC-162 support lasts after conversion opens.

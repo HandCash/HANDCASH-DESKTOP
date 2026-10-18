@@ -387,6 +387,21 @@ export const storageRegistry = Object.freeze({
     version: 1,
     retention: 'rebuildable',
   }),
+  /** IndexedDB: BRC-255 transactions in Extended Format, validated (txid, asset) pairs and deploy locations. Chain facts. */
+  hctChain: defineStorage({
+    key: 'handcash-brc100-hct',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** HCT outbox, per-peer proof frontier and issued-asset records. */
+  hct: defineStorage({
+    key: 'handcash.hct.v1',
+    owner: 'tokens',
+    scope: 'wallet',
+    version: 1,
+  }),
   importItems: defineStorage({
     key: 'handcash.import-items',
     owner: 'legacy-import',

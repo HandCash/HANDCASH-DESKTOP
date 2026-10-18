@@ -333,6 +333,14 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Releasing…',
     detail: 'Publishing the release keys on chain',
   },
+  issueHctAsset: {
+    label: 'Issuing…',
+    detail: 'Deploying the asset',
+  },
+  transferHctAsset: {
+    label: 'Sending…',
+    detail: 'Signing the transfer and delivering its proof',
+  },
 }
 
 /** Copy for a market method that keeps the wallet busy after approval. */

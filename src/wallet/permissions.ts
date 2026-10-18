@@ -642,6 +642,8 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'setCountersignedAssetPolicy',
         'releaseCountersignedAsset',
         'joinCountersignedAsset',
+        'issueHctAsset',
+        'transferHctAsset',
       ].includes(prompt.method)
     ) {
       return
@@ -1342,6 +1344,38 @@ export function summarizeAction(method: string, args: unknown): {
     return {
       title: `Send ${amount} issuer-accepted`,
       summary: 'You sign; the issuer countersigns or refuses. A refusal sends nothing.',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      details: [
+        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
+        recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
+      ],
+    }
+  }
+
+  if (method === 'issueHctAsset') {
+    const kind = body.kind === 'item' ? 'item' : 'token'
+    const label =
+      kind === 'item'
+        ? typeof body.name === 'string' ? body.name : 'item'
+        : `${String(body.supply ?? '?')} ${typeof body.sym === 'string' ? body.sym : 'tokens'}`
+    return {
+      title: `Issue ${label}`,
+      summary: `Deploy an open ${kind} you issue and hold; it moves on its holder's signature alone`,
+      itemName: label,
+      previewKind: kind === 'item' ? 'collectable' : 'token',
+      details: [
+        'Anyone can check it back to your deploy without an indexer',
+        typeof body.collection === 'string' ? `Collection: ${body.collection}` : kind === 'item' ? 'No collection' : 'Fixed supply',
+      ],
+    }
+  }
+
+  if (method === 'transferHctAsset') {
+    const amount = String(body.amount ?? '1')
+    const recipient = typeof body.recipient === 'string' ? body.recipient : ''
+    return {
+      title: `Send ${amount}`,
+      summary: 'You sign the transfer; the recipient gets its proof in their inbox and checks it themselves.',
       tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',

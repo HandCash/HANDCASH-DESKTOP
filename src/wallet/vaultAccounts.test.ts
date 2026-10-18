@@ -85,6 +85,17 @@ describe('vaultAccounts (BRC-208)', () => {
     ).toBeNull()
   })
 
+  it('refuses keys and signatures under asset custody protocols', () => {
+    for (const name of ['hct holder', 'HCT  Holder ', 'hct issuer', 'hct fee', 'countersign release', 'countersign decision']) {
+      for (const method of ['createSignature', 'getPublicKey', 'revealSpecificKeyLinkage', 'encrypt']) {
+        expect(reservedKeyRefusal(method, { protocolID: [2, name], keyID: 'a b', counterparty: 'self' }, undefined)).toBe(
+          'asset-protocol',
+        )
+      }
+    }
+    expect(reservedKeyRefusal('createSignature', { protocolID: [2, 'hct holders'], keyID: '1' }, undefined)).toBeNull()
+  })
+
   it('refuses to reveal the shared secret that yields every account offset', () => {
     const self = identityKeyForAccount(ROOT, 0)
     const reveal = (counterparty: string) =>

@@ -18,7 +18,7 @@ import { getActiveWallet } from './session'
  */
 
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
-import { isTokenFilingBasket } from './token/filing'
+import { isAssetFilingBasket, isTokenFilingBasket } from './token/filing'
 import { outpointFromOutput } from './txOutpoints'
 import { withStorageLockLabel } from './storageLockTrace'
 import { getUtxoLock, isUtxoBlockedFromRestore } from './utxoLockManager'
@@ -73,6 +73,7 @@ export function classifyOwnedCash(
   const basket = String(row.basket ?? '').toLowerCase()
   if (basket === '1sat') return { kind: 'exclude', reason: 'item' }
   if (isTokenFilingBasket(basket)) return { kind: 'exclude', reason: 'bsv21' }
+  if (isAssetFilingBasket(basket)) return { kind: 'exclude', reason: 'item' }
 
   if (spender === 'pending' || spender === 'settled') {
     return { kind: 'exclude', reason: 'spentLive' }

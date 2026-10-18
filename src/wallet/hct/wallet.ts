@@ -1,0 +1,1143 @@
+import { Beef, PrivateKey, Transaction, Utils } from '@bsv/sdk'
+import { createActor } from 'xstate'
+import { hctMachine } from '../../machines/hctMachine'
+import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
+import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid, rememberBeefTree } from '../beefCache'
+import { scheduleHistoryBackupPush } from '../deviceSync'
+import { stampBrc164Id } from '../itemAccess'
+import type { ActiveWallet } from '../session'
+import { runExclusiveSpend } from '../spendGuard'
+import { EMPTY_INPUT_BEEF } from '../token/verifiableInputBeef'
+import { activeAccountSpendRefusal } from '../vaultAccountHolding'
+import { getWalletRuntime } from '../walletRuntime'
+import { signInput, sourceTxidOf } from '../countersign/script'
+import {
+  freshDerivationString,
+  hctHolderPrivateKey,
+  hctHolderPublicKey,
+  hctIssuerPrivateKey,
+  readHctRemittance,
+  type HctRemittance,
+} from './keys'
+import { encodeHctPayload, HCT_MAX_CONTENT_BYTES, HCT_MAX_ICON_BYTES, type HctDeployFields } from './payload'
+import { buildHctPackage, hctAncestry, HCT_PACKAGE_BUDGET, readHctPackage, type HctPackage } from './proof'
+import {
+  HCT_HOLDER_SCOPE,
+  HCT_ISSUER_SCOPE,
+  HCT_MAX_AMOUNT,
+  hctAssetId,
+  hctAuthorityLock,
+  hctDeployLock,
+  hctHeldLock,
+  hctOpenUnlock,
+  isHctAssetId,
+  p2pkLock,
+  readHct,
+  type HctOutput,
+} from './script'
+import {
+  outboxId,
+  notePeerHolds,
+  peerHolds,
+  readHctState,
+  writeHctState,
+  type HctDeliveryOutput,
+  type HctOutboxEntry,
+} from './state'
+import {
+  getHctDeployRecord,
+  getHctTx,
+  isHctValidated,
+  isHctValidatedSync,
+  markHctValidated,
+  putHctDeployRecord,
+  putHctTx,
+} from './store'
+import { checkHctTx, readHctDeploy, readHctDeploys, walkHct, type HctDeploy } from './validity'
+
+/** Store-and-forward box for transfer packages and history requests. */
+export const HCT_BOX = 'hct'
+/** Open HCT filings (§11). Countersigned assets file in `csft` / `csnft`. */
+export const HCT_TOKEN_BASKET = 'p2pft'
+export const HCT_ITEM_BASKET = 'p2pnft'
+export const HCT_TAG = 'hct'
+/** One-satoshi P2PK coins locked to this identity's issuer key; a deploy spends one. */
+const ISSUER_BASKET = 'hct-issuer'
+const LABEL = 'hct'
+const SIG_LENGTH = 73
+const MAX_INPUTS = 64
+const MAX_DELIVERY_OUTPUTS = 64
+const BOX_ACTIVE_POLL_MS = 5_000
+const BOX_IDLE_POLL_MS = 20_000
+const RETRY_STEPS_MS = [30_000, 2 * 60_000, 10 * 60_000, 60 * 60_000]
+const NEED_RESEND_MS = 10 * 60_000
+/** A `history` reply is taken only while a `need` for that asset is this fresh. */
+const NEED_OPEN_MS = 60 * 60_000
+const KEY_RE = /^0[23][0-9a-f]{64}$/
+const TXID_RE = /^[0-9a-f]{64}$/
+
+type Wire =
+  | {
+      v: 1
+      t: 'transfer'
+      asset: string
+      /** The deploy outpoint, `txid_vout`: the package may omit its body. */
+      deploy: string
+      senderIdentityKey: string
+      outputs: HctDeliveryOutput[]
+      proof: HctPackage
+      /** Atomic BEEF of the subject for the recipient's toolbox, when it fits. */
+      beef?: string
+    }
+  | { v: 1; t: 'need'; asset: string; deploy: string; txid: string }
+  | { v: 1; t: 'history'; asset: string; proof: HctPackage }
+
+export type HctError =
+  | 'bad-asset-args'
+  | 'not-held'
+  | 'insufficient'
+  | 'unsupported-mode'
+  | 'invalid-build'
+
+export class HctRefusal extends Error {
+  constructor(
+    readonly reason: HctError,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'HctRefusal'
+  }
+}
+
+function refuse(reason: HctError, message: string): never {
+  console.warn(`[hct] refuse ${reason} — ${message}`)
+  throw new HctRefusal(reason, message)
+}
+
+function log(phase: string, startedAt: number): void {
+  const ms = Date.now() - startedAt
+  if (ms > 250) console.info(`[hct] ${phase} done ${ms}ms`)
+}
+
+function currentActive(): ActiveWallet | null {
+  return getWalletRuntime()?.instance ?? null
+}
+
+function requireActive(): ActiveWallet {
+  const active = currentActive()
+  if (!active) throw new Error('Wallet locked')
+  return active
+}
+
+const rootOf = (active: ActiveWallet) => PrivateKey.fromHex(active.rootKeyHex)
+const selfOf = (active: ActiveWallet) => active.identityKey.toLowerCase()
+const idOf = (tx: Transaction) => String(tx.id('hex')).toLowerCase()
+
+export function hctFilingOf(kind: 'token' | 'item'): string {
+  return kind === 'item' ? HCT_ITEM_BASKET : HCT_TOKEN_BASKET
+}
+
+// ── Transactions ───────────────────────────────────────────────────────────
+
+async function rawTx(active: ActiveWallet, txid: string): Promise<Transaction | null> {
+  if (!TXID_RE.test(txid)) return null
+  const stored = await getHctTx(txid)
+  if (stored) return stored
+  const local = await getLocalBeefForTxid(active, txid).catch(() => null)
+  const hit = local?.findTxid(txid)?.tx
+  if (hit) return hit
+  try {
+    const beef = await getBeefForTxidCached(active, txid, { needProof: false, allowUnprovenRawTx: true })
+    return beef.findTxid(txid)?.tx ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Link every input's source output (Extended Format); null when a parent is not available. */
+async function linkSources(active: ActiveWallet, tx: Transaction, beef?: Beef): Promise<Transaction | null> {
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const input = tx.inputs[vin]!
+    if (input.sourceTransaction?.outputs[input.sourceOutputIndex]) continue
+    const parentId = sourceTxidOf(tx, vin)
+    const parent = beef?.findTxid(parentId)?.tx ?? (await rawTx(active, parentId))
+    if (!parent?.outputs[input.sourceOutputIndex]) return null
+    input.sourceTXID = parentId
+    input.sourceTransaction = parent
+  }
+  return tx
+}
+
+async function linkedTx(active: ActiveWallet, txid: string): Promise<Transaction | null> {
+  const tx = await rawTx(active, txid)
+  return tx ? linkSources(active, tx) : null
+}
+
+/** Atomic BEEF of `tx` with every unproven ancestor this wallet can supply. */
+async function atomicBeefFor(active: ActiveWallet, tx: Transaction): Promise<number[]> {
+  const txid = idOf(tx)
+  const local = await getLocalBeefForTxid(active, txid).catch(() => null)
+  if (local?.findTxid(txid)?.tx) {
+    const framed = atomicBeefForSubject(Array.from(local.toBinary()), txid)
+    if (framed) return framed
+  }
+  const beef = new Beef()
+  beef.mergeRawTx(tx.toBinary())
+  for (let pass = 0; pass < 32; pass++) {
+    const need = new Set<string>()
+    for (const entry of beef.txs) {
+      if (entry.isTxidOnly || !entry.tx || entry.bumpIndex !== undefined) continue
+      for (let vin = 0; vin < entry.tx.inputs.length; vin++) {
+        const parent = sourceTxidOf(entry.tx, vin)
+        if (parent && !beef.findTxid(parent)) need.add(parent)
+      }
+    }
+    if (need.size === 0) break
+    let added = false
+    for (const parent of need) {
+      const held = await getLocalBeefForTxid(active, parent).catch(() => null)
+      if (held?.findTxid(parent)?.tx) {
+        beef.mergeBeef(held.toBinary())
+        added = true
+        continue
+      }
+      try {
+        beef.mergeBeef((await getBeefForTxidCached(active, parent, { needProof: false, allowUnprovenRawTx: true })).toBinary())
+        added = true
+      } catch {
+        // A parent this wallet cannot reach leaves the BEEF short; the toolbox refuses it and the caller retries.
+      }
+    }
+    if (!added) break
+  }
+  return Array.from(beef.toBinaryAtomic(txid))
+}
+
+// ── Deploys ────────────────────────────────────────────────────────────────
+
+const deployCache = new Map<string, HctDeploy>()
+
+/** The deploy of `assetId`, read back from its transaction; `at` names it when this wallet has no record. */
+async function deployOf(active: ActiveWallet, assetId: string, at?: { txid: string; vout: number }, supplied?: Transaction): Promise<HctDeploy | null> {
+  const cached = deployCache.get(assetId)
+  if (cached) return cached
+  const record = (await getHctDeployRecord(assetId)) ?? null
+  if (record && at && (record.txid !== at.txid || record.vout !== at.vout)) return null
+  const where = record ?? (at ? { assetId, ...at } : null)
+  if (!where || hctAssetId(where.txid, where.vout) !== assetId) return null
+  const tx = supplied && idOf(supplied) === where.txid ? await linkSources(active, supplied) : await linkedTx(active, where.txid)
+  if (!tx) return null
+  const read = readHctDeploy(tx, where.vout)
+  if (!read.ok || read.deploy.assetId !== assetId) return null
+  await putHctTx(tx)
+  if (!record) await putHctDeployRecord({ assetId, txid: where.txid, vout: where.vout })
+  await markHctValidated([where.txid], assetId)
+  deployCache.set(assetId, read.deploy)
+  return read.deploy
+}
+
+function parseOutpoint(value: unknown): { txid: string; vout: number } | null {
+  if (typeof value !== 'string') return null
+  const [txid, vout] = value.trim().toLowerCase().replace('.', '_').split('_')
+  const n = Number(vout)
+  return TXID_RE.test(txid ?? '') && Number.isInteger(n) && n >= 0 && n <= 255 ? { txid: txid!, vout: n } : null
+}
+
+// ── Rows ───────────────────────────────────────────────────────────────────
+
+export type HctRow = {
+  outpoint: string
+  txid: string
+  vout: number
+  assetId: string
+  read: HctOutput
+  /** Units this output carries as an input: a deploy carries its supply. */
+  amount: bigint
+  authority: boolean
+  basket: string
+  remittance: HctRemittance
+}
+
+function displayTag(prefix: string, value: string | undefined): string[] {
+  const text = value?.replace(/[\u0000-\u001f]/g, '').trim().slice(0, 64)
+  return text ? [`${prefix}:${text}`] : []
+}
+
+function rowTags(assetId: string, deploy: Pick<HctDeploy, 'fields'>, form: 'held' | 'authority' | 'deploy', amount: bigint): string[] {
+  const { fields } = deploy
+  return stampBrc164Id([
+    HCT_TAG,
+    `${hctFilingOf(fields.kind)}:${assetId}`,
+    form === 'authority' ? 'hct-authority' : `amt:${amount}`,
+    ...displayTag('sym', fields.sym),
+    ...displayTag('name', fields.name),
+    ...(fields.col ? [`collection:${fields.col}`] : []),
+    `creator:${fields.iss[0]}`,
+  ])
+}
+
+/** A deploy row has no asset id until it is signed: readers derive it from the outpoint and script. */
+function rowInstructions(
+  assetId: string | null,
+  fields: Pick<HctDeployFields, 'kind' | 'mode' | 'sym' | 'dec' | 'name' | 'col'>,
+  form: 'held' | 'authority' | 'deploy',
+  amount: bigint,
+  remittance: HctRemittance,
+): string {
+  return JSON.stringify({
+    ...(assetId ? { asset: assetId } : {}),
+    kind: fields.kind,
+    mode: fields.mode,
+    form,
+    amt: amount.toString(),
+    ...(fields.sym ? { sym: fields.sym } : {}),
+    ...(fields.dec != null ? { dec: fields.dec } : {}),
+    ...(fields.name ? { name: fields.name } : {}),
+    ...(fields.col ? { col: fields.col } : {}),
+    ...remittance,
+  })
+}
+
+/**
+ * Rows this wallet holds in `basket` that read as canonical HCT, whose
+ * remittance derives the clause's holder key, and whose (txid, asset) this
+ * device validated. A tag alone never makes a row an asset.
+ */
+async function heldRows(active: ActiveWallet, basket: string, assetId?: string): Promise<HctRow[]> {
+  const page = await active.wallet.listOutputs({
+    basket,
+    include: 'locking scripts',
+    includeTags: true,
+    includeCustomInstructions: true,
+    limit: 10_000,
+  })
+  const root = rootOf(active)
+  const rows: HctRow[] = []
+  for (const o of page.outputs ?? []) {
+    if (o.spendable === false || !(o.tags ?? []).includes(HCT_TAG) || !o.lockingScript) continue
+    const read = readHct(o.lockingScript)
+    if (!read) continue
+    const [txid, voutRaw] = o.outpoint.replace('_', '.').split('.')
+    const vout = Number(voutRaw)
+    const id = read.form === 'deploy' ? hctAssetId(txid!, vout) : read.assetId
+    if (assetId && id !== assetId) continue
+    let remittance: HctRemittance | null = null
+    try {
+      remittance = readHctRemittance(JSON.parse(o.customInstructions ?? 'null'))
+    } catch {
+      remittance = null
+    }
+    if (!remittance) continue
+    if (hctHolderPrivateKey(root, remittance).toPublicKey().toString() !== read.clause.holder) continue
+    if (!(await isHctValidated(txid!, id))) continue
+    const deploy = read.form === 'deploy' ? await deployOf(active, id, { txid: txid!, vout }) : null
+    rows.push({
+      outpoint: `${txid}.${vout}`,
+      txid: txid!,
+      vout,
+      assetId: id,
+      read,
+      amount: read.form === 'held' ? read.amount : read.form === 'deploy' ? read.supply : 0n,
+      authority: read.form === 'authority' || deploy?.fields.auth === true,
+      basket,
+      remittance,
+    })
+  }
+  return rows
+}
+
+export type HctAssetSummary = {
+  assetId: string
+  kind: 'token' | 'item'
+  mode: 'open' | 'countersign'
+  sym?: string
+  name?: string
+  dec?: number
+  collection?: string
+  issuers: string[]
+  balance: string
+  outputs: number
+  authority: boolean
+  deploy: string
+}
+
+/** Open HCT assets this wallet holds, from validated rows only. */
+export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
+  const active = requireActive()
+  const startedAt = Date.now()
+  const rows = [...(await heldRows(active, HCT_TOKEN_BASKET)), ...(await heldRows(active, HCT_ITEM_BASKET))]
+  const byAsset = new Map<string, HctRow[]>()
+  for (const row of rows) byAsset.set(row.assetId, [...(byAsset.get(row.assetId) ?? []), row])
+  const assets: HctAssetSummary[] = []
+  for (const [assetId, list] of byAsset) {
+    const deploy = await deployOf(active, assetId)
+    if (!deploy) continue
+    if (list.some((r) => r.basket !== hctFilingOf(deploy.fields.kind))) continue
+    assets.push({
+      assetId,
+      kind: deploy.fields.kind,
+      mode: deploy.fields.mode,
+      ...(deploy.fields.sym ? { sym: deploy.fields.sym } : {}),
+      ...(deploy.fields.name ? { name: deploy.fields.name } : {}),
+      ...(deploy.fields.dec != null ? { dec: deploy.fields.dec } : {}),
+      ...(deploy.fields.col ? { collection: deploy.fields.col } : {}),
+      issuers: deploy.fields.iss,
+      balance: list.reduce((sum, r) => sum + (r.read.form === 'authority' ? 0n : r.amount), 0n).toString(),
+      outputs: list.length,
+      authority: list.some((r) => r.authority),
+      deploy: `${deploy.txid}_${deploy.vout}`,
+    })
+  }
+  log('list', startedAt)
+  return { assets }
+}
+
+// ── Building ───────────────────────────────────────────────────────────────
+
+type PlannedOutput = {
+  lockingScript: string
+  satoshis: number
+  outputDescription: string
+  basket?: string
+  tags?: string[]
+  customInstructions?: string
+}
+
+type SignedHct = { txid: string; atomic: number[]; tx: Transaction }
+
+/** A fresh holder key for `recipient` and the remittance that names it. */
+function freshHolder(active: ActiveWallet, recipient: string, prefix: string): { holder: string; remittance: HctRemittance } {
+  const suffix = freshDerivationString()
+  return {
+    holder: hctHolderPublicKey(rootOf(active), recipient, prefix, suffix),
+    remittance: { derivationPrefix: prefix, derivationSuffix: suffix, senderIdentityKey: selfOf(active) },
+  }
+}
+
+/**
+ * Stage, sign and check one HCT action. The toolbox funds it and keeps the
+ * change; this wallet signs the inputs it names with `keys`, then `check`
+ * must pass on the fully linked transaction before `signAction` commits.
+ * Anything short of that aborts the action, so the inputs stay put.
+ */
+async function signHctAction(
+  active: ActiveWallet,
+  args: {
+    description: string
+    labels: string[]
+    inputs: Array<{ outpoint: string; description: string; key: PrivateKey; scope: number }>
+    outputs: PlannedOutput[]
+    check: (tx: Transaction) => string | null
+  },
+): Promise<SignedHct> {
+  const created = await active.wallet.createAction({
+    description: args.description.slice(0, 50),
+    labels: args.labels,
+    inputBEEF: EMPTY_INPUT_BEEF,
+    inputs: args.inputs.map((i) => ({ outpoint: i.outpoint, inputDescription: i.description, unlockingScriptLength: SIG_LENGTH })),
+    outputs: args.outputs,
+    options: { trustSelf: 'known', noSend: true, randomizeOutputs: false, signAndProcess: true },
+  })
+  const signable = created.signableTransaction
+  if (!signable?.reference) throw new Error('The HCT action returned nothing to sign')
+  const reference = signable.reference
+  try {
+    const beef = Beef.fromBinary(Array.from(signable.tx))
+    const targets = new Map(args.inputs.map((i) => [i.outpoint.replace('_', '.').toLowerCase(), i]))
+    const tx = beef.txs
+      .map((entry) => entry.tx)
+      .find((t) => t?.inputs.some((input, vin) => targets.has(`${sourceTxidOf(t, vin)}.${input.sourceOutputIndex}`)))
+    if (!tx) throw new Error('The staged HCT action does not spend its inputs')
+    if (!(await linkSources(active, tx, beef))) throw new Error('A staged HCT input has no source transaction')
+    const spends: Record<number, { unlockingScript: string }> = {}
+    for (let vin = 0; vin < tx.inputs.length; vin++) {
+      const input = tx.inputs[vin]!
+      const planned = targets.get(`${sourceTxidOf(tx, vin)}.${input.sourceOutputIndex}`)
+      if (!planned) continue
+      input.unlockingScript = hctOpenUnlock(signInput(tx, vin, planned.key, planned.scope))
+      spends[vin] = { unlockingScript: input.unlockingScript.toHex() }
+    }
+    if (Object.keys(spends).length !== args.inputs.length) throw new Error('An HCT input is missing from the staged action')
+    const problem = args.check(tx)
+    if (problem) refuse('invalid-build', `The built transaction fails BRC-255: ${problem}. Nothing was signed.`)
+    const signed = await active.wallet.signAction({ reference, spends, options: { noSend: true } })
+    const txid = typeof signed.txid === 'string' ? signed.txid.toLowerCase() : ''
+    const raw = signed.tx
+    const atomic = Array.isArray(raw) ? (raw as number[]) : raw ? Array.from(raw as Uint8Array) : []
+    if (!TXID_RE.test(txid) || atomic.length === 0) throw new Error('The HCT action was not signed')
+    const final = Beef.fromBinary(atomic).findTxid(txid)?.tx
+    if (!final || idOf(final) !== txid) throw new Error('The signed HCT action is missing from its BEEF')
+    final.inputs.forEach((input, vin) => {
+      const staged = tx.inputs[vin]
+      if (staged && sourceTxidOf(final, vin) === sourceTxidOf(tx, vin) && input.sourceOutputIndex === staged.sourceOutputIndex) {
+        input.sourceTransaction ??= staged.sourceTransaction
+      }
+    })
+    if (!(await linkSources(active, final))) throw new Error('The signed HCT action lost a source transaction')
+    const after = args.check(final)
+    if (after) {
+      await active.wallet.abortAction({ reference: txid }).catch(() => {})
+      throw new Error(`The signed HCT action fails BRC-255: ${after}`)
+    }
+    return { txid, atomic, tx: final }
+  } catch (err) {
+    await active.wallet.abortAction({ reference }).catch(() => {})
+    throw err
+  }
+}
+
+async function commitSigned(signed: SignedHct, assetIds: readonly string[], awaitMiners: boolean): Promise<void> {
+  rememberBeefTree(signed.atomic, signed.txid)
+  await putHctTx(signed.tx)
+  for (const assetId of assetIds) await markHctValidated([signed.txid], assetId)
+  const { registerSignedSend, propagateSignedSend, startSignedSendPropagation } = await import('../signedSendLifecycle')
+  const handle = await registerSignedSend({ txid: signed.txid, atomicBeef: signed.atomic, flow: 'hct' })
+  if (!awaitMiners) {
+    startSignedSendPropagation(handle)
+    return
+  }
+  await propagateSignedSend(handle).catch((err) => {
+    console.warn('[hct] propagation queued', err instanceof Error ? err.message : String(err))
+  })
+}
+
+// ── Issue ──────────────────────────────────────────────────────────────────
+
+async function issuerCoin(active: ActiveWallet, issuerPub: string): Promise<string> {
+  const lock = p2pkLock(issuerPub).toHex()
+  const page = await active.wallet.listOutputs({ basket: ISSUER_BASKET, include: 'locking scripts', limit: 100 })
+  const held = (page.outputs ?? []).find((o) => o.spendable !== false && (o.lockingScript ?? '').toLowerCase() === lock)
+  if (held) return held.outpoint.replace('_', '.')
+  const startedAt = Date.now()
+  const created = await active.wallet.createAction({
+    description: 'HCT issuer coin',
+    labels: [LABEL, 'hct-issuer'],
+    outputs: [{ lockingScript: lock, satoshis: 1, outputDescription: 'HCT issuer coin', basket: ISSUER_BASKET, tags: ['hct-issuer'] }],
+    options: { randomizeOutputs: false, noSend: true, acceptDelayedBroadcast: true },
+  })
+  const txid = created.txid?.toLowerCase() ?? ''
+  const atomic = created.tx ? Array.from(created.tx) : []
+  if (!TXID_RE.test(txid) || atomic.length === 0) throw new Error('The HCT issuer coin was not signed')
+  rememberBeefTree(atomic, txid)
+  const { registerSignedSend, propagateSignedSend } = await import('../signedSendLifecycle')
+  await propagateSignedSend(await registerSignedSend({ txid, atomicBeef: atomic, flow: 'hct' }))
+  log('issuer coin', startedAt)
+  return `${txid}.0`
+}
+
+type MediaArg = { mediaType?: unknown; base64?: unknown }
+
+function mediaOf(arg: MediaArg | undefined, max: number, what: string): { mediaType: string; bytes: Uint8Array } | undefined {
+  if (arg == null) return undefined
+  const mediaType = typeof arg.mediaType === 'string' ? arg.mediaType.trim() : ''
+  const bytes = typeof arg.base64 === 'string' ? Uint8Array.from(Utils.toArray(arg.base64, 'base64')) : new Uint8Array()
+  if (!mediaType || bytes.length === 0 || bytes.length > max) {
+    refuse('bad-asset-args', `The ${what} needs a media type and 1 byte to ${Math.round(max / 1024)} KiB.`)
+  }
+  return { mediaType, bytes }
+}
+
+export type IssueHctArgs = {
+  kind?: unknown
+  supply?: unknown
+  sym?: unknown
+  name?: unknown
+  dec?: unknown
+  icon?: MediaArg
+  content?: MediaArg
+  /** A token whose deploy is its mint authority (a collection's authority for items). */
+  auth?: unknown
+  /** An item's collection: a token asset whose authority this wallet holds. */
+  collection?: unknown
+  mode?: unknown
+}
+
+export type IssueHctResult = { assetId: string; txid: string; kind: 'token' | 'item'; supply: string; basket: string }
+
+/** Plain checks of issue arguments, before anything is staged. */
+export function hctIssueFields(args: IssueHctArgs, identityKey: string): { fields: HctDeployFields; supply: bigint } {
+  if (args.mode != null && args.mode !== 'open') {
+    refuse('unsupported-mode', 'This wallet issues open HCT assets; countersigned assets use issueCountersignedAsset.')
+  }
+  const kind = args.kind === 'item' ? 'item' : args.kind === 'token' || args.kind == null ? 'token' : null
+  if (!kind) refuse('bad-asset-args', 'kind must be "token" or "item".')
+  const supplyRaw = kind === 'item' ? String(args.supply ?? '1') : String(args.supply ?? '').trim()
+  if (!/^\d+$/.test(supplyRaw) || BigInt(supplyRaw) <= 0n || BigInt(supplyRaw) > HCT_MAX_AMOUNT) {
+    refuse('bad-asset-args', 'supply must be a whole number from 1 to 2^64-1.')
+  }
+  if (kind === 'item' && supplyRaw !== '1') refuse('bad-asset-args', 'An item has a supply of exactly 1.')
+  const sym = typeof args.sym === 'string' ? args.sym.trim() : ''
+  const name = typeof args.name === 'string' ? args.name.trim() : ''
+  if (kind === 'token' && !sym) refuse('bad-asset-args', 'A token needs a symbol.')
+  if (kind === 'item' && !name) refuse('bad-asset-args', 'An item needs a name.')
+  const dec = args.dec == null ? undefined : Number(args.dec)
+  const icon = mediaOf(args.icon, HCT_MAX_ICON_BYTES, 'icon')
+  const content = kind === 'item' ? mediaOf(args.content, HCT_MAX_CONTENT_BYTES, 'content') : undefined
+  if (kind === 'token' && args.content != null) refuse('bad-asset-args', 'Only an item carries content.')
+  const collection = args.collection == null ? undefined : String(args.collection).trim().toLowerCase()
+  if (collection != null && (kind !== 'item' || !isHctAssetId(collection))) {
+    refuse('bad-asset-args', 'collection is the 40-hex asset id of a token whose authority you hold, on an item.')
+  }
+  if (args.auth != null && typeof args.auth !== 'boolean') refuse('bad-asset-args', 'auth is true or false.')
+  const fields: HctDeployFields = {
+    mode: 'open',
+    kind,
+    iss: [identityKey.toLowerCase()],
+    m: 1,
+    ...(args.auth === true ? { auth: true } : {}),
+    ...(sym ? { sym } : {}),
+    ...(name ? { name } : {}),
+    ...(dec != null ? { dec } : {}),
+    ...(icon ? { icon } : {}),
+    ...(content ? { ctype: content.mediaType, c: content.bytes } : {}),
+    ...(collection ? { col: collection } : {}),
+  }
+  try {
+    encodeHctPayload(fields)
+  } catch (err) {
+    refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
+  }
+  return { fields, supply: BigInt(supplyRaw) }
+}
+
+/** Outputs that hand an authority (and a deploy's units) spent by this wallet back to it. */
+function carryBack(active: ActiveWallet, row: HctRow, deploy: HctDeploy, prefix: string): PlannedOutput[] {
+  const out: PlannedOutput[] = []
+  if (row.read.form !== 'authority' && row.amount > 0n) {
+    const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
+    out.push({
+      lockingScript: hctHeldLock({ assetId: row.assetId, amount: row.amount, clause: { mode: 'open', holder } }).toHex(),
+      satoshis: 1,
+      outputDescription: 'HCT units back to the holder',
+      basket: hctFilingOf(deploy.fields.kind),
+      tags: rowTags(row.assetId, deploy, 'held', row.amount),
+      customInstructions: rowInstructions(row.assetId, deploy.fields, 'held', row.amount, remittance),
+    })
+  }
+  if (row.authority) {
+    const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
+    out.push({
+      lockingScript: hctAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder } }).toHex(),
+      satoshis: 1,
+      outputDescription: 'HCT authority',
+      basket: hctFilingOf(deploy.fields.kind),
+      tags: rowTags(row.assetId, deploy, 'authority', 0n),
+      customInstructions: rowInstructions(row.assetId, deploy.fields, 'authority', 0n, remittance),
+    })
+  }
+  return out
+}
+
+/**
+ * Deploy an open BRC-255 token or item. This identity is the issuer: an
+ * issuer coin signed ALL|FORKID proves it (§3). Output 0 is the deploy, held
+ * by this wallet in `p2pft` (token) or `p2pnft` (item). An item in a
+ * collection spends that collection's authority and gets it back.
+ */
+export async function issueHctAsset(args: IssueHctArgs): Promise<IssueHctResult> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const chart = createActor(hctMachine).start()
+    chart.send({ type: 'ISSUE' })
+    try {
+      const { fields, supply } = hctIssueFields(args, active.identityKey)
+      const root = rootOf(active)
+      const issuerKey = hctIssuerPrivateKey(root)
+      const prefix = freshDerivationString()
+      const first = freshHolder(active, selfOf(active), prefix)
+      const basket = hctFilingOf(fields.kind)
+      const inputs: Array<{ outpoint: string; description: string; key: PrivateKey; scope: number }> = []
+      const outputs: PlannedOutput[] = [
+        {
+          lockingScript: hctDeployLock({ supply, payload: encodeHctPayload(fields), clause: { mode: 'open', holder: first.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: `HCT ${fields.kind} deploy`,
+          basket,
+          tags: rowTags('deploy', { fields }, 'deploy', supply),
+          customInstructions: rowInstructions(null, fields, 'deploy', supply, first.remittance),
+        },
+      ]
+      let collection: { row: HctRow; deploy: HctDeploy } | null = null
+      if (fields.col) {
+        const authority = (await heldRows(active, HCT_TOKEN_BASKET, fields.col)).find((r) => r.authority)
+        const deploy = authority ? await deployOf(active, fields.col) : null
+        if (!authority || !deploy) refuse('not-held', 'This wallet holds no authority of that collection.')
+        if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'The collection is not an open HCT asset.')
+        collection = { row: authority, deploy }
+        inputs.push({ outpoint: authority.outpoint, description: 'HCT collection authority', key: hctHolderPrivateKey(root, authority.remittance), scope: HCT_HOLDER_SCOPE })
+        outputs.push(...carryBack(active, authority, deploy, prefix))
+      }
+      const issuerPub = issuerKey.toPublicKey().toString()
+      inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'HCT issuer signature', key: issuerKey, scope: HCT_ISSUER_SCOPE })
+      // The next deploy's issuer coin rides this one; the issuer key is public by design (§3).
+      outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'HCT issuer coin', basket: ISSUER_BASKET, tags: ['hct-issuer'] })
+      chart.send({ type: 'BUILT' })
+      const label = fields.kind === 'item' ? fields.name! : `${supply} ${fields.sym}`
+      let deploy: HctDeploy | null = null
+      const signed = await signHctAction(active, {
+        description: `Issue ${label} (HCT)`,
+        labels: [LABEL, 'hct-issue'],
+        inputs,
+        outputs,
+        check: (tx) => {
+          const read = readHctDeploy(tx, 0)
+          if (!read.ok) return `${read.reason}: ${read.detail}`
+          if (collection) {
+            if (!read.deploy.member) return 'the item does not spend its collection authority'
+            const carried = checkHctTx(tx, collection.deploy)
+            if (!carried.ok) return `${carried.reason}: ${carried.detail}`
+          }
+          deploy = read.deploy
+          return null
+        },
+      })
+      const issued = deploy as HctDeploy | null
+      if (!issued) throw new Error('The signed deploy does not read back')
+      chart.send({ type: 'SIGNED', txid: signed.txid })
+      await putHctDeployRecord({ assetId: issued.assetId, txid: signed.txid, vout: 0 })
+      deployCache.set(issued.assetId, issued)
+      await commitSigned(signed, [issued.assetId, ...(collection ? [collection.row.assetId] : [])], true)
+      chart.send({ type: 'BROADCASTED' })
+      chart.send({ type: 'DELIVERED' })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-issue', note: `Issued ${label} (HCT ${fields.kind})`, txid: signed.txid })
+      scheduleHistoryBackupPush('hct')
+      log('issue', startedAt)
+      return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket }
+    } catch (err) {
+      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      throw err
+    } finally {
+      chart.stop()
+    }
+  }, undefined, { promote: false })
+}
+
+// ── Transfer ───────────────────────────────────────────────────────────────
+
+export type TransferHctResult = { assetId: string; txid: string; amount: string; recipient: string; delivered: boolean }
+
+function pickRows(rows: HctRow[], amount: bigint): HctRow[] | null {
+  const chosen: HctRow[] = []
+  let sum = 0n
+  for (const row of [...rows].sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))) {
+    if (sum >= amount) break
+    if (row.read.form === 'authority') continue
+    chosen.push(row)
+    sum += row.amount
+  }
+  return sum >= amount && chosen.length <= MAX_INPUTS ? chosen : null
+}
+
+/**
+ * Send units of an open HCT asset to an identity. The holder signs each input
+ * ALL|ANYONECANPAY|FORKID; the recipient's output is locked to a fresh
+ * `[2, "hct holder"]` key it derives from the remittance in the package,
+ * which goes to its box (and the durable outbox until it lands).
+ */
+export async function transferHctAsset(args: { assetId?: unknown; recipient?: unknown; amount?: unknown }): Promise<TransferHctResult> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const chart = createActor(hctMachine).start()
+    chart.send({ type: 'TRANSFER' })
+    try {
+      const assetId = String(args.assetId ?? '').trim().toLowerCase()
+      if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
+      const recipient = String(args.recipient ?? '').trim().toLowerCase()
+      if (!KEY_RE.test(recipient)) refuse('bad-asset-args', 'recipient is an identity key.')
+      const deploy = await deployOf(active, assetId)
+      if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets move through transferCountersignedAsset.')
+      const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
+      if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
+        refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+      }
+      const amount = BigInt(amountRaw)
+      if (deploy.fields.kind === 'item' && amount !== 1n) refuse('bad-asset-args', 'An item moves whole: amount is 1.')
+      const basket = hctFilingOf(deploy.fields.kind)
+      const rows = await heldRows(active, basket, assetId)
+      const chosen = pickRows(rows, amount)
+      if (!chosen) refuse('insufficient', `This wallet holds less than ${amount} of that asset in at most ${MAX_INPUTS} outputs.`)
+      const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
+      const self = selfOf(active)
+      const root = rootOf(active)
+      const prefix = freshDerivationString()
+      const pay = freshHolder(active, recipient, prefix)
+      const toSelf = recipient === self
+      const outputs: PlannedOutput[] = [
+        {
+          lockingScript: hctHeldLock({ assetId, amount, clause: { mode: 'open', holder: pay.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: 'HCT units',
+          ...(toSelf
+            ? { basket, tags: rowTags(assetId, deploy, 'held', amount), customInstructions: rowInstructions(assetId, deploy.fields, 'held', amount, pay.remittance) }
+            : {}),
+        },
+      ]
+      if (total > amount) {
+        const change = freshHolder(active, self, prefix)
+        outputs.push({
+          lockingScript: hctHeldLock({ assetId, amount: total - amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: 'HCT change',
+          basket,
+          tags: rowTags(assetId, deploy, 'held', total - amount),
+          customInstructions: rowInstructions(assetId, deploy.fields, 'held', total - amount, change.remittance),
+        })
+      }
+      for (const row of chosen.filter((r) => r.authority)) {
+        outputs.push(...carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix))
+      }
+      chart.send({ type: 'BUILT' })
+      const label = deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`
+      const signed = await signHctAction(active, {
+        description: `Send ${label} (HCT)`,
+        labels: [LABEL, 'hct-transfer'],
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'HCT units', key: hctHolderPrivateKey(root, row.remittance), scope: HCT_HOLDER_SCOPE })),
+        outputs,
+        check: (tx) => {
+          const check = checkHctTx(tx, deploy)
+          if (!check.ok) return `${check.reason}: ${check.detail}`
+          if (tx.outputs[0]?.lockingScript?.toHex() !== outputs[0]!.lockingScript) return 'the payment is not output 0'
+          return null
+        },
+      })
+      chart.send({ type: 'SIGNED', txid: signed.txid })
+      await commitSigned(signed, [assetId], false)
+      chart.send({ type: 'BROADCASTED' })
+      let delivered = toSelf
+      if (!toSelf) {
+        const entry: HctOutboxEntry = {
+          recipient,
+          assetId,
+          txid: signed.txid,
+          outputs: [{ vout: 0, derivationPrefix: pay.remittance.derivationPrefix, derivationSuffix: pay.remittance.derivationSuffix }],
+          at: Date.now(),
+          attempts: 0,
+          nextAt: Date.now(),
+        }
+        const state = readHctState()
+        state.outbox[outboxId(recipient, signed.txid)] = entry
+        writeHctState(state)
+        delivered = await deliverEntry(active, entry)
+      }
+      chart.send({ type: delivered ? 'DELIVERED' : 'QUEUED' })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-transfer', note: `Sent ${label} (HCT)`, txid: signed.txid })
+      scheduleHistoryBackupPush('hct')
+      log('transfer', startedAt)
+      return { assetId, txid: signed.txid, amount: amount.toString(), recipient, delivered }
+    } catch (err) {
+      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      throw err
+    } finally {
+      chart.stop()
+    }
+  }, undefined, { promote: false })
+}
+
+// ── Delivery ───────────────────────────────────────────────────────────────
+
+async function packageFor(
+  active: ActiveWallet,
+  subject: Transaction,
+  deploy: HctDeploy,
+  holds: ReadonlySet<string>,
+  budget: number,
+): Promise<{ pkg: HctPackage; shipped: string[] } | null> {
+  const ancestry = await hctAncestry(subject, deploy, (txid) => linkedTx(active, txid), (txid) => holds.has(txid))
+  if (!ancestry.ok) {
+    console.warn(`[hct] package ancestry ${ancestry.txid} — ${ancestry.detail}`)
+    return null
+  }
+  const deployTx = holds.has(deploy.txid) ? null : await linkedTx(active, deploy.txid)
+  const { pkg } = buildHctPackage(subject, ancestry.txs, deployTx ? [deployTx] : [], budget)
+  const shipped = [pkg.subject, ...ancestry.txs.map(idOf).slice(0, pkg.txs.length - 1), ...(pkg.deploys.length ? [deploy.txid] : [])]
+  return { pkg, shipped }
+}
+
+/** Send one outbox entry; true once the box took it. Failure reschedules, never voids the transfer. */
+async function deliverEntry(active: ActiveWallet, entry: HctOutboxEntry): Promise<boolean> {
+  const id = outboxId(entry.recipient, entry.txid)
+  try {
+    const subject = await linkedTx(active, entry.txid)
+    const deploy = await deployOf(active, entry.assetId)
+    if (!subject || !deploy) throw new Error('the transfer or its deploy is not available here')
+    const beefBytes = await atomicBeefFor(active, subject).catch(() => [] as number[])
+    const beef = beefBytes.length ? Utils.toBase64(beefBytes) : ''
+    const withBeef = beef.length > 0 && beef.length <= HCT_PACKAGE_BUDGET / 2
+    const holds = peerHolds(readHctState(), entry.recipient, entry.assetId)
+    const built = await packageFor(active, subject, deploy, holds, HCT_PACKAGE_BUDGET - (withBeef ? beef.length : 0))
+    if (!built) throw new Error('the package could not be built')
+    const wire: Wire = {
+      v: 1,
+      t: 'transfer',
+      asset: entry.assetId,
+      deploy: `${deploy.txid}_${deploy.vout}`,
+      senderIdentityKey: selfOf(active),
+      outputs: entry.outputs,
+      proof: built.pkg,
+      ...(withBeef ? { beef } : {}),
+    }
+    const { sendSealedToPeerBox } = await import('../messageTransport')
+    await sendSealedToPeerBox(active.rootKeyHex, entry.recipient, HCT_BOX, JSON.stringify(wire))
+    const state = readHctState()
+    delete state.outbox[id]
+    notePeerHolds(state, entry.recipient, entry.assetId, built.shipped)
+    writeHctState(state)
+    return true
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn(`[hct] delivery to ${entry.recipient.slice(0, 12)}… queued — ${message}`)
+    const state = readHctState()
+    const current = state.outbox[id]
+    if (current) {
+      const attempts = current.attempts + 1
+      state.outbox[id] = {
+        ...current,
+        attempts,
+        lastError: message.slice(0, 200),
+        nextAt: Date.now() + RETRY_STEPS_MS[Math.min(attempts - 1, RETRY_STEPS_MS.length - 1)]!,
+      }
+      writeHctState(state)
+    }
+    return false
+  }
+}
+
+async function flushOutbox(active: ActiveWallet): Promise<void> {
+  const now = Date.now()
+  for (const entry of Object.values(readHctState().outbox)) {
+    if (entry.nextAt <= now) await deliverEntry(active, entry)
+  }
+}
+
+// ── Receive ────────────────────────────────────────────────────────────────
+
+function parseWire(plaintext: string | null): Wire | null {
+  if (!plaintext) return null
+  try {
+    const msg = JSON.parse(plaintext) as Wire
+    return msg && msg.v === 1 && typeof msg.t === 'string' && isHctAssetId(msg.asset) ? msg : null
+  } catch {
+    return null
+  }
+}
+
+function deliveryOutputs(value: unknown): HctDeliveryOutput[] | null {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_DELIVERY_OUTPUTS) return null
+  const seen = new Set<number>()
+  const out: HctDeliveryOutput[] = []
+  for (const raw of value) {
+    const o = raw as Partial<HctDeliveryOutput>
+    if (!Number.isInteger(o.vout) || o.vout! < 0 || seen.has(o.vout!)) return null
+    if (typeof o.derivationPrefix !== 'string' || typeof o.derivationSuffix !== 'string') return null
+    seen.add(o.vout!)
+    out.push({ vout: o.vout!, derivationPrefix: o.derivationPrefix, derivationSuffix: o.derivationSuffix })
+  }
+  return out
+}
+
+const needAskedAt = new Map<string, number>()
+const needOpenAt = new Map<string, number>()
+const needServedAt = new Map<string, number>()
+
+async function askFor(active: ActiveWallet, peer: string, wire: Extract<Wire, { t: 'transfer' }>, txid: string): Promise<void> {
+  const key = `${peer}:${txid}`
+  if (Date.now() - (needAskedAt.get(key) ?? 0) < NEED_RESEND_MS) return
+  needAskedAt.set(key, Date.now())
+  needOpenAt.set(wire.asset, Date.now())
+  const { sendSealedToPeerBox } = await import('../messageTransport')
+  const need: Wire = { v: 1, t: 'need', asset: wire.asset, deploy: wire.deploy, txid }
+  await sendSealedToPeerBox(active.rootKeyHex, peer, HCT_BOX, JSON.stringify(need)).catch(() => {})
+}
+
+/**
+ * File the outputs of a delivered transfer that pay this wallet (§8): the
+ * sender must be the box sender, each named output must read as this asset
+ * locked to the holder key its remittance derives, and the walk must reach
+ * the deploy. A deploy is never credited by a transfer, and a countersigned
+ * asset is left in the box until this wallet can file it.
+ */
+async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extract<Wire, { t: 'transfer' }>): Promise<'filed' | 'invalid' | 'retry'> {
+  const startedAt = Date.now()
+  const from = sender.trim().toLowerCase()
+  if (!KEY_RE.test(from) || String(wire.senderIdentityKey ?? '').toLowerCase() !== from) return 'invalid'
+  const outputs = deliveryOutputs(wire.outputs)
+  const pkg = readHctPackage(wire.proof)
+  const at = parseOutpoint(wire.deploy)
+  if (!outputs || !pkg || !at || hctAssetId(at.txid, at.vout) !== wire.asset) return 'invalid'
+  const subject = pkg.subject
+  const txid = idOf(subject)
+  if (txid === at.txid) return 'invalid'
+  const root = rootOf(active)
+  const mine: Array<{ vout: number; read: Extract<HctOutput, { form: 'held' | 'authority' }>; remittance: HctRemittance }> = []
+  for (const o of outputs) {
+    const remittance = readHctRemittance({ ...o, senderIdentityKey: from })
+    const script = subject.outputs[o.vout]?.lockingScript
+    const read = script ? readHct(script) : null
+    if (!remittance || !read || read.form === 'deploy' || read.assetId !== wire.asset) return 'invalid'
+    if (hctHolderPrivateKey(root, remittance).toPublicKey().toString() !== read.clause.holder) return 'invalid'
+    if (read.clause.mode !== 'open') return 'retry'
+    mine.push({ vout: o.vout, read, remittance })
+  }
+  const deploy = await deployOf(active, wire.asset, at, pkg.deploys.get(at.txid))
+  if (!deploy) {
+    if ((await getHctDeployRecord(wire.asset)) && !deployCache.has(wire.asset)) return 'invalid'
+    await askFor(active, from, wire, at.txid)
+    return 'retry'
+  }
+  if (deploy.fields.mode !== 'open') return 'retry'
+  const basket = hctFilingOf(deploy.fields.kind)
+  const filed = await active.wallet.listOutputs({ basket, includeTags: true, limit: 10_000 })
+  if ((filed.outputs ?? []).some((o) => o.outpoint.replace('_', '.').startsWith(`${txid}.`))) return 'filed'
+  for (const tx of [...pkg.txs.values(), ...pkg.deploys.values()]) await putHctTx(tx).catch(() => {})
+  const walk = await walkHct(
+    txid,
+    deploy,
+    async (id) => {
+      const tx = pkg.txs.get(id) ?? (await linkedTx(active, id))
+      await isHctValidated(id, wire.asset)
+      return tx
+    },
+    (id) => isHctValidatedSync(id, wire.asset),
+  )
+  if (!walk.ok) {
+    console.warn(`[hct] transfer ${txid.slice(0, 12)}… ${walk.reason} at ${walk.txid.slice(0, 12)}… — ${walk.detail}`)
+    if (walk.reason === 'invalid') return 'invalid'
+    await askFor(active, from, wire, walk.txid)
+    return 'retry'
+  }
+  let atomic = wire.beef ? atomicBeefForSubject(Utils.toArray(wire.beef, 'base64'), txid) : undefined
+  atomic ??= await atomicBeefFor(active, subject).catch(() => undefined)
+  if (!atomic?.length) return 'retry'
+  try {
+    rememberBeefTree(atomic, txid)
+    const { withRestoredInternalizeStatus } = await import('../peerIngestHelpers')
+    await withRestoredInternalizeStatus(txid, () =>
+      active.wallet.internalizeAction({
+        tx: atomic!,
+        description: `Receive ${deploy.fields.sym ?? deploy.fields.name ?? 'asset'} (HCT)`.slice(0, 50),
+        labels: [LABEL],
+        outputs: mine.map((m) => {
+          const form = m.read.form
+          const amount = form === 'held' ? m.read.amount : 0n
+          return {
+            outputIndex: m.vout,
+            protocol: 'basket insertion' as const,
+            insertionRemittance: {
+              basket,
+              tags: rowTags(wire.asset, deploy, form, amount),
+              customInstructions: rowInstructions(wire.asset, deploy.fields, form, amount, m.remittance),
+            },
+          }
+        }),
+      }),
+    )
+  } catch (err) {
+    console.warn('[hct] transfer filing deferred', err instanceof Error ? err.message : String(err))
+    return 'retry'
+  }
+  await markHctValidated(walk.validated, wire.asset)
+  const state = readHctState()
+  notePeerHolds(state, from, wire.asset, [txid])
+  writeHctState(state)
+  const amount = mine.reduce((sum, m) => sum + (m.read.form === 'held' ? m.read.amount : 0n), 0n)
+  recordAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'event',
+    sats: 0,
+    method: 'hct-receive',
+    note: `Received ${deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`} (HCT)`,
+    txid,
+  })
+  scheduleHistoryBackupPush('hct')
+  log('receive', startedAt)
+  return 'filed'
+}
+
+/** Answer a peer's `need` with the history behind `txid`, once per peer and txid per resend window. */
+async function answerNeed(active: ActiveWallet, sender: string, wire: Extract<Wire, { t: 'need' }>): Promise<void> {
+  if (!TXID_RE.test(String(wire.txid))) return
+  const key = `${sender}:${wire.txid}`
+  if (Date.now() - (needServedAt.get(key) ?? 0) < NEED_RESEND_MS) return
+  needServedAt.set(key, Date.now())
+  const at = parseOutpoint(wire.deploy)
+  const deploy = at ? await deployOf(active, wire.asset, at) : null
+  if (!deploy) return
+  const subject = wire.txid === deploy.txid ? null : await getHctTx(wire.txid)
+  const built = subject ? await packageFor(active, subject, deploy, new Set(), HCT_PACKAGE_BUDGET) : null
+  const deployTx = built ? null : await linkedTx(active, deploy.txid)
+  const pkg = built?.pkg ?? (deployTx ? buildHctPackage(deployTx, [], [], HCT_PACKAGE_BUDGET).pkg : null)
+  if (!pkg) return
+  const { sendSealedToPeerBox } = await import('../messageTransport')
+  const reply: Wire = { v: 1, t: 'history', asset: wire.asset, proof: pkg }
+  await sendSealedToPeerBox(active.rootKeyHex, sender, HCT_BOX, JSON.stringify(reply)).catch(() => {})
+}
+
+/** Keep the transactions of a `history` reply this wallet asked for; validity is decided by the next walk. */
+async function takeHistory(wire: Extract<Wire, { t: 'history' }>): Promise<void> {
+  if (Date.now() - (needOpenAt.get(wire.asset) ?? 0) > NEED_OPEN_MS) return
+  const pkg = readHctPackage(wire.proof)
+  if (!pkg) return
+  for (const tx of [...pkg.txs.values(), ...pkg.deploys.values()]) await putHctTx(tx).catch(() => {})
+}
+
+let boxPolledAt = 0
+let serving = false
+
+/**
+ * Serve box `hct`: file delivered transfers, answer `need`, keep requested
+ * history, and retry the outbox. A transfer is acknowledged only once filed
+ * or proven invalid.
+ */
+export async function serveHctBox(opts?: { force?: boolean }): Promise<void> {
+  const active = currentActive()
+  if (!active || serving) return
+  if (activeAccountSpendRefusal(active)) return
+  const busy = Object.keys(readHctState().outbox).length > 0 || needOpenAt.size > 0
+  const now = Date.now()
+  if (!opts?.force && now - boxPolledAt < (busy ? BOX_ACTIVE_POLL_MS : BOX_IDLE_POLL_MS)) return
+  boxPolledAt = now
+  serving = true
+  try {
+    const { listSealedOwnBox, acknowledgeOwnBox } = await import('../messageTransport')
+    const messages = await listSealedOwnBox(active.rootKeyHex, HCT_BOX)
+    const acks: string[] = []
+    for (const m of messages ?? []) {
+      const wire = parseWire(m.plaintext)
+      if (!wire) {
+        if (m.messageId) acks.push(m.messageId)
+        continue
+      }
+      try {
+        if (wire.t === 'transfer') {
+          const fate = await runExclusiveSpend(() => ingestTransfer(active, m.sender, wire), undefined, { promote: false })
+          if (fate !== 'retry') acks.push(m.messageId)
+        } else if (wire.t === 'need') {
+          await answerNeed(active, m.sender.toLowerCase(), wire)
+          acks.push(m.messageId)
+        } else if (wire.t === 'history') {
+          await takeHistory(wire)
+          acks.push(m.messageId)
+        } else {
+          acks.push(m.messageId)
+        }
+      } catch (err) {
+        console.warn(`[hct] box ${wire.t} failed`, err instanceof Error ? err.message : String(err))
+      }
+    }
+    if (acks.length) await acknowledgeOwnBox(active.rootKeyHex, HCT_BOX, acks).catch(() => {})
+    for (const [asset, at] of needOpenAt) if (Date.now() - at > NEED_OPEN_MS) needOpenAt.delete(asset)
+    await flushOutbox(active).catch((err) => {
+      console.warn('[hct] outbox deferred', err instanceof Error ? err.message : String(err))
+    })
+  } finally {
+    serving = false
+  }
+}
+
+/** Every deploy output a transaction carries, for callers that only hold its body. */
+export function hctDeploysOf(tx: Transaction): HctDeploy[] {
+  return readHctDeploys(tx)
+}

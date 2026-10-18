@@ -22,6 +22,17 @@ export function isTokenFilingBasket(basket: unknown): boolean {
   return name === P2PFT_BASKET || name === LEGACY_TOKEN_BASKET
 }
 
+/**
+ * Baskets whose rows are assets, never cash: 1Sat items, open P2P-FT and
+ * P2P-NFT (BRC-255), and countersigned tokens and items. Generic change
+ * restore, heal and balance code leaves every one of them alone.
+ */
+const ASSET_FILING_BASKETS = new Set<string>(['1sat', P2PFT_BASKET, LEGACY_TOKEN_BASKET, 'p2pnft', 'csft', 'csnft'])
+
+export function isAssetFilingBasket(basket: unknown): boolean {
+  return typeof basket === 'string' && ASSET_FILING_BASKETS.has(basket.trim().toLowerCase())
+}
+
 export function isTokenPermissionScheme(scheme: string): boolean {
   return TOKEN_PERMISSION_SCHEMES.has(scheme.trim().toLowerCase())
 }

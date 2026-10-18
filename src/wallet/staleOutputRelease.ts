@@ -2,7 +2,7 @@
 // throws AbortError once that runtime is disposed, so no repair that spans an
 // account switch can write into the next account's toolbox (see pinnedWallet).
 import { pinnedActiveWallet as getActiveWallet } from './pinnedWallet'
-import { isTokenFilingBasket } from './token/filing'
+import { isAssetFilingBasket, isTokenFilingBasket } from './token/filing'
 
 /**
  * Writing off spendable outputs — the only path allowed to do it.
@@ -2518,7 +2518,7 @@ async function findDetachedChangeRows(
       seen.add(outputId);
       if (row.change !== true || positiveId(row.spentBy) != null) continue;
       const basket = String(row.basket ?? "").toLowerCase();
-      if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
+      if (isAssetFilingBasket(basket)) continue;
       const vout = Number(row.vout ?? row.outputIndex);
       if (!Number.isInteger(vout) || vout < 0) continue;
       const out = tx.outputs[vout];
@@ -2589,7 +2589,7 @@ export async function spendableChangeSatsOfSignedTx(
         if (row.spendable !== true) continue;
         if (positiveId(row.spentBy) != null) continue;
         const basket = String(row.basket ?? "").toLowerCase();
-        if (basket === "1sat" || isTokenFilingBasket(basket)) continue;
+        if (isAssetFilingBasket(basket)) continue;
         if (!hasLockingScript(row)) continue;
         sats += Math.max(0, Math.trunc(Number(row.satoshis) || 0));
       }

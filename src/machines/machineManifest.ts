@@ -6,6 +6,8 @@ import { sendMachine } from './sendMachine'
 import { unlockMachine } from './unlockMachine'
 import { offerMachine } from './offerMachine'
 import { countersignMachine } from './countersignMachine'
+import { hctMachine } from './hctMachine'
+import { hctHoldingsMachine } from './hctHoldingsMachine'
 import { marketPurchaseMachine } from './marketPurchaseMachine'
 import { marketSellerSettlementMachine } from './marketSellerSettlementMachine'
 import { appBrowserMachine } from './appBrowserMachine'
@@ -54,6 +56,7 @@ export const machineManifest = Object.freeze({
   unlock: unlockMachine,
   offer: offerMachine,
   countersign: countersignMachine,
+  hct: hctMachine,
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
   appBrowser: appBrowserMachine,
@@ -61,6 +64,7 @@ export const machineManifest = Object.freeze({
   assetBurnUi: assetBurnUiMachine,
   deviceBackup: deviceBackupMachine,
   fungibleDetails: fungibleDetailsMachine,
+  hctHoldings: hctHoldingsMachine,
   historyRecovery: historyRecoveryMachine,
   modelViewer: modelViewerMachine,
   permissionDecision: permissionDecisionMachine,

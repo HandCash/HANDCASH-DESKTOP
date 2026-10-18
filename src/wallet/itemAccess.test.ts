@@ -473,3 +473,49 @@ describe('P2P-FT permissions follow the BRC-165 1Sat model', () => {
     expect(tags).toEqual(['p2pft', `p2pft:${tokenA}`, expect.stringMatching(/^id:[0-9a-f]{32}$/)])
   })
 })
+
+describe('HCT items share the item grant; HCT is wallet-only', () => {
+  const assetId = 'ab'.repeat(20)
+
+  it('maps p p2pnft scopes to the p2pnft filing under the item gate', () => {
+    expect(isItemBasket('p p2pnft all')).toBe(true)
+    expect(isUnsupportedPBasket('p p2pnft all')).toBe(false)
+    const all = prepareItemBasketArgs({ basket: 'p p2pnft all' })
+    expect(all.error).toBeUndefined()
+    expect((all.args as { basket: string }).basket).toBe('p2pnft')
+    expect(all.itemViewRequest?.wantsAll).toBe(true)
+    const col = prepareItemBasketArgs({ basket: 'p p2pnft collection', tags: [`collection:${assetId}`] })
+    expect((col.args as { basket: string }).basket).toBe('p2pnft')
+    expect(col.itemViewRequest?.collections).toEqual([assetId])
+    expect((prepareItemBasketArgs({ basket: 'p 1sat all' }).args as { basket: string }).basket).toBe('1sat')
+  })
+
+  it('refuses the bare filing, a missing tag and a bad scope', () => {
+    expect(prepareItemBasketArgs({ basket: 'p2pnft' }).error?.code).toBe('USE_P1SAT_SCOPE')
+    expect(prepareItemBasketArgs({ basket: 'p p2pnft collection' }).error?.code).toBe('MISSING_P1SAT_SCOPE_TAG')
+    expect(prepareItemBasketArgs({ basket: 'p p2pnft asset' }).error?.code).toBe('INVALID_P1SAT_SCOPE')
+  })
+
+  it('refuses every app write of HCT', () => {
+    const hctLock = `17686374${assetId}5175` + '21' + '02'.padEnd(66, '1') + 'ac'
+    const refusals = [
+      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'p2pnft' }] },
+      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'p p2pnft all' }] },
+      { outputs: [{ protocol: 'basket insertion', insertionRemittance: { basket: 'p2pnft' } }] },
+      { outputs: [{ lockingScript: hctLock, satoshis: 1 }] },
+      { outputs: [{ lockingScript: `03686374`, satoshis: 1, basket: 'p2pft' }] },
+      { labels: ['p p2pnft input id abc'] },
+      { basket: 'p2pnft', output: `${'11'.repeat(32)}.0` },
+      { basket: 'csft', output: `${'11'.repeat(32)}.0` },
+    ]
+    for (const args of refusals) expect(prepareItemBasketArgs(args).error?.code, JSON.stringify(args)).toMatch(/WALLET_ONLY/)
+  })
+
+  it('filters token views by a 40-hex HCT asset id', () => {
+    const request = parseTokenViewRequest({ basket: 'p p2pft token', tags: [`p2pft:${assetId.toUpperCase()}`] })
+    expect(request.ids).toEqual([assetId])
+    const access = { view: 'filtered' as const, ids: [assetId], keys: [] }
+    expect(outputMatchesTokenAccess(access, [`p2pft:${assetId}`, 'hct'], undefined, request)).toBe(true)
+    expect(outputMatchesTokenAccess(access, [`p2pft:${'cd'.repeat(20)}`, 'hct'], undefined, request)).toBe(false)
+  })
+})

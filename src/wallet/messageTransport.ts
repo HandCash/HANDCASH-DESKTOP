@@ -1427,6 +1427,9 @@ export async function pollInboundTipHints(args: {
     void import('./countersign/wallet')
       .then(({ serveCountersignBox }) => serveCountersignBox())
       .catch((err) => console.warn('[countersign] box serve failed', err instanceof Error ? err.message : String(err)))
+    void import('./hct/wallet')
+      .then(({ serveHctBox }) => serveHctBox())
+      .catch((err) => console.warn('[hct] box serve failed', err instanceof Error ? err.message : String(err)))
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0

@@ -593,6 +593,35 @@ const BRC29_SEND = `stateDiagram-v2
   signing --> failed : FAIL
 `
 
+const HCT = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> building : ISSUE (issuer coin P2PK, ALL|FORKID)
+  idle --> building : TRANSFER (p2pft / p2pnft rows, wallet-only)
+  building --> signing : BUILT
+  building --> failed : FAIL (abortAction, outputs stay put)
+  signing --> signed : SIGNED txid
+  signing --> failed : FAIL (abortAction)
+  signed --> delivering : BROADCASTED (signed-send lifecycle)
+  delivering --> committed : DELIVERED box hct
+  delivering --> committed : QUEUED outbox (retried each serve)
+  note right of signing
+    Open mode: holder signs ALL|ANYONECANPAY
+    with a fresh hct holder child per output.
+    The wallet re-checks conservation (§4)
+    on the signed transaction before it is
+    registered; a mismatch aborts.
+  end note
+  note right of delivering
+    Box hct carries remittance + the §6 proof
+    package (Extended Format, hops the peer
+    has not been sent). Receive walks §7 to
+    the deploy, checks every claimed source
+    against its parent, files p2pft / p2pnft,
+    and ACKs only once filed or invalid.
+  end note
+`
+
 const COUNTERSIGN = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -1762,6 +1791,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'countersignMachine — issuer-accepted tokens and items: holder signs, the issuer (or m of n cosigners) countersigns or refuses; nothing exists until accepted',
     source: COUNTERSIGN,
+  },
+  {
+    id: 'hct',
+    label: 'HCT',
+    caption:
+      'hctMachine — open BRC-255 tokens and items: wallet builds and signs, the §6 package rides box hct, receive walks to the deploy',
+    source: HCT,
   },
   {
     id: 'marketPurchase',

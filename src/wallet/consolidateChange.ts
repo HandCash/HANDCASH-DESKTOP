@@ -1,5 +1,5 @@
 import { getActiveWallet } from './session'
-import { isTokenFilingBasket } from './token/filing'
+import { isAssetFilingBasket } from './token/filing'
 
 /**
  * Background change consolidation.
@@ -162,7 +162,7 @@ async function countConsolidatableChange(
         for (const row of batch) {
           if (row.change !== true) continue
           const basket = String(row.basket ?? '').toLowerCase()
-          if (basket === '1sat' || isTokenFilingBasket(basket)) continue
+          if (isAssetFilingBasket(basket)) continue
           const sats = Math.floor(Number(row.satoshis) || 0)
           if (sats <= 1) continue
           fragments += 1

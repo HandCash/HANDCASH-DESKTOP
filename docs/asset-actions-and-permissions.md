@@ -4,7 +4,7 @@ Every permission an app can hold, and every item, token, market and BSV action t
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
-Specs: market listings and direct offers for all four profiles are [BRC-254](../../BRCs-254/tokens/0254.md) (draft); countersigned assets are [BRC-253](../../BRCs-253/tokens/0253.md) (draft). This page and the drafts are published at `https://brc-cloud.bcryderman.workers.dev/docs`; paste that address into Apps → Open a web app to read them inside the wallet.
+Specs: market listings and direct offers for all four profiles are [BRC-254](../../BRCs-254/tokens/0254.md) (draft); countersigned assets are [BRC-253](../../BRCs-253/tokens/0253.md) (draft). Their planned replacement, HCT (one compact lock for open and countersigned tokens and items), is [BRC-255](../../BRCs-255/tokens/0255.md) (draft); the wallet plan is [`hct-tokens.md`](./hct-tokens.md). This page and the drafts are published at `https://brc-cloud.bcryderman.workers.dev/docs`; paste that address into Apps → Open a web app to read them inside the wallet.
 
 ## 0. The four asset profiles
 

@@ -128,6 +128,8 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   setCountersignedAssetPolicy: 'transfer rules',
   releaseCountersignedAsset: 'asset release',
   joinCountersignedAsset: 'cosigner join',
+  issueHctAsset: 'asset issue',
+  transferHctAsset: 'asset transfer',
 }
 
 /** What the row is called before a description or txid exists. */

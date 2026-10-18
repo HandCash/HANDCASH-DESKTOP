@@ -44,6 +44,7 @@ import {
   isBsv21ReceiveArgs,
   isItemBasket,
   isItemReceiveArgs,
+  isThirdPartyOriginator,
   isTokenViewBasket,
   p1SatSpendIds,
   p2pftSpendIds,
@@ -141,6 +142,8 @@ import {
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { reservedKeyRefusal } from './vaultAccounts'
+import { looksLikeHct } from './hct/script'
+import { isTokenFilingBasket } from './token/filing'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
 import {
   paintAfterCreateActionBsv21Mint,
@@ -352,11 +355,16 @@ async function verifyHeldRowSpendLabels(
       tags: [`id:${id}`],
       tagQueryMode: 'all',
       limit: 2,
+      include: 'locking scripts',
       includeTags: true,
       seekPermission: false,
     })
     if (listed.outputs.length !== 1) {
       throw new Error(`Held-row id "${id}" does not resolve to exactly one ${basket} row`)
+    }
+    const row = listed.outputs[0]!
+    if ((row.tags ?? []).includes('hct') || (row.lockingScript && looksLikeHct(row.lockingScript))) {
+      throw new Error(`Held-row id "${id}" is an HCT output; HCT moves only through transferHctAsset`)
     }
     const heldOutpoint = normalizeOutpoint(listed.outputs[0]?.outpoint)
     if (!heldOutpoint || !actionInputs.has(heldOutpoint)) {
@@ -415,7 +423,9 @@ export async function dispatchWalletMethod(
     throw new Error(
       refusal === 'account-protocol'
         ? 'Protocol "account" is reserved for the wallet (BRC-208)'
-        : 'The wallet does not reveal linkage with itself (BRC-208)',
+        : refusal === 'asset-protocol'
+          ? 'This protocol holds asset custody keys; assets move only through wallet methods'
+          : 'The wallet does not reveal linkage with itself (BRC-208)',
     )
   }
 
@@ -585,6 +595,16 @@ export async function dispatchWalletMethod(
       )
     case 'listCountersignedAssets':
       return (await import('./countersign/wallet')).listCountersignedAssets()
+    case 'issueHctAsset':
+      return (await import('./hct/wallet')).issueHctAsset(
+        (args ?? {}) as Parameters<typeof import('./hct/wallet').issueHctAsset>[0],
+      )
+    case 'transferHctAsset':
+      return (await import('./hct/wallet')).transferHctAsset(
+        (args ?? {}) as Parameters<typeof import('./hct/wallet').transferHctAsset>[0],
+      )
+    case 'listHctAssets':
+      return (await import('./hct/wallet')).listHctAssets()
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -619,8 +639,18 @@ export async function dispatchWalletMethod(
       const { listMarketBasketOutputs } = await import('./marketInventory')
       return listMarketBasketOutputs(wallet, (args ?? {}) as never)
     }
-    case 'relinquishOutput':
-      return wallet.relinquishOutput((args ?? {}) as never, originator)
+    case 'relinquishOutput': {
+      const body = (args ?? {}) as { basket?: unknown; output?: unknown }
+      if (isThirdPartyOriginator(originator) && isTokenFilingBasket(body.basket) && typeof body.output === 'string') {
+        const outpoint = normalizeOutpoint(body.output)
+        const page = await wallet.listOutputs({ basket: String(body.basket), include: 'locking scripts', includeTags: true, limit: 10000, seekPermission: false })
+        const row = page.outputs.find((o) => normalizeOutpoint(o.outpoint) === outpoint)
+        if (row && ((row.tags ?? []).includes('hct') || (row.lockingScript && looksLikeHct(row.lockingScript)))) {
+          throw new Error('HCT outputs are never relinquished by an app; the row holds its holder key remittance')
+        }
+      }
+      return wallet.relinquishOutput(body as never, originator)
+    }
     case 'getBalance': {
       const satoshis = await fetchFastBalanceSats(wallet)
       return { satoshis }
@@ -1119,6 +1149,22 @@ async function handleBrc100RequestInner(
             status: 'error',
             code: `COUNTERSIGN_${refusal.reason.toUpperCase().replace(/-/g, '_')}`,
             description: refusal.message,
+          }),
+        }
+      }
+    }
+    if (method === 'issueHctAsset') {
+      const hct = await import('./hct/wallet')
+      try {
+        hct.hctIssueFields((args ?? {}) as Parameters<typeof hct.hctIssueFields>[0], runtime?.instance?.identityKey ?? '02'.padEnd(66, '0'))
+      } catch (err) {
+        if (!(err instanceof hct.HctRefusal)) throw err
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: `HCT_${err.reason.toUpperCase().replace(/-/g, '_')}`,
+            description: err.message,
           }),
         }
       }

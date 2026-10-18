@@ -392,6 +392,17 @@ export function formatFungibleAmount(amt: string, dec: number): string {
   return frac ? `${wholeFmt}.${frac}` : wholeFmt
 }
 
+/** Typed amount → integer units with deploy decimals; null when not a positive amount that fits `dec`. */
+export function parseFungibleAmount(display: string, dec: number): string | null {
+  const safeDec = Number.isInteger(dec) && dec >= 0 && dec <= 18 ? dec : 0
+  const m = /^(\d*)(?:\.(\d*))?$/.exec(display.trim().replace(/,/g, ''))
+  if (!m || (!m[1] && !m[2])) return null
+  const frac = (m[2] ?? '').replace(/0+$/, '')
+  if (frac.length > safeDec) return null
+  const units = BigInt((m[1] || '0') + frac.padEnd(safeDec, '0'))
+  return units > 0n ? units.toString() : null
+}
+
 export function buildBsv21CustomInstructions(args: {
   tokenId: string
   amt: string

@@ -41,6 +41,7 @@ export type TransactionFlow =
   | 'brc100_action'
   | 'identity_publish'
   | 'countersign'
+  | 'hct'
   | 'payment'
 
 export type TransactionStage =

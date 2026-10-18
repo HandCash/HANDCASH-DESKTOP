@@ -21,7 +21,7 @@
  * row the chain shows landed is restored, and its change comes back
  * (hc-a580a 0.1.539: ~2.5M sats of phantom coins hidden, change not restored).
  */
-import { isTokenFilingBasket } from './token/filing'
+import { isAssetFilingBasket } from './token/filing'
 import type { Chain } from './vault'
 import type { ActiveWallet } from './session'
 import type { ConfirmedSpenderAdoption } from './staleOutputRelease'
@@ -204,7 +204,7 @@ async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
       for (const row of batch) {
         if (row.change !== true) continue
         const basket = String(row.basket ?? '').toLowerCase()
-        if (basket === '1sat' || isTokenFilingBasket(basket)) continue
+        if (isAssetFilingBasket(basket)) continue
         if (Math.floor(Number(row.satoshis) || 0) <= 1) continue
         if (unsettled.has(Number(row.transactionId))) continue
         const outpoint = outpointFromOutput(row)

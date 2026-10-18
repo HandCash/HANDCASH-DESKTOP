@@ -28,7 +28,20 @@ import {
 
 export { VAULT_ACCOUNT_PROTOCOL, accountKeyId } from './vaultMaster'
 
-export type ReservedKeyRefusal = 'account-protocol' | 'self-linkage'
+export type ReservedKeyRefusal = 'account-protocol' | 'asset-protocol' | 'self-linkage'
+
+/**
+ * Keys only wallet code signs with: HCT holder, issuer and fee keys (BRC-255
+ * moves only through the wallet), and countersign decision and release keys.
+ * A signature under any of them spends or accepts an asset the app never had.
+ */
+const WALLET_ASSET_PROTOCOLS = new Set([
+  'hct holder',
+  'hct issuer',
+  'hct fee',
+  'countersign decision',
+  'countersign release',
+])
 
 /**
  * Why an application request must not reach the wallet, or null.
@@ -36,6 +49,8 @@ export type ReservedKeyRefusal = 'account-protocol' | 'self-linkage'
  * `account-protocol`: a key or signature under the account protocol is another
  * account's root. Reserved at every security level, as BRC-44 reserves
  * `admin`; names are matched as BRC-43 normalises them (lowercase, trimmed).
+ *
+ * `asset-protocol`: a key the wallet signs asset custody with.
  *
  * `self-linkage`: linkage with the wallet itself is the BRC-42 offset of its
  * `self` children (counterparty linkage yields all of them, specific linkage
@@ -56,6 +71,13 @@ export function reservedKeyRefusal(
     protocolID[1].toLowerCase().trim() === VAULT_ACCOUNT_PROTOCOL[1]
   ) {
     return 'account-protocol'
+  }
+  if (
+    Array.isArray(protocolID) &&
+    typeof protocolID[1] === 'string' &&
+    WALLET_ASSET_PROTOCOLS.has(protocolID[1].toLowerCase().trim().replace(/\s+/g, ' '))
+  ) {
+    return 'asset-protocol'
   }
   if (
     (method === 'revealCounterpartyKeyLinkage' || method === 'revealSpecificKeyLinkage') &&
