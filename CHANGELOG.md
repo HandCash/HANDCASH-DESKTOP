@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.595] - 2026-10-18
+
+### Fixed
+
+- Apps reading a token basket over BRC-100 `listOutputs` now get the wallet's live rows whenever it is idle. The bridge served the UI's token paint first, which lags the wallet's own spends and ignores the caller's tags and paging, so the token demo read a zero DEMO balance right after a cancel had returned all 10,000 units. The paint still answers while the wallet is busy or a live read fails, and the large `1sat` item inventory still paints first.
+
 ## [1.3.594] - 2026-10-18
 
 ### Fixed

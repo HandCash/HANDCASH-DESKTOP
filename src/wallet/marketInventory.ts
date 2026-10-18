@@ -70,7 +70,11 @@ export async function listMarketBasketOutputs(
 
   const cached = cachedMarketListOutputs(basket)
   const busy = walletBusyForMarketRead()
-  if (cached && (cached.outputs.length > 0 || busy)) {
+  // Only an item inventory is large enough to wedge an idle read. A token
+  // basket is a few rows, and its paint lags the wallet's own spends: a cancel
+  // that just returned units read as a zero balance.
+  const paintFirst = basket === '1sat' || basket === 'p 1sat all'
+  if (cached && (busy || (paintFirst && cached.outputs.length > 0))) {
     console.info(
       `[market-inventory] serving projected ${String(basket ?? 'basket')} (${cached.outputs.length} row(s)${
         busy ? ', wallet busy' : ''
