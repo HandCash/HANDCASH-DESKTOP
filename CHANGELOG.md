@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.592] - 2026-10-18
+
+### Fixed
+
+- In the dev build, Arcade V2 failed to install ("serviceUrl must be an absolute HTTP(S) URL") because the Vite proxy mount was passed as a relative path. Nothing reached Arcade, so signed sends were never pinned and their change stayed held: a funded wallet refused the token demo deploy with "7 more satoshis are needed". The proxy URL is now absolute on the page origin.
+- The engine's ChainTracks, block-header and fetch clients no longer throw "Illegal invocation" when they fall back to the global `fetch`; it is called unbound from the client.
+
 ## [1.3.591] - 2026-10-18
 
 ### Fixed

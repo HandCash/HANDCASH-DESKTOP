@@ -31,11 +31,13 @@ export const ARCADE_V2_DEV_PROXY_TEST = '/arcade-v2-testnet'
 /** Credential-free public Arcade V2 hosts (wallet-toolbox `publicArcadeUrl`). */
 export function arcadeV2BaseUrl(chain: Chain): string | null {
   if (import.meta.env.DEV && typeof window !== 'undefined') {
+    // The ChainTracks client refuses a relative service URL.
+    const origin = window.location.origin
     switch (chain) {
       case 'main':
-        return ARCADE_V2_DEV_PROXY_MAIN
+        return `${origin}${ARCADE_V2_DEV_PROXY_MAIN}`
       case 'test':
-        return ARCADE_V2_DEV_PROXY_TEST
+        return `${origin}${ARCADE_V2_DEV_PROXY_TEST}`
       default:
         return null
     }

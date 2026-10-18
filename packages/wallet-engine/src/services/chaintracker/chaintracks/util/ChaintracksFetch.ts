@@ -133,7 +133,7 @@ export class ChaintracksFetch implements ChaintracksFetchApi {
       'maxRetryMsecs'
     )
     this.random = options.random ?? Math.random
-    this.fetcher = options.fetch ?? fetch
+    this.fetcher = options.fetch ?? ((input, init) => fetch(input, init))
     this.publicNetworkFetch = options.publicNetworkFetch ?? createPublicHTTPSFetch()
   }
 

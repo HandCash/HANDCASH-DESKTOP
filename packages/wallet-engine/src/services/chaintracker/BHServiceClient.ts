@@ -49,7 +49,7 @@ export class BHServiceClient implements ChaintracksClientApi {
     }
     this.serviceUrl = this.normalizeServiceUrl(url)
     this.options = { ...ChaintracksServiceClient.createChaintracksServiceClientOptions(), ...options }
-    this.fetcher = this.options.fetch ?? fetch
+    this.fetcher = this.options.fetch ?? ((input, init) => fetch(input, init))
     this.requestTimeoutMsecs = this.positiveInteger(
       this.options.requestTimeoutMsecs ?? 30_000,
       'requestTimeoutMsecs',

@@ -89,7 +89,7 @@ export class GoChaintracksServiceClient implements ChaintracksClientApi {
       while (prefix.endsWith('/')) prefix = prefix.slice(0, -1)
     }
     this.baseUrl = `${base}${prefix}`
-    this.fetcher = options.fetch ?? fetch
+    this.fetcher = options.fetch ?? ((input, init) => fetch(input, init))
     if (typeof this.fetcher !== 'function') throw new Error('fetch must be a function.')
     this.requestTimeoutMsecs = options.requestTimeoutMsecs ?? 30000
     this.reconnectWaitMsecs = options.reconnectWaitMsecs ?? 1000

@@ -20,8 +20,9 @@ describe('arcadeV2BaseUrl', () => {
   })
 
   it('uses Vite dev proxy paths in DEV', () => {
-    expect(arcadeV2BaseUrl('main')).toBe(ARCADE_V2_DEV_PROXY_MAIN)
-    expect(arcadeV2BaseUrl('test')).toBe(ARCADE_V2_DEV_PROXY_TEST)
+    expect(arcadeV2BaseUrl('main')).toBe(`http://localhost:5173${ARCADE_V2_DEV_PROXY_MAIN}`)
+    expect(arcadeV2BaseUrl('test')).toBe(`http://localhost:5173${ARCADE_V2_DEV_PROXY_TEST}`)
+    expect(() => new URL(arcadeV2BaseUrl('main')!)).not.toThrow()
     expect(arcadeV2BaseUrl('reg')).toBeNull()
   })
 })
