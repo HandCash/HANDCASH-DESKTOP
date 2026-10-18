@@ -258,7 +258,7 @@ export function hctWriteRefusal(args: unknown): string | null {
       return 'Only the wallet files HCT items; apps cannot write basket "p2pnft".'
     }
     if (typeof out.lockingScript === 'string' && looksLikeHct(out.lockingScript)) {
-      return 'HCT outputs are written only by the wallet (issueHctAsset / transferHctAsset).'
+      return 'HCT outputs are written only by the wallet (issueHctAsset / mintHctAsset / transferHctAsset).'
     }
   }
   return null

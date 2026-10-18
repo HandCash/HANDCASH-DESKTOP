@@ -129,6 +129,7 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   releaseCountersignedAsset: 'asset release',
   joinCountersignedAsset: 'cosigner join',
   issueHctAsset: 'asset issue',
+  mintHctAsset: 'asset mint',
   transferHctAsset: 'asset transfer',
 }
 

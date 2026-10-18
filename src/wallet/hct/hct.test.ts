@@ -2,7 +2,7 @@ import { LockingScript, OP, PrivateKey, Script, Transaction, UnlockingScript, Ut
 import { describe, expect, it } from 'vitest'
 import { inputScriptValid, signInput } from '../countersign/script'
 import { hctHolderPrivateKey, hctHolderPublicKey, hctIssuerKeyOf, hctIssuerPrivateKey } from './keys'
-import { decodeHctPayload, encodeHctPayload, HCT_MIN_SILENCE_SECONDS, type HctDeployFields } from './payload'
+import { decodeHctPayload, encodeHctPayload, HCT_MIN_SILENCE_SECONDS, hctSupplyPolicy, type HctDeployFields } from './payload'
 import { buildHctPackage, hctAncestry, readHctPackage } from './proof'
 import {
   HCT_HOLDER_SCOPE,
@@ -377,5 +377,134 @@ describe('hct proof package', () => {
     expect(ancestry).toEqual({ ok: true, txs: [] })
     const { complete } = buildHctPackage(t2, [t1], [dTx], t2.toHexEF().length + 100)
     expect(complete).toBe(false)
+  })
+})
+
+describe('hct supply policy', () => {
+  const capped = (max?: bigint, size?: bigint): HctDeployFields => ({
+    ...tokenFields,
+    auth: true,
+    ...(max != null ? { max } : {}),
+    ...(size != null ? { size } : {}),
+  })
+  const authority = (assetId: string, holder: PrivateKey, issued?: { units: bigint; members: bigint }) =>
+    hctAuthorityLock({ assetId, clause: openClause(holder), ...(issued ? { issued } : {}) })
+
+  it('names fixed, open and capped supply from the deploy', () => {
+    expect(hctSupplyPolicy(tokenFields)).toEqual({ kind: 'fixed' })
+    expect(hctSupplyPolicy({ ...tokenFields, auth: true })).toEqual({ kind: 'open' })
+    expect(hctSupplyPolicy(capped(100n, 5n))).toEqual({ kind: 'capped', max: 100n, size: 5n })
+  })
+
+  it('round-trips caps past 2^53 and refuses a cap without an authority', () => {
+    const max = (1n << 64n) - 1n
+    expect(decodeHctPayload(Uint8Array.from(encodeHctPayload(capped(max))))).toMatchObject({ auth: true, max })
+    expect(decodeHctPayload(Uint8Array.from(encodeHctPayload(capped(undefined, 3n))))).toMatchObject({ size: 3n })
+    expect(() => encodeHctPayload({ ...tokenFields, max: 10n })).toThrow(/auth/)
+    expect(() => encodeHctPayload(capped(0n))).toThrow()
+    expect(() => encodeHctPayload({ ...capped(10n), kind: 'item', name: 'x', sym: undefined, dec: undefined, auth: undefined })).toThrow()
+  })
+
+  it('reads a capped authority back exactly and keeps the open form unchanged', () => {
+    const assetId = 'cd'.repeat(20)
+    const lock = authority(assetId, alice, { units: 300n, members: 0n })
+    expect(readHct(lock)).toMatchObject({ form: 'authority', assetId, issued: { units: 300n, members: 0n } })
+    expect(readHct(authority(assetId, alice))).toEqual({ form: 'authority', assetId, clause: openClause(alice) })
+    expect(readHct(`${lock.toHex()}51`)).toBeNull()
+  })
+
+  it('refuses a deploy whose supply is over its own cap', () => {
+    expect(readHctDeploy(deployTx({ supply: 101n, fields: capped(100n) }), 0)).toMatchObject({ ok: false, reason: 'over-cap' })
+    expect(readHctDeploy(deployTx({ supply: 100n, fields: capped(100n) }), 0)).toMatchObject({ ok: true })
+  })
+
+  it('mints up to the cap and states the running total', () => {
+    const dTx = deployTx({ supply: 60n, fields: capped(100n) })
+    const deploy = deployOf(dTx)
+    const ok = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 100n, alice) }, { script: authority(deploy.assetId, alice, { units: 100n, members: 0n }) }],
+    )
+    expect(checkHctTx(ok, deploy)).toMatchObject({ ok: true, issued: { units: 100n, members: 0n } })
+    const over = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 101n, alice) }, { script: authority(deploy.assetId, alice, { units: 101n, members: 0n }) }],
+    )
+    expect(checkHctTx(over, deploy)).toMatchObject({ ok: false, reason: 'over-cap' })
+  })
+
+  it('refuses an authority that understates, omits or invents its issued count', () => {
+    const dTx = deployTx({ supply: 60n, fields: capped(100n) })
+    const deploy = deployOf(dTx)
+    const lie = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 90n, alice) }, { script: authority(deploy.assetId, alice, { units: 60n, members: 0n }) }],
+    )
+    expect(checkHctTx(lie, deploy)).toMatchObject({ ok: false, reason: 'mint' })
+    const omitted = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 60n, alice) }, { script: authority(deploy.assetId, alice) }],
+    )
+    expect(checkHctTx(omitted, deploy)).toMatchObject({ ok: false, reason: 'output' })
+    const oTx = deployTx({ supply: 10n, fields: { ...tokenFields, auth: true } })
+    const open = deployOf(oTx)
+    const invented = transfer(
+      [{ tx: oTx, vout: 0, holder: alice }],
+      [{ script: held(open.assetId, 10n, alice) }, { script: authority(open.assetId, alice, { units: 10n, members: 0n }) }],
+    )
+    expect(checkHctTx(invented, open)).toMatchObject({ ok: false, reason: 'output' })
+  })
+
+  it('still enforces the cap when the authority is dropped', () => {
+    const dTx = deployTx({ supply: 60n, fields: capped(100n) })
+    const deploy = deployOf(dTx)
+    const closing = transfer([{ tx: dTx, vout: 0, holder: alice }], [{ script: held(deploy.assetId, 100n, bob) }])
+    expect(checkHctTx(closing, deploy)).toMatchObject({ ok: true })
+    const over = transfer([{ tx: dTx, vout: 0, holder: alice }], [{ script: held(deploy.assetId, 101n, bob) }])
+    expect(checkHctTx(over, deploy)).toMatchObject({ ok: false, reason: 'over-cap' })
+  })
+
+  it('walks a capped chain of mints back to the deploy', async () => {
+    const dTx = deployTx({ supply: 10n, fields: capped(30n) })
+    const deploy = deployOf(dTx)
+    const m1 = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 20n, bob) }, { script: authority(deploy.assetId, alice, { units: 20n, members: 0n }) }],
+    )
+    const m2 = transfer(
+      [{ tx: m1, vout: 1, holder: alice }],
+      [{ script: held(deploy.assetId, 10n, bob) }, { script: authority(deploy.assetId, alice, { units: 30n, members: 0n }) }],
+    )
+    expect(await walkHct(String(m2.id('hex')), deploy, storeOf(dTx, m1, m2), () => false)).toMatchObject({ ok: true })
+    const m3 = transfer(
+      [{ tx: m2, vout: 1, holder: alice }],
+      [{ script: held(deploy.assetId, 1n, bob) }, { script: authority(deploy.assetId, alice, { units: 31n, members: 0n }) }],
+    )
+    expect(await walkHct(String(m3.id('hex')), deploy, storeOf(dTx, m1, m2, m3), () => false)).toMatchObject({ ok: false, reason: 'invalid' })
+  })
+
+  it('counts collection members against its size', () => {
+    const cTx = deployTx({ supply: 1n, fields: capped(undefined, 1n) })
+    const collection = deployOf(cTx)
+    const member = (count: number, issued: { units: bigint; members: bigint }) => {
+      const coin = coinFor(issuerKey)
+      const tx = new Transaction()
+      tx.addInput({ sourceTransaction: coin, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      tx.addInput({ sourceTransaction: cTx, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      const item: HctDeployFields = { mode: 'open', kind: 'item', iss: [pub(identity)], m: 1, name: 'Member', col: collection.assetId }
+      for (let i = 0; i < count; i++) {
+        tx.addOutput({ lockingScript: hctDeployLock({ supply: 1n, payload: encodeHctPayload({ ...item, name: `Member ${i}` }), clause: openClause(alice) }), satoshis: 1 })
+      }
+      tx.addOutput({ lockingScript: held(collection.assetId, 1n, alice), satoshis: 1 })
+      tx.addOutput({ lockingScript: authority(collection.assetId, alice, issued), satoshis: 1 })
+      tx.inputs[0]!.unlockingScript = new UnlockingScript().writeBin(signInput(tx, 0, issuerKey, HCT_ISSUER_SCOPE))
+      tx.inputs[1]!.unlockingScript = hctOpenUnlock(signInput(tx, 1, alice, HCT_HOLDER_SCOPE))
+      return tx
+    }
+    const one = member(1, { units: 1n, members: 1n })
+    expect(readHctDeploy(one, 0)).toMatchObject({ ok: true, deploy: { member: true } })
+    expect(checkHctTx(one, collection)).toMatchObject({ ok: true, issued: { units: 1n, members: 1n } })
+    expect(checkHctTx(member(2, { units: 1n, members: 2n }), collection)).toMatchObject({ ok: false, reason: 'over-cap' })
+    expect(checkHctTx(member(1, { units: 1n, members: 0n }), collection)).toMatchObject({ ok: false, reason: 'mint' })
   })
 })

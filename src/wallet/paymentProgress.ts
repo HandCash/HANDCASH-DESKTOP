@@ -337,6 +337,10 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Issuing…',
     detail: 'Deploying the asset',
   },
+  mintHctAsset: {
+    label: 'Minting…',
+    detail: 'Spending the mint authority and handing it back',
+  },
   transferHctAsset: {
     label: 'Sending…',
     detail: 'Signing the transfer and delivering its proof',

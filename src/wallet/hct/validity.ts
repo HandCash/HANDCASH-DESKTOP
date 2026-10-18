@@ -1,7 +1,7 @@
 import { Transaction } from '@bsv/sdk'
 import { inputScriptValid, sourceOutputOf, sourceTxidOf } from '../countersign/script'
 import { hctIssuerKeyOf } from './keys'
-import { decodeHctPayload, type HctDeployFields } from './payload'
+import { decodeHctPayload, hctSupplyPolicy, type HctDeployFields } from './payload'
 import {
   HCT_ISSUER_SCOPE,
   hctAssetId,
@@ -12,6 +12,7 @@ import {
   readHct,
   rulesOf,
   sameRules,
+  type HctIssued,
   type HctOutput,
   type HctRules,
 } from './script'
@@ -39,6 +40,7 @@ export type DeployRefusal =
   | 'payload'
   | 'clause'
   | 'item-supply'
+  | 'over-cap'
   | 'unsigned'
   | 'beacon'
 
@@ -109,6 +111,9 @@ export function readHctDeploy(tx: Transaction, vout: number): DeployRead {
     return { ok: false, reason: 'clause', detail: 'the clause does not match the payload mode and issuer keys' }
   }
   if (fields.kind === 'item' && read.supply !== 1n) return { ok: false, reason: 'item-supply', detail: 'an item has a supply of one' }
+  if (fields.max != null && read.supply > fields.max) {
+    return { ok: false, reason: 'over-cap', detail: `the supply ${read.supply} is over the cap of ${fields.max}` }
+  }
   if (!deploySignedByIssuer(tx, issuerKeys, fields.m)) {
     return { ok: false, reason: 'unsigned', detail: 'no input is signed ALL|FORKID by the issuer keys' }
   }
@@ -136,12 +141,27 @@ export function readHctDeploys(tx: Transaction): HctDeploy[] {
   return out
 }
 
-export type TxRefusal = 'input' | 'output' | 'conservation' | 'mint' | 'item' | 'conjured' | 'unrelated'
+export type TxRefusal = 'input' | 'output' | 'conservation' | 'mint' | 'over-cap' | 'item' | 'conjured' | 'unrelated'
 export type TxCheck =
-  | { ok: true; inputs: number[]; accepted: boolean; outputs: Array<{ vout: number; amount: bigint; authority: boolean }> }
+  | { ok: true; inputs: number[]; accepted: boolean; outputs: Array<{ vout: number; amount: bigint; authority: boolean }>; issued?: HctIssued }
   | { ok: false; reason: TxRefusal; detail: string }
 
-type AssetInput = { vin: number; amount: bigint; authority: boolean }
+type AssetInput = { vin: number; amount: bigint; authority: boolean; issued?: HctIssued }
+
+/** What a capped asset's deploy has issued when its authority is first spent; null for any other asset. */
+export function deployIssued(deploy: Pick<HctDeploy, 'supply' | 'fields'>): HctIssued | null {
+  return hctSupplyPolicy(deploy.fields).kind === 'capped' ? { units: deploy.supply, members: 0n } : null
+}
+
+/** Deploy outputs of `tx` that name `collection`: each counts against the collection's size. */
+function membersWritten(tx: Transaction, collection: string): bigint {
+  let n = 0n
+  for (const output of tx.outputs) {
+    const read = output.lockingScript ? readHct(output.lockingScript) : null
+    if (read?.form === 'deploy' && decodeHctPayload(read.payload)?.col === collection) n += 1n
+  }
+  return n
+}
 
 function assetInput(tx: Transaction, vin: number, deploy: HctDeploy): (AssetInput & { read: HctOutput }) | null {
   const source = sourceOutputOf(tx, vin)
@@ -150,10 +170,12 @@ function assetInput(tx: Transaction, vin: number, deploy: HctDeploy): (AssetInpu
   if (read.form === 'deploy') {
     const txid = sourceTxidOf(tx, vin)
     if (txid !== deploy.txid || tx.inputs[vin]!.sourceOutputIndex !== deploy.vout) return null
-    return { vin, amount: deploy.supply, authority: deploy.fields.auth === true, read }
+    const issued = deployIssued(deploy)
+    return { vin, amount: deploy.supply, authority: deploy.fields.auth === true, ...(issued ? { issued } : {}), read }
   }
   if (read.assetId !== deploy.assetId) return null
-  return read.form === 'held' ? { vin, amount: read.amount, authority: false, read } : { vin, amount: 0n, authority: true, read }
+  if (read.form === 'held') return { vin, amount: read.amount, authority: false, read }
+  return { vin, amount: 0n, authority: true, ...(read.issued ? { issued: read.issued } : {}), read }
 }
 
 /**
@@ -174,7 +196,8 @@ export function checkHctTx(tx: Transaction, deploy: HctDeploy): TxCheck {
     if (!inputScriptValid(tx, vin)) return { ok: false, reason: 'input', detail: `input ${vin} does not unlock its source` }
     inputs.push(hit)
   }
-  const outputs: Array<{ vout: number; amount: bigint; authority: boolean }> = []
+  const capped = hctSupplyPolicy(deploy.fields).kind === 'capped'
+  const outputs: Array<{ vout: number; amount: bigint; authority: boolean; issued?: HctIssued }> = []
   for (let vout = 0; vout < tx.outputs.length; vout++) {
     const script = tx.outputs[vout]!.lockingScript
     const hex = script?.toHex() ?? ''
@@ -186,7 +209,15 @@ export function checkHctTx(tx: Transaction, deploy: HctDeploy): TxCheck {
       return { ok: false, reason: 'output', detail: `output ${vout} writes ${deploy.assetId} under another clause` }
     }
     if ((tx.outputs[vout]!.satoshis ?? 0) < 1) return { ok: false, reason: 'output', detail: `output ${vout} carries no satoshi` }
-    outputs.push({ vout, amount: read.form === 'held' ? read.amount : 0n, authority: read.form === 'authority' })
+    if (read.form === 'authority' && capped !== (read.issued != null)) {
+      return { ok: false, reason: 'output', detail: `output ${vout} ${capped ? 'omits' : 'writes'} the issued count of ${deploy.assetId}` }
+    }
+    outputs.push({
+      vout,
+      amount: read.form === 'held' ? read.amount : 0n,
+      authority: read.form === 'authority',
+      ...(read.form === 'authority' && read.issued ? { issued: read.issued } : {}),
+    })
   }
   if (inputs.length === 0 && outputs.length === 0) {
     return { ok: false, reason: 'unrelated', detail: `the transaction neither spends nor writes ${deploy.assetId}` }
@@ -198,15 +229,37 @@ export function checkHctTx(tx: Transaction, deploy: HctDeploy): TxCheck {
   const authorities = outputs.filter((o) => o.authority).length
   if (authorities > 0 && !mints) return { ok: false, reason: 'mint', detail: 'an authority is written without spending one' }
   if (authorities > 1) return { ok: false, reason: 'mint', detail: 'more than one authority is written' }
+  if (inputs.filter((i) => i.authority).length > 1) return { ok: false, reason: 'mint', detail: 'more than one authority is spent' }
   if (mints ? outs < ins : outs !== ins) {
     return { ok: false, reason: 'conservation', detail: `${deploy.assetId} writes ${outs} from ${ins}` }
+  }
+  let issued: HctIssued | undefined
+  if (capped && mints) {
+    const before = inputs.find((i) => i.authority)!.issued
+    if (!before) return { ok: false, reason: 'input', detail: `the authority of ${deploy.assetId} carries no issued count` }
+    issued = { units: before.units + (outs - ins), members: before.members + membersWritten(tx, deploy.assetId) }
+    const { max, size } = deploy.fields
+    if (max != null && issued.units > max) {
+      return { ok: false, reason: 'over-cap', detail: `${deploy.assetId} would have ${issued.units} units, over its cap of ${max}` }
+    }
+    if (size != null && issued.members > size) {
+      return { ok: false, reason: 'over-cap', detail: `${deploy.assetId} would have ${issued.members} members, over its size of ${size}` }
+    }
+    const written = outputs.find((o) => o.authority)?.issued
+    if (written && (written.units !== issued.units || written.members !== issued.members)) {
+      return {
+        ok: false,
+        reason: 'mint',
+        detail: `the authority states ${written.units} units and ${written.members} members issued; it is ${issued.units} and ${issued.members}`,
+      }
+    }
   }
   if (deploy.fields.kind === 'item' && outs !== 1n) {
     return { ok: false, reason: 'item', detail: `item ${deploy.assetId} is written ${outs} times` }
   }
   const accepted =
     deploy.rules.mode === 'countersign' && inputs.every((i) => hctUnlockBranch(tx.inputs[i.vin]!.unlockingScript) === 'issuer')
-  return { ok: true, inputs: inputs.map((i) => i.vin), accepted, outputs }
+  return { ok: true, inputs: inputs.map((i) => i.vin), accepted, outputs, ...(issued ? { issued } : {}) }
 }
 
 export type WalkResult =

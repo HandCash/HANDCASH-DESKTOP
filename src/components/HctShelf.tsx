@@ -43,6 +43,20 @@ function amountOf(asset: HctAssetSummary): string {
   return formatFungibleAmount(asset.balance, asset.dec ?? 0)
 }
 
+/** The deploy's supply policy in words; items have none of their own. */
+export function hctSupplyLabel(asset: HctAssetSummary): string | null {
+  if (asset.kind === 'item') return null
+  const { supply } = asset
+  if (supply.policy === 'fixed') return 'Fixed supply'
+  if (supply.policy === 'open') return 'Open supply, no cap'
+  const units = (n: string) => `${formatFungibleAmount(n, asset.dec ?? 0)} ${label(asset)}`
+  const caps = [
+    supply.max != null ? (supply.issued ? `${units(supply.issued.units)} of ${units(supply.max)} minted` : `capped at ${units(supply.max)}`) : '',
+    supply.size != null ? (supply.issued ? `${supply.issued.members} of ${supply.size} items` : `up to ${supply.size} items`) : '',
+  ].filter(Boolean)
+  return `Capped supply: ${caps.join(', ')}`
+}
+
 export type HctChipActions = {
   /** The asset whose send form is open. */
   composing: string | null
@@ -52,6 +66,7 @@ export type HctChipActions = {
 /** One HCT token or item in an issuer's strip; tapping opens its send form. */
 export function HctChip({ asset, view, actions }: { asset: HctAssetSummary; view: CollectionView; actions: HctChipActions }) {
   const amount = asset.kind === 'item' ? (asset.collection ? 'Collection item' : 'Item') : amountOf(asset)
+  const supply = hctSupplyLabel(asset)
   return (
     <li
       className="token-chip"
@@ -65,7 +80,7 @@ export function HctChip({ asset, view, actions }: { asset: HctAssetSummary; view
           playWalletSound('soft')
           actions.open(asset.assetId)
         }}
-        title={`${label(asset)} · HCT`}
+        title={supply ? `${label(asset)} · HCT · ${supply}` : `${label(asset)} · HCT`}
         aria-label={`${label(asset)}, ${amount}, HCT. Send`}
       >
         <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
@@ -139,6 +154,7 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
   const units = asset.kind === 'item' ? '1' : parseFungibleAmount(amount, asset.dec ?? 0)
   const overBalance = units !== null && BigInt(units) > BigInt(asset.balance || '0')
   const ready = recipient.trim().length > 0 && units !== null && !overBalance
+  const supply = hctSupplyLabel(asset)
 
   const submit = async () => {
     if (!units) return
@@ -183,6 +199,7 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
       }}
     >
       <h3 className="collect-section-title">Send {label(asset)}</h3>
+      {supply ? <p className="settings-row-desc" data-aeon-part="supply">{supply}</p> : null}
       <div className="field">
         <label htmlFor="hct-send-recipient">To</label>
         <input

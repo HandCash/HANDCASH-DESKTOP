@@ -19,7 +19,13 @@ import {
   readHctRemittance,
   type HctRemittance,
 } from './keys'
-import { encodeHctPayload, HCT_MAX_CONTENT_BYTES, HCT_MAX_ICON_BYTES, type HctDeployFields } from './payload'
+import {
+  encodeHctPayload,
+  HCT_MAX_CONTENT_BYTES,
+  HCT_MAX_ICON_BYTES,
+  hctSupplyPolicy,
+  type HctDeployFields,
+} from './payload'
 import { buildHctPackage, hctAncestry, HCT_PACKAGE_BUDGET, readHctPackage, type HctPackage } from './proof'
 import {
   HCT_HOLDER_SCOPE,
@@ -33,6 +39,7 @@ import {
   isHctAssetId,
   p2pkLock,
   readHct,
+  type HctIssued,
   type HctOutput,
 } from './script'
 import {
@@ -53,7 +60,7 @@ import {
   putHctDeployRecord,
   putHctTx,
 } from './store'
-import { checkHctTx, readHctDeploy, readHctDeploys, walkHct, type HctDeploy } from './validity'
+import { checkHctTx, deployIssued, readHctDeploy, readHctDeploys, walkHct, type HctDeploy } from './validity'
 
 /** Store-and-forward box for transfer packages and history requests. */
 export const HCT_BOX = 'hct'
@@ -97,6 +104,8 @@ export type HctError =
   | 'not-held'
   | 'insufficient'
   | 'unsupported-mode'
+  | 'fixed-supply'
+  | 'over-cap'
   | 'invalid-build'
 
 export class HctRefusal extends Error {
@@ -254,6 +263,8 @@ export type HctRow = {
   /** Units this output carries as an input: a deploy carries its supply. */
   amount: bigint
   authority: boolean
+  /** A capped asset's authority: what it has issued so far. */
+  issued?: HctIssued
   basket: string
   remittance: HctRemittance
 }
@@ -331,6 +342,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
     if (hctHolderPrivateKey(root, remittance).toPublicKey().toString() !== read.clause.holder) continue
     if (!(await isHctValidated(txid!, id))) continue
     const deploy = read.form === 'deploy' ? await deployOf(active, id, { txid: txid!, vout }) : null
+    const issued = read.form === 'authority' ? read.issued : deploy?.fields.auth ? deployIssued(deploy) : null
     rows.push({
       outpoint: `${txid}.${vout}`,
       txid: txid!,
@@ -339,6 +351,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
       read,
       amount: read.form === 'held' ? read.amount : read.form === 'deploy' ? read.supply : 0n,
       authority: read.form === 'authority' || deploy?.fields.auth === true,
+      ...(issued ? { issued } : {}),
       basket,
       remittance,
     })
@@ -361,6 +374,25 @@ export type HctAssetSummary = {
   deploy: string
   /** Token icon, or an image item's content, from the deploy. */
   imageUrl?: string
+  supply: HctSupplySummary
+}
+
+/** §5 supply policy as decimal strings; `issued` only when this wallet holds a capped asset's authority. */
+export type HctSupplySummary =
+  | { policy: 'fixed' }
+  | { policy: 'open' }
+  | { policy: 'capped'; max?: string; size?: string; issued?: { units: string; members: string } }
+
+function supplySummary(deploy: HctDeploy, rows: HctRow[]): HctSupplySummary {
+  const policy = hctSupplyPolicy(deploy.fields)
+  if (policy.kind !== 'capped') return { policy: policy.kind }
+  const issued = rows.find((r) => r.issued)?.issued
+  return {
+    policy: 'capped',
+    ...(policy.max != null ? { max: policy.max.toString() } : {}),
+    ...(policy.size != null ? { size: policy.size.toString() } : {}),
+    ...(issued ? { issued: { units: issued.units.toString(), members: issued.members.toString() } } : {}),
+  }
 }
 
 const IMAGE_ITEM_MAX_BYTES = 512 * 1024
@@ -406,6 +438,7 @@ export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
       authority: list.some((r) => r.authority),
       deploy: `${deploy.txid}_${deploy.vout}`,
       ...(image ? { imageUrl: image } : {}),
+      supply: supplySummary(deploy, list),
     })
   }
   log('list', startedAt)
@@ -567,6 +600,10 @@ export type IssueHctArgs = {
   content?: MediaArg
   /** A token whose deploy is its mint authority (a collection's authority for items). */
   auth?: unknown
+  /** Cap on the units that may ever exist, the supply included; implies `auth`. */
+  max?: unknown
+  /** Cap on the member items a collection may ever deploy; implies `auth`. */
+  size?: unknown
   /** An item's collection: a token asset whose authority this wallet holds. */
   collection?: unknown
   mode?: unknown
@@ -599,12 +636,30 @@ export function hctIssueFields(args: IssueHctArgs, identityKey: string): { field
     refuse('bad-asset-args', 'collection is the 40-hex asset id of a token whose authority you hold, on an item.')
   }
   if (args.auth != null && typeof args.auth !== 'boolean') refuse('bad-asset-args', 'auth is true or false.')
+  const cap = (name: 'max' | 'size'): bigint | undefined => {
+    const raw = args[name]
+    if (raw == null) return undefined
+    const text = String(raw).trim()
+    if (!/^\d+$/.test(text) || BigInt(text) < 1n || BigInt(text) > HCT_MAX_AMOUNT) {
+      refuse('bad-asset-args', `${name} must be a whole number from 1 to 2^64-1.`)
+    }
+    return BigInt(text)
+  }
+  const max = cap('max')
+  const size = cap('size')
+  if ((max != null || size != null) && (kind !== 'token' || args.auth === false)) {
+    refuse('bad-asset-args', 'max and size cap minting, so they go on a token with a mint authority.')
+  }
+  if (max != null && BigInt(supplyRaw) > max) refuse('bad-asset-args', `supply ${supplyRaw} is over max ${max}.`)
+  const auth = args.auth === true || max != null || size != null
   const fields: HctDeployFields = {
     mode: 'open',
     kind,
     iss: [identityKey.toLowerCase()],
     m: 1,
-    ...(args.auth === true ? { auth: true } : {}),
+    ...(auth ? { auth: true } : {}),
+    ...(max != null ? { max } : {}),
+    ...(size != null ? { size } : {}),
     ...(sym ? { sym } : {}),
     ...(name ? { name } : {}),
     ...(dec != null ? { dec } : {}),
@@ -620,8 +675,12 @@ export function hctIssueFields(args: IssueHctArgs, identityKey: string): { field
   return { fields, supply: BigInt(supplyRaw) }
 }
 
-/** Outputs that hand an authority (and a deploy's units) spent by this wallet back to it. */
-function carryBack(active: ActiveWallet, row: HctRow, deploy: HctDeploy, prefix: string): PlannedOutput[] {
+/**
+ * Outputs that hand an authority (and a deploy's units) spent by this wallet
+ * back to it. A capped authority states `issued`: the row's count plus what
+ * this transaction issues.
+ */
+function carryBack(active: ActiveWallet, row: HctRow, deploy: HctDeploy, prefix: string, issued: HctIssued | undefined = row.issued): PlannedOutput[] {
   const out: PlannedOutput[] = []
   if (row.read.form !== 'authority' && row.amount > 0n) {
     const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
@@ -637,7 +696,7 @@ function carryBack(active: ActiveWallet, row: HctRow, deploy: HctDeploy, prefix:
   if (row.authority) {
     const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
     out.push({
-      lockingScript: hctAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder } }).toHex(),
+      lockingScript: hctAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder }, ...(issued ? { issued } : {}) }).toHex(),
       satoshis: 1,
       outputDescription: 'HCT authority',
       basket: hctFilingOf(deploy.fields.kind),
@@ -684,9 +743,13 @@ export async function issueHctAsset(args: IssueHctArgs): Promise<IssueHctResult>
         const deploy = authority ? await deployOf(active, fields.col) : null
         if (!authority || !deploy) refuse('not-held', 'This wallet holds no authority of that collection.')
         if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'The collection is not an open HCT asset.')
+        if (deploy.fields.size != null && authority.issued && authority.issued.members >= deploy.fields.size) {
+          refuse('over-cap', `The collection is full: all ${deploy.fields.size} of its items are deployed.`)
+        }
         collection = { row: authority, deploy }
         inputs.push({ outpoint: authority.outpoint, description: 'HCT collection authority', key: hctHolderPrivateKey(root, authority.remittance), scope: HCT_HOLDER_SCOPE })
-        outputs.push(...carryBack(active, authority, deploy, prefix))
+        const issued = authority.issued ? { units: authority.issued.units, members: authority.issued.members + 1n } : undefined
+        outputs.push(...carryBack(active, authority, deploy, prefix, issued))
       }
       const issuerPub = issuerKey.toPublicKey().toString()
       inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'HCT issuer signature', key: issuerKey, scope: HCT_ISSUER_SCOPE })
@@ -724,6 +787,97 @@ export async function issueHctAsset(args: IssueHctArgs): Promise<IssueHctResult>
       scheduleHistoryBackupPush('hct')
       log('issue', startedAt)
       return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket }
+    } catch (err) {
+      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      throw err
+    } finally {
+      chart.stop()
+    }
+  }, undefined, { promote: false })
+}
+
+// ── Mint ───────────────────────────────────────────────────────────────────
+
+export type MintHctResult = { assetId: string; txid: string; amount: string; issued?: { units: string; members: string } }
+
+/**
+ * Mint units of an open HCT token whose authority this wallet holds (§5).
+ * The new units and the authority come back to this wallet; a capped
+ * token's authority states the new total, and the cap is never passed.
+ */
+export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }): Promise<MintHctResult> {
+  return runExclusiveSpend(async () => {
+    const startedAt = Date.now()
+    const active = requireActive()
+    const chart = createActor(hctMachine).start()
+    chart.send({ type: 'MINT' })
+    try {
+      const assetId = String(args.assetId ?? '').trim().toLowerCase()
+      if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
+      const amountRaw = String(args.amount ?? '').trim()
+      if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
+        refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+      }
+      const amount = BigInt(amountRaw)
+      const deploy = await deployOf(active, assetId)
+      if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open HCT assets only.')
+      const policy = hctSupplyPolicy(deploy.fields)
+      if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
+      const authority = (await heldRows(active, HCT_TOKEN_BASKET, assetId)).find((r) => r.authority)
+      if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
+      let issued: HctIssued | undefined
+      if (policy.kind === 'capped') {
+        if (!authority.issued) refuse('invalid-build', 'The authority carries no issued count.')
+        issued = { units: authority.issued.units + amount, members: authority.issued.members }
+        if (policy.max != null && issued.units > policy.max) {
+          refuse('over-cap', `At most ${policy.max - authority.issued.units} more can be minted; the cap is ${policy.max}.`)
+        }
+      }
+      const root = rootOf(active)
+      const prefix = freshDerivationString()
+      const minted = freshHolder(active, selfOf(active), prefix)
+      const basket = hctFilingOf(deploy.fields.kind)
+      const outputs: PlannedOutput[] = [
+        {
+          lockingScript: hctHeldLock({ assetId, amount, clause: { mode: 'open', holder: minted.holder } }).toHex(),
+          satoshis: 1,
+          outputDescription: 'HCT minted units',
+          basket,
+          tags: rowTags(assetId, deploy, 'held', amount),
+          customInstructions: rowInstructions(assetId, deploy.fields, 'held', amount, minted.remittance),
+        },
+        ...carryBack(active, authority, deploy, prefix, issued),
+      ]
+      chart.send({ type: 'BUILT' })
+      const label = `${amount} ${deploy.fields.sym ?? 'units'}`
+      const signed = await signHctAction(active, {
+        description: `Mint ${label} (HCT)`,
+        labels: [LABEL, 'hct-mint'],
+        inputs: [{ outpoint: authority.outpoint, description: 'HCT mint authority', key: hctHolderPrivateKey(root, authority.remittance), scope: HCT_HOLDER_SCOPE }],
+        outputs,
+        check: (tx) => {
+          const check = checkHctTx(tx, deploy)
+          if (!check.ok) return `${check.reason}: ${check.detail}`
+          const written = check.outputs.reduce((sum, o) => sum + o.amount, 0n)
+          if (written !== authority.amount + amount) return `it writes ${written} units, not ${authority.amount + amount}`
+          if (!check.outputs.some((o) => o.authority)) return 'the authority is not handed back'
+          return null
+        },
+      })
+      chart.send({ type: 'SIGNED', txid: signed.txid })
+      await commitSigned(signed, [assetId], true)
+      chart.send({ type: 'BROADCASTED' })
+      chart.send({ type: 'DELIVERED' })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-mint', note: `Minted ${label} (HCT)`, txid: signed.txid })
+      scheduleHistoryBackupPush('hct')
+      log('mint', startedAt)
+      return {
+        assetId,
+        txid: signed.txid,
+        amount: amount.toString(),
+        ...(issued ? { issued: { units: issued.units.toString(), members: issued.members.toString() } } : {}),
+      }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
       throw err
@@ -807,7 +961,7 @@ export async function transferHctAsset(args: { assetId?: unknown; recipient?: un
         })
       }
       for (const row of chosen.filter((r) => r.authority)) {
-        outputs.push(...carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix))
+        outputs.push(...carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix, row.issued))
       }
       chart.send({ type: 'BUILT' })
       const label = deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`

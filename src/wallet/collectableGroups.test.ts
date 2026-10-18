@@ -109,6 +109,7 @@ describe('groupCollectables', () => {
       authority: false,
       deploy: `${'d'.repeat(64)}_0`,
       imageUrl: 'data:image/png;base64,AA==',
+      supply: { policy: 'fixed' },
     })
     const seen: unknown[] = []
     const result = groupCollectables(

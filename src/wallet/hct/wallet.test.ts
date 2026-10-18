@@ -180,7 +180,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueHctAsset, transferHctAsset, listHctAssets, serveHctBox, HctRefusal } = await import('./wallet')
+const { issueHctAsset, mintHctAsset, transferHctAsset, listHctAssets, serveHctBox, HctRefusal } = await import('./wallet')
 const { readHctState, writeHctState } = await import('./state')
 
 const alice = makeInstall()
@@ -247,6 +247,50 @@ describe('open HCT wallet', () => {
     expect(assets.find((a) => a.assetId === col.assetId)).toMatchObject({ authority: true, balance: '1' })
     const memberRow = alice.rows.find((r) => r.outpoint === `${item.txid}.0`)!
     expect(memberRow.tags).toContain(`collection:${col.assetId}`)
+  })
+
+  it('mints a capped token up to its cap and a fixed one never', async () => {
+    const fixed = await as(alice, () => issueHctAsset({ kind: 'token', sym: 'FIX', supply: '10' }))
+    await expect(as(alice, () => mintHctAsset({ assetId: fixed.assetId, amount: '1' }))).rejects.toMatchObject({ reason: 'fixed-supply' })
+    expect((await as(alice, () => listHctAssets())).assets.find((a) => a.assetId === fixed.assetId)?.supply).toEqual({ policy: 'fixed' })
+
+    const cap = await as(alice, () => issueHctAsset({ kind: 'token', sym: 'CAP', supply: '60', max: '100' }))
+    const minted = await as(alice, () => mintHctAsset({ assetId: cap.assetId, amount: '30' }))
+    expect(minted).toMatchObject({ amount: '30', issued: { units: '90', members: '0' } })
+    await expect(as(alice, () => mintHctAsset({ assetId: cap.assetId, amount: '11' }))).rejects.toMatchObject({ reason: 'over-cap' })
+    await as(alice, () => mintHctAsset({ assetId: cap.assetId, amount: '10' }))
+    const listed = (await as(alice, () => listHctAssets())).assets.find((a) => a.assetId === cap.assetId)
+    expect(listed).toMatchObject({ balance: '100', supply: { policy: 'capped', max: '100', issued: { units: '100', members: '0' } } })
+
+    const dave = makeInstall()
+    const sent = await as(alice, () => transferHctAsset({ assetId: cap.assetId, recipient: dave.identityKey, amount: '100' }))
+    expect(sent.delivered).toBe(true)
+    await as(dave, () => serveHctBox({ force: true }))
+    expect(await balanceOf(dave, cap.assetId)).toBe('100')
+    expect((await as(dave, () => listHctAssets())).assets.find((a) => a.assetId === cap.assetId)?.supply).toEqual({ policy: 'capped', max: '100' })
+  })
+
+  it('refuses supply caps that cannot hold, before anything is staged', async () => {
+    for (const args of [
+      { kind: 'token', sym: 'X', supply: '11', max: '10' },
+      { kind: 'token', sym: 'X', supply: '1', max: '10', auth: false },
+      { kind: 'item', name: 'X', size: '3' },
+      { kind: 'token', sym: 'X', supply: '1', size: '0' },
+    ]) {
+      await expect(as(alice, () => issueHctAsset(args))).rejects.toMatchObject({ reason: 'bad-asset-args' })
+    }
+  })
+
+  it('stops a capped collection at its size', async () => {
+    const col = await as(alice, () => issueHctAsset({ kind: 'token', sym: 'ED', supply: '1', size: '2' }))
+    await as(alice, () => issueHctAsset({ kind: 'item', name: 'One', collection: col.assetId }))
+    await as(alice, () => issueHctAsset({ kind: 'item', name: 'Two', collection: col.assetId }))
+    await expect(as(alice, () => issueHctAsset({ kind: 'item', name: 'Three', collection: col.assetId }))).rejects.toMatchObject({ reason: 'over-cap' })
+    expect((await as(alice, () => listHctAssets())).assets.find((a) => a.assetId === col.assetId)?.supply).toEqual({
+      policy: 'capped',
+      size: '2',
+      issued: { units: '1', members: '2' },
+    })
   })
 
   it('sends to a peer who validates from the package alone and files into p2pft', async () => {

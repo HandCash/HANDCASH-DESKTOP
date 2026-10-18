@@ -9,6 +9,7 @@ import { decodeScriptNumber, encodeScriptNumber } from '../token/decode162'
  *   deploy:     <"hct">            <supply> <payload> OP_2DROP OP_DROP <clause>
  *   held:       <"hct" ‖ asset id> <amount> OP_2DROP <clause>
  *   authority:  <"hct" ‖ asset id> OP_0     OP_2DROP <clause>
+ *   capped:     <"hct" ‖ asset id> OP_0 <units issued> <members issued> OP_2DROP OP_2DROP <clause>
  */
 
 export const HCT_MARKER = [0x68, 0x63, 0x74] as const
@@ -38,7 +39,10 @@ export type HctClause = HctRules & { holder: string }
 export type HctOutput =
   | { form: 'deploy'; supply: bigint; payload: Uint8Array; clause: HctClause }
   | { form: 'held'; assetId: string; amount: bigint; clause: HctClause }
-  | { form: 'authority'; assetId: string; clause: HctClause }
+  | { form: 'authority'; assetId: string; clause: HctClause; issued?: HctIssued }
+
+/** What a capped asset's authority has issued so far: units (the deploy's supply included) and collection members. */
+export type HctIssued = { units: bigint; members: bigint }
 
 export type HctBranch = 'issuer' | 'release'
 
@@ -144,13 +148,19 @@ export function hctHeldLock(args: { assetId: string; amount: bigint; clause: Hct
   return script.writeOpCode(OP.OP_2DROP).writeScript(hctClause(args.clause))
 }
 
-export function hctAuthorityLock(args: { assetId: string; clause: HctClause }): LockingScript {
+export function hctAuthorityLock(args: { assetId: string; clause: HctClause; issued?: HctIssued }): LockingScript {
   if (!isHctAssetId(args.assetId)) throw new Error('An asset id is 20 bytes of hex')
-  return new LockingScript()
-    .writeBin([...HCT_MARKER, ...Utils.toArray(args.assetId, 'hex')])
-    .writeOpCode(OP.OP_0)
-    .writeOpCode(OP.OP_2DROP)
-    .writeScript(hctClause(args.clause))
+  const script = new LockingScript().writeBin([...HCT_MARKER, ...Utils.toArray(args.assetId, 'hex')]).writeOpCode(OP.OP_0)
+  if (args.issued) {
+    const { units, members } = args.issued
+    if (units < 1n || units > HCT_MAX_AMOUNT || members < 0n || members > HCT_MAX_AMOUNT) {
+      throw new Error('An authority has issued 1 to 2^64-1 units and 0 to 2^64-1 members')
+    }
+    writeAmount(script, units)
+    writeAmount(script, members)
+    script.writeOpCode(OP.OP_2DROP)
+  }
+  return script.writeOpCode(OP.OP_2DROP).writeScript(hctClause(args.clause))
 }
 
 /** The beacon (countersigned mode): `OP_IF <issuer part> OP_ELSE <release part> OP_ENDIF`. */
@@ -266,10 +276,20 @@ export function readHct(script: Script | string): HctOutput | null {
   } else {
     const assetId = Utils.toHex(head.slice(3))
     const amount = chunks[1] ? decodeScriptNumber(chunks[1]) : null
-    if (amount == null || chunks[2]?.op !== OP.OP_2DROP) return null
-    const clause = readClauseChunks(chunks, 3)
-    if (!clause) return null
-    out = amount === 0n ? { form: 'authority', assetId, clause } : { form: 'held', assetId, amount, clause }
+    if (amount == null) return null
+    if (amount === 0n && chunks[2]?.op !== OP.OP_2DROP) {
+      const units = chunks[2] ? decodeScriptNumber(chunks[2]) : null
+      const members = chunks[3] ? decodeScriptNumber(chunks[3]) : null
+      if (units == null || members == null || chunks[4]?.op !== OP.OP_2DROP || chunks[5]?.op !== OP.OP_2DROP) return null
+      const clause = readClauseChunks(chunks, 6)
+      if (!clause) return null
+      out = { form: 'authority', assetId, clause, issued: { units, members } }
+    } else {
+      if (chunks[2]?.op !== OP.OP_2DROP) return null
+      const clause = readClauseChunks(chunks, 3)
+      if (!clause) return null
+      out = amount === 0n ? { form: 'authority', assetId, clause } : { form: 'held', assetId, amount, clause }
+    }
   }
   try {
     const reencoded =
@@ -277,7 +297,7 @@ export function readHct(script: Script | string): HctOutput | null {
         ? hctDeployLock({ supply: out.supply, payload: out.payload, clause: out.clause })
         : out.form === 'held'
           ? hctHeldLock({ assetId: out.assetId, amount: out.amount, clause: out.clause })
-          : hctAuthorityLock({ assetId: out.assetId, clause: out.clause })
+          : hctAuthorityLock({ assetId: out.assetId, clause: out.clause, ...(out.issued ? { issued: out.issued } : {}) })
     return reencoded.toHex() === hex ? out : null
   } catch {
     return null

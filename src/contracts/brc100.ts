@@ -39,6 +39,7 @@ export const ACTION_BRC100_METHODS = [
   'releaseCountersignedAsset',
   'joinCountersignedAsset',
   'issueHctAsset',
+  'mintHctAsset',
   'transferHctAsset',
   'encrypt',
   'decrypt',

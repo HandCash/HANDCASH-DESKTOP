@@ -19,15 +19,18 @@ export type CountersignDeployFields = {
   hdl?: string
 }
 
-export type CborValue = string | number | boolean | Uint8Array | CborValue[] | Map<string, CborValue>
+export type CborValue = string | number | bigint | boolean | Uint8Array | CborValue[] | Map<string, CborValue>
 
-function head(major: number, n: number): number[] {
+function head(major: number, n: number | bigint): number[] {
   const hi = major << 5
-  if (n < 24) return [hi | n]
-  if (n < 0x100) return [hi | 24, n]
-  if (n < 0x10000) return [hi | 25, n >> 8, n & 0xff]
-  if (n <= 0xffffffff) return [hi | 26, (n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]
-  throw new Error('CBOR value out of range')
+  const v = BigInt(n)
+  if (v < 0n || v > 0xffffffffffffffffn) throw new Error('CBOR value out of range')
+  const be = (width: number) => Array.from({ length: width }, (_, i) => Number((v >> BigInt(8 * (width - 1 - i))) & 0xffn))
+  if (v < 24n) return [hi | Number(v)]
+  if (v < 0x100n) return [hi | 24, ...be(1)]
+  if (v < 0x10000n) return [hi | 25, ...be(2)]
+  if (v <= 0xffffffffn) return [hi | 26, ...be(4)]
+  return [hi | 27, ...be(8)]
 }
 
 function compareKeys(a: number[], b: number[]): number {
@@ -47,6 +50,7 @@ function encode(value: CborValue): number[] {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('Only unsigned integers are encoded')
     return head(0, value)
   }
+  if (typeof value === 'bigint') return head(0, value)
   if (typeof value === 'string') {
     const bytes = [...new TextEncoder().encode(value)]
     return head(3, bytes.length).concat(bytes)

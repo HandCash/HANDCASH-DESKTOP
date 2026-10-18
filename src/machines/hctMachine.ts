@@ -1,13 +1,14 @@
 import { assign, setup } from 'xstate'
 
 type Context = {
-  operation: 'issue' | 'transfer' | null
+  operation: 'issue' | 'mint' | 'transfer' | null
   txid: string | null
   error: string | null
 }
 
 type Event =
   | { type: 'ISSUE' }
+  | { type: 'MINT' }
   | { type: 'TRANSFER' }
   | { type: 'BUILT' }
   | { type: 'SIGNED'; txid: string }
@@ -17,7 +18,7 @@ type Event =
   | { type: 'FAIL'; error: string }
 
 /**
- * Issue or transfer an open BRC-255 asset. Nothing exists until SIGNED; a
+ * Issue, mint or transfer an open BRC-255 asset. Nothing exists until SIGNED; a
  * failure before it aborts the action and the holder's outputs stay put.
  * After SIGNED the transaction is the payment: miner propagation is the
  * signed-send lifecycle's, and a failed delivery only queues the package in
@@ -27,6 +28,7 @@ export const hctMachine = setup({
   types: { context: {} as Context, events: {} as Event },
   actions: {
     issue: assign({ operation: 'issue', txid: null, error: null }),
+    mint: assign({ operation: 'mint', txid: null, error: null }),
     transfer: assign({ operation: 'transfer', txid: null, error: null }),
     txid: assign(({ event }) => (event.type === 'SIGNED' ? { txid: event.txid } : {})),
     error: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
@@ -39,6 +41,7 @@ export const hctMachine = setup({
     idle: {
       on: {
         ISSUE: { target: 'building', actions: 'issue' },
+        MINT: { target: 'building', actions: 'mint' },
         TRANSFER: { target: 'building', actions: 'transfer' },
       },
     },

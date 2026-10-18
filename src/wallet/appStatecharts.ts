@@ -597,6 +597,7 @@ const HCT = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> building : ISSUE (issuer coin P2PK, ALL|FORKID)
+  idle --> building : MINT (authority row; fixed supply refused, cap never passed)
   idle --> building : TRANSFER (p2pft / p2pnft rows, wallet-only)
   building --> signing : BUILT
   building --> failed : FAIL (abortAction, outputs stay put)

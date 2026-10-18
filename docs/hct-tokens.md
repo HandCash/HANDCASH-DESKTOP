@@ -44,6 +44,18 @@ Proof trust is fixed per mode, with nothing in between:
 - **Open transfer:** the recipient checks every hop back to the deploy and trusts no one, not even the issuer. The sender ships only the hops this recipient has not already checked, so repeat receipts are small. A first receipt of an old, busy asset is the largest case, at about 0.5 KB per hop.
 - **Countersigned transfer:** the issuer checked the history before signing, so the package is one Extended Format transaction, about 0.8 KB. A transfer after a release is not issuer-checked, so it walks back to the last transaction the issuer accepted.
 
+## Supply
+
+Every token deploy fixes its supply policy (BRC-255 §4), and `listHctAssets` reports it as `supply`:
+
+| Policy | `issueHctAsset` arguments | Minting |
+|---|---|---|
+| Fixed | no `auth`, `max` or `size` | `mintHctAsset` refuses `fixed-supply` |
+| Open | `auth: true` | any amount |
+| Capped | `max` (units, supply included) and/or `size` (collection members); either implies `auth` | up to the cap; past it is `over-cap` |
+
+A capped authority states the units and members issued so far. Every reader checks each mint against the cap during its walk, so a mint past the cap is never credited, whoever signed it. Dropping the authority ends minting for good.
+
 ## Modules (open mode, shipped)
 
 | Concern | Module |
@@ -53,9 +65,9 @@ Proof trust is fixed per mode, with nothing in between:
 | Issuer and holder keys (`[2, "hct issuer"]` counterparty `anyone`; `[2, "hct holder"]`) | `src/wallet/hct/keys.ts` |
 | Deploy read, per-transaction conservation check, walk to the deploy | `src/wallet/hct/validity.ts` |
 | Proof package (§6) and validated-transaction store | `src/wallet/hct/proof.ts`, `store.ts` |
-| Issue, transfer, receive (box `hct`), durable outbox, per-peer frontier | `src/wallet/hct/wallet.ts`, `state.ts`, chart `hctMachine` |
+| Issue, mint, transfer, receive (box `hct`), durable outbox, per-peer frontier | `src/wallet/hct/wallet.ts`, `state.ts`, chart `hctMachine` |
 | Collectables shelf and send form | `src/components/HctShelf.tsx`, chart `hctHoldingsMachine` |
-| BRC-100 methods `issueHctAsset`, `transferHctAsset`, `listHctAssets` | `src/wallet/brc100Handler.ts` |
+| BRC-100 methods `issueHctAsset`, `mintHctAsset`, `transferHctAsset`, `listHctAssets` | `src/wallet/brc100Handler.ts` |
 | App views (`p p2pft token`, `p p2pnft …` under the item grant) | `src/wallet/itemAccess.ts` |
 
 Rules the code holds to:

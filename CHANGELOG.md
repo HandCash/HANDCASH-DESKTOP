@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.585] - 2026-10-18
+
+### Added
+- **HCT supply policy: fixed, open or capped.** An issuer chooses at deploy how many units can ever exist, and the choice is signed into the deploy:
+  - **fixed** (the default): the issued supply, never more;
+  - **open**: `auth: true`, mint any amount;
+  - **capped**: `max` units, with the supply counted, and/or `size` items for a limited-edition collection.
+- **A capped asset can never pass its cap.** Its mint authority records how many units and items have been issued so far. Every recipient checks each mint against the cap during the check it already runs back to the deploy, so units minted past the cap are never credited, whoever signed them.
+- **`mintHctAsset`** mints more units of an open or capped token whose mint authority this wallet holds. A fixed-supply token is refused with `HCT_FIXED_SUPPLY`, and a mint past the cap with `HCT_OVER_CAP`. A collection that already has `size` items refuses another.
+- `listHctAssets` returns each asset's `supply` policy. The issuer's wallet also sees how much has been issued. Collectables shows the policy on HCT tokens, and the issue prompt states it before you approve.
+
 ## [1.3.584] - 2026-10-18
 
 ### Changed

@@ -1,7 +1,7 @@
 import { Utils } from '@bsv/sdk'
 import { encodeDagCbor, type CborValue } from '../countersign/payload'
 import { decodeDagCborMap } from '../token/decode162'
-import type { HctMode } from './script'
+import { HCT_MAX_AMOUNT, type HctMode } from './script'
 
 /** Shortest silence period a countersigned deploy may declare: 7 days. */
 export const HCT_MIN_SILENCE_SECONDS = 604_800
@@ -26,6 +26,10 @@ export type HctDeployFields = {
   /** Countersigned: seconds between mined beacons before the asset has lapsed. */
   sil?: number
   auth?: boolean
+  /** A minted token: the most units that may ever exist, the deploy's supply included. */
+  max?: bigint
+  /** A minted collection: the most member items it may ever deploy. */
+  size?: bigint
   sym?: string
   name?: string
   dec?: number
@@ -38,12 +42,33 @@ export type HctDeployFields = {
 }
 
 const KNOWN = new Set([
-  'v', 'mode', 'kind', 'iss', 'm', 'bcn', 'rel', 'relk', 'k', 'sil', 'auth',
+  'v', 'mode', 'kind', 'iss', 'm', 'bcn', 'rel', 'relk', 'k', 'sil', 'auth', 'max', 'size',
   'sym', 'name', 'dec', 'icon', 'ctype', 'c', 'col', 'hdl', 'crit',
 ])
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 const URL_RE = /[a-z][a-z0-9+.-]*:\/\//i
 const MAX_TEXT = 256
+
+/**
+ * How many units can ever exist (§5). `fixed`: the deploy's supply, never
+ * more. `open`: the authority mints without limit. `capped`: the authority
+ * mints up to `max` units and/or `size` collection members, and every
+ * authority output carries what has been issued so far.
+ */
+export type HctSupplyPolicy =
+  | { kind: 'fixed' }
+  | { kind: 'open' }
+  | { kind: 'capped'; max?: bigint; size?: bigint }
+
+export function hctSupplyPolicy(fields: Pick<HctDeployFields, 'auth' | 'max' | 'size'>): HctSupplyPolicy {
+  if (!fields.auth) return { kind: 'fixed' }
+  if (fields.max == null && fields.size == null) return { kind: 'open' }
+  return {
+    kind: 'capped',
+    ...(fields.max != null ? { max: fields.max } : {}),
+    ...(fields.size != null ? { size: fields.size } : {}),
+  }
+}
 
 function outpointBytes(outpoint: string): number[] {
   const [txid, vout] = outpoint.split('_')
@@ -106,6 +131,11 @@ export function assertHctFields(fields: HctDeployFields): void {
   } else if (fields.c != null || fields.ctype != null || fields.col != null) {
     throw new Error('Only an item carries content or a collection')
   }
+  for (const [name, cap] of [['max', fields.max], ['size', fields.size]] as const) {
+    if (cap == null) continue
+    if (!fields.auth) throw new Error(`${name} caps minting, so it needs a mint authority (auth)`)
+    if (typeof cap !== 'bigint' || cap < 1n || cap > HCT_MAX_AMOUNT) throw new Error(`${name} is 1 to 2^64-1`)
+  }
   if (fields.dec != null && (!Number.isInteger(fields.dec) || fields.dec < 0 || fields.dec > 18)) {
     throw new Error('dec is 0 to 18')
   }
@@ -139,6 +169,8 @@ export function encodeHctPayload(fields: HctDeployFields): number[] {
   if (fields.k != null) map.set('k', fields.k)
   if (fields.sil != null) map.set('sil', fields.sil)
   if (fields.auth) map.set('auth', true)
+  if (fields.max != null) map.set('max', fields.max)
+  if (fields.size != null) map.set('size', fields.size)
   if (fields.sym) map.set('sym', fields.sym)
   if (fields.name) map.set('name', fields.name)
   if (fields.dec != null) map.set('dec', fields.dec)
@@ -177,8 +209,16 @@ export function decodeHctPayload(bytes: Uint8Array): HctDeployFields | null {
     const value = map.get(key)
     return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
   }
+  const count = (key: string): bigint | undefined => {
+    const value = map.get(key)
+    if (typeof value === 'bigint') return value >= 0n ? value : undefined
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : undefined
+  }
   for (const key of ['m', 'k', 'sil', 'dec']) {
     if (map.has(key) && uint(key) == null) return null
+  }
+  for (const key of ['max', 'size']) {
+    if (map.has(key) && count(key) == null) return null
   }
   for (const key of ['sym', 'name', 'ctype', 'hdl']) {
     if (map.has(key) && text(key) == null) return null
@@ -213,6 +253,8 @@ export function decodeHctPayload(bytes: Uint8Array): HctDeployFields | null {
     ...(uint('k') != null ? { k: uint('k') } : {}),
     ...(uint('sil') != null ? { sil: uint('sil') } : {}),
     ...(auth === true ? { auth: true } : {}),
+    ...(count('max') != null ? { max: count('max') } : {}),
+    ...(count('size') != null ? { size: count('size') } : {}),
     ...(text('sym') != null ? { sym: text('sym') } : {}),
     ...(text('name') != null ? { name: text('name') } : {}),
     ...(uint('dec') != null ? { dec: uint('dec') } : {}),

@@ -643,6 +643,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'releaseCountersignedAsset',
         'joinCountersignedAsset',
         'issueHctAsset',
+        'mintHctAsset',
         'transferHctAsset',
       ].includes(prompt.method)
     ) {
@@ -845,6 +846,16 @@ function tokenIdFromBody(body: Record<string, unknown>): string | undefined {
     }
   }
   return undefined
+}
+
+/** The supply line of an HCT token issue prompt: fixed, open, or capped. */
+function hctIssueSupplyLine(body: Record<string, unknown>): string {
+  const caps = [
+    body.max != null ? `at most ${String(body.max)} units` : '',
+    body.size != null ? `at most ${String(body.size)} items` : '',
+  ].filter(Boolean)
+  if (caps.length > 0) return `Capped supply: you can mint more, ${caps.join(' and ')}`
+  return body.auth === true ? 'Open supply: you can mint more, with no cap' : 'Fixed supply: nothing more can ever be minted'
 }
 
 export function summarizeAction(method: string, args: unknown): {
@@ -1365,8 +1376,19 @@ export function summarizeAction(method: string, args: unknown): {
       previewKind: kind === 'item' ? 'collectable' : 'token',
       details: [
         'Anyone can check it back to your deploy without an indexer',
-        typeof body.collection === 'string' ? `Collection: ${body.collection}` : kind === 'item' ? 'No collection' : 'Fixed supply',
+        typeof body.collection === 'string' ? `Collection: ${body.collection}` : kind === 'item' ? 'No collection' : hctIssueSupplyLine(body),
       ],
+    }
+  }
+
+  if (method === 'mintHctAsset') {
+    const amount = String(body.amount ?? '?')
+    return {
+      title: `Mint ${amount}`,
+      summary: 'Create new units of a token you issued. They come to you; a capped token never passes its cap.',
+      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
+      previewKind: 'token',
+      details: [typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset'],
     }
   }
 

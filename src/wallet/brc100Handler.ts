@@ -632,6 +632,10 @@ export async function dispatchWalletMethod(
       return (await import('./hct/wallet')).issueHctAsset(
         (args ?? {}) as Parameters<typeof import('./hct/wallet').issueHctAsset>[0],
       )
+    case 'mintHctAsset':
+      return (await import('./hct/wallet')).mintHctAsset(
+        (args ?? {}) as Parameters<typeof import('./hct/wallet').mintHctAsset>[0],
+      )
     case 'transferHctAsset':
       return (await import('./hct/wallet')).transferHctAsset(
         (args ?? {}) as Parameters<typeof import('./hct/wallet').transferHctAsset>[0],
@@ -1478,6 +1482,17 @@ async function handleBrc100RequestInner(
         setPaymentProgress('preparing', busy.detail, outpoint, busy.label)
         result = await dispatchWalletMethod(active.wallet, method, args, originator)
         setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
+      } catch (err) {
+        const hct = await import('./hct/wallet')
+        if (!(err instanceof hct.HctRefusal)) throw err
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: `HCT_${err.reason.toUpperCase().replace(/-/g, '_')}`,
+            description: err.message,
+          }),
+        }
       } finally {
         inFlightMarketActions.delete(actionKey)
         clearPaymentProgress()
