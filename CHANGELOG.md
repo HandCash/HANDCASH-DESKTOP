@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.603] - 2026-10-18
+
+### Fixed
+
+- HCT issue and mint (and so every wLTC deposit) failed with "Every signableTransaction input must have a sourceTransaction". HCT actions passed an empty input BEEF, and the wallet engine builds a signable transaction from that BEEF alone for inputs it does not sign. The failure came after storage had already staged the action, so each attempt also left an unsigned row that locked the issuer coin and change, which then caused "Insufficient funds". HCT actions now carry the source transaction of every input they name, and refuse before staging when one is unavailable.
+- A wLTC deposit could show as credited with no wLTC behind it. The bridge took any labelled action that had not failed as the deposit's mint, including the unsigned row a failed issue leaves. Only a signed action counts now. A credit with no signed mint is dropped so the deposit mints again, and a signed mint the app stopped before recording is adopted (re-checked, validated and propagated).
+
 ## [1.3.602] - 2026-10-18
 
 ### Changed
