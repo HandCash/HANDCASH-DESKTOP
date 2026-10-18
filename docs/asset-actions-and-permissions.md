@@ -60,7 +60,7 @@ All grants are stored per account (`accountLocalKey`). Every HandCash catalog ho
 |---|---|---|---|
 | **Connect** | Connected methods; opens a 20 s fresh-connect window | Connect prompt (`allowOrigin`) | Disconnect |
 | **Item view** | `listOutputs` on `p 1sat all \| collection \| app \| creator \| id`; filtered to the granted collections, apps, creators or ids | View prompt (`requestItemViewApproval`); `id` lookups are silent and cover only that id; catalog hosts get `all` | Disconnect |
-| **Token view** | `listOutputs` on `p p2pft all \| token \| id` (`p bsv21` still read); a filtered grant stays an allowlist | View prompt (`requestTokenViewApproval`) | Disconnect |
+| **Token view** | `listOutputs` on `p p2pft all \| token \| id`; a filtered grant stays an allowlist | View prompt (`requestTokenViewApproval`) | Disconnect |
 | **Countersigned token view** | `listOutputs` on `p csft all \| asset \| id` | View prompt (`requestCountersignedViewApproval`), one grant per profile; `id` lookups are silent | Disconnect |
 | **Countersigned item view** | `listOutputs` on `p csnft all \| asset \| collection \| id` | Same, its own grant | Disconnect |
 | **Item and token receive** | Later item or token `internalizeAction` calls without a prompt | First approved receive | Disconnect |
@@ -76,7 +76,7 @@ Not implemented: BRC-73 protocol, basket, certificate and counterparty grants. C
 
 Revocation: `revokeOrigin` removes the app and clears its auto-pay, spending authorization and session grants (`AppDetailsPanel.tsx`, Disconnect).
 
-Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bsv21` (`USE_PBSV21_SCOPE`), a bare `csft` or `csnft` (`USE_COUNTERSIGNED_SCOPE`), any app write into either or a `p csft|csnft input id` label (`COUNTERSIGNED_WALLET_ONLY`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
+Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft`, a bare `csft` or `csnft` (`USE_COUNTERSIGNED_SCOPE`), any app write into either or a `p csft|csnft input id` label (`COUNTERSIGNED_WALLET_ONLY`), and any unknown `p` scheme (`UNSUPPORTED_P_BASKET`).
 
 ## 3. Item actions (1Sat)
 
@@ -96,16 +96,16 @@ Scopes refused by name: a bare `1sat` (`USE_P1SAT_SCOPE`), a bare `p2pft` or `bs
 
 ## 4. Token actions (BRC-162 / P2P-FT)
 
-Filing name `p2pft`, tag `p2pft:<tokenId>`; legacy `bsv21` rows move over once (`token/filing.ts`).
+Filing name `p2pft`, tag `p2pft:<tokenId>` (`token/filing.ts`).
 
 | Action | Owner | Started from |
 |---|---|---|
 | Deploy or mint | App `createAction`; wire format from `token/mintWire.ts`; issuer stamp `token/issuer.ts` | Apps only |
-| Send | `sendFungible` → `sendBsv21Tokens`, `bsv21SendMachine`, `sendPlan.ts` | `SendFungiblePanel` (with the peer capability warning) |
+| Send | `sendFungible` → `token/send.ts`, `token/sendMachine.ts`, `token/sendPlan.ts` | `SendFungiblePanel` (with the peer capability warning) |
 | Receive | `internalizePeerFungibleSettle` (`token/settle.ts`), lineage in the envelope | Inbox, bridge |
 | Prove lineage | `token/prove176.ts`, `lineage.ts`, `genesisStore.ts` | Token details |
-| Combine | `combineBsv21Tips` | `FungibleDetailsPanel` |
-| Burn | `burnBsv21Tokens` | `BurnAssetPanel` |
+| Combine | `token/send.ts` | `FungibleDetailsPanel` |
+| Burn | `token/burn.ts` | `BurnAssetPanel` |
 | Icon | `token/icons/*`; bridge `getTokenIcon` | Token face |
 | Required processing | `token/requiredProcessing.ts`: any `req` → unsupported | Automatic |
 | Cosigned (MNEE) | Detected and refused for send; sweep from imported keys through the MNEE API | Import |
@@ -135,7 +135,7 @@ Version 1 signed the asset `NONE|ANYONECANPAY`, and the index served that signat
 - the index refuses v1 at admission (`settlement-unlocks-unbound`) and never serves it;
 - cancel spends the asset back to the seller along with the offer.
 
-Before paying for a token, the buyer walks its BRC-176 lineage with script checks (`proveListedToken`). Token listings read both token baskets (`p2pft` and legacy `bsv21`).
+Before paying for a token, the buyer walks its BRC-176 lineage with script checks (`proveListedToken`). Token listings read the `p2pft` basket.
 
 Countersigned listings (`csft`, `csnft`) use `token-v2`. Listing is a sender-funded trade the acceptor countersigns: the listed units go to vout 0 under a fresh holder key (tag `market-held`), the offer to vout 1, and change, if any, to vout 2. The seller then signs vout 0 `0xC3` against its payment, so the listing needs no live seller. The proof is `{ v: 253, assetId, kind, amt }`. The buyer and the index check it against the listing transaction and the deploy (`checkCountersignedListing`). To buy, the buyer:
 
@@ -178,8 +178,8 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
 | Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `direct-offer` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
-| Partial fills | Missing; a buy takes the whole lot | `splitBsv21CoverToExactAmt` |
-| Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | `buildBsv21SendOutputs`, bulk run machinery |
+| Partial fills | Missing; a buy takes the whole lot | Exact-amount split in `marketListing.ts` |
+| Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | Output builder in `token/sendPlan.ts`, bulk run machinery |
 | Token split as a user action | Missing; only combine is exposed | The combine self-send |
 | Issuer freeze, transfer limits | Ship for countersigned assets (section 9, `setCountersignedAssetPolicy`). A cosigner of a shared set knows the holders of the outputs it accepted itself; for the rest the requester stands in | Registered-recipient lists, fee terms |
 | Required-processing profiles | Every `req` is unsupported | `requiredProcessing.ts` is the hook |
@@ -255,4 +255,4 @@ Specified in BRC-253 (draft). A countersigned output is a BRC-162 transfer whose
 - Tags: `<profile>:<assetId>` (`<profile>:deploy` on the issuer's deploy row, which is its own asset id), `amt:<units>`, `sym:` and `name:` when known (display only; views list tags, never the remittance), `id:<key>` (BRC-164).
 - Trades (BRC-253 §6): market listings, purchases and cancels, and direct offers that give a countersigned asset, are sender-funded. The party that builds the transaction funds it, the acceptor countersigns without adding an input and replies `cosigned`, and the builder broadcasts. A holder may sign `0xC3` (`SWAP_HOLDER_SCOPE`) bound to a plain payment at its own index. The acceptor refuses one bound to a countersigned output. An earlier signed sale, or a request sharing a plain input, never blocks a new request (`blockingPriorSpends`), because at most one of them can be mined. Any other sender-funded request blocks until a mined spend of one of its plain inputs proves it dead. Recipients file a trade once it is mined.
 - App scopes: `p csft all | asset | id` and `p csnft all | asset | collection | id`, with `<profile>:<assetId>`, `collection:<id>` or `id:<key>` tags for the narrow ones. Listed deploy rows get a `<profile>:<assetId>` tag.
-- Apps cannot write into either profile or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …`, `p p2pft …` and `bsv21` never return a countersigned output, and payment or auto-pay grants never cover one.
+- Apps cannot write into either profile or spend from it with a label; transfers go through `transferCountersignedAsset`. `p 1sat …` and `p p2pft …` never return a countersigned output, and payment or auto-pay grants never cover one.
