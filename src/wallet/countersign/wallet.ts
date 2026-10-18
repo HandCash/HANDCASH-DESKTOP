@@ -49,8 +49,11 @@ import {
   checkAcceptRequest,
   plainInputsOf,
   readCountersignDeploy,
+  releasedAncestryStarts,
   resolveCountersignTransfer,
+  resolveReleasedAncestry,
   type AcceptCheck,
+  type AncestryResult,
   type AcceptorPolicy,
   type AcceptRefusal,
   type CountersignDeploy,
@@ -396,6 +399,34 @@ async function fullTx(active: ActiveWallet, txid: string, state?: CountersignSta
   } catch {
     return null
   }
+}
+
+/** BRC-253 §11 step 7 for `tx`: ancestors come from the delivered BEEF first, then this wallet and the chain. */
+async function releasedAncestryOf(
+  active: ActiveWallet,
+  tx: Transaction,
+  deploys: ReadonlyMap<string, CountersignDeploy>,
+  state: CountersignState,
+  which: 'release-branch' | 'all',
+  beefB64?: string,
+): Promise<AncestryResult> {
+  const starts = releasedAncestryStarts(tx, deploys, which)
+  if (starts.length === 0) return { ok: true, walked: 0 }
+  let delivered: Beef | null = null
+  try {
+    delivered = beefB64 ? Beef.fromBinary(Utils.toArray(beefB64, 'base64')) : null
+  } catch {
+    delivered = null
+  }
+  const startedAt = Date.now()
+  const result = await resolveReleasedAncestry(starts, deploys, async (txid) => {
+    const fromDelivery = delivered?.findTxid(txid)?.tx
+    if (fromDelivery) return fromDelivery
+    return fullTx(active, txid, state)
+  })
+  const ms = Date.now() - startedAt
+  if (ms > 250) console.info(`[countersign] released ancestry done ${ms}ms (${result.ok ? result.walked : result.reason})`)
+  return result
 }
 
 /** The deploy for an asset id, kept once its body hashes to the id's txid. */
@@ -2191,6 +2222,18 @@ export async function countersignTrade(args: {
       acceptedBy = path.path === 'local-acceptor' ? 'local' : path.path === 'quorum' ? 'quorum' : 'remote'
     }
   }
+  if (branch === 'release') {
+    const ancestry = await releasedAncestryOf(active, tx, deploys, readCountersignState(), 'all')
+    if (!ancestry.ok) {
+      console.warn(`[countersign] trade ancestry ${ancestry.reason} — ${ancestry.detail}`)
+      refuse(
+        'invalid-acceptance',
+        ancestry.reason === 'invalid'
+          ? 'These released units do not trace back to units the issuer accepted. Nothing was sent.'
+          : 'The history of these released units could not be read. Nothing was sent; try again.',
+      )
+    }
+  }
   const unlocks = perVin.map((countersignatures, vin) => {
     const unlock = countersignedUnlock({
       countersignatures,
@@ -2587,6 +2630,11 @@ async function ingestTransfer(active: ActiveWallet, wire: Extract<Wire, { t: 'tr
     resolved.assetIds.some((id) => state.phases[id]?.phase.phase === 'released')
   // A quorum transfer is funded by its sender, who could void it by double spending a fee input.
   const quorumSpend = resolved.assetIds.some((id) => isQuorum(deploys.get(id)!.sets.issuer))
+  const ancestry = await releasedAncestryOf(active, tx, deploys, state, 'release-branch', wire.beef)
+  if (!ancestry.ok) {
+    console.warn(`[countersign] transfer ancestry ${ancestry.reason} — ${ancestry.detail}`)
+    return ancestry.reason === 'invalid' ? 'invalid' : 'retry'
+  }
   if ((releasedSpend || quorumSpend) && !(await minedYet(active, txid))) return 'retry'
   let atomic = wire.beef ? atomicBeefForSubject(Utils.toArray(wire.beef, 'base64'), txid) : undefined
   atomic ??= await atomicBeefFor(active, tx, state)

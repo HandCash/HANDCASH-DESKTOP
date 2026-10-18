@@ -12,6 +12,7 @@ import {
   sourceOutputOf,
   sourceTxidOf,
   SWAP_HOLDER_SCOPE,
+  unlockBranch,
   type CountersignKeySets,
   type CountersignedOutput,
 } from './script'
@@ -137,6 +138,90 @@ export function resolveCountersignTransfer(
     }
   }
   return { ok: true, mine, assetIds: [...outs.keys()] }
+}
+
+export type AncestryResult = { ok: true; walked: number } | { ok: false; reason: 'missing' | 'invalid'; detail: string }
+
+/** Most ancestors one ancestry walk reads before it gives up as `missing`. */
+export const MAX_RELEASED_ANCESTRY = 5000
+
+/**
+ * BRC-253 §11 step 7. After a release anyone can countersign, so a transfer
+ * that verifies alone proves nothing about the amounts it spends. Each start
+ * names a transaction whose outputs of one asset are spent on the release
+ * branch; that transaction must conserve the asset with valid spends, and
+ * every release-branch input it has walks back the same way, until each path
+ * ends at a transaction whose inputs of the asset are all on the issuer
+ * branch (accepted) or at the deploy. `parentOf` returns a transaction by id;
+ * missing sources are linked through it.
+ */
+export async function resolveReleasedAncestry(
+  starts: ReadonlyArray<{ txid: string; assetId: string }>,
+  deploys: ReadonlyMap<string, CountersignDeploy>,
+  parentOf: (txid: string) => Promise<Transaction | null>,
+): Promise<AncestryResult> {
+  const queue = starts.map((s) => ({ txid: s.txid.toLowerCase(), assetId: s.assetId }))
+  const seen = new Set<string>()
+  let walked = 0
+  while (queue.length > 0) {
+    const { txid, assetId } = queue.shift()!
+    const key = `${txid}:${assetId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    if (++walked > MAX_RELEASED_ANCESTRY) {
+      return { ok: false, reason: 'missing', detail: `${assetId} ancestry is over ${MAX_RELEASED_ANCESTRY} transactions` }
+    }
+    const deploy = deploys.get(assetId)
+    if (!deploy) return { ok: false, reason: 'missing', detail: `${assetId} has no deploy body` }
+    const tx = await parentOf(txid)
+    if (!tx) return { ok: false, reason: 'missing', detail: `ancestor ${txid} of ${assetId} is not available` }
+    let ins = 0n
+    for (let vin = 0; vin < tx.inputs.length; vin++) {
+      const input = tx.inputs[vin]!
+      const branch = unlockBranch(input.unlockingScript)
+      if (!branch) continue
+      if (!input.sourceTransaction) {
+        const source = await parentOf(sourceTxidOf(tx, vin))
+        if (!source) return { ok: false, reason: 'missing', detail: `source of ${txid} input ${vin} is not available` }
+        input.sourceTransaction = source
+      }
+      const asset = assetOfInput(tx, vin, deploys)
+      if (asset?.assetId !== assetId) continue
+      if (!sameKeySets(asset.read.sets, deploy.sets) || !inputScriptValid(tx, vin)) {
+        return { ok: false, reason: 'invalid', detail: `${txid} input ${vin} is not a valid spend of ${assetId}` }
+      }
+      ins += asset.read.amount
+      if (branch === 'release' && asset.outpoint !== assetId) {
+        queue.push({ txid: asset.outpoint.slice(0, 64), assetId })
+      }
+    }
+    let outs = 0n
+    for (const output of tx.outputs) {
+      const read = output.lockingScript ? readCountersigned(output.lockingScript) : null
+      if (read?.assetId !== assetId) continue
+      if (!sameKeySets(read.sets, deploy.sets)) return { ok: false, reason: 'invalid', detail: `${txid} writes ${assetId} under other key sets` }
+      outs += read.amount
+    }
+    if (outs !== ins) return { ok: false, reason: 'invalid', detail: `${txid} writes ${outs} of ${assetId} from ${ins}` }
+    if (deploy.kind === 'item' && outs !== 1n) return { ok: false, reason: 'invalid', detail: `${txid} writes item ${assetId} ${outs} times` }
+  }
+  return { ok: true, walked }
+}
+
+/** Starts for `resolveReleasedAncestry`: the parents of `tx`'s asset inputs, all of them or only those on the release branch. */
+export function releasedAncestryStarts(
+  tx: Transaction,
+  deploys: ReadonlyMap<string, CountersignDeploy>,
+  which: 'release-branch' | 'all',
+): Array<{ txid: string; assetId: string }> {
+  const starts: Array<{ txid: string; assetId: string }> = []
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const asset = assetOfInput(tx, vin, deploys)
+    if (!asset || asset.outpoint === asset.assetId) continue
+    if (which === 'release-branch' && unlockBranch(tx.inputs[vin]!.unlockingScript) !== 'release') continue
+    starts.push({ txid: asset.outpoint.slice(0, 64), assetId: asset.assetId })
+  }
+  return starts
 }
 
 /** Acceptor reply codes. */

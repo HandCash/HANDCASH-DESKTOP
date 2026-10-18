@@ -19,7 +19,7 @@ export type CountersignDeployFields = {
   hdl?: string
 }
 
-type CborValue = string | number | Uint8Array | CborValue[] | Map<string, CborValue>
+export type CborValue = string | number | boolean | Uint8Array | CborValue[] | Map<string, CborValue>
 
 function head(major: number, n: number): number[] {
   const hi = major << 5
@@ -37,7 +37,12 @@ function compareKeys(a: number[], b: number[]): number {
 }
 
 /** DAG-CBOR: definite lengths, minimal heads, map keys length-first then bytewise. */
+export function encodeDagCbor(value: CborValue): number[] {
+  return encode(value)
+}
+
 function encode(value: CborValue): number[] {
+  if (typeof value === 'boolean') return [value ? 0xf5 : 0xf4]
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value < 0) throw new Error('Only unsigned integers are encoded')
     return head(0, value)

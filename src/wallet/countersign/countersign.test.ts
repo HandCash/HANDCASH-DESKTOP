@@ -10,7 +10,9 @@ import {
   checkAcceptRequest,
   plainInputsOf,
   readCountersignDeploy,
+  releasedAncestryStarts,
   resolveCountersignTransfer,
+  resolveReleasedAncestry,
   type AcceptorPolicy,
   type CountersignDeploy,
   type PriorSpend,
@@ -513,6 +515,38 @@ describe('beacon and release', () => {
       holderPublicKey: recipient.toPublicKey().encode(true) as number[],
     })
     expect(inputScriptValid(stranger, 0)).toBe(false)
+  })
+
+  describe('released ancestry', () => {
+    const keys = () => disclosedReleaseKeys(disclosed.map((k) => k.toHex()), sets.release)!
+    const accepted = transfer(deploy, 0, [{ to: holder, amount: 100n }], assetId).tx
+    const lookup = (...txs: Transaction[]) => {
+      const byId = new Map(txs.map((t) => [String(t.id('hex')), t]))
+      return async (txid: string) => byId.get(txid) ?? null
+    }
+
+    it('walks release-branch hops back to the last accepted transfer', async () => {
+      const hop = transfer(accepted, 0, [{ to: holder, amount: 100n }], assetId, keys(), 'release').tx
+      const last = transfer(hop, 0, [{ to: recipient, amount: 100n }], assetId, keys(), 'release').tx
+      const starts = releasedAncestryStarts(last, deploys, 'release-branch')
+      expect(starts).toEqual([{ txid: String(hop.id('hex')), assetId }])
+      expect(await resolveReleasedAncestry(starts, deploys, lookup(accepted, hop, deploy))).toEqual({ ok: true, walked: 2 })
+      expect(releasedAncestryStarts(transfer(accepted, 0, [{ to: recipient, amount: 100n }], assetId).tx, deploys, 'release-branch')).toEqual([])
+    })
+
+    it('refuses units a released countersign inflated, though the next hop verifies alone', async () => {
+      const forged = transfer(accepted, 0, [{ to: holder, amount: 1000n }], assetId, keys(), 'release').tx
+      const spend = transfer(forged, 0, [{ to: recipient, amount: 1000n }], assetId, keys(), 'release').tx
+      expect(resolveCountersignTransfer(Transaction.fromEF(spend.toEF()), deploys, new Set([pkh(recipient)]))).toMatchObject({ ok: true })
+      const result = await resolveReleasedAncestry(releasedAncestryStarts(spend, deploys, 'all'), deploys, lookup(accepted, forged, deploy))
+      expect(result).toMatchObject({ ok: false, reason: 'invalid' })
+    })
+
+    it('is missing, not invalid, when an ancestor cannot be read', async () => {
+      const hop = transfer(accepted, 0, [{ to: holder, amount: 100n }], assetId, keys(), 'release').tx
+      const last = transfer(hop, 0, [{ to: recipient, amount: 100n }], assetId, keys(), 'release').tx
+      expect(await resolveReleasedAncestry(releasedAncestryStarts(last, deploys, 'all'), deploys, lookup())).toMatchObject({ ok: false, reason: 'missing' })
+    })
   })
 
   describe('phase', () => {
