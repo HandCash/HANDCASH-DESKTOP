@@ -424,6 +424,15 @@ describe('P2P-FT permissions follow the BRC-165 1Sat model', () => {
     expect(outputMatchesTokenAccess(access, ['p2pft', `p2pft:${tokenB}`], undefined, request)).toBe(false)
   })
 
+  it('asks again when a filtered grant names no token', () => {
+    const empty = mergeTokenViewGrant(
+      DEFAULT_TOKEN_ACCESS,
+      { scope: 'token', ids: [], keys: [], wantsAll: false },
+      { allowAll: false },
+    )
+    expect(tokenViewGranted(empty, parseTokenViewRequest({ basket: 'p p2pft all' }))).toBe(false)
+  })
+
   it('looks up one held row under scope id, like p 1sat id', () => {
     const request = parseTokenViewRequest({ basket: 'p p2pft id', tags: ['id:row-1'] })
     expect(request).toEqual({ scope: 'id', ids: [], keys: ['row-1'], wantsAll: false })

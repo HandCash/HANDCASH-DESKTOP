@@ -1125,7 +1125,9 @@ export function mergeTokenViewGrant(
 export function tokenViewGranted(access: TokenAccess, request: TokenViewRequest): boolean {
   if (access.view === 'none') return false
   if (access.view === 'all') return true
-  if (request.wantsAll) return access.view === 'filtered'
+  // A filtered grant naming nothing came from a bug that stored "all" without
+  // its ids; ask again rather than serve an empty view forever.
+  if (request.wantsAll) return access.view === 'filtered' && (access.ids.length > 0 || access.keys.length > 0)
   if (request.scope === 'token') {
     return request.ids.length > 0 && request.ids.every((value) => access.ids.includes(value))
   }

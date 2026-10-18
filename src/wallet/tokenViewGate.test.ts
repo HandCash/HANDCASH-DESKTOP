@@ -79,4 +79,42 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     expect(listOutputs).not.toHaveBeenCalled()
     unsubscribe()
   })
+
+  it('stores the held token ids when a third party is allowed every token', async () => {
+    const { requestTokenViewApproval, subscribePermissionRequests, resolvePermission, getTokenAccess } =
+      await import('./permissions')
+    const origin = 'https://all-tokens.example'
+    let prompt: { id: number } | null = null
+    const unsubscribe = subscribePermissionRequests((next) => {
+      prompt = next as typeof prompt
+    })
+    const decision = requestTokenViewApproval(origin, { basket: 'p p2pft all' })
+    await vi.advanceTimersByTimeAsync(0)
+    resolvePermission(prompt!.id, 'allow')
+    await expect(decision).resolves.toBe('allow')
+    const access = getTokenAccess(origin)
+    expect(access.view).toBe('filtered')
+    expect(access.ids).toContain(`${'f'.repeat(64)}_0`)
+    unsubscribe()
+  })
+
+  it('adds a token the app deploys to its filtered grant', async () => {
+    const { requestTokenViewApproval, subscribePermissionRequests, resolvePermission, getTokenAccess, grantDeployedTokensToCreator } =
+      await import('./permissions')
+    const origin = 'https://deployer.example'
+    let prompt: { id: number } | null = null
+    const unsubscribe = subscribePermissionRequests((next) => {
+      prompt = next as typeof prompt
+    })
+    const decision = requestTokenViewApproval(origin, { basket: 'p p2pft all' })
+    await vi.advanceTimersByTimeAsync(0)
+    resolvePermission(prompt!.id, 'allow')
+    await decision
+    const deployed = `${'e'.repeat(64)}_0`
+    grantDeployedTokensToCreator(origin, [deployed])
+    expect(getTokenAccess(origin).ids).toContain(deployed)
+    grantDeployedTokensToCreator('https://never-asked.example', [deployed])
+    expect(getTokenAccess('https://never-asked.example').view).not.toBe('filtered')
+    unsubscribe()
+  })
 })

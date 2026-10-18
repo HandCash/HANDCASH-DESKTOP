@@ -1844,9 +1844,13 @@ export async function requestTokenViewApproval(
     return 'allow'
   }
   let tickers: string[] = original.ids
+  // A third-party "all" is granted as the tokens the prompt names; storing the
+  // request itself left a filtered grant naming nothing.
+  let granted = original
   if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
     const converted = await thirdPartyTokenViewRequest(original)
     tickers = converted.tickers
+    granted = converted.request
   }
 
   const { title, summary, details } = summarizeTokenView(tickers, original.wantsAll)
@@ -1854,7 +1858,7 @@ export async function requestTokenViewApproval(
   const grant = (decision: PermissionDecision) => {
     if (decision === 'allow') {
       patchTokenAccess(origin, (cur) =>
-        mergeTokenViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+        mergeTokenViewGrant(cur, granted, { allowAll: catalog || !thirdParty }),
       )
     }
     return decision
@@ -1887,6 +1891,18 @@ export async function requestTokenViewApproval(
     details,
     createdAt: Date.now(),
   }).then(grant)
+}
+
+/**
+ * A token an app deployed itself joins the app's filtered token view. It never
+ * creates a view grant the user did not give.
+ */
+export function grantDeployedTokensToCreator(origin: string | undefined, tokenIds: readonly string[]): void {
+  if (!isThirdPartyOriginator(origin) || tokenIds.length === 0) return
+  if (getTokenAccess(origin).view !== 'filtered') return
+  patchTokenAccess(origin, (cur) =>
+    mergeTokenViewGrant(cur, { scope: 'token', ids: [...tokenIds], keys: [], wantsAll: false }, { allowAll: false }),
+  )
 }
 
 /**

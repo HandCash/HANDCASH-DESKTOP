@@ -406,6 +406,31 @@ async function hctInputOf(wallet: WalletInterface, args: unknown): Promise<strin
   return null
 }
 
+/** Token deploys in the signed transaction join the deploying app's filtered token view. */
+async function grantDeployedTokensFromAction(
+  originator: string | undefined,
+  txid: string,
+  atomic: unknown,
+): Promise<void> {
+  try {
+    const bytes = Array.isArray(atomic) ? (atomic as number[]) : atomic instanceof Uint8Array ? Array.from(atomic) : []
+    if (bytes.length === 0) return
+    const [{ Beef }, { decodeBsv21Binary }, { grantDeployedTokensToCreator }] = await Promise.all([
+      import('@bsv/sdk'),
+      import('./token/decode162'),
+      import('./permissions'),
+    ])
+    const tx = Beef.fromBinary(bytes).findTxid(txid)?.tx
+    if (!tx) return
+    const ids = tx.outputs.flatMap((out, vout) =>
+      decodeBsv21Binary(out.lockingScript)?.role === 'deploy' ? [`${txid.toLowerCase()}_${vout}`] : [],
+    )
+    grantDeployedTokensToCreator(originator, ids)
+  } catch (err) {
+    console.warn('[brc100] deployed token grant skipped', txid.slice(0, 12), err)
+  }
+}
+
 /**
  * Run an app spend, freeing change held behind an unfinished app parent first
  * if the toolbox cannot fund it.
@@ -1605,6 +1630,9 @@ async function handleBrc100RequestInner(
           }
         })()
         if (method === 'createAction') {
+          if (isThirdPartyOriginator(originator)) {
+            void grantDeployedTokensFromAction(originator, txid, (result as { tx?: unknown } | null)?.tx)
+          }
           cacheImageIconsFromCreateAction(txid, args, result)
           void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
             proveCachedFungibleEncodings(active),
