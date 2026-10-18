@@ -22,6 +22,7 @@ import {
   FilterIcon,
   FriendsIcon,
   ListingIcon,
+  LitecoinIcon,
   MintIcon,
   PurchaseIcon,
   ReceiveIcon,
@@ -158,6 +159,9 @@ import { usePeerIdentity, type PeerIdentityView } from "../hooks/usePeerIdentity
 import type { AccountProfile } from "../wallet/publicIdentities";
 import { getWalletRuntime } from "../wallet/walletRuntime";
 import { appDisplayName } from "../wallet/appIdentity";
+import { useLtcDepositByMint } from "../features/ltcDeposits";
+import { describeLtcDeposit, ltcDepositWaiting } from "../wallet/wltc/depositPhase";
+import { LtcDepositBadge } from "./LtcDepositProgress";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24;
@@ -513,6 +517,10 @@ function HistoryRow({
   const utxoHeal = isUtxoHealActivity(entry);
   const utxoHealDone = utxoHeal && !failed && entry.sats > 0;
   const showPending = pending && (spent || !inventoryProven || indexInstall);
+  const deposit = useLtcDepositByMint(
+    entry.method === "wltc-credit" ? entry.txid : undefined
+  );
+  const depositWaiting = deposit ? ltcDepositWaiting(deposit.phase) : false;
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined;
   const named = shown ? { ...entry, item: shown } : entry;
@@ -577,6 +585,8 @@ function HistoryRow({
       ? "Recipient not notified — needs attention"
       : noticeState === "retrying"
       ? "Notifying recipient…"
+      : deposit
+      ? describeLtcDeposit(deposit.phase).status
       : event
       ? entry.origin !== WALLET_ACTIVITY_ORIGIN
         ? entry.origin
@@ -603,7 +613,7 @@ function HistoryRow({
     <li
       data-activity-key={entryKey}
       data-activity-newest={newest ? "" : undefined}
-      data-activity-pending={showPending ? "" : undefined}
+      data-activity-pending={showPending || depositWaiting ? "" : undefined}
       data-activity-failed={failed ? "" : undefined}
       data-aeon-scope="activity-row"
       data-aeon-state={rowState}
@@ -652,7 +662,11 @@ function HistoryRow({
           >
             {failed ? "Failed" : signed}
           </span>
-          {showWhen ? (
+          {deposit && depositWaiting ? (
+            <span className="history-when" data-aeon-part="row-state">
+              <LtcDepositBadge phase={deposit.phase} />
+            </span>
+          ) : showWhen ? (
             <span className="history-when" data-aeon-part="row-state">
               {(showPending || live) && stateLabel ? stateLabel : formatWhen(entry.at)}
             </span>
@@ -737,6 +751,15 @@ function eventAmountLabel(entry: ActivityEntry): string {
   if (m === "market-cancel") return "Cancelled";
   if (m === "direct-offer-list") return "Listed";
   if (m === "direct-offer-cancel") return "Cancelled";
+  if (m === "wltc-credit") {
+    const credited = entry.note?.match(/Credited ([\d.]+) wLTC/)?.[1];
+    return credited ? `+${credited} wLTC` : "Deposit";
+  }
+  if (m === "wltc-withdraw") {
+    const withdrew = entry.note?.match(/Withdrew ([\d.]+) LTC/)?.[1];
+    return withdrew ? `−${withdrew} LTC` : "Withdrawal";
+  }
+  if (m === "wltc-proven") return "Can move";
   return "Action";
 }
 
@@ -748,6 +771,7 @@ function eventIcon(entry: ActivityEntry, size = 18) {
   }
   if (m === "utxo-heal") return <RefreshIcon size={size} />;
   if (m === "add-friend") return <FriendsIcon size={size} />;
+  if (m.startsWith("wltc-")) return <LitecoinIcon size={size} />;
   if (
     m.startsWith("connect") ||
     m === "disconnect" ||

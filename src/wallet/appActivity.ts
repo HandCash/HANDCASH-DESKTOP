@@ -2795,6 +2795,8 @@ export function activityEntryTitle(entry: ActivityEntry): string {
         ? `Listed ${entry.item.name} for ${price} sats`
         : `Listed ${entry.item.name}`;
     }
+    // The deposit's amount and confirmations ride the amount and state slots.
+    if (entry.method === "wltc-credit") return "Litecoin deposit";
     return entry.note?.trim() || entry.method || "Activity";
   }
   if (entry.item?.tokenId || isTokenActivity(entry)) {

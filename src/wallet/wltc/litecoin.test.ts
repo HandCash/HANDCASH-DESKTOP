@@ -1,5 +1,5 @@
 import { BigNumber, ECDSA, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { LtcChain } from './chain'
 import fixture from './fixtures/deposit.json'
 import {
@@ -21,7 +21,7 @@ import {
   type LtcTx,
 } from './litecoin'
 import { createLtcHeaderChain, memoryLtcHeaderStore, type LtcAnchor, type LtcBurialAnchor } from './headers'
-import { checkLtcBurial, fetchLtcBurial, LTC_BURIAL_DEPTH, readLtcDeposit, type LtcBurialProof } from './verify'
+import { checkLtcBurial, locateLtcDeposit, LTC_BURIAL_DEPTH, readLtcDeposit, type LtcBurialProof } from './verify'
 
 describe('litecoin primitives', () => {
   it('computes the BIP143 native P2WPKH digest', () => {
@@ -194,22 +194,28 @@ describe('explorer reads', () => {
     expect(await readLtcDeposit(chainOf(), outpoint, p2wpkhScript(fromHex(`02${'11'.repeat(32)}`)))).toMatchObject({ kind: 'refuse', reason: 'wrong-script' })
   })
 
-  it('gathers a burial proof that checks once the deposit is deep enough', async () => {
-    const fetched = await fetchLtcBurial(chainOf(), fixture.txid)
-    expect(fetched).toEqual({ kind: 'buried', proof: proofOf() })
-    if (fetched.kind !== 'buried') return
-    expect(await checkLtcBurial(fetched.proof, outpoint, reserve, value, BURIED)).toEqual({ ok: true, litoshi: value })
+  it('builds a burial proof from the block an explorer names, never asking it how deep', async () => {
+    const tipHeight = vi.fn(async () => fixture.height)
+    const located = await locateLtcDeposit(chainOf({ tipHeight }), fixture.txid)
+    expect(located).toEqual({ kind: 'in-block', proof: proofOf() })
+    expect(tipHeight).not.toHaveBeenCalled()
+    if (located.kind !== 'in-block') return
+    expect(await checkLtcBurial(located.proof, outpoint, reserve, value, BURIED)).toEqual({ ok: true, litoshi: value })
+    expect(await checkLtcBurial(located.proof, outpoint, reserve, value, anchorOf({ kind: 'shallow', confirmations: 4 }))).toMatchObject({
+      ok: false,
+      reason: 'shallow',
+      confirmations: 4,
+    })
   })
 
-  it('waits while the deposit is shallow or unconfirmed, and reports it gone when the explorers forget it', async () => {
-    expect(await fetchLtcBurial(chainOf({ tip: fixture.height + 4 }), fixture.txid)).toEqual({ kind: 'pending', confirmations: 5, needed: 6 })
-    expect(await fetchLtcBurial(chainOf({ txStatus: async () => ({ confirmed: false }) }), fixture.txid)).toEqual({ kind: 'pending', confirmations: 0, needed: 6 })
+  it('reports an unconfirmed deposit, and one the explorers forget', async () => {
+    expect(await locateLtcDeposit(chainOf({ txStatus: async () => ({ confirmed: false }) }), fixture.txid)).toEqual({ kind: 'unconfirmed' })
     const gone = chainOf({ txStatus: async () => Promise.reject(new Error('Litecoin explorer /tx/ab 404')) })
-    expect(await fetchLtcBurial(gone, fixture.txid)).toEqual({ kind: 'gone' })
-    await expect(fetchLtcBurial(chainOf({ txStatus: async () => Promise.reject(new Error('timeout')) }), fixture.txid)).rejects.toThrow(/timeout/)
+    expect(await locateLtcDeposit(gone, fixture.txid)).toEqual({ kind: 'gone' })
+    await expect(locateLtcDeposit(chainOf({ txStatus: async () => Promise.reject(new Error('timeout')) }), fixture.txid)).rejects.toThrow(/timeout/)
   })
 
   it('refuses an explorer that answers with a different block', async () => {
-    await expect(fetchLtcBurial(chainOf({ header: async () => fromHex(fixture.headers[1]!) }), fixture.txid)).rejects.toThrow(/does not hash/)
+    await expect(locateLtcDeposit(chainOf({ header: async () => fromHex(fixture.headers[1]!) }), fixture.txid)).rejects.toThrow(/does not hash/)
   })
 })

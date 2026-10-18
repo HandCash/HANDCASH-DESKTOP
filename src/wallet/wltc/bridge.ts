@@ -19,7 +19,8 @@ import {
   toHex,
   type LtcTx,
 } from './litecoin'
-import { fetchLtcBurial, LTC_BURIAL_DEPTH, readLtcDeposit, type DepositRefusal } from './verify'
+import type { LtcDepositPhase, LtcDepositView } from './depositPhase'
+import { checkLtcBurial, locateLtcDeposit, LTC_BURIAL_DEPTH, readLtcDeposit, type DepositRefusal, type LtcBurialProof } from './verify'
 
 /**
  * wLTC: Litecoin wrapped as an open, backed BRC-255 token, with this wallet as
@@ -93,6 +94,10 @@ type DepositRecord = {
   proven?: boolean
   /** When the explorers first stopped knowing the deposit; it is void once that lasts past `VOID_AFTER_MS`. */
   goneAt?: number
+  /** Where the deposit stands on this wallet's own Litecoin chain (unproven deposits only). */
+  phase?: LtcDepositPhase
+  /** Burial proof built from an explorer's answer, kept while it is too shallow, so later checks need only this wallet's chain. */
+  proof?: LtcBurialProof
 }
 
 type WithdrawalRecord = {
@@ -136,8 +141,19 @@ function readState(): WltcState {
   }
 }
 
+const listeners = new Set<() => void>()
+
 function writeState(state: WltcState): void {
   if (!durableSetItem(stateKey(), JSON.stringify(state))) throw new Error('The wLTC record could not be saved.')
+  for (const listener of listeners) listener()
+}
+
+/** Called after every change to the deposit record. */
+export function subscribeLtcDeposits(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => {
+    listeners.delete(listener)
+  }
 }
 
 const outpointKey = (txid: string, vout: number) => `${txid}:${vout}`
@@ -245,7 +261,18 @@ export async function getLtcDepositAddress(): Promise<LtcDepositAddress> {
  * `void`: the deposit vanished before it was proven; its wLTC never moves.
  */
 export type LtcDepositStatus =
-  | { txid: string; vout: number; litoshi: string; status: 'credited'; proven: boolean; bsvTxid?: string; confirmations?: number; needed?: number }
+  | {
+      txid: string
+      vout: number
+      litoshi: string
+      status: 'credited'
+      proven: boolean
+      bsvTxid?: string
+      /** Counted on this wallet's own Litecoin chain; 0 until it has counted any. */
+      confirmations?: number
+      needed?: number
+      phase?: LtcDepositPhase
+    }
   | { txid: string; vout: number; litoshi: string; status: 'waiting'; needed: number }
   | { txid: string; vout: number; litoshi: string; status: 'void'; bsvTxid?: string }
   | { txid: string; vout: number; status: 'refused'; reason: DepositRefusal; detail: string }
@@ -411,8 +438,6 @@ async function creditPass(active: ActiveWallet, utxos: Awaited<ReturnType<LtcCha
   return statuses
 }
 
-type ProofProgress = Map<string, { confirmations: number; needed: number }>
-
 /**
  * A deposit proven before 1.3.604 holds a header-run proof that no wallet
  * reads now (burials are anchored to each reader's own Litecoin chain).
@@ -432,41 +457,102 @@ async function reopenUnreadableProofs(): Promise<void> {
   if (changed) writeState(state)
 }
 
+type Judgement = {
+  phase: LtcDepositPhase
+  /** The proof to keep for the next check; null drops the kept one. */
+  proof?: LtcBurialProof | null
+  /** Set when the deposit is buried: the proof to record. */
+  buried?: LtcBurialProof
+  /** When the explorers stopped knowing it; null clears it. */
+  goneAt?: number | null
+}
+
+function uncheckedSince(d: DepositRecord, now: number): LtcDepositPhase {
+  const prior = d.phase
+  const last =
+    prior?.kind === 'confirming'
+      ? { confirmations: prior.confirmations, needed: prior.needed, height: prior.height, checkedAt: prior.checkedAt }
+      : prior?.kind === 'unchecked'
+        ? prior.last
+        : undefined
+  return { kind: 'unchecked', since: prior?.kind === 'unchecked' ? prior.since : now, ...(last ? { last } : {}) }
+}
+
 /**
- * Unproven deposits: once deep enough, fetch and record the burial proof,
- * which frees their wLTC. One status call per deposit per pass until mined.
+ * Where an unproven deposit stands. Depth is only ever this wallet's own
+ * header chain's answer (`checkLtcBurial`); an explorer only says whether the
+ * deposit waits for a block or which block holds it. A kept proof needs no
+ * explorer at all. A kept proof the chain no longer holds (reorganized) is
+ * dropped and the deposit located again.
  */
-async function provePass(active: ActiveWallet): Promise<ProofProgress> {
-  const progress: ProofProgress = new Map()
+async function judgeDeposit(d: DepositRecord, outpoint: { txid: string; vout: number }, reserve: Uint8Array, fresh = false): Promise<Judgement> {
+  const now = Date.now()
+  let proof = fresh ? undefined : d.proof
+  const kept = !!proof
+  if (!proof) {
+    let located
+    try {
+      located = await locateLtcDeposit(deps.chain, outpoint.txid)
+    } catch (err) {
+      console.warn(`[wltc] locate ${outpoint.txid.slice(0, 12)} failed — ${err instanceof Error ? err.message : String(err)}`)
+      return { phase: uncheckedSince(d, now) }
+    }
+    if (located.kind === 'gone') {
+      const since = d.goneAt ?? now
+      return { phase: { kind: now - since >= VOID_AFTER_MS ? 'abandoned' : 'missing', since }, goneAt: since, proof: null }
+    }
+    if (located.kind === 'unconfirmed') return { phase: { kind: 'unconfirmed', checkedAt: now }, goneAt: null, proof: null }
+    proof = located.proof
+  }
+  const check = await checkLtcBurial(proof, outpoint, reserve, BigInt(d.litoshi))
+  if (check.ok) return { phase: { kind: 'movable', height: proof.height, checkedAt: now }, buried: proof, proof: null, goneAt: null }
+  if (check.reason === 'shallow') {
+    return {
+      phase: { kind: 'confirming', confirmations: check.confirmations ?? 0, needed: LTC_BURIAL_DEPTH, height: proof.height, checkedAt: now },
+      proof,
+      goneAt: null,
+    }
+  }
+  if (check.reason === 'unanchored') return { phase: uncheckedSince(d, now), proof }
+  console.warn(`[wltc] proof of ${outpoint.txid.slice(0, 12)} refused (${check.reason}) — ${check.detail}`)
+  if (kept) return judgeDeposit({ ...d, proof: undefined }, outpoint, reserve, true)
+  return { phase: uncheckedSince(d, now), proof: null }
+}
+
+/**
+ * Unproven deposits: count each one's confirmations on this wallet's own
+ * Litecoin chain, and once buried record its proof, which frees its wLTC.
+ * `skipAbandoned` leaves deposits already abandoned alone (the watcher).
+ */
+async function provePass(active: ActiveWallet, opts: { skipAbandoned?: boolean } = {}): Promise<void> {
   await reopenUnreadableProofs()
   const state = readState()
   const assetId = await backedAssetId(active, state)
+  const { script: reserve } = reserveOf(active)
   for (const [key, d] of Object.entries(state.deposits)) {
     if (d.status !== 'credited' || d.proven !== false || !d.bsvTxid || !assetId) continue
+    if (opts.skipAbandoned && d.phase?.kind === 'abandoned') continue
     const [txid, vout] = key.split(':') as [string, string]
     const chart = createActor(wltcMachine).start()
     chart.send({ type: 'PROVE' })
     try {
       const startedAt = Date.now()
-      const fetched = await fetchLtcBurial(deps.chain, txid)
+      const judged = await judgeDeposit(d, { txid, vout: Number(vout) }, reserve)
       const next = readState()
       const record = next.deposits[key]
       if (!record) continue
-      if (fetched.kind === 'gone') {
-        record.goneAt ??= Date.now()
+      record.phase = judged.phase
+      if (judged.proof === null) delete record.proof
+      else if (judged.proof) record.proof = judged.proof
+      if (judged.goneAt === null) delete record.goneAt
+      else if (judged.goneAt !== undefined) record.goneAt = judged.goneAt
+      if (!judged.buried) {
         writeState(next)
-        chart.send({ type: Date.now() - record.goneAt >= VOID_AFTER_MS ? 'VOIDED' : 'PENDING' })
-        continue
-      }
-      if (record.goneAt) delete record.goneAt
-      if (fetched.kind === 'pending') {
-        writeState(next)
-        progress.set(key, { confirmations: fetched.confirmations, needed: fetched.needed })
-        chart.send({ type: 'PENDING' })
+        chart.send({ type: judged.phase.kind === 'abandoned' ? 'VOIDED' : 'PENDING' })
         continue
       }
       const { proveHctBacking } = await import('../hct/wallet')
-      await proveHctBacking(assetId, d.bsvTxid, fetched.proof)
+      await proveHctBacking(assetId, d.bsvTxid, judged.buried)
       record.proven = true
       writeState(next)
       chart.send({ type: 'PROVEN' })
@@ -477,7 +563,7 @@ async function provePass(active: ActiveWallet): Promise<ProofProgress> {
         kind: 'event',
         sats: 0,
         method: 'wltc-proven',
-        note: `${formatLtc(BigInt(d.litoshi))} wLTC can move: LTC deposit ${txid.slice(0, 12)}…:${vout} is buried`,
+        note: `${formatLtc(BigInt(d.litoshi))} wLTC can move: LTC deposit ${txid.slice(0, 12)}…:${vout} has ${LTC_BURIAL_DEPTH} Litecoin confirmations`,
         txid: d.bsvTxid,
       })
     } catch (err) {
@@ -488,7 +574,12 @@ async function provePass(active: ActiveWallet): Promise<ProofProgress> {
       chart.stop()
     }
   }
-  return progress
+}
+
+/** A deposit's phase as the record holds it; deposits credited before 1.3.601, or already proven, can move. */
+function phaseOf(d: DepositRecord): LtcDepositPhase {
+  if (d.proven !== false) return { kind: 'movable' }
+  return d.phase ?? { kind: 'unchecked', since: d.at }
 }
 
 function report(
@@ -496,23 +587,22 @@ function report(
   assetId: string | null,
   holdings: { backed: WltcHolding | null; legacy: WltcHolding | null },
   live: LtcDepositStatus[],
-  progress: ProofProgress,
 ): LtcDepositsResult {
   const state = readState()
-  const now = Date.now()
   const credited: LtcDepositStatus[] = Object.entries(state.deposits)
     .filter(([, d]) => d.status === 'credited')
     .sort(([, a], [, b]) => b.at - a.at)
     .map(([key, d]): LtcDepositStatus => {
       const [txid, vout] = key.split(':')
       const base = { txid: txid!, vout: Number(vout), litoshi: d.litoshi, ...(d.bsvTxid ? { bsvTxid: d.bsvTxid } : {}) }
-      if (d.proven === false && d.goneAt && now - d.goneAt >= VOID_AFTER_MS) return { ...base, status: 'void' }
-      const step = progress.get(key)
+      const phase = phaseOf(d)
+      if (phase.kind === 'abandoned') return { ...base, status: 'void' }
+      const confirming = phase.kind === 'confirming' ? phase.confirmations : 0
       return {
         ...base,
         status: 'credited',
         proven: d.proven !== false,
-        ...(d.proven === false ? { confirmations: step?.confirmations ?? 0, needed: step?.needed ?? LTC_BURIAL_DEPTH } : {}),
+        ...(d.proven === false ? { confirmations: confirming, needed: LTC_BURIAL_DEPTH, phase } : {}),
       }
     })
   const withdrawals: LtcWithdrawalStatus[] = Object.entries(state.withdrawals)
@@ -552,10 +642,59 @@ export function listLtcDeposits(): Promise<LtcDepositsResult> {
     await healCredits(active)
     const utxos = await deps.chain.addressUtxos(reserveOf(active).address)
     const live = await creditPass(active, utxos)
-    const progress = await provePass(active)
+    await provePass(active)
     const state = readState()
-    return report(active, await backedAssetId(active, state), await wltcHoldings(active, state), live, progress)
+    return report(active, await backedAssetId(active, state), await wltcHoldings(active, state), live)
   })
+}
+
+/** Every credited deposit of the open account, newest first, as the record holds it. No network. */
+export function readLtcDepositViews(): LtcDepositView[] {
+  if (!getWalletRuntime()?.instance) return []
+  const state = readState()
+  return Object.entries(state.deposits)
+    .filter(([, d]) => d.status === 'credited')
+    .sort(([, a], [, b]) => b.at - a.at)
+    .map(([key, d]) => {
+      const [txid, vout] = key.split(':') as [string, string]
+      const assetId = d.proven === undefined ? state.assetId : state.backedAssetId
+      return {
+        txid,
+        vout: Number(vout),
+        litoshi: d.litoshi,
+        at: d.at,
+        phase: phaseOf(d),
+        ...(d.bsvTxid ? { bsvTxid: d.bsvTxid } : {}),
+        ...(assetId ? { assetId } : {}),
+      }
+    })
+}
+
+/** About one check per Litecoin block (2.5 min) is enough; more would only repeat the same answer. */
+const WATCH_MS = 60_000
+let watchTimer: ReturnType<typeof setInterval> | null = null
+
+function hasWaitingDeposit(): boolean {
+  return Object.values(readState().deposits).some((d) => d.status === 'credited' && d.proven === false && d.phase?.kind !== 'abandoned')
+}
+
+/**
+ * While the wallet is open and a deposit waits, count its confirmations about
+ * once a minute so activity and collections move without an app polling.
+ * Idle when nothing waits or the page is hidden.
+ */
+export function startWltcWatcher(): void {
+  if (watchTimer) return
+  const tick = () => {
+    if (typeof document !== 'undefined' && document.hidden) return
+    const active = getWalletRuntime()?.instance
+    if (!active || !hasWaitingDeposit()) return
+    void serial(() => provePass(active, { skipAbandoned: true })).catch((err: unknown) => {
+      console.warn(`[wltc] watch pass failed — ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+  watchTimer = setInterval(tick, WATCH_MS)
+  setTimeout(tick, 5_000)
 }
 
 // ── Withdraw ───────────────────────────────────────────────────────────────

@@ -294,6 +294,19 @@ export function ActivityIcon(props: IconProps) {
   )
 }
 
+/**
+ * The Litecoin mark. Drawn by the wallet only for an asset whose BRC-255 `bk`
+ * names Litecoin, never from issuer metadata; colours come from the brand sheet (`[data-chain-mark]`).
+ */
+export function LitecoinIcon({ size = 18, ...rest }: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden focusable="false" data-chain-mark="ltc" {...rest}>
+      <circle cx="16" cy="16" r="16" className="chain-mark-disc" />
+      <path className="chain-mark-glyph" d="M13.4 7.5h3.4l-1.8 6.8 2.5-.9-.7 2.6-2.5.9-1.3 4.9h8.6l-.7 2.7H9.7l1.8-6.6-2.1.8.7-2.6 2.1-.8 1.2-7.8z" />
+    </svg>
+  )
+}
+
 /** Material Design Icons — `diamond-stone` */
 export function CollectablesIcon(props: IconProps) {
   return (

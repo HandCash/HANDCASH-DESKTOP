@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.606] - 2026-10-18
+
+### Added
+
+- Pending Litecoin deposits can be tracked in Collections and Activity. Each wLTC deposit shows six confirmation marks, filled only for confirmations the wallet counted on its own Litecoin header chain. It also says who established its state and when ("3 of 6 Litecoin confirmations · counted on this wallet's own Litecoin header chain · 12:40"), and gives a time estimate labelled as one.
+- An explorer is only asked which block holds a deposit, never how deep it is. Before that, the deposit reads "Waiting for its first Litecoin block". In a block the wallet's chain has not reached yet, it reads "In Litecoin block N".
+- When Litecoin cannot be read, the deposit keeps its last count and time instead of guessing. A deposit no explorer has known for 30 minutes is shown as void, and the wallet does not claim it can never return.
+- The wallet draws the Litecoin mark on wLTC coins from the deploy's backing chain, never from issuer art.
+- The token's send form lists every waiting deposit.
+- Activity rows read "Litecoin deposit" with the amount and confirmation marks. Their details show the Litecoin deposit outpoint, its block and the BSV mint.
+
+### Changed
+
+- Waiting deposits now advance on their own. While a deposit waits and the page is visible, a 60-second watcher runs. Once it holds a deposit's inclusion proof, it needs no explorer to count confirmations. A reorg off that block drops the proof and locates the deposit again.
+
 ## [1.3.605] - 2026-10-18
 
 ### Changed

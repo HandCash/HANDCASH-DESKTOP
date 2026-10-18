@@ -633,9 +633,9 @@ const WLTC = `stateDiagram-v2
   minting --> credited : MINTED (backed wLTC, backing output names the deposit; label wltc deposit outpoint)
   minting --> awaiting : AWAITING (first deposit unproven, its deploy is the authority)
   idle --> proving : PROVE (credited, unproven)
-  proving --> proven : PROVEN (merkle + 2 or 1 per LTC linked scrypt headers; wLTC can move)
-  proving --> pending : PENDING (not deep enough yet)
-  proving --> voided : VOIDED (unknown to the explorers for 30 min; wLTC never moves)
+  proving --> proven : PROVEN (block 6 deep on this wallet's own Litecoin header chain; wLTC can move)
+  proving --> pending : PENDING (unconfirmed, n of 6 counted on this chain, or Litecoin unreadable)
+  proving --> voided : VOIDED (abandoned: unknown to the explorers for 30 min; wLTC never moves)
   idle --> building : WITHDRAW (proven reserve outputs, recorded amounts)
   building --> burning : LTC_SIGNED (BIP143 P2WPKH, kept unsent)
   burning --> broadcasting : BURNED (amount + fee to the wLTC burn key)
@@ -652,6 +652,7 @@ const WLTC = `stateDiagram-v2
     move only with the deposit's burial proof.
     Every receiver checks it; a double-spent
     deposit leaves its wLTC unmovable.
+    Explorers say which block, never how deep.
   end note
 `
 

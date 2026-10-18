@@ -3,6 +3,7 @@ import { useActivityAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { AppAvatar } from './AppAvatar'
 import { AssetIssuers } from './AssetIssuers'
+import { LtcDepositDetails } from './LtcDepositDetails'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
 import { appDisplayName } from '../wallet/appIdentity'
@@ -361,6 +362,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     return (
       <ListingActivityDetails entry={entry} chain={chain} />
     )
+  }
+
+  if (entry.method === 'wltc-credit') {
+    return <LtcDepositDetails entry={entry} chain={chain} />
   }
 
   if (isEventActivity(entry)) {

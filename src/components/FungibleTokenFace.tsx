@@ -1,6 +1,6 @@
 import { noteArtRatio } from './artRatio'
 import { DeferredImage } from './DeferredImage'
-import { CollectablesIcon } from './icons'
+import { CollectablesIcon, LitecoinIcon } from './icons'
 
 type Props = {
   tokenId: string
@@ -8,6 +8,8 @@ type Props = {
   iconUrl?: string
   size: number
   className?: string
+  /** The chain a backed token's value sits on, from its deploy (`bk`); issuer metadata never sets it. */
+  chainMark?: 'ltc'
 }
 
 function TokenPlaceholder({ size }: { size: number }) {
@@ -32,6 +34,7 @@ export function FungibleTokenFace({
   iconUrl,
   size,
   className,
+  chainMark,
 }: Props) {
   const cls = ['fungible-avatar', className].filter(Boolean).join(' ')
   const local = Boolean(iconUrl && (iconUrl.startsWith('data:') || iconUrl.startsWith('blob:')))
@@ -69,9 +72,18 @@ export function FungibleTokenFace({
           retainDecoded
           fallback={<TokenPlaceholder size={size} />}
         />
+      ) : chainMark === 'ltc' ? (
+        <span className="collectable-media-fallback" data-aeon-part="chain-face" aria-hidden>
+          <LitecoinIcon size={Math.round(size * 0.72)} />
+        </span>
       ) : (
         <TokenPlaceholder size={size} />
       )}
+      {chainMark === 'ltc' && iconUrl ? (
+        <span data-aeon-part="chain-mark" data-aeon-state="ltc" title="Backed by Litecoin">
+          <LitecoinIcon size={Math.max(14, Math.round(size * 0.3))} />
+        </span>
+      ) : null}
     </span>
   )
 }

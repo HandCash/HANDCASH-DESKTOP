@@ -535,6 +535,7 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
     startBrc250DeviceService(),
   )
+  void import('./wltc/bridge').then(({ startWltcWatcher }) => startWltcWatcher())
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle
   // (`accountLocalStores`), in the same tick as every other account store.
   return wallet

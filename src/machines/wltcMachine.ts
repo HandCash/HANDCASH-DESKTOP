@@ -33,10 +33,11 @@ type Event =
  * labelled with it so a restored wallet never mints it twice. While the first
  * deposit is unproven its deploy is the authority, so later deposits AWAIT.
  *
- * Prove: an unproven deposit stays PENDING until it is buried deep enough;
- * then its burial proof (merkle path, linked headers, scrypt work above the
- * floor) is checked and recorded, and its wLTC can move. A deposit the
- * explorers stop knowing is VOIDED: its wLTC never moves.
+ * Prove: an unproven deposit stays PENDING while this wallet's own Litecoin
+ * header chain counts fewer than 6 confirmations over its block; then its
+ * burial proof (deposit, merkle path, block header) is recorded and its wLTC
+ * can move. A deposit the explorers stop knowing is VOIDED (abandoned): its
+ * wLTC never moves.
  *
  * Withdraw: the LTC transaction is signed first and kept unsent; wLTC is
  * burned next; only a burned withdrawal is broadcast. A failed burn leaves the

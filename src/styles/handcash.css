@@ -11322,6 +11322,135 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   overflow: hidden;
 }
 
+/* Chain marks are drawn by the wallet from a backed token's deploy, never from issuer art. */
+[data-chain-mark='ltc'] .chain-mark-disc {
+  fill: #345d9d;
+}
+
+[data-chain-mark='ltc'] .chain-mark-glyph {
+  fill: #fff;
+}
+
+.fungible-avatar:has(> [data-aeon-part='chain-mark']) {
+  position: relative;
+}
+
+.fungible-avatar > [data-aeon-part='chain-face'] {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.fungible-avatar > [data-aeon-part='chain-mark'] {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  display: grid;
+  line-height: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--hc-surface, #fff);
+}
+
+/* LTC deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
+[data-aeon-scope='ltc-deposit'] [data-aeon-part='pips'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+[data-aeon-scope='ltc-deposit'] [data-aeon-part='pip'] {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, #345d9d 70%, var(--hc-muted));
+  background: transparent;
+}
+
+[data-aeon-scope='ltc-deposit'] [data-aeon-part='pip'][data-aeon-state='counted'] {
+  background: #345d9d;
+  border-color: #345d9d;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-state='unchecked'] [data-aeon-part='pip'],
+[data-aeon-scope='ltc-deposit'][data-aeon-state='missing'] [data-aeon-part='pip'] {
+  opacity: 0.45;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-state='abandoned'] [data-aeon-part='pip'] {
+  border-style: dashed;
+  border-color: var(--hc-danger, #c0392b);
+  background: transparent;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='badge'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, #345d9d 7%, transparent);
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='headline'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='pip'] {
+  width: 9px;
+  height: 9px;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] p {
+  margin: 0;
+  font-size: 0.78rem;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='status'] {
+  font-weight: 600;
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='source'],
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
+  font-style: italic;
+}
+
+[data-aeon-part='deposit-list'] {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='collectables'] .token-chip-main [data-aeon-part='deposits'] {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 8px;
+  max-width: 100%;
+}
+
+[data-aeon-scope='collectables'] .token-chip-main [data-aeon-part='more'] {
+  font-size: 0.7rem;
+  color: var(--hc-muted);
+}
+
 /* Panda `display:block` on image beats the HTML `hidden` attribute — force it. */
 .fungible-avatar [data-aeon-part='image'][hidden],
 .fungible-avatar [data-aeon-part='image'][data-aeon-state='idle'],

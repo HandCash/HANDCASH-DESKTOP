@@ -2,7 +2,7 @@ import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LtcChain } from './chain'
 import { fromHex, ltcOutputScript, ltcTxid, parseLtcTx, toHex } from './litecoin'
-import type { BurialFetch, DepositSighting } from './verify'
+import type { BurialCheck, DepositLocation, DepositSighting } from './verify'
 
 const root = PrivateKey.fromRandom()
 const identityKey = root.toPublicKey().toString()
@@ -15,7 +15,9 @@ const lockedBy = new Map<string, bigint>()
 let assetKnown = false
 let burnFails = false
 let sightings = new Map<string, DepositSighting>()
-let burials = new Map<string, BurialFetch>()
+let locations = new Map<string, DepositLocation>()
+let depths = new Map<string, BurialCheck>()
+let locates = 0
 let utxos: Array<{ txid: string; vout: number; value: number; confirmed: boolean }> = []
 const broadcasts: string[] = []
 let broadcastFails = false
@@ -47,7 +49,11 @@ vi.mock('../appActivity', () => ({ recordAppActivity: () => {}, WALLET_ACTIVITY_
 vi.mock('./verify', async (load) => ({
   ...(await load<typeof import('./verify')>()),
   readLtcDeposit: async (_chain: unknown, o: { txid: string; vout: number }) => sightings.get(`${o.txid}:${o.vout}`)!,
-  fetchLtcBurial: async (_chain: unknown, txid: string) => burials.get(txid) ?? { kind: 'pending', confirmations: 0, needed: 6 },
+  locateLtcDeposit: async (_chain: unknown, txid: string) => {
+    locates += 1
+    return locations.get(txid) ?? { kind: 'unconfirmed' }
+  },
+  checkLtcBurial: async (_proof: unknown, o: { txid: string }) => depths.get(o.txid) ?? { ok: true, litoshi: 0n },
 }))
 vi.mock('../hct/store', () => ({
   getHctBacking: async (txid: string) => (proved.has(txid) ? PROOF : null),
@@ -136,7 +142,7 @@ const tx = (n: number) => n.toString(16).padStart(64, '0')
 function deposit(n: number, litoshi: bigint, buried = true) {
   utxos.push({ txid: tx(n), vout: 0, value: Number(litoshi), confirmed: buried })
   sightings.set(`${tx(n)}:0`, { kind: 'seen', txid: tx(n), vout: 0, litoshi })
-  if (buried) burials.set(tx(n), { kind: 'buried', proof: PROOF })
+  if (buried) locations.set(tx(n), { kind: 'in-block', proof: PROOF })
 }
 
 /** Credit the deposits seen, then (next pass) prove the ones buried. */
@@ -157,7 +163,9 @@ beforeEach(() => {
   burnFails = false
   broadcastFails = false
   sightings = new Map()
-  burials = new Map()
+  locations = new Map()
+  depths = new Map()
+  locates = 0
   utxos = []
   bridge.setWltcDepsForTest({ chain })
 })
@@ -180,7 +188,7 @@ describe('wLTC bridge', () => {
     expect(hctCalls[0]!.backing).toEqual({ deposit: { txid: tx(1), vout: 0 }, bk: { chain: 'ltc', reserve: scriptHex } })
     expect(result).toMatchObject({ assetId: ASSET, balance: '50000000', locked: '50000000' })
     expect(result.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: false, needed: 6 })])
-    burials.set(tx(1), { kind: 'buried', proof: PROOF })
+    locations.set(tx(1), { kind: 'in-block', proof: PROOF })
     const after = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove'])
     expect(after).toMatchObject({ balance: '50000000', locked: '0' })
@@ -193,10 +201,10 @@ describe('wLTC bridge', () => {
     expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove'])
     const minted = hctCalls[0]!.labels[0]!
     proved.clear()
-    burials.delete(tx(1))
+    locations.delete(tx(1))
     const reopened = await bridge.listLtcDeposits()
     expect(reopened.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: false, needed: 6 })])
-    burials.set(tx(1), { kind: 'buried', proof: PROOF })
+    locations.set(tx(1), { kind: 'in-block', proof: PROOF })
     const after = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue', 'prove', 'prove'])
     expect(after.deposits).toEqual([expect.objectContaining({ txid: tx(1), status: 'credited', proven: true })])
@@ -209,7 +217,7 @@ describe('wLTC bridge', () => {
     const first = await bridge.listLtcDeposits()
     expect(hctCalls.map((c) => c.op)).toEqual(['issue'])
     expect(first.deposits).toEqual(expect.arrayContaining([expect.objectContaining({ txid: tx(2), status: 'waiting', needed: 6 })]))
-    burials.set(tx(1), { kind: 'buried', proof: PROOF })
+    locations.set(tx(1), { kind: 'in-block', proof: PROOF })
     await bridge.listLtcDeposits()
     await bridge.listLtcDeposits()
     await bridge.listLtcDeposits()
@@ -221,7 +229,7 @@ describe('wLTC bridge', () => {
   it('voids a deposit the explorers forget, and never frees its wLTC', async () => {
     deposit(3, 20_000n, false)
     await bridge.listLtcDeposits()
-    burials.set(tx(3), { kind: 'gone' })
+    locations.set(tx(3), { kind: 'gone' })
     const now = Date.now()
     const clock = vi.spyOn(Date, 'now')
     clock.mockReturnValue(now)
@@ -232,6 +240,39 @@ describe('wLTC bridge', () => {
     expect(result.deposits).toEqual([expect.objectContaining({ txid: tx(3), status: 'void' })])
     expect(result.locked).toBe('20000')
     expect(hctCalls.map((c) => c.op)).toEqual(['issue'])
+  })
+
+  it('counts confirmations only on its own Litecoin chain, and needs no explorer once it keeps the proof', async () => {
+    deposit(14, 40_000n, false)
+    const first = await bridge.listLtcDeposits()
+    expect(first.deposits).toEqual([expect.objectContaining({ confirmations: 0, phase: expect.objectContaining({ kind: 'unconfirmed' }) })])
+    const seen: number[] = []
+    const unsubscribe = bridge.subscribeLtcDeposits(() => seen.push(1))
+    locations.set(tx(14), { kind: 'in-block', proof: PROOF })
+    depths.set(tx(14), { ok: false, reason: 'shallow', detail: '3 of 6', missing: true, confirmations: 3 })
+    const counted = await bridge.listLtcDeposits()
+    expect(counted.deposits).toEqual([expect.objectContaining({ confirmations: 3, needed: 6, phase: expect.objectContaining({ kind: 'confirming', confirmations: 3, height: 1 }) })])
+    expect(bridge.readLtcDepositViews()).toEqual([expect.objectContaining({ txid: tx(14), litoshi: '40000', assetId: ASSET, phase: expect.objectContaining({ kind: 'confirming' }) })])
+    expect(seen.length).toBeGreaterThan(0)
+    unsubscribe()
+
+    const located = locates
+    depths.set(tx(14), { ok: false, reason: 'unanchored', detail: 'offline', missing: true })
+    const offline = await bridge.listLtcDeposits()
+    expect(locates).toBe(located)
+    expect(offline.deposits[0]).toMatchObject({ phase: { kind: 'unchecked', last: { confirmations: 3, needed: 6 } } })
+
+    depths.set(tx(14), { ok: false, reason: 'off-chain', detail: 'reorganized', missing: false })
+    locations.set(tx(14), { kind: 'unconfirmed' })
+    const reorganized = await bridge.listLtcDeposits()
+    expect(locates).toBe(located + 1)
+    expect(reorganized.deposits[0]).toMatchObject({ confirmations: 0, phase: { kind: 'unconfirmed' } })
+
+    locations.set(tx(14), { kind: 'in-block', proof: PROOF })
+    depths.delete(tx(14))
+    const buried = await bridge.listLtcDeposits()
+    expect(buried.deposits[0]).toMatchObject({ status: 'credited', proven: true })
+    expect(bridge.readLtcDepositViews()[0]!.phase).toEqual({ kind: 'movable' })
   })
 
   it('reports refused deposits and mints nothing for them', async () => {
@@ -323,7 +364,7 @@ describe('wLTC bridge', () => {
     deposit(11, 5_000_000n, false)
     await bridge.listLtcDeposits()
     await expect(bridge.withdrawLtc({ address: DEST, litoshi: '1000000' })).rejects.toMatchObject({ reason: 'reserve-short' })
-    burials.set(tx(11), { kind: 'buried', proof: PROOF })
+    locations.set(tx(11), { kind: 'in-block', proof: PROOF })
     await bridge.listLtcDeposits()
     await expect(bridge.withdrawLtc({ address: DEST, litoshi: '5000000' })).rejects.toMatchObject({ reason: 'reserve-short' })
     await expect(bridge.withdrawLtc({ address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', litoshi: '5000' })).rejects.toMatchObject({ reason: 'bad-args' })

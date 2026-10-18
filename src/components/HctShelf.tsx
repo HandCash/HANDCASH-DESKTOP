@@ -7,6 +7,10 @@ import { subscribeAppActivity } from '../features/activity'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { FungibleTokenFace } from './FungibleTokenFace'
+import { LtcDepositBadge, LtcDepositProgress } from './LtcDepositProgress'
+import { useLtcDeposits } from '../features/ltcDeposits'
+import { ltcDepositWaiting, type LtcDepositView } from '../wallet/wltc/depositPhase'
+import { LTC_BURIAL_DEPTH } from '../wallet/wltc/verify'
 import { listHctAssets, transferHctAsset, type HctAssetSummary } from '../wallet/hct/wallet'
 import { formatFungibleAmount, parseFungibleAmount } from '../wallet/token/types'
 import { resolvePinnedHandle } from '../wallet/friends'
@@ -54,7 +58,7 @@ const BACKING_CHAIN_NAMES: Record<NonNullable<HctAssetSummary['backedBy']>, stri
 export function hctLockedLabel(asset: HctAssetSummary): string | null {
   if (!asset.locked || asset.locked === '0') return null
   const chain = asset.backedBy ? BACKING_CHAIN_NAMES[asset.backedBy] : 'its chain'
-  return `${formatFungibleAmount(asset.locked, asset.dec ?? 0)} ${label(asset)} moves once its deposit is confirmed on ${chain}`
+  return `${formatFungibleAmount(asset.locked, asset.dec ?? 0)} ${label(asset)} waits for its deposit's ${LTC_BURIAL_DEPTH} ${chain} confirmations`
 }
 
 /** The deploy's supply policy in words; items have none of their own. */
@@ -77,10 +81,21 @@ export type HctChipActions = {
   open: (assetId: string) => void
 }
 
+/** Deposits behind `asset` whose wLTC cannot move yet, newest first. */
+function useWaitingDeposits(asset: HctAssetSummary): readonly LtcDepositView[] {
+  const deposits = useLtcDeposits()
+  if (asset.backedBy !== 'ltc') return []
+  return deposits.filter((d) => d.assetId === asset.assetId && ltcDepositWaiting(d.phase))
+}
+
+/** Most deposits a chip spells out; the send form lists every one. */
+const CHIP_DEPOSITS = 3
+
 /** One HCT token or item in an issuer's strip; tapping opens its send form. */
 export function HctChip({ asset, view, actions }: { asset: HctAssetSummary; view: CollectionView; actions: HctChipActions }) {
   const amount = asset.kind === 'item' ? (asset.collection ? 'Collection item' : 'Item') : amountOf(asset)
   const supply = hctSupplyLabel(asset)
+  const waiting = useWaitingDeposits(asset)
   return (
     <li
       className="token-chip"
@@ -98,12 +113,26 @@ export function HctChip({ asset, view, actions }: { asset: HctAssetSummary; view
         aria-label={`${label(asset)}, ${amount}, HCT. Send`}
       >
         <span className="collectable-media collectable-media-sm collectable-media-token token-chip-face">
-          <FungibleTokenFace tokenId={asset.assetId} sym={label(asset)} iconUrl={asset.imageUrl} size={view === 'grid' ? 72 : 56} />
+          <FungibleTokenFace
+            tokenId={asset.assetId}
+            sym={label(asset)}
+            iconUrl={asset.imageUrl}
+            size={view === 'grid' ? 72 : 56}
+            {...(asset.backedBy ? { chainMark: asset.backedBy } : {})}
+          />
         </span>
         <strong className="token-chip-sym" title={label(asset)}>
           {label(asset)}
         </strong>
         <span className="fungible-card-amount token-chip-amount">{amount}</span>
+        {waiting.length > 0 ? (
+          <span data-aeon-part="deposits" aria-label={`${waiting.length} Litecoin deposit${waiting.length === 1 ? '' : 's'} confirming`}>
+            {waiting.slice(0, CHIP_DEPOSITS).map((d) => (
+              <LtcDepositBadge key={`${d.txid}:${d.vout}`} phase={d.phase} />
+            ))}
+            {waiting.length > CHIP_DEPOSITS ? <span data-aeon-part="more">+{waiting.length - CHIP_DEPOSITS}</span> : null}
+          </span>
+        ) : null}
       </button>
     </li>
   )
@@ -170,6 +199,7 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
   const ready = recipient.trim().length > 0 && units !== null && !overBalance
   const supply = hctSupplyLabel(asset)
   const locked = hctLockedLabel(asset)
+  const waiting = useWaitingDeposits(asset)
 
   const submit = async () => {
     if (!units) return
@@ -216,6 +246,15 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
       <h3 className="collect-section-title">Send {label(asset)}</h3>
       {supply ? <p className="settings-row-desc" data-aeon-part="supply">{supply}</p> : null}
       {locked ? <p className="settings-row-desc" data-aeon-part="locked">{locked}</p> : null}
+      {waiting.length > 0 ? (
+        <ul data-aeon-part="deposit-list" aria-label="Litecoin deposits confirming">
+          {waiting.map((d) => (
+            <li key={`${d.txid}:${d.vout}`}>
+              <LtcDepositProgress view={d} />
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <div className="field">
         <label htmlFor="hct-send-recipient">To</label>
         <input

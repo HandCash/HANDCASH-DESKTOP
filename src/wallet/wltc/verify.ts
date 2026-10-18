@@ -45,8 +45,11 @@ export type LtcBurialProof = { tx: string; path: string[]; pos: number; height: 
 /**
  * `missing`: the proof may still check later (the block is not deep yet on
  * this chain, or the chain could not be read). Otherwise it never will.
+ * `confirmations` comes with `shallow`: the count on this wallet's own chain.
  */
-export type BurialCheck = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string; missing: boolean }
+export type BurialCheck =
+  | { ok: true; litoshi: bigint }
+  | { ok: false; reason: DepositRefusal; detail: string; missing: boolean; confirmations?: number }
 
 type DepositOutput = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string }
 
@@ -69,7 +72,7 @@ function depositOutput(raw: Bytes, outpoint: { txid: string; vout: number }, res
   return { ok: true, litoshi: output.value }
 }
 
-const refused = (reason: DepositRefusal, detail: string, missing = false): BurialCheck => ({ ok: false, reason, detail, missing })
+const refused = (reason: DepositRefusal, detail: string, missing = false): Extract<BurialCheck, { ok: false }> => ({ ok: false, reason, detail, missing })
 
 /**
  * Check a burial proof: the deposit pays the reserve at least `minted`
@@ -107,7 +110,10 @@ export async function checkLtcBurial(
     case 'buried':
       return { ok: true, litoshi: output.litoshi }
     case 'shallow':
-      return refused('shallow', `the deposit has ${anchored.confirmations} of ${LTC_BURIAL_DEPTH} confirmations on this wallet's Litecoin chain`, true)
+      return {
+        ...refused('shallow', `the deposit has ${anchored.confirmations} of ${LTC_BURIAL_DEPTH} confirmations on this wallet's Litecoin chain`, true),
+        confirmations: anchored.confirmations,
+      }
     case 'off-chain':
       return refused('off-chain', `block ${proof.height} on this wallet's Litecoin chain is not the proof's block`)
     case 'unavailable':
@@ -137,34 +143,28 @@ export async function readLtcDeposit(chain: LtcChain, outpoint: { txid: string; 
   return { kind: 'seen', txid, vout, litoshi: output.litoshi }
 }
 
-export type BurialFetch =
-  | { kind: 'buried'; proof: LtcBurialProof }
-  | { kind: 'pending'; confirmations: number; needed: number }
-  | { kind: 'gone' }
-
 /**
- * Gather the burial proof of a deposit once the explorer reports it deep
- * enough. The caller checks it with `checkLtcBurial`; nothing here is
- * trusted. `gone` means the explorer no longer knows the transaction
+ * Where an explorer says a deposit is. `in-block` carries a burial proof built
+ * from its answer, which only `checkLtcBurial` can confirm: the explorer never
+ * decides how deep the deposit is. `unconfirmed` is the explorer's word that
+ * the transaction waits for a block; `gone`, that it no longer knows it
  * (replaced or reorganized away).
  */
-export async function fetchLtcBurial(chain: LtcChain, txid: string): Promise<BurialFetch> {
-  const needed = LTC_BURIAL_DEPTH
+export type DepositLocation = { kind: 'in-block'; proof: LtcBurialProof } | { kind: 'unconfirmed' } | { kind: 'gone' }
+
+export async function locateLtcDeposit(chain: LtcChain, txid: string): Promise<DepositLocation> {
   const status = await chain.txStatus(txid).catch((err: unknown) => {
     if (err instanceof Error && /\b404\b|not found/i.test(err.message)) return null
     throw err
   })
   if (!status) return { kind: 'gone' }
-  if (!status.confirmed) return { kind: 'pending', confirmations: 0, needed }
+  if (!status.confirmed) return { kind: 'unconfirmed' }
   const merkle = await chain.merkleProof(txid)
-  const tip = await chain.tipHeight()
-  const confirmations = tip - merkle.blockHeight + 1
-  if (confirmations < needed) return { kind: 'pending', confirmations: Math.max(0, confirmations), needed }
   const hash = await chain.blockHashAt(merkle.blockHeight)
   const raw = await chain.header(hash)
   if (parseLtcHeader(raw).hash !== hash) throw new Error(`the header at ${merkle.blockHeight} does not hash to its block`)
   return {
-    kind: 'buried',
+    kind: 'in-block',
     proof: { tx: (await chain.txHex(txid)).toLowerCase(), path: merkle.merkle, pos: merkle.pos, height: merkle.blockHeight, header: toHex(raw) },
   }
 }
