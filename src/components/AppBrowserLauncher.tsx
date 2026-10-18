@@ -12,13 +12,13 @@ const openTab: AppBrowserOpener = async (url) => {
 }
 
 /**
- * Type-an-address entry for the phone's in-app browser. Desktop reaches its
- * tabs from connected apps and the address bar of the system browser, so this
- * renders only where the native guest hosts tabs.
+ * Type-an-address entry for the in-app browser: the phone's native guest and
+ * Desktop's `<webview>` tabs alike. Without a wallet-hosted surface there is
+ * nothing to open into, so it renders nothing.
  */
 export function AppBrowserLauncher() {
   const surface = chooseAppBrowserSurface(window.handcash)
-  if (surface.surface !== 'embedded' || surface.host !== 'native') return null
+  if (surface.surface !== 'embedded') return null
   return <Launcher />
 }
 

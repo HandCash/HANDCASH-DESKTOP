@@ -4,6 +4,8 @@ Every permission an app can hold, and every item, token, market and BSV action t
 
 Related: [`brc-wallet-feature-map.md`](./brc-wallet-feature-map.md) (feature → BRC), [`token-architecture.md`](./token-architecture.md), [`wallet-p2p-messagebox.md`](./wallet-p2p-messagebox.md).
 
+Specs: market listings and direct offers for all four profiles are [BRC-254](../../BRCs-254/tokens/0254.md) (draft); countersigned assets are [BRC-253](../../BRCs-253/tokens/0253.md) (draft). This page and the drafts are published at `https://brc-cloud.bcryderman.workers.dev/docs`; paste that address into Apps → Open a web app to read them inside the wallet.
+
 ## 0. The four asset profiles
 
 Every asset the wallet holds belongs to exactly one profile. A profile is a storage basket, an app permission scheme, a tag prefix and a set of actions. Granting one profile never grants another, and no asset changes profile, not even a released countersigned one.
@@ -12,6 +14,7 @@ Every asset the wallet holds belongs to exactly one profile. A profile is a stor
 |---|---|---|---|---|
 | Holds | Items (one-sat ordinals) | Tokens (BRC-162, P2P-FT) | Countersigned tokens | Countersigned items (a supply-1 deploy) |
 | Spec | BRC-147, BRC-150, BRC-165 | BRC-162, BRC-251, BRC-252 | BRC-253 draft | BRC-253 draft |
+| Trades spec | BRC-254 draft | BRC-254 draft | BRC-254 draft, settled through BRC-253 §6 | Same as `csft` |
 | Authenticity | BRC-150 proof to the origin | BRC-176 lineage to the deploy | The issuer's countersignature in each transfer | Same as `csft` |
 | Who signs a transfer | Owner | Owner | Owner, then the issuer (or m of n cosigners); after release, the owner with the published keys | Same as `csft` |
 | App view (section 2) | `p 1sat all \| collection \| app \| creator \| id` | `p p2pft all \| token \| id` | `p csft all \| asset \| id` | `p csnft all \| asset \| collection \| id` |
@@ -113,11 +116,11 @@ Keys follow BRC-251 Custody. Every value output a transfer writes gets a fresh B
 - the payee's own child, when the transfer is delivered to it by identity key;
 - this wallet's own child, for change, a self-send, burn change and the market split change.
 
-The remittance strings are stored in each output's `customInstructions`, so BRC-39 backs them up with the rest of local state. The delivery carries the payee's strings in `meta.asset.remittance`, and receive derives the key from them. A payee known only by a bare address keeps that address. Market and direct-offer lots stay on the identity address, because BRC-251 does not define swaps. Every token input signs with `tipSigningKey` (`token/tipKeys.ts`), and every ownership check uses `ownsTokenLock`.
+The remittance strings are stored in each output's `customInstructions`, so BRC-39 backs them up with the rest of local state. The delivery carries the payee's strings in `meta.asset.remittance`, and receive derives the key from them. A payee known only by a bare address keeps that address. Market and direct-offer lots stay on the identity address: BRC-254 §2 requires a `p2pft` listing to be held by the address of the seller identity key its offer token names. Every token input signs with `tipSigningKey` (`token/tipKeys.ts`), and every ownership check uses `ownsTokenLock`.
 
 ## 5. Market actions
 
-A listing is a `1SAT-MARKET` PushDrop offer: the asset at vout 0, the offer at vout 1. At list time the seller signs both inputs of the buyer's settlement `SIGHASH_SINGLE|ANYONECANPAY|FORKID` (settlement v2, `marketSettlementLayout.ts`). Each signature commits to the output at its own input index: the asset to the seller payment, the offer to the market fee. The asset cannot move without paying the seller, and withdrawing someone else's advert costs the fee.
+Specified in BRC-254 §1–§9. A listing is a `1SAT-MARKET` PushDrop offer: the asset at vout 0, the offer at vout 1. At list time the seller signs both inputs of the buyer's settlement `SIGHASH_SINGLE|ANYONECANPAY|FORKID` (settlement v2, `marketSettlementLayout.ts`). Each signature commits to the output at its own input index: the asset to the seller payment, the offer to the market fee. The asset cannot move without paying the seller, and withdrawing someone else's advert costs the fee.
 
 | Layout | Inputs | Outputs |
 |---|---|---|
@@ -169,9 +172,9 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 
 | Feature | State | Builds on |
 |---|---|---|
-| Item direct offers | Missing; token for sats and token for token ship (section 8) | Ordinal pads from `ordinal-v2` |
-| Asking for a countersigned asset in a direct offer | Refused by name (`countersigned-want`) | The seller signs before the buyer's receive output exists, so the offer cannot carry the linkage the acceptor checks; needs a per-entry prover in BRC-253 |
-| Countersigned swaps across issuers | Missing | A conditional accept per acceptor; BRC-253 open question |
+| Item direct offers | Missing; token for sats and token for token ship (section 8) | BRC-254 §10 `direct-ordinal`: buyer pads first, as in `ordinal-v2` |
+| Asking for a countersigned asset in a direct offer | Refused by name (`countersigned-want`) | BRC-254 §10 `wantLinkage`: the offer carries the seller's linkage for its receive output, sealed to each acceptor of the wanted asset, and the buyer forwards it |
+| Countersigned swaps across issuers | Missing | BRC-254 §10: one sender-funded request to both acceptors, each countersigning its own inputs over the same transaction |
 | Token-priced market listings | Missing; the market prices in sats only | Overlay offer fields carry a token price; fee rule for a token price |
 | Direct offer delivery | Offers are shared by hand (JSON); the seller collects with the buy txid | Messagebox `direct-offer` box |
 | Bids (offers to buy) | Missing; listings are seller-side only | Purchase intent signing |
@@ -188,7 +191,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 
 ## 8. Offers: market listings and direct offers
 
-There is one offer mechanism. The seller holds an output with exactly what it offers, out of the spendable balance, and signs that input with `SIGHASH_SINGLE|ANYONECANPAY|FORKID`, binding the output at the same index to what it wants back. Whoever holds the signature can complete the trade without the seller; the buyer adds its own inputs and the remaining outputs and signs `ALL`. The seller cancels by spending the held output to itself. Holding the lot back is not a separate rule: spending it elsewhere would leave a published signature pointing at a coin that no longer exists.
+Specified in BRC-254 (§1 for the signature, §10 for direct offers). There is one offer mechanism. The seller holds an output with exactly what it offers, out of the spendable balance, and signs that input with `SIGHASH_SINGLE|ANYONECANPAY|FORKID`, binding the output at the same index to what it wants back. Whoever holds the signature can complete the trade without the seller; the buyer adds its own inputs and the remaining outputs and signs `ALL`. The seller cancels by spending the held output to itself. Holding the lot back is not a separate rule: spending it elsewhere would leave a published signature pointing at a coin that no longer exists.
 
 Two venues use it:
 
@@ -227,7 +230,7 @@ Every offer transaction goes through `signedSendLifecycle`. Delivery of the sell
 
 ## 9. Countersigned assets: profiles `csft` and `csnft`
 
-From an unpublished issuer-control draft. A countersigned output is a BRC-162 transfer whose lock also needs a second signature: the holder signs `0xC1`, and the issuer key set countersigns. Countersigning is for assets whose value comes from the issuer (handles, stablecoins, tickets); art and open tokens stay BRC-150 / BRC-162. Tokens and items share one scheme, because an item is a deploy with a supply of 1. Code: `src/wallet/countersign/` (`script.ts`, `payload.ts`, `resolve.ts`, `path.ts`, `beacon.ts`, `beaconSource.ts`, `wallet.ts`), chart `countersignMachine`.
+Specified in BRC-253 (draft). A countersigned output is a BRC-162 transfer whose lock also needs a second signature: the holder signs `0xC1`, and the issuer key set countersigns. Countersigning is for assets whose value comes from the issuer (handles, stablecoins, tickets); art and open tokens stay BRC-150 / BRC-162. Tokens and items share one scheme, because an item is a deploy with a supply of 1. Code: `src/wallet/countersign/` (`script.ts`, `payload.ts`, `resolve.ts`, `path.ts`, `beacon.ts`, `beaconSource.ts`, `wallet.ts`), chart `countersignMachine`.
 
 | Method (action, prompts) | What it does |
 |---|---|
