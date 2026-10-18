@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.600] - 2026-10-18
+
+### Fixed
+
+- Windows release build: the identity-address ratchet keyed files by native paths, so backslashes on Windows missed every allowlist entry and failed the build. Paths are now repo-relative with forward slashes on every platform.
+
 ## [1.3.599] - 2026-10-18
 
 ### Fixed

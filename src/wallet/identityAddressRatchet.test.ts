@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -22,6 +22,7 @@ const PATTERNS = [
 ]
 
 const ROOT = join(__dirname, '..', '..')
+const repoPath = (path: string): string => relative(ROOT, path).split(sep).join('/')
 
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
@@ -36,7 +37,7 @@ function census(): Record<string, number> {
   for (const path of sources(join(ROOT, 'src'))) {
     const text = readFileSync(path, 'utf8')
     const hits = PATTERNS.reduce((n, re) => n + (text.match(re)?.length ?? 0), 0)
-    if (hits > 0) out[relative(ROOT, path)] = hits
+    if (hits > 0) out[repoPath(path)] = hits
   }
   // The definition is not a use.
   if (out['src/wallet/friends.ts']) out['src/wallet/friends.ts'] -= 1
@@ -52,7 +53,7 @@ describe('identity-address locks', () => {
   it('never writes p color keys outside the legacy spend path', () => {
     const writers = sources(join(ROOT, 'src'))
       .filter((p) => /legacyColorPublicKey\(/.test(readFileSync(p, 'utf8')))
-      .map((p) => relative(ROOT, p))
+      .map(repoPath)
     expect(writers.sort()).toEqual(['src/wallet/countersign/holderKeys.ts', 'src/wallet/legacyColorKeys.ts'])
   })
 })
