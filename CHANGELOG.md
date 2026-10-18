@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.599] - 2026-10-18
+
+### Fixed
+
+- wLTC deposits are no longer stuck while litecoinspace.org is down. The wallet read Litecoin only from litecoinspace, so its outage hid every deposit and blocked withdrawals. It now falls back to BRC-CLOUD's `/v1/ltc` route, which asks litecoinspace and then Blockbook. The wallet still checks every header, merkle proof and scrypt proof of work itself, so the fallback can only delay a deposit, never credit one that isn't real.
+
 ## [1.3.598] - 2026-10-18
 
 ### Fixed

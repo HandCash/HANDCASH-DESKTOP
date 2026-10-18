@@ -1,3 +1,4 @@
+import { PUBLIC_BRC_CLOUD_ORIGIN } from '../walletConfig'
 import { fromHex } from './litecoin'
 
 /**
@@ -19,6 +20,8 @@ export type LtcChain = {
 }
 
 export const LITECOINSPACE_API = 'https://litecoinspace.org/api'
+/** BRC-CLOUD's Esplora-shaped Litecoin route: litecoinspace, else Blockbook (which sends no CORS headers). */
+export const BRC_CLOUD_LTC_API = `${PUBLIC_BRC_CLOUD_ORIGIN}/v1/ltc`
 const TIMEOUT_MS = 15_000
 const HASH_RE = /^[0-9a-f]{64}$/
 
@@ -91,4 +94,40 @@ export function esploraLtcChain(base = LITECOINSPACE_API): LtcChain {
       return Number.isFinite(rate) && rate >= 1 ? Math.ceil(rate) : 1
     },
   }
+}
+
+/**
+ * Ask each explorer in turn until one answers. Safe because no answer is
+ * trusted (see {@link LtcChain}); a broadcast tried twice is the same
+ * transaction, so the second explorer at worst reports it already known.
+ */
+export function failoverLtcChain(chains: readonly LtcChain[]): LtcChain {
+  const first = <K extends keyof LtcChain>(method: K) =>
+    (async (...args: Parameters<LtcChain[K]>) => {
+      let lastError: unknown
+      for (const chain of chains) {
+        try {
+          return await (chain[method] as (...a: Parameters<LtcChain[K]>) => ReturnType<LtcChain[K]>)(...args)
+        } catch (err) {
+          lastError = err
+        }
+      }
+      throw lastError ?? new Error('No Litecoin explorer configured')
+    }) as LtcChain[K]
+  return {
+    tipHeight: first('tipHeight'),
+    blockHashAt: first('blockHashAt'),
+    header: first('header'),
+    txHex: first('txHex'),
+    txStatus: first('txStatus'),
+    merkleProof: first('merkleProof'),
+    addressUtxos: first('addressUtxos'),
+    broadcast: first('broadcast'),
+    feeRate: first('feeRate'),
+  }
+}
+
+/** The wallet's Litecoin explorers: litecoinspace directly, then through BRC-CLOUD. */
+export function defaultLtcChain(): LtcChain {
+  return failoverLtcChain([esploraLtcChain(LITECOINSPACE_API), esploraLtcChain(BRC_CLOUD_LTC_API)])
 }

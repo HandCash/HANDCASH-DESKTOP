@@ -7,7 +7,7 @@ import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
 import { durableGetItem, durableSetItem } from '../durableStorage'
 import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
-import { esploraLtcChain, type LtcChain } from './chain'
+import { defaultLtcChain, type LtcChain } from './chain'
 import {
   formatLtc,
   ltcOutputScript,
@@ -126,11 +126,11 @@ const outpointKey = (txid: string, vout: number) => `${txid}:${vout}`
 // ── Runtime ────────────────────────────────────────────────────────────────
 
 type Deps = { chain: LtcChain; verify: VerifyOptions }
-let deps: Deps = { chain: esploraLtcChain(), verify: {} }
+let deps: Deps = { chain: defaultLtcChain(), verify: {} }
 
 /** Tests swap the explorer and verifier options. */
 export function setWltcDepsForTest(next: Partial<Deps> | null): void {
-  deps = next ? { ...deps, ...next } : { chain: esploraLtcChain(), verify: {} }
+  deps = next ? { ...deps, ...next } : { chain: defaultLtcChain(), verify: {} }
 }
 
 function requireActive(): ActiveWallet {
