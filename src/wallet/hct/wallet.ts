@@ -19,11 +19,13 @@ import {
   readHctRemittance,
   type HctRemittance,
 } from './keys'
+import { checkBackingProof, hctBackingScript, type BackingOutpoint, type HctBackingProof } from './backing'
 import {
   encodeHctPayload,
   HCT_MAX_CONTENT_BYTES,
   HCT_MAX_ICON_BYTES,
   hctSupplyPolicy,
+  type HctBacking,
   type HctDeployFields,
 } from './payload'
 import { buildHctPackage, hctAncestry, HCT_PACKAGE_BUDGET, readHctPackage, type HctPackage } from './proof'
@@ -52,15 +54,27 @@ import {
   type HctOutboxEntry,
 } from './state'
 import {
+  getHctBacking,
   getHctDeployRecord,
   getHctTx,
+  hasHctBackingSync,
   isHctValidated,
   isHctValidatedSync,
   markHctValidated,
+  putHctBacking,
   putHctDeployRecord,
   putHctTx,
 } from './store'
-import { checkHctTx, deployIssued, readHctDeploy, readHctDeploys, walkHct, type HctDeploy } from './validity'
+import {
+  checkHctTx,
+  deployIssued,
+  hctBackingNeed,
+  readHctDeploy,
+  readHctDeploys,
+  walkHct,
+  type BackingSource,
+  type HctDeploy,
+} from './validity'
 
 /** Store-and-forward box for transfer packages and history requests. */
 export const HCT_BOX = 'hct'
@@ -107,6 +121,7 @@ export type HctError =
   | 'fixed-supply'
   | 'over-cap'
   | 'invalid-build'
+  | 'awaiting-backing'
 
 export class HctRefusal extends Error {
   constructor(
@@ -267,6 +282,8 @@ export type HctRow = {
   issued?: HctIssued
   basket: string
   remittance: HctRemittance
+  /** Units of a backed mint whose deposit (or an earlier one they came through) has no burial proof yet: held, not movable. */
+  locked: boolean
 }
 
 function displayTag(prefix: string, value: string | undefined): string[] {
@@ -343,6 +360,8 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
     if (!(await isHctValidated(txid!, id))) continue
     const deploy = read.form === 'deploy' ? await deployOf(active, id, { txid: txid!, vout }) : null
     const issued = read.form === 'authority' ? read.issued : deploy?.fields.auth ? deployIssued(deploy) : null
+    const assetDeploy = deploy ?? (await deployOf(active, id))
+    const locked = assetDeploy?.fields.bk ? !(await movable(active, assetDeploy, txid!, vout)) : false
     rows.push({
       outpoint: `${txid}.${vout}`,
       txid: txid!,
@@ -354,9 +373,103 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
       ...(issued ? { issued } : {}),
       basket,
       remittance,
+      locked,
     })
   }
   return rows
+}
+
+// ── Backing ────────────────────────────────────────────────────────────────
+
+/** `assetId:txid` pairs whose whole history back to the deploy carries every burial proof it needs. Proofs are only ever added. */
+const backedThrough = new Set<string>()
+
+async function hctTxOf(active: ActiveWallet, txid: string): Promise<Transaction | null> {
+  return (await getHctTx(txid)) ?? (await linkedTx(active, txid))
+}
+
+/** Does every backed transaction whose units `txid`'s history moves have a checked burial proof here? */
+async function historyBacked(active: ActiveWallet, deploy: HctDeploy, txid: string): Promise<boolean> {
+  const key = `${deploy.assetId}:${txid}`
+  if (txid === deploy.txid || backedThrough.has(key)) return true
+  const tx = await hctTxOf(active, txid)
+  const check = tx ? checkHctTx(tx, deploy) : null
+  if (!tx || !check?.ok) return false
+  const byParent = new Map<string, number[]>()
+  for (const vin of check.inputs) {
+    const parent = sourceTxidOf(tx, vin)
+    byParent.set(parent, [...(byParent.get(parent) ?? []), tx.inputs[vin]!.sourceOutputIndex])
+  }
+  for (const [parent, vouts] of byParent) {
+    const parentTx = await hctTxOf(active, parent)
+    if (!parentTx) return false
+    const need = hctBackingNeed(parentTx, parent, deploy, vouts)
+    if (need.kind === 'invalid') return false
+    if (need.kind === 'needed' && !(await getHctBacking(parent))) return false
+    if (!(await historyBacked(active, deploy, parent))) return false
+  }
+  backedThrough.add(key)
+  return true
+}
+
+/** May output `vout` of `txid` move? Its own deposit, and every one its history moved units through, must be proven. */
+async function movable(active: ActiveWallet, deploy: HctDeploy, txid: string, vout: number): Promise<boolean> {
+  const tx = await hctTxOf(active, txid)
+  if (!tx) return false
+  const need = hctBackingNeed(tx, txid, deploy, [vout])
+  if (need.kind === 'invalid') return false
+  if (need.kind === 'needed' && !(await getHctBacking(txid))) return false
+  return historyBacked(active, deploy, txid)
+}
+
+/** Burial proofs a recipient's walk of these transactions may need: every one this device holds for them or their parents. */
+async function backingFor(txs: readonly Transaction[], extra: readonly string[] = []): Promise<Map<string, HctBackingProof>> {
+  const ids = new Set<string>(extra)
+  for (const tx of txs) {
+    ids.add(idOf(tx))
+    for (let vin = 0; vin < tx.inputs.length; vin++) ids.add(sourceTxidOf(tx, vin))
+  }
+  const out = new Map<string, HctBackingProof>()
+  for (const id of ids) {
+    const proof = await getHctBacking(id)
+    if (proof) out.set(id, proof)
+  }
+  return out
+}
+
+/** Burial proofs a `history` reply supplied, unchecked until a walk needs one. */
+const suppliedBacking = new Map<string, HctBackingProof>()
+
+function backingSource(pkgBacking?: ReadonlyMap<string, HctBackingProof>): BackingSource {
+  return {
+    proven: (txid) => hasHctBackingSync(txid),
+    proofOf: async (txid) => pkgBacking?.get(txid) ?? suppliedBacking.get(txid) ?? (await getHctBacking(txid)),
+  }
+}
+
+async function keepBacked(backed: ReadonlyArray<{ txid: string; proof: HctBackingProof }>): Promise<void> {
+  for (const { txid, proof } of backed) {
+    await putHctBacking(txid, proof)
+    suppliedBacking.delete(txid)
+  }
+}
+
+/**
+ * Record the burial proof of a backed deploy or mint this wallet wrote, once
+ * it checks against the deposit that transaction names. Wallet-internal: the
+ * wLTC bridge calls it when a deposit is deep enough.
+ */
+export async function proveHctBacking(assetId: string, txid: string, proof: HctBackingProof): Promise<void> {
+  const active = requireActive()
+  const deploy = await deployOf(active, assetId)
+  if (!deploy?.fields.bk) throw new Error('That asset is not backed')
+  const tx = await hctTxOf(active, txid)
+  if (!tx) throw new Error(`Transaction ${txid} is not available`)
+  const need = hctBackingNeed(tx, txid.toLowerCase(), deploy, tx.outputs.map((_, vout) => vout))
+  if (need.kind !== 'needed') throw new Error(need.kind === 'invalid' ? need.detail : `${txid} is not a backed mint of ${assetId}`)
+  const check = checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
+  if (!check.ok) throw new Error(`The burial proof does not check: ${check.detail}`)
+  await putHctBacking(txid, proof)
 }
 
 export type HctAssetSummary = {
@@ -369,6 +482,10 @@ export type HctAssetSummary = {
   collection?: string
   issuers: string[]
   balance: string
+  /** Of `balance`, units of a backed token waiting for their deposit's burial proof before they can move. */
+  locked?: string
+  /** A backed token: the chain its units stand for (BRC-255 `bk`). */
+  backedBy?: HctBacking['chain']
   outputs: number
   authority: boolean
   deploy: string
@@ -424,6 +541,7 @@ export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
     if (!deploy) continue
     if (list.some((r) => r.basket !== hctFilingOf(deploy.fields.kind))) continue
     const image = deployImage(deploy.fields)
+    const locked = list.reduce((sum, r) => sum + (r.locked && r.read.form !== 'authority' ? r.amount : 0n), 0n)
     assets.push({
       assetId,
       kind: deploy.fields.kind,
@@ -434,6 +552,8 @@ export async function listHctAssets(): Promise<{ assets: HctAssetSummary[] }> {
       ...(deploy.fields.col ? { collection: deploy.fields.col } : {}),
       issuers: deploy.fields.iss,
       balance: list.reduce((sum, r) => sum + (r.read.form === 'authority' ? 0n : r.amount), 0n).toString(),
+      ...(locked > 0n ? { locked: locked.toString() } : {}),
+      ...(deploy.fields.bk ? { backedBy: deploy.fields.bk.chain } : {}),
       outputs: list.length,
       authority: list.some((r) => r.authority),
       deploy: `${deploy.txid}_${deploy.vout}`,
@@ -613,6 +733,11 @@ export type IssueHctArgs = {
 export type HctWalletOptions = {
   /** Extra action labels, written atomically with the transaction (they ride the BRC-39 history). */
   labels?: readonly string[]
+  /**
+   * A backed token (BRC-255 `bk`): the deposit this deploy or mint issues
+   * units against. A deploy also names the chain and reserve.
+   */
+  backing?: { deposit: BackingOutpoint; bk?: HctBacking }
 }
 
 export type IssueHctResult = { assetId: string; txid: string; kind: 'token' | 'item'; supply: string; basket: string }
@@ -726,7 +851,16 @@ export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions =
     const chart = createActor(hctMachine).start()
     chart.send({ type: 'ISSUE' })
     try {
-      const { fields, supply } = hctIssueFields(args, active.identityKey)
+      const parsed = hctIssueFields(args, active.identityKey)
+      const supply = parsed.supply
+      const fields: HctDeployFields = opts.backing?.bk ? { ...parsed.fields, bk: opts.backing.bk } : parsed.fields
+      if (fields.bk) {
+        try {
+          encodeHctPayload(fields)
+        } catch (err) {
+          refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
+        }
+      }
       const root = rootOf(active)
       const issuerKey = hctIssuerPrivateKey(root)
       const prefix = freshDerivationString()
@@ -756,6 +890,9 @@ export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions =
         inputs.push({ outpoint: authority.outpoint, description: 'HCT collection authority', key: hctHolderPrivateKey(root, authority.remittance), scope: HCT_HOLDER_SCOPE })
         const issued = authority.issued ? { units: authority.issued.units, members: authority.issued.members + 1n } : undefined
         outputs.push(...carryBack(active, authority, deploy, prefix, issued))
+      }
+      if (fields.bk) {
+        outputs.push({ lockingScript: hctBackingScript(opts.backing!.deposit, null), satoshis: 0, outputDescription: 'HCT backing deposit' })
       }
       const issuerPub = issuerKey.toPublicKey().toString()
       inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'HCT issuer signature', key: issuerKey, scope: HCT_ISSUER_SCOPE })
@@ -804,6 +941,30 @@ export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions =
 
 // ── Mint ───────────────────────────────────────────────────────────────────
 
+/**
+ * Move a proven backed deploy's units and its authority into separate
+ * outputs, issuing nothing. A mint that spent the deploy would rewrite those
+ * proven units into outputs that wait on the new deposit's proof.
+ */
+async function splitBackedDeploy(active: ActiveWallet, row: HctRow, deploy: HctDeploy): Promise<HctRow> {
+  const signed = await signHctAction(active, {
+    description: `Split ${deploy.fields.sym ?? 'units'} deploy (HCT)`,
+    labels: [LABEL, 'hct-split'],
+    inputs: [{ outpoint: row.outpoint, description: 'HCT deploy', key: hctHolderPrivateKey(rootOf(active), row.remittance), scope: HCT_HOLDER_SCOPE }],
+    outputs: carryBack(active, row, deploy, freshDerivationString()),
+    check: (tx) => {
+      const check = checkHctTx(tx, deploy)
+      if (!check.ok) return `${check.reason}: ${check.detail}`
+      if (check.minted !== 0n) return `it issues ${check.minted} units`
+      return null
+    },
+  })
+  await commitSigned(signed, [deploy.assetId], true)
+  const authority = (await heldRows(active, HCT_TOKEN_BASKET, deploy.assetId)).find((r) => r.authority && r.txid === signed.txid)
+  if (!authority) throw new Error('The split deploy left no authority')
+  return authority
+}
+
 export type MintHctResult = { assetId: string; txid: string; amount: string; issued?: { units: string; members: string } }
 
 /**
@@ -830,8 +991,18 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
       if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open HCT assets only.')
       const policy = hctSupplyPolicy(deploy.fields)
       if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
-      const authority = (await heldRows(active, HCT_TOKEN_BASKET, assetId)).find((r) => r.authority)
+      let authority = (await heldRows(active, HCT_TOKEN_BASKET, assetId)).find((r) => r.authority)
       if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
+      if (deploy.fields.bk) {
+        if (!opts.backing) refuse('bad-asset-args', 'A backed token mints only against a deposit.')
+        if (authority.amount > 0n) {
+          // Spending the deploy moves its units; they wait for the first deposit's proof.
+          if (authority.locked) refuse('awaiting-backing', 'The first deposit has no burial proof yet; this mint waits for it.')
+          authority = await splitBackedDeploy(active, authority, deploy)
+        }
+      } else if (opts.backing) {
+        refuse('bad-asset-args', 'Only a backed token mints against a deposit.')
+      }
       let issued: HctIssued | undefined
       if (policy.kind === 'capped') {
         if (!authority.issued) refuse('invalid-build', 'The authority carries no issued count.')
@@ -854,6 +1025,7 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
           customInstructions: rowInstructions(assetId, deploy.fields, 'held', amount, minted.remittance),
         },
         ...carryBack(active, authority, deploy, prefix, issued),
+        ...(opts.backing ? [{ lockingScript: hctBackingScript(opts.backing.deposit, assetId), satoshis: 0, outputDescription: 'HCT backing deposit' }] : []),
       ]
       chart.send({ type: 'BUILT' })
       const label = `${amount} ${deploy.fields.sym ?? 'units'}`
@@ -902,7 +1074,7 @@ function pickRows(rows: HctRow[], amount: bigint): HctRow[] | null {
   let sum = 0n
   for (const row of [...rows].sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))) {
     if (sum >= amount) break
-    if (row.read.form === 'authority') continue
+    if (row.read.form === 'authority' || row.locked) continue
     chosen.push(row)
     sum += row.amount
   }
@@ -1114,7 +1286,8 @@ async function packageFor(
     return null
   }
   const deployTx = holds.has(deploy.txid) ? null : await linkedTx(active, deploy.txid)
-  const { pkg } = buildHctPackage(subject, ancestry.txs, deployTx ? [deployTx] : [], budget)
+  const backing = deploy.fields.bk ? await backingFor([subject, ...ancestry.txs], [deploy.txid]) : new Map<string, HctBackingProof>()
+  const { pkg } = buildHctPackage(subject, ancestry.txs, deployTx ? [deployTx] : [], budget, backing)
   const shipped = [pkg.subject, ...ancestry.txs.map(idOf).slice(0, pkg.txs.length - 1), ...(pkg.deploys.length ? [deploy.txid] : [])]
   return { pkg, shipped }
 }
@@ -1264,6 +1437,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
       return tx
     },
     (id) => isHctValidatedSync(id, wire.asset),
+    backingSource(pkg.backing),
   )
   if (!walk.ok) {
     console.warn(`[hct] transfer ${txid.slice(0, 12)}… ${walk.reason} at ${walk.txid.slice(0, 12)}… — ${walk.detail}`)
@@ -1302,6 +1476,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
     return 'retry'
   }
   await markHctValidated(walk.validated, wire.asset)
+  await keepBacked(walk.backed)
   const state = readHctState()
   notePeerHolds(state, from, wire.asset, [txid])
   writeHctState(state)
@@ -1331,7 +1506,8 @@ async function answerNeed(active: ActiveWallet, sender: string, wire: Extract<Wi
   const subject = wire.txid === deploy.txid ? null : await getHctTx(wire.txid)
   const built = subject ? await packageFor(active, subject, deploy, new Set(), HCT_PACKAGE_BUDGET) : null
   const deployTx = built ? null : await linkedTx(active, deploy.txid)
-  const pkg = built?.pkg ?? (deployTx ? buildHctPackage(deployTx, [], [], HCT_PACKAGE_BUDGET).pkg : null)
+  const deployBacking = deployTx && deploy.fields.bk ? await backingFor([], [deploy.txid]) : undefined
+  const pkg = built?.pkg ?? (deployTx ? buildHctPackage(deployTx, [], [], HCT_PACKAGE_BUDGET, deployBacking).pkg : null)
   if (!pkg) return
   const { sendSealedToPeerBox } = await import('../messageTransport')
   const reply: Wire = { v: 1, t: 'history', asset: wire.asset, proof: pkg }
@@ -1344,6 +1520,7 @@ async function takeHistory(wire: Extract<Wire, { t: 'history' }>): Promise<void>
   const pkg = readHctPackage(wire.proof)
   if (!pkg) return
   for (const tx of [...pkg.txs.values(), ...pkg.deploys.values()]) await putHctTx(tx).catch(() => {})
+  for (const [txid, proof] of pkg.backing) suppliedBacking.set(txid, proof)
 }
 
 let boxPolledAt = 0

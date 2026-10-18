@@ -1,7 +1,7 @@
 import { assign, setup } from 'xstate'
 
 type Context = {
-  operation: 'credit' | 'withdraw' | null
+  operation: 'credit' | 'prove' | 'withdraw' | null
   ltcTxid: string | null
   bsvTxid: string | null
   error: string | null
@@ -9,10 +9,14 @@ type Context = {
 
 type Event =
   | { type: 'CREDIT' }
+  | { type: 'PROVE' }
   | { type: 'WITHDRAW' }
   | { type: 'RESUME_BROADCAST'; ltcTxid: string }
-  | { type: 'VERIFIED' }
+  | { type: 'SEEN' }
+  | { type: 'AWAITING' }
   | { type: 'PENDING' }
+  | { type: 'PROVEN' }
+  | { type: 'VOIDED' }
   | { type: 'REFUSED'; error: string }
   | { type: 'MINTED'; bsvTxid: string }
   | { type: 'LTC_SIGNED'; ltcTxid: string }
@@ -24,9 +28,15 @@ type Event =
 /**
  * The wLTC bridge (1-of-1 federation: this wallet holds the LTC reserve key).
  *
- * Credit: a deposit is minted only after the wallet's own SPV check (merkle
- * proof, linked headers, scrypt work above the floor); one mint per LTC
- * outpoint, labelled with it so a restored wallet never mints it twice.
+ * Credit: a deposit seen paying the reserve is minted at once against the
+ * backed wLTC (BRC-255 `bk`), naming the deposit; one mint per LTC outpoint,
+ * labelled with it so a restored wallet never mints it twice. While the first
+ * deposit is unproven its deploy is the authority, so later deposits AWAIT.
+ *
+ * Prove: an unproven deposit stays PENDING until it is buried deep enough;
+ * then its burial proof (merkle path, linked headers, scrypt work above the
+ * floor) is checked and recorded, and its wLTC can move. A deposit the
+ * explorers stop knowing is VOIDED: its wLTC never moves.
  *
  * Withdraw: the LTC transaction is signed first and kept unsent; wLTC is
  * burned next; only a burned withdrawal is broadcast. A failed burn leaves the
@@ -37,6 +47,7 @@ export const wltcMachine = setup({
   types: { context: {} as Context, events: {} as Event },
   actions: {
     credit: assign({ operation: 'credit', ltcTxid: null, bsvTxid: null, error: null }),
+    prove: assign({ operation: 'prove', ltcTxid: null, bsvTxid: null, error: null }),
     withdraw: assign({ operation: 'withdraw', ltcTxid: null, bsvTxid: null, error: null }),
     resume: assign(({ event }) => (event.type === 'RESUME_BROADCAST' ? { operation: 'withdraw' as const, ltcTxid: event.ltcTxid, error: null } : {})),
     ltcTxid: assign(({ event }) => (event.type === 'LTC_SIGNED' ? { ltcTxid: event.ltcTxid } : {})),
@@ -52,15 +63,15 @@ export const wltcMachine = setup({
   states: {
     idle: {
       on: {
-        CREDIT: { target: 'verifying', actions: 'credit' },
+        CREDIT: { target: 'reading', actions: 'credit' },
+        PROVE: { target: 'proving', actions: 'prove' },
         WITHDRAW: { target: 'building', actions: 'withdraw' },
         RESUME_BROADCAST: { target: 'broadcasting', actions: 'resume' },
       },
     },
-    verifying: {
+    reading: {
       on: {
-        VERIFIED: 'minting',
-        PENDING: 'pending',
+        SEEN: 'minting',
         REFUSED: { target: 'refused', actions: 'error' },
         FAIL: { target: 'failed', actions: 'error' },
       },
@@ -68,6 +79,15 @@ export const wltcMachine = setup({
     minting: {
       on: {
         MINTED: { target: 'credited', actions: 'bsvTxid' },
+        AWAITING: 'awaiting',
+        FAIL: { target: 'failed', actions: 'error' },
+      },
+    },
+    proving: {
+      on: {
+        PROVEN: 'proven',
+        PENDING: 'pending',
+        VOIDED: 'voided',
         FAIL: { target: 'failed', actions: 'error' },
       },
     },
@@ -91,7 +111,10 @@ export const wltcMachine = setup({
       },
     },
     credited: { type: 'final' },
+    awaiting: { type: 'final' },
     pending: { type: 'final' },
+    proven: { type: 'final' },
+    voided: { type: 'final' },
     refused: { type: 'final' },
     withdrawn: { type: 'final' },
     queued: { type: 'final' },

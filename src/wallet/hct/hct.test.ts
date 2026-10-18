@@ -22,6 +22,9 @@ import {
   type HctClause,
 } from './script'
 import { checkHctTx, readHctDeploy, walkHct, type HctDeploy } from './validity'
+import { hctBackingScript, readBackingOutputs, type HctBackingProof } from './backing'
+import ltcDeposit from '../wltc/fixtures/deposit.json'
+import { fromHex, parseLtcTx, toHex } from '../wltc/litecoin'
 
 const pub = (key: PrivateKey) => key.toPublicKey().toString()
 const identity = PrivateKey.fromRandom()
@@ -48,7 +51,15 @@ function coinFor(key: PrivateKey): Transaction {
 const openClause = (holder: PrivateKey): HctClause => ({ mode: 'open', holder: pub(holder) })
 const tokenFields: HctDeployFields = { mode: 'open', kind: 'token', iss: [pub(identity)], m: 1, sym: 'HCT', dec: 0 }
 
-function deployTx(args: { supply: bigint; fields?: HctDeployFields; signer?: PrivateKey; holder?: PrivateKey; clause?: HctClause; scope?: number }) {
+function deployTx(args: {
+  supply: bigint
+  fields?: HctDeployFields
+  signer?: PrivateKey
+  holder?: PrivateKey
+  clause?: HctClause
+  scope?: number
+  extra?: LockingScript[]
+}) {
   const signer = args.signer ?? issuerKey
   const coin = coinFor(signer)
   const tx = new Transaction()
@@ -61,6 +72,7 @@ function deployTx(args: { supply: bigint; fields?: HctDeployFields; signer?: Pri
     }),
     satoshis: 1,
   })
+  for (const script of args.extra ?? []) tx.addOutput({ lockingScript: script, satoshis: 0 })
   tx.inputs[0]!.unlockingScript = new UnlockingScript().writeBin(signInput(tx, 0, signer, args.scope ?? HCT_ISSUER_SCOPE))
   return tx
 }
@@ -256,7 +268,7 @@ describe('hct validity', () => {
     const t2 = transfer([{ tx: t1, vout: 0, holder: bob }, { tx: t1, vout: 1, holder: alice }], [{ script: held(deploy.assetId, 100n, bob) }])
     expect(checkHctTx(t1, deploy)).toMatchObject({ ok: true })
     const result = await walkHct(String(t2.id('hex')), deploy, storeOf(dTx, t1, t2), () => false)
-    expect(result).toEqual({ ok: true, validated: [String(t2.id('hex')), String(t1.id('hex'))] })
+    expect(result).toEqual({ ok: true, validated: [String(t2.id('hex')), String(t1.id('hex'))], backed: [] })
   })
 
   it('refuses inflation', async () => {
@@ -345,6 +357,7 @@ describe('hct validity', () => {
     expect(await walkHct(String(t2.id('hex')), deploy, storeOf(t1, t2), (txid) => txid === known)).toEqual({
       ok: true,
       validated: [String(t2.id('hex'))],
+      backed: [],
     })
   })
 })
@@ -506,5 +519,89 @@ describe('hct supply policy', () => {
     expect(checkHctTx(one, collection)).toMatchObject({ ok: true, issued: { units: 1n, members: 1n } })
     expect(checkHctTx(member(2, { units: 1n, members: 2n }), collection)).toMatchObject({ ok: false, reason: 'over-cap' })
     expect(checkHctTx(member(1, { units: 1n, members: 0n }), collection)).toMatchObject({ ok: false, reason: 'mint' })
+  })
+})
+
+describe('hct backed tokens', () => {
+  const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
+  const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
+  const bk = { chain: 'ltc' as const, reserve }
+  const backedFields: HctDeployFields = { ...tokenFields, sym: 'wLTC', dec: 8, auth: true, bk }
+  const proof: HctBackingProof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, headers: ltcDeposit.headers.slice(0, 2) }
+  const backingLock = (assetId: string | null) => LockingScript.fromHex(hctBackingScript(deposit, assetId))
+  const authority = (assetId: string, holder: PrivateKey) => hctAuthorityLock({ assetId, clause: openClause(holder) })
+  const sources = (proofs: Record<string, HctBackingProof>) => ({ proven: () => false, proofOf: async (txid: string) => proofs[txid] ?? null })
+
+  function chain() {
+    const dTx = deployTx({ supply: 1_000n, fields: backedFields, extra: [backingLock(null)] })
+    const deploy = deployOf(dTx)
+    const m1 = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 1_000n, alice) }, { script: held(deploy.assetId, 500n, alice) }, { script: authority(deploy.assetId, alice) }, { script: backingLock(deploy.assetId), satoshis: 0 }],
+    )
+    return { dTx, deploy, m1, d: String(dTx.id('hex')), m: String(m1.id('hex')) }
+  }
+
+  it('names its chain and reserve as a critical field, and refuses one without an authority', () => {
+    const bytes = Uint8Array.from(encodeHctPayload(backedFields))
+    expect(decodeHctPayload(bytes)).toEqual(backedFields)
+    expect(() => encodeHctPayload({ ...backedFields, auth: undefined })).toThrow(/authority/)
+    expect(() => encodeHctPayload({ ...backedFields, bk: { chain: 'doge' as 'ltc', reserve } })).toThrow(/chain/)
+  })
+
+  it('writes the deposit outpoint in a backing output and reads it back', () => {
+    const tx = new Transaction()
+    tx.addOutput({ lockingScript: backingLock('cd'.repeat(20)), satoshis: 0 })
+    tx.addOutput({ lockingScript: backingLock(null), satoshis: 0 })
+    expect(readBackingOutputs(tx)).toEqual([
+      { vout: 0, deposit, assetId: 'cd'.repeat(20) },
+      { vout: 1, deposit, assetId: null },
+    ])
+  })
+
+  it('needs exactly one deposit on the deploy and on every mint, and none on a transfer', () => {
+    expect(readHctDeploy(deployTx({ supply: 1_000n, fields: backedFields }), 0)).toMatchObject({ ok: false, reason: 'backing' })
+    const { dTx, deploy, m1 } = chain()
+    expect(checkHctTx(m1, deploy)).toMatchObject({ ok: true, minted: 500n })
+    const bare = transfer(
+      [{ tx: dTx, vout: 0, holder: alice }],
+      [{ script: held(deploy.assetId, 1_500n, alice) }, { script: authority(deploy.assetId, alice) }],
+    )
+    expect(checkHctTx(bare, deploy)).toMatchObject({ ok: false, reason: 'backing' })
+    const t1 = transfer([{ tx: m1, vout: 1, holder: alice }], [{ script: held(deploy.assetId, 500n, bob) }, { script: backingLock(deploy.assetId), satoshis: 0 }])
+    expect(checkHctTx(t1, deploy)).toMatchObject({ ok: false, reason: 'backing' })
+  })
+
+  it('moves minted units only with the burial proof of every deposit they came through', async () => {
+    const { dTx, deploy, m1, d, m } = chain()
+    const t1 = transfer([{ tx: m1, vout: 1, holder: alice }], [{ script: held(deploy.assetId, 500n, bob) }])
+    const store = storeOf(dTx, m1, t1)
+    const subject = String(t1.id('hex'))
+    expect(await walkHct(subject, deploy, store, () => false, sources({}))).toMatchObject({ ok: false, reason: 'missing', txid: m })
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: proof }))).toMatchObject({ ok: false, reason: 'missing', txid: d })
+    const walked = await walkHct(subject, deploy, store, () => false, sources({ [m]: proof, [d]: proof }))
+    expect(walked).toMatchObject({ ok: true })
+    expect(walked.ok && walked.backed.map((b) => b.txid).sort()).toEqual([m, d].sort())
+    const shallow = { ...proof, headers: proof.headers.slice(0, 1) }
+    expect(await walkHct(subject, deploy, store, () => false, sources({ [m]: shallow, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+    const otherReserve = { ...deploy, fields: { ...deploy.fields, bk: { chain: 'ltc' as const, reserve: `0014${'11'.repeat(20)}` } } }
+    expect(await walkHct(subject, otherReserve, store, () => false, sources({ [m]: proof, [d]: proof }))).toMatchObject({ ok: false, reason: 'invalid' })
+  })
+
+  it('lets the authority mint again before an earlier mint is proven', async () => {
+    const { dTx, deploy, m1, d } = chain()
+    const m2 = transfer(
+      [{ tx: m1, vout: 2, holder: alice }],
+      [{ script: held(deploy.assetId, 10n, alice) }, { script: authority(deploy.assetId, alice) }, { script: backingLock(deploy.assetId), satoshis: 0 }],
+    )
+    expect(await walkHct(String(m2.id('hex')), deploy, storeOf(dTx, m1, m2), () => false, sources({ [d]: proof }))).toMatchObject({ ok: true })
+  })
+
+  it('carries burial proofs in the package and reads them back strictly', () => {
+    const { dTx, m1, m } = chain()
+    const { pkg } = buildHctPackage(m1, [], [dTx], undefined, new Map([[m, proof]]))
+    const read = readHctPackage(JSON.parse(JSON.stringify(pkg)))
+    expect(read?.backing.get(m)).toEqual(proof)
+    expect(readHctPackage({ ...pkg, bk: { [m]: { ...proof, headers: ['zz'] } } })).toBeNull()
   })
 })

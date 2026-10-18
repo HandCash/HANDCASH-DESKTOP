@@ -19,15 +19,17 @@ import {
   toHex,
   type LtcTx,
 } from './litecoin'
-import { confirmationsFor, verifyLtcDeposit, type DepositRefusal, type VerifyOptions } from './verify'
+import { confirmationsFor, fetchLtcBurial, readLtcDeposit, type DepositRefusal } from './verify'
 
 /**
- * wLTC: Litecoin wrapped as an open BRC-255 token, with this wallet as a
- * 1-of-1 federation. The wallet holds the LTC reserve key, mints wLTC to
- * itself for each deposit it has proven by SPV, and burns wLTC for each
- * withdrawal it pays from the reserve. Every wLTC unit is one litoshi held at
- * the reserve address; nobody else can mint it, and only this wallet can pay
- * the LTC out.
+ * wLTC: Litecoin wrapped as an open, backed BRC-255 token, with this wallet as
+ * a 1-of-1 federation. The wallet holds the LTC reserve key and mints wLTC to
+ * itself the moment a deposit is seen paying the reserve, like an unproven
+ * BSV payment: the balance is UTXO state at once. Those units cannot move
+ * until the deposit's burial proof exists; every receiver checks that proof,
+ * so a deposit that is double-spent never yields wLTC anyone accepts. The
+ * wallet burns wLTC for each withdrawal it pays from proven deposits. Every
+ * movable wLTC unit is one litoshi buried at the reserve address.
  */
 
 export const WLTC_RESERVE_PROTOCOL: [2, string] = [2, 'wltc reserve']
@@ -82,7 +84,16 @@ export const WLTC_BURN_HOLDER: string = (() => {
 
 // ── State ──────────────────────────────────────────────────────────────────
 
-type DepositRecord = { litoshi: string; status: 'minting' | 'credited'; bsvTxid?: string; at: number }
+type DepositRecord = {
+  litoshi: string
+  status: 'minting' | 'credited'
+  bsvTxid?: string
+  at: number
+  /** Minted against the backed asset: false until its burial proof is recorded. Absent on deposits credited after burial (before 1.3.601). */
+  proven?: boolean
+  /** When the explorers first stopped knowing the deposit; it is void once that lasts past `VOID_AFTER_MS`. */
+  goneAt?: number
+}
 
 type WithdrawalRecord = {
   address: string
@@ -101,7 +112,10 @@ type WithdrawalRecord = {
 }
 
 type WltcState = {
+  /** The unbacked wLTC of earlier versions; its deposits were credited only after burial. */
   assetId?: string
+  /** The backed wLTC (BRC-255 `bk` naming this reserve): minted at first sight, movable once proven. */
+  backedAssetId?: string
   deposits: Record<string, DepositRecord>
   withdrawals: Record<string, WithdrawalRecord>
 }
@@ -111,7 +125,12 @@ const stateKey = () => accountLocalKey(storageRegistry.wltc.key)
 function readState(): WltcState {
   try {
     const parsed = JSON.parse(durableGetItem(stateKey()) ?? '{}') as Partial<WltcState>
-    return { ...(parsed.assetId ? { assetId: parsed.assetId } : {}), deposits: parsed.deposits ?? {}, withdrawals: parsed.withdrawals ?? {} }
+    return {
+      ...(parsed.assetId ? { assetId: parsed.assetId } : {}),
+      ...(parsed.backedAssetId ? { backedAssetId: parsed.backedAssetId } : {}),
+      deposits: parsed.deposits ?? {},
+      withdrawals: parsed.withdrawals ?? {},
+    }
   } catch {
     return { deposits: {}, withdrawals: {} }
   }
@@ -122,15 +141,18 @@ function writeState(state: WltcState): void {
 }
 
 const outpointKey = (txid: string, vout: number) => `${txid}:${vout}`
+/** A deposit the explorers have not known for this long is void: its wLTC stays locked for good. */
+const VOID_AFTER_MS = 30 * 60_000
+const isProven = (d: DepositRecord) => d.status === 'credited' && d.proven !== false
 
 // ── Runtime ────────────────────────────────────────────────────────────────
 
-type Deps = { chain: LtcChain; verify: VerifyOptions }
-let deps: Deps = { chain: defaultLtcChain(), verify: {} }
+type Deps = { chain: LtcChain }
+let deps: Deps = { chain: defaultLtcChain() }
 
-/** Tests swap the explorer and verifier options. */
+/** Tests swap the explorer. */
 export function setWltcDepsForTest(next: Partial<Deps> | null): void {
-  deps = next ? { ...deps, ...next } : { chain: defaultLtcChain(), verify: {} }
+  deps = next ? { ...deps, ...next } : { chain: defaultLtcChain() }
 }
 
 function requireActive(): ActiveWallet {
@@ -139,10 +161,11 @@ function requireActive(): ActiveWallet {
   return active
 }
 
-function reserveOf(active: ActiveWallet): { key: PrivateKey; address: string; script: Uint8Array } {
+function reserveOf(active: ActiveWallet): { key: PrivateKey; address: string; script: Uint8Array; scriptHex: string } {
   const key = wltcReserveKey(PrivateKey.fromHex(active.rootKeyHex))
   const pub = pubBytes(key)
-  return { key, address: p2wpkhAddress(pub), script: p2wpkhScript(pub) }
+  const script = p2wpkhScript(pub)
+  return { key, address: p2wpkhAddress(pub), script, scriptHex: toHex(script) }
 }
 
 let tail: Promise<unknown> = Promise.resolve()
@@ -154,26 +177,36 @@ function serial<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
-async function hasLabelledAction(active: ActiveWallet, label: string): Promise<boolean> {
+/** The txid of the live action carrying `label`, or null. */
+async function labelledAction(active: ActiveWallet, label: string): Promise<string | null> {
   const page = await active.wallet.listActions({ labels: [label], labelQueryMode: 'any', limit: 10 })
-  return (page.actions ?? []).some((a) => a.status !== 'failed')
+  const hit = (page.actions ?? []).find((a) => a.status !== 'failed')
+  return hit ? String(hit.txid ?? '').toLowerCase() : null
 }
 
-async function wltcAssetId(active: ActiveWallet, state: WltcState): Promise<string | null> {
-  if (state.assetId) return state.assetId
+async function hasLabelledAction(active: ActiveWallet, label: string): Promise<boolean> {
+  return (await labelledAction(active, label)) !== null
+}
+
+type WltcHolding = { assetId: string; balance: bigint; locked: bigint }
+
+/** The backed wLTC (minting) and the unbacked wLTC of earlier versions this wallet issued, with balances. */
+async function wltcHoldings(active: ActiveWallet, state: WltcState): Promise<{ backed: WltcHolding | null; legacy: WltcHolding | null }> {
   const { listHctAssets } = await import('../hct/wallet')
   const self = active.identityKey.toLowerCase()
-  const found = (await listHctAssets()).assets.find(
-    (a) => a.mode === 'open' && a.kind === 'token' && a.sym === WLTC_SYM && a.authority && a.issuers.includes(self),
-  )
-  return found?.assetId ?? null
+  const assets = (await listHctAssets()).assets
+  const holding = (a: (typeof assets)[number] | undefined): WltcHolding | null =>
+    a ? { assetId: a.assetId, balance: BigInt(a.balance), locked: BigInt(a.locked ?? '0') } : null
+  const ours = (a: (typeof assets)[number]) => a.mode === 'open' && a.kind === 'token' && a.sym === WLTC_SYM && a.authority && a.issuers.includes(self)
+  const backed = state.backedAssetId
+    ? assets.find((a) => a.assetId === state.backedAssetId)
+    : assets.find((a) => ours(a) && a.backedBy === 'ltc')
+  const legacy = state.assetId ? assets.find((a) => a.assetId === state.assetId) : assets.find((a) => ours(a) && !a.backedBy)
+  return { backed: holding(backed), legacy: holding(legacy) }
 }
 
-async function wltcBalance(assetId: string | null): Promise<bigint> {
-  if (!assetId) return 0n
-  const { listHctAssets } = await import('../hct/wallet')
-  const asset = (await listHctAssets()).assets.find((a) => a.assetId === assetId)
-  return asset ? BigInt(asset.balance) : 0n
+async function backedAssetId(active: ActiveWallet, state: WltcState): Promise<string | null> {
+  return state.backedAssetId ?? (await wltcHoldings(active, state)).backed?.assetId ?? null
 }
 
 // ── Address ────────────────────────────────────────────────────────────────
@@ -194,7 +227,7 @@ export async function getLtcDepositAddress(): Promise<LtcDepositAddress> {
     network: 'litecoin',
     address: reserveOf(active).address,
     asset: WLTC_SYM,
-    assetId: await wltcAssetId(active, state),
+    assetId: await backedAssetId(active, state),
     decimals: WLTC_DECIMALS,
     minConfirmations: confirmationsFor(1n),
   }
@@ -202,9 +235,16 @@ export async function getLtcDepositAddress(): Promise<LtcDepositAddress> {
 
 // ── Credit ─────────────────────────────────────────────────────────────────
 
+/**
+ * `credited`: wLTC minted. `proven` false means it cannot move yet; it moves
+ * once the deposit has `needed` confirmations. `waiting`: not minted yet,
+ * because the first deposit (whose deploy is the mint authority) is unproven.
+ * `void`: the deposit vanished before it was proven; its wLTC never moves.
+ */
 export type LtcDepositStatus =
-  | { txid: string; vout: number; litoshi: string; status: 'credited'; bsvTxid?: string }
-  | { txid: string; vout: number; litoshi: string; status: 'pending'; confirmations: number; needed: number }
+  | { txid: string; vout: number; litoshi: string; status: 'credited'; proven: boolean; bsvTxid?: string; confirmations?: number; needed?: number }
+  | { txid: string; vout: number; litoshi: string; status: 'waiting'; needed: number }
+  | { txid: string; vout: number; litoshi: string; status: 'void'; bsvTxid?: string }
   | { txid: string; vout: number; status: 'refused'; reason: DepositRefusal; detail: string }
   | { txid: string; vout: number; litoshi: string; status: 'failed'; error: string }
 
@@ -223,75 +263,91 @@ export type LtcDepositsResult = {
   assetId: string | null
   /** wLTC this wallet holds, in litoshi. */
   balance: string
+  /** Of `balance`, wLTC waiting for its deposit's burial proof. */
+  locked: string
   deposits: LtcDepositStatus[]
   withdrawals: LtcWithdrawalStatus[]
 }
 
-/** Mint one proven deposit; the label names the outpoint so a restored wallet finds it. */
-async function mintDeposit(active: ActiveWallet, txid: string, vout: number, litoshi: bigint): Promise<string | undefined> {
+/**
+ * Mint one deposit against the backed wLTC, naming it in a backing output so
+ * every receiver can demand its burial proof. The label names the outpoint
+ * so a restored wallet finds the mint instead of minting again.
+ */
+async function mintDeposit(active: ActiveWallet, txid: string, vout: number, litoshi: bigint): Promise<string> {
   const key = outpointKey(txid, vout)
   const label = `${DEPOSIT_LABEL} ${txid}.${vout}`
   let state = readState()
   const prior = state.deposits[key]
-  if (prior?.status === 'credited') return prior.bsvTxid
-  if (prior?.status === 'minting' && (await hasLabelledAction(active, label))) {
-    state.deposits[key] = { ...prior, status: 'credited' }
+  if (prior?.status === 'credited' && prior.bsvTxid) return prior.bsvTxid
+  const recorded = prior ? await labelledAction(active, label) : null
+  if (recorded) {
+    state.deposits[key] = { ...prior!, status: 'credited', bsvTxid: recorded, proven: prior!.proven ?? false }
     writeState(state)
-    return undefined
+    return recorded
   }
-  state.deposits[key] = { litoshi: litoshi.toString(), status: 'minting', at: Date.now() }
+  state.deposits[key] = { litoshi: litoshi.toString(), status: 'minting', at: Date.now(), proven: false }
   writeState(state)
   const hct = await import('../hct/wallet')
-  const assetId = await wltcAssetId(active, state)
+  const assetId = await backedAssetId(active, state)
   const labels = [label]
+  const deposit = { txid, vout }
   let bsvTxid: string
   if (assetId) {
-    bsvTxid = (await hct.mintHctAsset({ assetId, amount: litoshi.toString() }, { labels })).txid
+    bsvTxid = (await hct.mintHctAsset({ assetId, amount: litoshi.toString() }, { labels, backing: { deposit } })).txid
   } else {
     const issued = await hct.issueHctAsset(
       { kind: 'token', sym: WLTC_SYM, name: 'Wrapped Litecoin', dec: WLTC_DECIMALS, supply: litoshi.toString(), auth: true },
-      { labels },
+      { labels, backing: { deposit, bk: { chain: 'ltc', reserve: reserveOf(active).scriptHex } } },
     )
     bsvTxid = issued.txid
     state = readState()
-    state.assetId = issued.assetId
+    state.backedAssetId = issued.assetId
     writeState(state)
   }
   state = readState()
-  if (!state.assetId && assetId) state.assetId = assetId
-  state.deposits[key] = { litoshi: litoshi.toString(), status: 'credited', bsvTxid, at: Date.now() }
+  if (!state.backedAssetId && assetId) state.backedAssetId = assetId
+  state.deposits[key] = { litoshi: litoshi.toString(), status: 'credited', bsvTxid, at: Date.now(), proven: false }
   writeState(state)
   return bsvTxid
 }
 
-async function creditPass(active: ActiveWallet): Promise<LtcDepositStatus[]> {
-  const { address, script } = reserveOf(active)
+/** New deposits paying the reserve: minted at first sight, or `waiting` while the first deposit is unproven. */
+async function creditPass(active: ActiveWallet, utxos: Awaited<ReturnType<LtcChain['addressUtxos']>>): Promise<LtcDepositStatus[]> {
+  const { script } = reserveOf(active)
   const state = readState()
   const ownChange = new Set(
     Object.entries(state.withdrawals).flatMap(([txid, w]) => (w.change ? [outpointKey(txid, w.change.vout)] : [])),
   )
   const statuses: LtcDepositStatus[] = []
-  for (const utxo of await deps.chain.addressUtxos(address)) {
+  for (const utxo of utxos) {
     const key = outpointKey(utxo.txid, utxo.vout)
     if (ownChange.has(key) || state.deposits[key]?.status === 'credited') continue
     const chart = createActor(wltcMachine).start()
     chart.send({ type: 'CREDIT' })
     try {
-      const verdict = await verifyLtcDeposit(deps.chain, { txid: utxo.txid, vout: utxo.vout }, script, deps.verify)
-      if (verdict.kind === 'refuse') {
-        chart.send({ type: 'REFUSED', error: verdict.reason })
-        statuses.push({ txid: utxo.txid, vout: utxo.vout, status: 'refused', reason: verdict.reason, detail: verdict.detail })
+      const sighting = await readLtcDeposit(deps.chain, { txid: utxo.txid, vout: utxo.vout }, script)
+      if (sighting.kind === 'refuse') {
+        chart.send({ type: 'REFUSED', error: sighting.reason })
+        statuses.push({ txid: utxo.txid, vout: utxo.vout, status: 'refused', reason: sighting.reason, detail: sighting.detail })
         continue
       }
-      if (verdict.kind === 'pending') {
-        chart.send({ type: 'PENDING' })
-        statuses.push({ txid: utxo.txid, vout: utxo.vout, litoshi: verdict.litoshi.toString(), status: 'pending', confirmations: verdict.confirmations, needed: verdict.needed })
-        continue
-      }
-      chart.send({ type: 'VERIFIED' })
+      chart.send({ type: 'SEEN' })
       const startedAt = Date.now()
-      const bsvTxid = await mintDeposit(active, utxo.txid, utxo.vout, verdict.litoshi)
-      chart.send({ type: 'MINTED', bsvTxid: bsvTxid ?? '' })
+      let bsvTxid: string
+      try {
+        bsvTxid = await mintDeposit(active, utxo.txid, utxo.vout, sighting.litoshi)
+      } catch (err) {
+        const { HctRefusal } = await import('../hct/wallet')
+        if (!(err instanceof HctRefusal && err.reason === 'awaiting-backing')) throw err
+        const dropped = readState()
+        if (dropped.deposits[key]?.status === 'minting') delete dropped.deposits[key]
+        writeState(dropped)
+        chart.send({ type: 'AWAITING' })
+        statuses.push({ txid: utxo.txid, vout: utxo.vout, litoshi: sighting.litoshi.toString(), status: 'waiting', needed: confirmationsFor(sighting.litoshi) })
+        continue
+      }
+      chart.send({ type: 'MINTED', bsvTxid })
       const ms = Date.now() - startedAt
       if (ms > 250) console.info(`[wltc] mint done ${ms}ms`)
       recordAppActivity({
@@ -299,8 +355,8 @@ async function creditPass(active: ActiveWallet): Promise<LtcDepositStatus[]> {
         kind: 'event',
         sats: 0,
         method: 'wltc-credit',
-        note: `Credited ${formatLtc(verdict.litoshi)} wLTC for LTC deposit ${utxo.txid.slice(0, 12)}…`,
-        ...(bsvTxid ? { txid: bsvTxid } : {}),
+        note: `Credited ${formatLtc(sighting.litoshi)} wLTC for LTC deposit ${utxo.txid.slice(0, 12)}… (moves after ${confirmationsFor(sighting.litoshi)} confirmations)`,
+        txid: bsvTxid,
       })
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
@@ -314,14 +370,89 @@ async function creditPass(active: ActiveWallet): Promise<LtcDepositStatus[]> {
   return statuses
 }
 
-function report(active: ActiveWallet, assetId: string | null, balance: bigint, live: LtcDepositStatus[]): LtcDepositsResult {
+type ProofProgress = Map<string, { confirmations: number; needed: number }>
+
+/**
+ * Unproven deposits: once deep enough, fetch and record the burial proof,
+ * which frees their wLTC. One status call per deposit per pass until mined.
+ */
+async function provePass(active: ActiveWallet): Promise<ProofProgress> {
+  const progress: ProofProgress = new Map()
   const state = readState()
+  const assetId = await backedAssetId(active, state)
+  for (const [key, d] of Object.entries(state.deposits)) {
+    if (d.status !== 'credited' || d.proven !== false || !d.bsvTxid || !assetId) continue
+    const [txid, vout] = key.split(':') as [string, string]
+    const chart = createActor(wltcMachine).start()
+    chart.send({ type: 'PROVE' })
+    try {
+      const startedAt = Date.now()
+      const fetched = await fetchLtcBurial(deps.chain, txid, BigInt(d.litoshi))
+      const next = readState()
+      const record = next.deposits[key]
+      if (!record) continue
+      if (fetched.kind === 'gone') {
+        record.goneAt ??= Date.now()
+        writeState(next)
+        chart.send({ type: Date.now() - record.goneAt >= VOID_AFTER_MS ? 'VOIDED' : 'PENDING' })
+        continue
+      }
+      if (record.goneAt) delete record.goneAt
+      if (fetched.kind === 'pending') {
+        writeState(next)
+        progress.set(key, { confirmations: fetched.confirmations, needed: fetched.needed })
+        chart.send({ type: 'PENDING' })
+        continue
+      }
+      const { proveHctBacking } = await import('../hct/wallet')
+      await proveHctBacking(assetId, d.bsvTxid, fetched.proof)
+      record.proven = true
+      writeState(next)
+      chart.send({ type: 'PROVEN' })
+      const ms = Date.now() - startedAt
+      if (ms > 250) console.info(`[wltc] prove done ${ms}ms`)
+      recordAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: 'event',
+        sats: 0,
+        method: 'wltc-proven',
+        note: `${formatLtc(BigInt(d.litoshi))} wLTC can move: LTC deposit ${txid.slice(0, 12)}…:${vout} is buried`,
+        txid: d.bsvTxid,
+      })
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      chart.send({ type: 'FAIL', error })
+      console.warn(`[wltc] proof ${key} deferred — ${error}`)
+    } finally {
+      chart.stop()
+    }
+  }
+  return progress
+}
+
+function report(
+  active: ActiveWallet,
+  assetId: string | null,
+  holdings: { backed: WltcHolding | null; legacy: WltcHolding | null },
+  live: LtcDepositStatus[],
+  progress: ProofProgress,
+): LtcDepositsResult {
+  const state = readState()
+  const now = Date.now()
   const credited: LtcDepositStatus[] = Object.entries(state.deposits)
     .filter(([, d]) => d.status === 'credited')
     .sort(([, a], [, b]) => b.at - a.at)
-    .map(([key, d]) => {
+    .map(([key, d]): LtcDepositStatus => {
       const [txid, vout] = key.split(':')
-      return { txid: txid!, vout: Number(vout), litoshi: d.litoshi, status: 'credited', ...(d.bsvTxid ? { bsvTxid: d.bsvTxid } : {}) }
+      const base = { txid: txid!, vout: Number(vout), litoshi: d.litoshi, ...(d.bsvTxid ? { bsvTxid: d.bsvTxid } : {}) }
+      if (d.proven === false && d.goneAt && now - d.goneAt >= VOID_AFTER_MS) return { ...base, status: 'void' }
+      const step = progress.get(key)
+      return {
+        ...base,
+        status: 'credited',
+        proven: d.proven !== false,
+        ...(d.proven === false ? { confirmations: step?.confirmations ?? 0, needed: step?.needed ?? confirmationsFor(BigInt(d.litoshi)) } : {}),
+      }
     })
   const withdrawals: LtcWithdrawalStatus[] = Object.entries(state.withdrawals)
     .filter(([, w]) => w.status !== 'signed')
@@ -335,22 +466,33 @@ function report(active: ActiveWallet, assetId: string | null, balance: bigint, l
       ...(w.bsvTxid ? { bsvTxid: w.bsvTxid } : {}),
       ...(w.lastError ? { lastError: w.lastError } : {}),
     }))
-  return { address: reserveOf(active).address, assetId, balance: balance.toString(), deposits: [...live, ...credited], withdrawals }
+  const held = [holdings.backed, holdings.legacy].filter((h): h is WltcHolding => !!h)
+  return {
+    address: reserveOf(active).address,
+    assetId,
+    balance: held.reduce((sum, h) => sum + h.balance, 0n).toString(),
+    locked: held.reduce((sum, h) => sum + h.locked, 0n).toString(),
+    deposits: [...live, ...credited],
+    withdrawals,
+  }
 }
 
 /**
- * Every deposit to the reserve address and what became of it. Proven deposits
- * are minted as wLTC to this wallet during the call: minting against an LTC
- * output the wallet itself proved is receiving, and an app cannot cause one
- * without a real deposit to this wallet's own reserve.
+ * Every deposit to the reserve address and what became of it. A deposit seen
+ * paying the reserve is minted as wLTC to this wallet during the call, and
+ * its burial proof is recorded once it is deep enough: minting against an LTC
+ * output paying this wallet's own reserve is receiving, and an app cannot
+ * cause one without a real deposit.
  */
 export function listLtcDeposits(): Promise<LtcDepositsResult> {
   return serial(async () => {
     const active = requireActive()
     await settleWithdrawals(active)
-    const live = await creditPass(active)
-    const assetId = await wltcAssetId(active, readState())
-    return report(active, assetId, await wltcBalance(assetId), live)
+    const utxos = await deps.chain.addressUtxos(reserveOf(active).address)
+    const live = await creditPass(active, utxos)
+    const progress = await provePass(active)
+    const state = readState()
+    return report(active, await backedAssetId(active, state), await wltcHoldings(active, state), live, progress)
   })
 }
 
@@ -367,7 +509,7 @@ export type WithdrawLtcResult = {
 
 const outputVbytes = (script: Uint8Array) => 9 + script.length
 
-/** Spendable reserve outputs with the amounts this wallet recorded (never the explorer's). */
+/** Proven reserve outputs with the amounts this wallet recorded (never the explorer's). */
 function backedOutputs(state: WltcState, unspent: ReadonlySet<string>): Array<{ txid: string; vout: number; litoshi: bigint }> {
   const reserved = new Set(
     Object.values(state.withdrawals)
@@ -376,7 +518,7 @@ function backedOutputs(state: WltcState, unspent: ReadonlySet<string>): Array<{ 
   )
   const out: Array<{ txid: string; vout: number; litoshi: bigint }> = []
   for (const [key, d] of Object.entries(state.deposits)) {
-    if (d.status !== 'credited' || reserved.has(key) || !unspent.has(key)) continue
+    if (!isProven(d) || reserved.has(key) || !unspent.has(key)) continue
     const [txid, vout] = key.split(':')
     out.push({ txid: txid!, vout: Number(vout), litoshi: BigInt(d.litoshi) })
   }
@@ -531,16 +673,19 @@ export function withdrawLtc(args: { address?: unknown; litoshi?: unknown }): Pro
       const litoshi = BigInt(raw)
       await settleWithdrawals(active)
       const state = readState()
-      const assetId = await wltcAssetId(active, state)
-      if (!assetId) refuse('no-asset', 'This wallet has not minted any wLTC yet.')
+      const holdings = await wltcHoldings(active, state)
+      if (!holdings.backed && !holdings.legacy) refuse('no-asset', 'This wallet has not minted any wLTC yet.')
       const reserve = reserveOf(active)
       const unspent = new Set((await deps.chain.addressUtxos(reserve.address)).map((u) => outpointKey(u.txid, u.vout)))
       const plan = planLtcWithdrawal(backedOutputs(state, unspent), destination, reserve.script, litoshi, await deps.chain.feeRate())
       if (!plan) refuse('reserve-short', `The reserve cannot pay ${formatLtc(litoshi)} LTC plus its fee from credited deposits.`)
-      const balance = await wltcBalance(assetId)
-      if (balance < plan.burn) {
-        refuse('insufficient', `Withdrawing ${formatLtc(litoshi)} LTC burns ${formatLtc(plan.burn)} wLTC with the fee; this wallet holds ${formatLtc(balance)}.`)
+      const movable = [holdings.legacy, holdings.backed].filter((h): h is WltcHolding => !!h).map((h) => ({ ...h, movable: h.balance - h.locked }))
+      const source = movable.find((h) => h.movable >= plan.burn)
+      if (!source) {
+        const best = movable.reduce((max, h) => (h.movable > max ? h.movable : max), 0n)
+        refuse('insufficient', `Withdrawing ${formatLtc(litoshi)} LTC burns ${formatLtc(plan.burn)} wLTC with the fee; this wallet can move ${formatLtc(best)} in one wLTC asset.`)
       }
+      const assetId = source.assetId
       const signed = signP2wpkhInputs(plan.tx, reserve.key, plan.amounts)
       const ltcTxid = payoutTxid(signed)
       const record: WithdrawalRecord = {
@@ -565,7 +710,7 @@ export function withdrawLtc(args: { address?: unknown; litoshi?: unknown }): Pro
       try {
         bsvTxid = (
           await burnHctUnits(
-            { assetId: assetId!, amount: plan.burn, holder: WLTC_BURN_HOLDER, memo: `wltc-redeem ${ltcTxid}` },
+            { assetId, amount: plan.burn, holder: WLTC_BURN_HOLDER, memo: `wltc-redeem ${ltcTxid}` },
             { labels: [`${REDEEM_LABEL} ${ltcTxid}`] },
           )
         ).txid

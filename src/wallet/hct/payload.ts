@@ -39,11 +39,18 @@ export type HctDeployFields = {
   /** An item's collection asset id. */
   col?: string
   hdl?: string
+  /** A backed token: units stand for deposits on another chain, and a mint's units move only with the deposit's burial proof. */
+  bk?: HctBacking
 }
+
+/** Chains a backed token may name. A reader that knows none of them cannot check a mint, so `bk` is always critical. */
+export const HCT_BACKING_CHAINS = ['ltc'] as const
+export type HctBacking = { chain: (typeof HCT_BACKING_CHAINS)[number]; /** The reserve's output script, hex. */ reserve: string }
+const MAX_RESERVE_SCRIPT = 64
 
 const KNOWN = new Set([
   'v', 'mode', 'kind', 'iss', 'm', 'bcn', 'rel', 'relk', 'k', 'sil', 'auth', 'max', 'size',
-  'sym', 'name', 'dec', 'icon', 'ctype', 'c', 'col', 'hdl', 'crit',
+  'sym', 'name', 'dec', 'icon', 'ctype', 'c', 'col', 'hdl', 'bk', 'crit',
 ])
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 const URL_RE = /[a-z][a-z0-9+.-]*:\/\//i
@@ -151,6 +158,12 @@ export function assertHctFields(fields: HctDeployFields): void {
   }
   if (fields.c != null && !fields.ctype) throw new Error('content needs its media type (ctype)')
   if (fields.col != null && !/^[0-9a-f]{40}$/.test(fields.col)) throw new Error('col is a 20-byte asset id')
+  if (fields.bk != null) {
+    if (fields.kind !== 'token' || !fields.auth) throw new Error('A backed asset is a token with a mint authority')
+    if (!(HCT_BACKING_CHAINS as readonly string[]).includes(fields.bk.chain)) throw new Error(`bk names a chain this reader knows (${HCT_BACKING_CHAINS.join(', ')})`)
+    const n = fields.bk.reserve.length / 2
+    if (!/^(?:[0-9a-f]{2})+$/.test(fields.bk.reserve) || n > MAX_RESERVE_SCRIPT) throw new Error(`bk names a reserve script of 1 to ${MAX_RESERVE_SCRIPT} bytes`)
+  }
 }
 
 export function encodeHctPayload(fields: HctDeployFields): number[] {
@@ -179,6 +192,10 @@ export function encodeHctPayload(fields: HctDeployFields): number[] {
   if (fields.c) map.set('c', fields.c)
   if (fields.col) map.set('col', bytes(fields.col))
   if (fields.hdl) map.set('hdl', fields.hdl)
+  if (fields.bk) {
+    map.set('bk', [fields.bk.chain, bytes(fields.bk.reserve)])
+    map.set('crit', ['bk'])
+  }
   return encodeDagCbor(map)
 }
 
@@ -242,6 +259,14 @@ export function decodeHctPayload(bytes: Uint8Array): HctDeployFields | null {
   if (c != null && !(c instanceof Uint8Array)) return null
   const colRaw = map.get('col')
   if (colRaw != null && !(colRaw instanceof Uint8Array && colRaw.length === 20)) return null
+  const bkRaw = map.get('bk')
+  let bk: HctBacking | undefined
+  if (bkRaw != null) {
+    if (!Array.isArray(bkRaw) || bkRaw.length !== 2 || typeof bkRaw[0] !== 'string' || !(bkRaw[1] instanceof Uint8Array)) return null
+    if (!(HCT_BACKING_CHAINS as readonly string[]).includes(bkRaw[0])) return null
+    if (!Array.isArray(crit) || !crit.includes('bk')) return null
+    bk = { chain: bkRaw[0] as HctBacking['chain'], reserve: Utils.toHex([...bkRaw[1]]) }
+  }
   const fields: HctDeployFields = {
     mode,
     kind: kindRaw === 'item' ? 'item' : 'token',
@@ -263,6 +288,7 @@ export function decodeHctPayload(bytes: Uint8Array): HctDeployFields | null {
     ...(c instanceof Uint8Array ? { c } : {}),
     ...(colRaw instanceof Uint8Array ? { col: Utils.toHex([...colRaw]) } : {}),
     ...(text('hdl') != null ? { hdl: text('hdl') } : {}),
+    ...(bk ? { bk } : {}),
   }
   try {
     assertHctFields(fields)

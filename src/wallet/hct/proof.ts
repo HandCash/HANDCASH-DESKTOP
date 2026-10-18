@@ -1,13 +1,16 @@
 import { Transaction } from '@bsv/sdk'
 import { sourceTxidOf } from '../countersign/script'
+import { readBackingProof, type HctBackingProof } from './backing'
 import { checkHctTx, type HctDeploy } from './validity'
 
 /**
  * BRC-255 §6 proof packages: the subject, the ancestors a recipient has not
- * validated, and the deploys it lacks, every one in Extended Format.
+ * validated, and the deploys it lacks, every one in Extended Format, plus
+ * the burial proofs of backed mints whose units the history moves (`bk`,
+ * keyed by the backed transaction's txid).
  */
 
-export type HctPackage = { v: 1; subject: string; txs: string[]; deploys: string[] }
+export type HctPackage = { v: 1; subject: string; txs: string[]; deploys: string[]; bk?: Record<string, HctBackingProof> }
 
 /** Plaintext a package may take before BRC-78 sealing, under the box host's 1 MiB body cap. */
 export const HCT_PACKAGE_BUDGET = 600_000
@@ -66,12 +69,23 @@ export function buildHctPackage(
   ancestors: readonly Transaction[],
   deploys: readonly Transaction[],
   budget = HCT_PACKAGE_BUDGET,
+  backing: ReadonlyMap<string, HctBackingProof> = new Map(),
 ): { pkg: HctPackage; complete: boolean } {
   const subjectEf = subject.toHexEF()
   const pkg: HctPackage = { v: 1, subject: idOf(subject), txs: [subjectEf], deploys: [] }
   let size = 64 + subjectEf.length
   let complete = true
   const seen = new Set<string>([pkg.subject])
+  for (const [txid, proof] of backing) {
+    const cost = 80 + proof.tx.length + proof.headers.length * 163 + proof.path.length * 67
+    if (size + cost > budget) {
+      complete = false
+      continue
+    }
+    pkg.bk ??= {}
+    pkg.bk[txid] = proof
+    size += cost
+  }
   for (const tx of deploys) {
     const id = idOf(tx)
     if (seen.has(id)) continue
@@ -99,7 +113,13 @@ export function buildHctPackage(
   return { pkg, complete }
 }
 
-export type ReadPackage = { subject: Transaction; txs: Map<string, Transaction>; deploys: Map<string, Transaction> }
+export type ReadPackage = {
+  subject: Transaction
+  txs: Map<string, Transaction>
+  deploys: Map<string, Transaction>
+  /** Unchecked burial proofs; a walk checks each one it needs. */
+  backing: Map<string, HctBackingProof>
+}
 
 function parseEf(hex: unknown): Transaction | null {
   if (typeof hex !== 'string' || !HEX.test(hex)) return null
@@ -132,5 +152,16 @@ export function readHctPackage(value: unknown): ReadPackage | null {
     if (!tx) return null
     deploys.set(idOf(tx), tx)
   }
-  return { subject, txs, deploys }
+  const backing = new Map<string, HctBackingProof>()
+  if (v.bk != null) {
+    if (typeof v.bk !== 'object' || Array.isArray(v.bk)) return null
+    const entries = Object.entries(v.bk as Record<string, unknown>)
+    if (entries.length > MAX_PACKAGE_TXS) return null
+    for (const [txid, raw] of entries) {
+      const proof = readBackingProof(raw)
+      if (!TXID.test(txid) || !proof) return null
+      backing.set(txid, proof)
+    }
+  }
+  return { subject, txs, deploys, backing }
 }

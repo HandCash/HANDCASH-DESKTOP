@@ -1,25 +1,30 @@
 /**
  * BRC-255 chain facts on disk: transactions in Extended Format, the (txid,
- * asset) pairs this device validated, and where each deploy is. A txid
+ * asset) pairs this device validated, where each deploy is, and the burial
+ * proofs this device checked for backed mints (forwarded to later receivers). A txid
  * commits to its bytes and validity is a function of those bytes, so every
  * entry holds for every account and never goes stale. The account-scoped
  * state (outbox, peer frontier, issued records) lives in `state.ts`.
  */
 import { Transaction, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../../storage/registry'
+import { readBackingProof, type HctBackingProof } from './backing'
 
 export const HCT_CHAIN_DB = storageRegistry.hctChain.key
-const DB_VERSION = 1
+const DB_VERSION = 2
 const TXS = 'txs'
 const VALID = 'valid'
 const DEPLOYS = 'deploys'
+const BACKING = 'backing'
 
 type TxRecord = { txid: string; ef: string }
 type ValidRecord = { key: string }
+type BackingRecord = { txid: string; proof: HctBackingProof }
 export type DeployRecord = { assetId: string; txid: string; vout: number }
 
 const memoryTxs = new Map<string, Transaction>()
 const memoryValid = new Set<string>()
+const memoryBacking = new Map<string, HctBackingProof>()
 let opening: Promise<IDBDatabase> | null = null
 
 function open(): Promise<IDBDatabase> {
@@ -35,6 +40,7 @@ function open(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(TXS)) db.createObjectStore(TXS, { keyPath: 'txid' })
       if (!db.objectStoreNames.contains(VALID)) db.createObjectStore(VALID, { keyPath: 'key' })
       if (!db.objectStoreNames.contains(DEPLOYS)) db.createObjectStore(DEPLOYS, { keyPath: 'assetId' })
+      if (!db.objectStoreNames.contains(BACKING)) db.createObjectStore(BACKING, { keyPath: 'txid' })
     }
     req.onsuccess = () => {
       const db = req.result
@@ -134,8 +140,30 @@ export async function getHctDeployRecord(assetId: string): Promise<DeployRecord 
   return (await request<DeployRecord>(DEPLOYS, 'readonly', (s) => s.get(assetId.toLowerCase())).catch(() => undefined)) ?? null
 }
 
+/** Keep a burial proof the caller has checked against the backed transaction `txid`. */
+export async function putHctBacking(txid: string, proof: HctBackingProof): Promise<void> {
+  const key = txid.toLowerCase()
+  memoryBacking.set(key, proof)
+  await request(BACKING, 'readwrite', (s) => s.put({ txid: key, proof } satisfies BackingRecord)).catch(() => {})
+}
+
+export function hasHctBackingSync(txid: string): boolean {
+  return memoryBacking.has(txid.toLowerCase())
+}
+
+export async function getHctBacking(txid: string): Promise<HctBackingProof | null> {
+  const key = txid.toLowerCase()
+  const cached = memoryBacking.get(key)
+  if (cached) return cached
+  const record = await request<BackingRecord>(BACKING, 'readonly', (s) => s.get(key)).catch(() => undefined)
+  const proof = record ? readBackingProof(record.proof) : null
+  if (proof) memoryBacking.set(key, proof)
+  return proof
+}
+
 export function resetHctStoreForTests(): void {
   opening = null
   memoryTxs.clear()
   memoryValid.clear()
+  memoryBacking.clear()
 }

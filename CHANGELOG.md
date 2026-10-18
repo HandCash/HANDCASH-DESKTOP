@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.601] - 2026-10-18
+
+### Changed
+
+- wLTC no longer waits for Litecoin confirmations to credit you. A deposit mints as soon as it appears; the minted units can move only once the deposit's burial proof (merkle path plus scrypt headers, 2 or more confirmations by value) is attached. Peers check that proof themselves (BRC-255 §15 backed tokens, deploy field `bk`), so a double-spent deposit leaves units that can never move. No chain rule or burn is involved.
+- The token shelf shows how much of a balance is still waiting for its deposit to confirm, and sends only what can move. Withdrawals pay only from proven deposits.
+- wLTC from before this release stays as it was and remains withdrawable.
+
 ## [1.3.600] - 2026-10-18
 
 ### Fixed

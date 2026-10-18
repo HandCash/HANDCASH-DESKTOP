@@ -1,5 +1,6 @@
 import { Transaction } from '@bsv/sdk'
 import { inputScriptValid, sourceOutputOf, sourceTxidOf } from '../countersign/script'
+import { backingCount, backingDepositOf, checkBackingProof, type BackingOutpoint, type HctBackingProof } from './backing'
 import { hctIssuerKeyOf } from './keys'
 import { decodeHctPayload, hctSupplyPolicy, type HctDeployFields } from './payload'
 import {
@@ -43,6 +44,7 @@ export type DeployRefusal =
   | 'over-cap'
   | 'unsigned'
   | 'beacon'
+  | 'backing'
 
 export type DeployRead = { ok: true; deploy: HctDeploy } | { ok: false; reason: DeployRefusal; detail: string }
 
@@ -124,6 +126,9 @@ export function readHctDeploy(tx: Transaction, vout: number): DeployRead {
       return { ok: false, reason: 'beacon', detail: 'bcn names an output of this deploy that is not its beacon' }
     }
   }
+  if (fields.bk && backingCount(tx, txid, hctAssetId(txid, vout), txid) !== 1) {
+    return { ok: false, reason: 'backing', detail: 'a backed deploy names exactly one deposit' }
+  }
   const member = fields.col ? tx.inputs.some((_, vin) => spendsCollectionAuthority(tx, vin, fields.col!)) : false
   return {
     ok: true,
@@ -141,9 +146,17 @@ export function readHctDeploys(tx: Transaction): HctDeploy[] {
   return out
 }
 
-export type TxRefusal = 'input' | 'output' | 'conservation' | 'mint' | 'over-cap' | 'item' | 'conjured' | 'unrelated'
+export type TxRefusal = 'input' | 'output' | 'conservation' | 'mint' | 'over-cap' | 'item' | 'conjured' | 'unrelated' | 'backing'
 export type TxCheck =
-  | { ok: true; inputs: number[]; accepted: boolean; outputs: Array<{ vout: number; amount: bigint; authority: boolean }>; issued?: HctIssued }
+  | {
+      ok: true
+      inputs: number[]
+      accepted: boolean
+      outputs: Array<{ vout: number; amount: bigint; authority: boolean }>
+      issued?: HctIssued
+      /** Units this transaction issues: written minus spent when it spends an authority, else 0. */
+      minted: bigint
+    }
   | { ok: false; reason: TxRefusal; detail: string }
 
 type AssetInput = { vin: number; amount: bigint; authority: boolean; issued?: HctIssued }
@@ -257,13 +270,20 @@ export function checkHctTx(tx: Transaction, deploy: HctDeploy): TxCheck {
   if (deploy.fields.kind === 'item' && outs !== 1n) {
     return { ok: false, reason: 'item', detail: `item ${deploy.assetId} is written ${outs} times` }
   }
+  const minted = mints ? outs - ins : 0n
+  if (deploy.fields.bk) {
+    const txid = String(tx.id('hex')).toLowerCase()
+    const named = backingCount(tx, txid, deploy.assetId, deploy.txid)
+    if (minted > 0n && named !== 1) return { ok: false, reason: 'backing', detail: `a mint of ${deploy.assetId} names exactly one deposit` }
+    if (minted === 0n && named !== 0) return { ok: false, reason: 'backing', detail: `only a mint of ${deploy.assetId} names a deposit` }
+  }
   const accepted =
     deploy.rules.mode === 'countersign' && inputs.every((i) => hctUnlockBranch(tx.inputs[i.vin]!.unlockingScript) === 'issuer')
-  return { ok: true, inputs: inputs.map((i) => i.vin), accepted, outputs, ...(issued ? { issued } : {}) }
+  return { ok: true, inputs: inputs.map((i) => i.vin), accepted, outputs, ...(issued ? { issued } : {}), minted }
 }
 
 export type WalkResult =
-  | { ok: true; validated: string[] }
+  | { ok: true; validated: string[]; backed: Array<{ txid: string; proof: HctBackingProof }> }
   | { ok: false; reason: 'missing'; txid: string; detail: string }
   | { ok: false; reason: 'invalid'; txid: string; detail: string }
 
@@ -271,6 +291,37 @@ export type WalkResult =
 export const MAX_HCT_WALK = 20_000
 
 type Claim = { child: string; vout: number; scriptHex: string; satoshis: number }
+
+type BackingNeed = { kind: 'none' } | { kind: 'needed'; deposit: BackingOutpoint; minted: bigint } | { kind: 'invalid'; detail: string }
+
+/**
+ * Does spending `claims` of `tx` need its deposit's burial proof? Only when
+ * `tx` is a backed deploy or mint and a claim takes units it wrote; its
+ * authority alone moves freely, so minting never waits on an earlier proof.
+ */
+export function hctBackingNeed(tx: Transaction, txid: string, deploy: HctDeploy, claimedVouts: readonly number[]): BackingNeed {
+  if (!deploy.fields.bk) return { kind: 'none' }
+  const takesUnits = claimedVouts.some((vout) => {
+    const script = tx.outputs[vout]?.lockingScript
+    const read = script ? readHct(script) : null
+    return read?.form === 'deploy' || (read?.form === 'held' && read.amount > 0n)
+  })
+  if (!takesUnits) return { kind: 'none' }
+  const deposit = backingDepositOf(tx, txid, deploy.assetId, deploy.txid)
+  if (!deposit) return { kind: 'none' }
+  if (txid === deploy.txid) return { kind: 'needed', deposit, minted: deploy.supply }
+  const check = checkHctTx(tx, deploy)
+  if (!check.ok) return { kind: 'invalid', detail: `${check.reason}: ${check.detail}` }
+  return { kind: 'needed', deposit, minted: check.minted }
+}
+
+/** Where a walk finds burial proofs: ones this device already checked, and unchecked ones a package or history supplied. */
+export type BackingSource = {
+  proven: (txid: string) => boolean
+  proofOf: (txid: string) => Promise<HctBackingProof | null>
+}
+
+const NO_BACKING: BackingSource = { proven: () => false, proofOf: async () => null }
 
 /**
  * §7: validate the outputs of `subject` for one asset. Each transaction is
@@ -290,12 +341,15 @@ export async function walkHct(
   deploy: HctDeploy,
   txOf: (txid: string) => Promise<Transaction | null>,
   isValidated: (txid: string) => boolean,
+  backing: BackingSource = NO_BACKING,
 ): Promise<WalkResult> {
   const subject = subjectTxid.toLowerCase()
   const queue: Array<{ txid: string; claims: Claim[] }> = [{ txid: subject, claims: [] }]
   const loaded = new Map<string, Transaction>()
   const checked = new Set<string>()
   const validated: string[] = []
+  const backed: Array<{ txid: string; proof: HctBackingProof }> = []
+  const buried = new Set<string>()
   const load = async (txid: string): Promise<Transaction | null> => {
     const known = loaded.get(txid)
     if (known) return known
@@ -316,6 +370,18 @@ export async function walkHct(
       const real = tx.outputs[claim.vout]
       if (!real?.lockingScript || real.lockingScript.toHex() !== claim.scriptHex || real.satoshis !== claim.satoshis) {
         return { ok: false, reason: 'invalid', txid: claim.child, detail: `it claims output ${claim.vout} of ${txid} as something that transaction did not write` }
+      }
+    }
+    if (deploy.fields.bk && claims.length > 0 && !buried.has(txid) && !backing.proven(txid)) {
+      const need = hctBackingNeed(tx, txid, deploy, claims.map((c) => c.vout))
+      if (need.kind === 'invalid') return { ok: false, reason: 'invalid', txid, detail: need.detail }
+      if (need.kind === 'needed') {
+        const proof = await backing.proofOf(txid)
+        if (!proof) return { ok: false, reason: 'missing', txid, detail: `the burial proof of the deposit behind ${txid} is not available` }
+        const check = checkBackingProof(deploy.fields.bk, proof, need.deposit, need.minted)
+        if (!check.ok) return { ok: false, reason: 'invalid', txid: claims[0]!.child, detail: `it moves units of ${txid} without a valid burial proof (${check.detail})` }
+        backed.push({ txid, proof })
+        buried.add(txid)
       }
     }
     if (checked.has(txid)) continue
@@ -340,5 +406,5 @@ export async function walkHct(
     }
     for (const [parent, parentClaims] of byParent) queue.push({ txid: parent, claims: parentClaims })
   }
-  return { ok: true, validated }
+  return { ok: true, validated, backed }
 }

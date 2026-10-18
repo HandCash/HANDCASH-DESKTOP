@@ -20,7 +20,7 @@ import {
   toHex,
   type LtcTx,
 } from './litecoin'
-import { checkHeaderRun, confirmationsFor, verifyLtcDeposit } from './verify'
+import { checkHeaderRun, checkLtcBurial, confirmationsFor, fetchLtcBurial, readLtcDeposit, type LtcBurialProof } from './verify'
 
 describe('litecoin primitives', () => {
   it('computes the BIP143 native P2WPKH digest', () => {
@@ -95,24 +95,78 @@ describe('litecoin primitives', () => {
   })
 
   it('buries bigger deposits deeper', () => {
-    expect(confirmationsFor(1n)).toBe(6)
+    expect(confirmationsFor(1n)).toBe(2)
+    expect(confirmationsFor(150_000_000n)).toBe(2)
     expect(confirmationsFor(600_000_000n)).toBe(6)
     expect(confirmationsFor(1_000_000_001n)).toBe(11)
     expect(confirmationsFor(10n ** 15n)).toBe(576)
   })
 })
 
-describe('verifyLtcDeposit', () => {
-  const headers = fixture.headers.map((h) => parseLtcHeader(fromHex(h)))
-  const reserve = parseLtcTx(fromHex(fixture.hex)).outputs[fixture.vout]!.script
+const reserve = parseLtcTx(fromHex(fixture.hex)).outputs[fixture.vout]!.script
+const outpoint = { txid: fixture.txid, vout: fixture.vout }
+const value = BigInt(fixture.value)
+const proofOf = (over: Partial<LtcBurialProof> = {}): LtcBurialProof => ({
+  tx: fixture.hex,
+  path: fixture.proof.merkle,
+  pos: fixture.proof.pos,
+  headers: fixture.headers.slice(0, 2),
+  ...over,
+})
 
-  function chainOf(over: Partial<LtcChain> & { tip?: number; headerList?: string[] } = {}): LtcChain {
-    const list = over.headerList ?? fixture.headers
-    const parsed = list.map((h) => parseLtcHeader(fromHex(h)))
+describe('checkLtcBurial', () => {
+  const headers = fixture.headers.map((h) => parseLtcHeader(fromHex(h)))
+
+  it('accepts a real deposit buried two headers deep', () => {
+    expect(checkLtcBurial(proofOf(), outpoint, reserve, value)).toEqual({ ok: true, litoshi: value })
+    expect(checkLtcBurial(proofOf(), outpoint, reserve, 1n)).toEqual({ ok: true, litoshi: value })
+  })
+
+  it('refuses a proof shallower than the deposit needs', () => {
+    expect(checkLtcBurial(proofOf({ headers: fixture.headers.slice(0, 1) }), outpoint, reserve, value)).toMatchObject({ ok: false, reason: 'shallow' })
+  })
+
+  it('refuses a mint larger than the deposit', () => {
+    expect(checkLtcBurial(proofOf(), outpoint, reserve, value + 1n)).toMatchObject({ ok: false, reason: 'under-backed' })
+  })
+
+  it('refuses an output that does not pay the reserve', () => {
+    expect(checkLtcBurial(proofOf(), outpoint, p2wpkhScript(fromHex(`02${'11'.repeat(32)}`)), 1n)).toMatchObject({ ok: false, reason: 'wrong-script' })
+  })
+
+  it('refuses bytes that do not hash to the txid', () => {
+    expect(checkLtcBurial(proofOf(), { ...outpoint, txid: 'ee'.repeat(32) }, reserve, 1n)).toMatchObject({ ok: false, reason: 'tx-mismatch' })
+  })
+
+  it('refuses a forged merkle path', () => {
+    const path = [...fixture.proof.merkle]
+    path[0] = '00'.repeat(32)
+    expect(checkLtcBurial(proofOf({ path }), outpoint, reserve, 1n)).toMatchObject({ ok: false, reason: 'merkle' })
+  })
+
+  it('refuses a header without its proof of work', () => {
+    const forged = fixture.headers.slice(0, 2)
+    forged[1] = `${forged[1]!.slice(0, 152)}00000000`
+    expect(checkLtcBurial(proofOf({ headers: forged }), outpoint, reserve, 1n)).toMatchObject({ ok: false, reason: 'pow' })
+  })
+
+  it('refuses headers that do not chain', () => {
+    expect(checkHeaderRun([headers[0]!, headers[2]!])).toMatchObject({ ok: false, reason: 'chain-link' })
+    expect(checkLtcBurial(proofOf({ headers: [fixture.headers[0]!, fixture.headers[2]!] }), outpoint, reserve, 1n)).toMatchObject({ ok: false, reason: 'chain-link' })
+  })
+
+  it('refuses headers easier than the difficulty floor', () => {
+    expect(checkLtcBurial(proofOf(), outpoint, reserve, 1n, 1n << 190n)).toMatchObject({ ok: false, reason: 'difficulty-floor' })
+  })
+})
+
+describe('explorer reads', () => {
+  function chainOf(over: Partial<LtcChain> & { tip?: number } = {}): LtcChain {
+    const parsed = fixture.headers.map((h) => parseLtcHeader(fromHex(h)))
     return {
       tipHeight: async () => over.tip ?? fixture.height + fixture.headers.length - 1,
       blockHashAt: async (height) => parsed[height - fixture.height]!.hash,
-      header: async (hash) => fromHex(list[parsed.findIndex((h) => h.hash === hash)]!),
+      header: async (hash) => fromHex(fixture.headers[parsed.findIndex((h) => h.hash === hash)]!),
       txHex: async () => fixture.hex,
       txStatus: async () => ({ confirmed: true, blockHeight: fixture.height }),
       merkleProof: async () => ({ blockHeight: fixture.height, merkle: fixture.proof.merkle, pos: fixture.proof.pos }),
@@ -122,52 +176,29 @@ describe('verifyLtcDeposit', () => {
       ...over,
     }
   }
-  const outpoint = { txid: fixture.txid, vout: fixture.vout }
 
-  it('credits a real deposit once it is buried', async () => {
-    const verdict = await verifyLtcDeposit(chainOf(), outpoint, reserve)
-    expect(verdict).toMatchObject({ kind: 'credit', litoshi: BigInt(fixture.value), height: fixture.height })
+  it('sees a deposit paying the reserve, and refuses one that does not', async () => {
+    expect(await readLtcDeposit(chainOf(), outpoint, reserve)).toEqual({ kind: 'seen', ...outpoint, litoshi: value })
+    expect(await readLtcDeposit(chainOf(), outpoint, p2wpkhScript(fromHex(`02${'11'.repeat(32)}`)))).toMatchObject({ kind: 'refuse', reason: 'wrong-script' })
   })
 
-  it('waits while the deposit is shallow or unconfirmed', async () => {
-    expect(await verifyLtcDeposit(chainOf({ tip: fixture.height + 2 }), outpoint, reserve)).toMatchObject({ kind: 'pending', confirmations: 3, needed: 6 })
-    expect(await verifyLtcDeposit(chainOf({ txStatus: async () => ({ confirmed: false }) }), outpoint, reserve)).toMatchObject({ kind: 'pending', confirmations: 0 })
+  it('gathers a burial proof that checks once the deposit is deep enough', async () => {
+    const fetched = await fetchLtcBurial(chainOf(), fixture.txid, value)
+    expect(fetched.kind).toBe('buried')
+    if (fetched.kind !== 'buried') return
+    expect(fetched.proof.headers).toHaveLength(2)
+    expect(checkLtcBurial(fetched.proof, outpoint, reserve, value)).toEqual({ ok: true, litoshi: value })
   })
 
-  it('refuses an output that does not pay the reserve', async () => {
-    expect(await verifyLtcDeposit(chainOf(), outpoint, p2wpkhScript(fromHex(`02${'11'.repeat(32)}`)))).toMatchObject({ kind: 'refuse', reason: 'wrong-script' })
-  })
-
-  it('refuses bytes that do not hash to the txid', async () => {
-    const other = { ...outpoint, txid: 'ee'.repeat(32) }
-    expect(await verifyLtcDeposit(chainOf(), other, reserve)).toMatchObject({ kind: 'refuse', reason: 'tx-mismatch' })
-  })
-
-  it('refuses a forged merkle path', async () => {
-    const merkle = [...fixture.proof.merkle]
-    merkle[0] = '00'.repeat(32)
-    const chain = chainOf({ merkleProof: async () => ({ blockHeight: fixture.height, merkle, pos: fixture.proof.pos }) })
-    expect(await verifyLtcDeposit(chain, outpoint, reserve)).toMatchObject({ kind: 'refuse', reason: 'merkle' })
-  })
-
-  it('refuses a header without its proof of work', async () => {
-    const forged = [...fixture.headers]
-    forged[3] = `${forged[3]!.slice(0, 152)}00000000`
-    expect(await verifyLtcDeposit(chainOf({ headerList: forged }), outpoint, reserve)).toMatchObject({ kind: 'refuse', reason: 'pow' })
-    const run = checkHeaderRun(forged.slice(3, 4).map((h) => parseLtcHeader(fromHex(h))))
-    expect(run).toMatchObject({ ok: false, reason: 'pow' })
-  })
-
-  it('refuses headers that do not chain', () => {
-    expect(checkHeaderRun([headers[0]!, headers[2]!])).toMatchObject({ ok: false, reason: 'chain-link' })
-  })
-
-  it('refuses headers easier than the difficulty floor', async () => {
-    expect(await verifyLtcDeposit(chainOf(), outpoint, reserve, { floor: 1n << 190n })).toMatchObject({ kind: 'refuse', reason: 'difficulty-floor' })
+  it('waits while the deposit is shallow or unconfirmed, and reports it gone when the explorers forget it', async () => {
+    expect(await fetchLtcBurial(chainOf({ tip: fixture.height }), fixture.txid, value)).toEqual({ kind: 'pending', confirmations: 1, needed: 2 })
+    expect(await fetchLtcBurial(chainOf({ txStatus: async () => ({ confirmed: false }) }), fixture.txid, value)).toEqual({ kind: 'pending', confirmations: 0, needed: 2 })
+    const gone = chainOf({ txStatus: async () => Promise.reject(new Error('Litecoin explorer /tx/ab 404')) })
+    expect(await fetchLtcBurial(gone, fixture.txid, value)).toEqual({ kind: 'gone' })
+    await expect(fetchLtcBurial(chainOf({ txStatus: async () => Promise.reject(new Error('timeout')) }), fixture.txid, value)).rejects.toThrow(/timeout/)
   })
 
   it('refuses an explorer that answers with a different block', async () => {
-    const chain = chainOf({ header: async () => fromHex(fixture.headers[1]!) })
-    expect(await verifyLtcDeposit(chain, outpoint, reserve)).toMatchObject({ kind: 'refuse', reason: 'header-hash' })
+    await expect(fetchLtcBurial(chainOf({ header: async () => fromHex(fixture.headers[1]!) }), fixture.txid, value)).rejects.toThrow(/does not hash/)
   })
 })

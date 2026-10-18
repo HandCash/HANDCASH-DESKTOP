@@ -43,6 +43,20 @@ function amountOf(asset: HctAssetSummary): string {
   return formatFungibleAmount(asset.balance, asset.dec ?? 0)
 }
 
+/** Units that can move now: a backed token's units wait for their deposit's burial proof. */
+function movableOf(asset: HctAssetSummary): bigint {
+  return BigInt(asset.balance || '0') - BigInt(asset.locked ?? '0')
+}
+
+const BACKING_CHAIN_NAMES: Record<NonNullable<HctAssetSummary['backedBy']>, string> = { ltc: 'Litecoin' }
+
+/** How much of a backed token waits for its deposit to be buried, in words; null when nothing waits. */
+export function hctLockedLabel(asset: HctAssetSummary): string | null {
+  if (!asset.locked || asset.locked === '0') return null
+  const chain = asset.backedBy ? BACKING_CHAIN_NAMES[asset.backedBy] : 'its chain'
+  return `${formatFungibleAmount(asset.locked, asset.dec ?? 0)} ${label(asset)} moves once its deposit is confirmed on ${chain}`
+}
+
 /** The deploy's supply policy in words; items have none of their own. */
 export function hctSupplyLabel(asset: HctAssetSummary): string | null {
   if (asset.kind === 'item') return null
@@ -152,9 +166,10 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
   const [recipient, setRecipient] = useState('')
   const [amount, setAmount] = useState(asset.kind === 'item' ? '1' : '')
   const units = asset.kind === 'item' ? '1' : parseFungibleAmount(amount, asset.dec ?? 0)
-  const overBalance = units !== null && BigInt(units) > BigInt(asset.balance || '0')
+  const overBalance = units !== null && BigInt(units) > movableOf(asset)
   const ready = recipient.trim().length > 0 && units !== null && !overBalance
   const supply = hctSupplyLabel(asset)
+  const locked = hctLockedLabel(asset)
 
   const submit = async () => {
     if (!units) return
@@ -200,6 +215,7 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
     >
       <h3 className="collect-section-title">Send {label(asset)}</h3>
       {supply ? <p className="settings-row-desc" data-aeon-part="supply">{supply}</p> : null}
+      {locked ? <p className="settings-row-desc" data-aeon-part="locked">{locked}</p> : null}
       <div className="field">
         <label htmlFor="hct-send-recipient">To</label>
         <input

@@ -627,25 +627,31 @@ const HCT = `stateDiagram-v2
 const WLTC = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> verifying : CREDIT (reserve UTXO not yet credited)
-  verifying --> minting : VERIFIED (merkle + linked scrypt headers)
-  verifying --> pending : PENDING (confirmations below 6 + 1 per LTC)
-  verifying --> refused : REFUSED tx-mismatch | wrong-script | merkle | header-hash | chain-link | pow | difficulty-floor
-  minting --> credited : MINTED (issue wLTC once, then mint; label wltc deposit outpoint)
-  idle --> building : WITHDRAW (credited reserve outputs, recorded amounts)
+  idle --> reading : CREDIT (reserve UTXO not yet credited)
+  reading --> minting : SEEN (bytes hash to txid, output pays the reserve)
+  reading --> refused : REFUSED tx-mismatch | malformed | coinbase | no-output | wrong-script
+  minting --> credited : MINTED (backed wLTC, backing output names the deposit; label wltc deposit outpoint)
+  minting --> awaiting : AWAITING (first deposit unproven, its deploy is the authority)
+  idle --> proving : PROVE (credited, unproven)
+  proving --> proven : PROVEN (merkle + 2 or 1 per LTC linked scrypt headers; wLTC can move)
+  proving --> pending : PENDING (not deep enough yet)
+  proving --> voided : VOIDED (unknown to the explorers for 30 min; wLTC never moves)
+  idle --> building : WITHDRAW (proven reserve outputs, recorded amounts)
   building --> burning : LTC_SIGNED (BIP143 P2WPKH, kept unsent)
   burning --> broadcasting : BURNED (amount + fee to the wLTC burn key)
   broadcasting --> withdrawn : BROADCASTED
   broadcasting --> queued : BROADCAST_QUEUED (retried every pass)
   idle --> broadcasting : RESUME_BROADCAST
-  verifying --> failed : FAIL
+  reading --> failed : FAIL
   minting --> failed : FAIL
+  proving --> failed : FAIL (retried next pass)
   building --> failed : FAIL
   burning --> failed : FAIL (payout dropped, reserve untouched)
-  note right of verifying
-    1-of-1 federation: this wallet holds the
-    LTC reserve key. The explorer only supplies
-    bytes; the wallet proves each deposit.
+  note right of proving
+    BRC-255 backed token: units a mint writes
+    move only with the deposit's burial proof.
+    Every receiver checks it; a double-spent
+    deposit leaves its wLTC unmovable.
   end note
 `
 
@@ -1830,7 +1836,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'wltc',
     label: 'wLTC',
     caption:
-      'wltcMachine — LTC deposits proven by SPV mint wLTC (HCT); withdrawals sign LTC, burn wLTC, then broadcast',
+      'wltcMachine — LTC deposits mint backed wLTC at first sight and move once buried (BRC-255 bk); withdrawals sign LTC, burn wLTC, then broadcast',
     source: WLTC,
   },
   {
