@@ -64,6 +64,7 @@ import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { decodeBsv21Binary } from './decode162'
+import { looksLikeHct } from '../hct/script'
 import { deployDisplayFromScript } from './deployDisplay'
 import { noteTokenRequiresProcessing, tokenRequiresProcessing } from './requiredProcessing'
 import { holdTokenGenesis, retainedTokenGenesis } from './genesisStore'
@@ -1310,6 +1311,8 @@ function parseListedOutput(
   const outpoint = (raw.outpoint ?? '').trim().toLowerCase()
   if (!outpoint) return null
   if (!raw.lockingScript) return null
+  // HCT shares the filing; it is listed and moved only by `hct/wallet`.
+  if (looksLikeHct(raw.lockingScript)) return null
   const from162 = tipFromBsv21Script({
     outpoint,
     lockingScript: raw.lockingScript,

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.583] - 2026-10-18
+
+### Added
+- **HCT tokens and items (BRC-255 draft, open mode).** An app can issue a token, a collection, or an item in a collection with `issueHctAsset`, and move it with `transferHctAsset`. Only the holder's signature is needed, and nobody else can move it. Open tokens are filed under `p2pft` and open items under `p2pnft`, beside the formats already there, so they show in the same Collectables view.
+- **Recipients check HCT transfers themselves.** Each transfer carries the history back to the asset's deploy, minus the steps this recipient has already checked. The recipient's wallet checks every step without an indexer before filing it. If the history is incomplete, it asks the sender for the rest and keeps the message until filing succeeds. A transfer that fails the check is never credited.
+- **HCT in Collectables.** HCT items and tokens have their own rows, each with a send form that accepts a handle or an identity key. They never go through the 1Sat or P2P-FT send screens.
+
+### Changed
+- **One item permission covers 1Sat and HCT items.** `p p2pnft all | collection | creator | id` uses the same grant as `p 1sat`. Apps can view HCT rows but cannot write, spend, relinquish or sign for them. Those requests are refused before any prompt.
+- Change consolidation, dead-coin sweep, stale-output release and the balance never treat a token or item output as change. The P2P-FT list also skips HCT rows explicitly.
+- Countersigned transfers after a release now check history back to the last transfer the issuer accepted.
+
 ## [1.3.582] - 2026-10-17
 
 ### Changed
