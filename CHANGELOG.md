@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.587] - 2026-10-18
+
+### Fixed
+- **A signed payment waiting for miners can no longer be undone by the next send.** Before a token send, the wallet clears leftover unbroadcast actions. It now skips every signed transaction still in the miner retry queue, so a BSV, token, HCT or wLTC transaction that is waiting for a miner is never aborted.
+
 ## [1.3.586] - 2026-10-18
 
 ### Added

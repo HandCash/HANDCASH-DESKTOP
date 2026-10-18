@@ -66,6 +66,10 @@ vi.mock("./session", () => ({
 vi.mock("./marketSettlement", () => ({
   protectedMarketActionReferences: () => new Set(["keep-me"]),
 }));
+const queuedCheques = vi.hoisted(() => new Set<string>());
+vi.mock("./pendingMinerOutbox", () => ({
+  pendingMinerOutboxTxids: () => new Set(queuedCheques),
+}));
 vi.mock("./walletCoordinator", () => ({
   getSpendPriorityDepth: () => spendPriority.depth,
   shouldYieldChainIngestToSpend: () => spendPriority.depth > 0,
@@ -252,6 +256,20 @@ describe("actionReview", () => {
     await releaseStuckNosends();
     expect(sweepChangeScripts).not.toHaveBeenCalled();
     expect(reviewStatus).not.toHaveBeenCalled();
+  });
+
+  it("never aborts a signed cheque still queued for miners", async () => {
+    const queued = "ab".repeat(32);
+    queuedCheques.add(queued);
+    listNoSendActions.mockImplementationOnce(async () => ({
+      totalActions: 3,
+      actions: [{ reference: "keep-me" }, { reference: "stale" }, { reference: "queued-ref", txid: queued }],
+    }) as never);
+    abortAction.mockClear();
+    const { releaseStuckNosends } = await import("./actionReview");
+    await releaseStuckNosends();
+    expect(abortAction.mock.calls.map((c) => (c as unknown as [{ reference: string }])[0].reference)).toEqual(["stale"]);
+    queuedCheques.clear();
   });
 
   it("does not list historical no-send actions while a payment is in progress", async () => {

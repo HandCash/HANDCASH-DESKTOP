@@ -103,7 +103,11 @@ export async function releaseStuckNosends(
       } catch {
         /* market module optional during early boot */
       }
-      if (protectedRefs.size === 0) {
+      // A signed cheque stays `noSend` until a miner accepts it. Aborting one
+      // still in the retry queue would unsign a payment the peer may hold.
+      const { pendingMinerOutboxTxids } = await import("./pendingMinerOutbox");
+      const queued = pendingMinerOutboxTxids();
+      if (protectedRefs.size === 0 && queued.size === 0) {
         await withSendCleanupBudget("abort no-send actions", () =>
           wallet.listNoSendActions({ labels: [], limit: 100 }, true)
         );
@@ -112,7 +116,10 @@ export async function releaseStuckNosends(
           const reference = String(
             (action as { reference?: string }).reference ?? ""
           ).trim();
-          if (!reference || protectedRefs.has(reference)) continue;
+          const txid = String(
+            (action as { txid?: string }).txid ?? ""
+          ).trim().toLowerCase();
+          if (!reference || protectedRefs.has(reference) || queued.has(txid)) continue;
           await withSendCleanupBudget(
             `abort no-send ${reference.slice(0, 12)}`,
             () => wallet.abortAction({ reference })

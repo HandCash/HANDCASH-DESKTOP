@@ -335,6 +335,11 @@ export function pendingMinerOutboxDepth(): number {
   return load().length
 }
 
+/** Signed transactions still waiting for a miner: `noSend` in storage, but never abortable. */
+export function pendingMinerOutboxTxids(): Set<string> {
+  return new Set(load().map((row) => row.txid.toLowerCase()))
+}
+
 export function __resetPendingMinerOutboxForTests(): void {
   save([])
 }
