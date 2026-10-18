@@ -78,7 +78,7 @@ export type OutgoingRequest = {
   amount: string
   acceptors: string[]
   inputs: string[]
-  /** The transfer's `p color` remittance: who holds each output and its suffix under one prefix. */
+  /** The transfer's holder remittance: who holds each output and its suffix under one prefix. */
   remittance?: HolderRemittance
   state: 'open' | 'accepted' | 'refused' | 'cancelled'
   reason?: AcceptRefusal

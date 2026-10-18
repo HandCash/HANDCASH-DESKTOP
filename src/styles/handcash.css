@@ -1797,6 +1797,16 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
 .dashboard-side > .permission-side-panel .permission-request-actions .btn {
   flex: 1 1 0;
   min-width: 0;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-actions .btn > svg {
+  flex: 0 0 auto;
 }
 
 .dashboard-side > .permission-side-panel--processing {

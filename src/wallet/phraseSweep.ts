@@ -62,6 +62,9 @@ import { runExclusiveSpend } from './spendGuard'
 import { leaseSpendPriority } from './walletCoordinator'
 import { BeefShelf, beefSubset, prefixWithinBeefBudget } from './beefSubset'
 import { settleSealedTips, type SealedTipsResult, type SealerPorts } from './import/sealedTips'
+import { freshRemittanceString, selfBrc29Output } from './brc29Keys'
+import { heldItemRow } from './itemRecipientKey'
+import { lockHolder, primeItemTipKeys, rememberTipKey } from './token/tipKeys'
 import { withStorageLockLabel } from './storageLockTrace'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
@@ -866,7 +869,9 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
   const results = new Map<string, SingleItemMigrate>()
   if (args.items.length === 0) return { results, stopped: null, transactions: 0 }
   const startedAt = Date.now()
-  const destLock = new P2PKH().lock(active.address).toHex()
+  // Each leg pays its items to fresh BRC-29 self children; a sealed leg of an
+  // earlier run may have paid the identity address.
+  const isDestLock = (lockingScriptHex: string) => lockHolder(active, lockingScriptHex) !== 'other'
   const spenders = new Map<string, ItemSpender & { address: string }>()
   const spenderOf = (keyHex: string) => {
     const known = spenders.get(keyHex)
@@ -964,7 +969,8 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
     let build = pending
     if (pending.some((item) => sealedSpenderOf(item.outpoint))) {
       const settledAt = Date.now()
-      const settled = await settleSealedTips(pending, destLock, sealers)
+      await primeItemTipKeys(active)
+      const settled = await settleSealedTips(pending, isDestLock, sealers)
       logSealers(settled, settledAt)
       const receipts = sealedReceipts(settled)
       if (receipts.length > 0) {
@@ -980,7 +986,7 @@ async function migrateChosenUnderPriority(args: ChosenItemsArgs): Promise<Chosen
 
     const unit = await migrateOrdinalUnit({
       active,
-      destLockHex: destLock,
+      isDestLock,
       sourceBeef: parents.shelf,
       items: build,
       itemsPerTx: MAX_ITEMS_PER_MIGRATE_TX,
@@ -1266,7 +1272,7 @@ function paintMigratedItems(receipts: ReadonlyArray<MigratedItemReceipt>, active
  */
 async function migrateOrdinalUnit(args: {
   active: ActiveWallet
-  destLockHex: string
+  isDestLock: (lockingScriptHex: string) => boolean
   sourceBeef: Beef | BeefShelf
   items: PendingItemMigrate[]
   itemsPerTx: number
@@ -1306,7 +1312,6 @@ async function migrateOrdinalUnit(args: {
           withVisibleOnChainBeef(async () =>
             buildAndPostItemMigrate({
               active: args.active,
-              destLockHex: args.destLockHex,
               inputBeef,
               items: group,
             }),
@@ -1346,7 +1351,7 @@ async function migrateOrdinalUnit(args: {
         const settledAt = Date.now()
         const settled = await settleSealedTips(
           group.filter((item) => dead.has(item.outpoint)),
-          args.destLockHex,
+          args.isDestLock,
           args.sealers,
         )
         logSealers(settled, settledAt)
@@ -1423,43 +1428,54 @@ export async function refreshAfterPhraseItemMigrate(): Promise<void> {
  */
 async function buildAndPostItemMigrate(args: {
   active: ActiveWallet
-  destLockHex: string
   inputBeef: BEEF
   items: PendingItemMigrate[]
 }): Promise<{ txid: string; vouts: number[] }> {
-  const { destLockHex, items } = args
+  const { active, items } = args
   const first = items[0]!
+  const prefix = freshRemittanceString()
+  const children = items.map(() => selfBrc29Output(active, prefix))
+  for (const child of children) rememberTipKey(active, child.key)
+  const locks = children.map((child) => new P2PKH().lock(child.address).toHex())
   const posted = await postForeignInputs({
-    active: args.active,
+    active,
     inputBeef: args.inputBeef,
     inputs: items.map((item) => ({ ...item, description: 'migrate ordinal from phrase' })),
-    outputs: items.map((item) => ({
-      lockingScript: destLockHex,
+    outputs: items.map((item, i) => ({
+      lockingScript: locks[i]!,
       satoshis: 1,
       outputDescription: 'Migrated collectable',
       basket: '1sat',
-      tags: ['ordinal', 'phrase-migrate', `origin:${item.origin.replace(/_(\d+)$/, '.$1')}`],
-      customInstructions: item.customInstructions,
+      ...heldItemRow(
+        {
+          customInstructions: item.customInstructions,
+          tags: ['ordinal', 'phrase-migrate', `origin:${item.origin.replace(/_(\d+)$/, '.$1')}`],
+        },
+        children[i]!.remittance,
+      ),
     })),
     labels: ['1sat', 'phrase-migrate'],
     description: itemMigrateTxDescription(items.length, first.outpoint),
   })
-  return { txid: posted.txid, vouts: itemOutputVouts(posted.tx, destLockHex, items.length) }
+  return { txid: posted.txid, vouts: itemOutputVouts(posted.tx, locks) }
 }
 
 /**
- * Outputs paying `destLockHex` one sat, in order. Outputs are not randomized,
- * and wallet change never pays the receive address, so the n-th match holds the
- * n-th tip. Any other count means the shape is not what was asked for: no vouts.
+ * The one-sat output paying each of `locks`, in order: each item has its own
+ * child, so its output is read from the signed transaction rather than assumed
+ * from output order. Any lock missing or paid twice means the shape is not what
+ * was asked for: no vouts.
  */
-export function itemOutputVouts(tx: Transaction | null, destLockHex: string, count: number): number[] {
+export function itemOutputVouts(tx: Transaction | null, locks: readonly string[]): number[] {
   if (!tx) return []
-  const want = destLockHex.toLowerCase()
-  const vouts: number[] = []
-  tx.outputs.forEach((output, vout) => {
-    if (output.satoshis === 1 && output.lockingScript.toHex().toLowerCase() === want) vouts.push(vout)
+  const vouts = locks.map((lock) => {
+    const want = lock.toLowerCase()
+    const hits = tx.outputs.flatMap((output, vout) =>
+      output.satoshis === 1 && output.lockingScript.toHex().toLowerCase() === want ? [vout] : [],
+    )
+    return hits.length === 1 ? hits[0]! : -1
   })
-  return vouts.length === count ? vouts : []
+  return vouts.includes(-1) ? [] : vouts
 }
 
 /** A source output signed by a foreign key against its real locking script. */

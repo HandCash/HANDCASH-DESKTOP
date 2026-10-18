@@ -106,7 +106,7 @@ vi.mock('./staleOutputRelease', () => ({
   releaseSealedInputsOfUnsentTx: async () => 0,
 }))
 vi.mock('./friends', () => ({
-  resolvePaymentRecipient: async (to: string) => to,
+  resolvePaymentRecipient: async (to: string) => ({ kind: 'address', address: to }),
 }))
 vi.mock('./actionReview', () => ({
   releaseStuckNosends: async () => {},

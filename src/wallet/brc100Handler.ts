@@ -483,7 +483,11 @@ export async function dispatchWalletMethod(
         ? 'Protocol "account" is reserved for the wallet (BRC-208)'
         : refusal === 'asset-protocol'
           ? 'This protocol holds asset custody keys; assets move only through wallet methods'
-          : 'The wallet does not reveal linkage with itself (BRC-208)',
+          : refusal === 'admin-protocol'
+            ? 'Protocols starting with "admin" are reserved for the wallet (BRC-44)'
+            : refusal === 'permission-scheme'
+              ? 'This wallet does not support that "p" permission scheme (BRC-98)'
+              : 'The wallet does not reveal linkage with itself (BRC-208)',
     )
   }
 

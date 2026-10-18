@@ -10,7 +10,7 @@
  */
 import { ownershipFate } from './collectableOwnershipFate'
 import { classifyTipKind } from './collectableTipKind'
-import { scriptPaysAddress } from './ordinalOwnership'
+import type { LockHolder } from './token/tipKeys'
 
 /**
  * How long a tip missing from the address scan stays unjudged.
@@ -86,10 +86,13 @@ export function shouldRejectSendForMissingLiveTip(args: {
   liveScanAt: number
   now?: number
   lockingScriptHex?: string | null
-  walletAddress?: string | null
+  /** Who the tip's lock pays (`lockHolder`); omitted = unknown. */
+  holder?: LockHolder | null
   graceMs?: number
 }): boolean {
   if (args.inLiveSet) return false
+  // A BRC-29 child is never on the scanned address; its absence proves nothing.
+  if (args.holder === 'derived') return false
   const now = args.now ?? Date.now()
   const unjudged = isOwnershipUnjudged({
     firstSeenAt: args.firstSeenAt,
@@ -98,9 +101,7 @@ export function shouldRejectSendForMissingLiveTip(args: {
     graceMs: args.graceMs,
   })
   const paysOur =
-    args.lockingScriptHex && args.walletAddress
-      ? scriptPaysAddress(args.lockingScriptHex, args.walletAddress)
-      : null
+    args.holder == null || args.holder === 'unknown' ? null : args.holder === 'address'
   const tipKind = classifyTipKind(args.lockingScriptHex)
   const fate = ownershipFate({
       tipKind,

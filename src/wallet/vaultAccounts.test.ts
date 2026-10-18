@@ -96,6 +96,21 @@ describe('vaultAccounts (BRC-208)', () => {
     expect(reservedKeyRefusal('createSignature', { protocolID: [2, 'hct holders'], keyID: '1' }, undefined)).toBeNull()
   })
 
+  it('refuses BRC-44 admin protocols and BRC-98 permission schemes at every level', () => {
+    for (const level of [0, 1, 2]) {
+      for (const name of ['admin', ' Admin Keys', 'administrator']) {
+        expect(reservedKeyRefusal('getPublicKey', { protocolID: [level, name], keyID: '1' }, undefined)).toBe('admin-protocol')
+      }
+      for (const name of ['p nosuchscheme x', ' P Basket shoes', 'p 1sat all']) {
+        expect(reservedKeyRefusal('createSignature', { protocolID: [level, name], keyID: '1' }, undefined)).toBe(
+          'permission-scheme',
+        )
+      }
+    }
+    expect(reservedKeyRefusal('getPublicKey', { protocolID: [2, 'padmin'], keyID: '1' }, undefined)).toBeNull()
+    expect(reservedKeyRefusal('getPublicKey', { protocolID: [2, 'pcolor tips'], keyID: '1' }, undefined)).toBeNull()
+  })
+
   it('refuses to reveal the shared secret that yields every account offset', () => {
     const self = identityKeyForAccount(ROOT, 0)
     const reveal = (counterparty: string) =>

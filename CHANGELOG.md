@@ -1,10 +1,22 @@
 # Changelog
 
+## [1.3.597] - 2026-10-18
+
+### Fixed
+
+- Nothing the wallet receives or keeps is locked to the identity address any more, and nothing is signed with the raw identity key except the BAP/Sigma issuer attestation. A BRC-100 wallet never signs with its identity key (BRC-42/43), so outputs there were unspendable by any other BRC-100 wallet. Every such output now sits on a BRC-29 child (protocol `3241645161d8`, fresh prefix per transfer, one suffix per output) whose remittance is kept in `customInstructions` and a `brc29:` tag:
+  - tokens (BRC-251), countersigned tokens and their fee coins (BRC-253), direct offers, and BSV payments to friends;
+  - market listings (BRC-254 offer v2: the lot and offer token on a BRC-29 listing key, the payout on another child, the offer signed by the BRC-43 key `1sat market offer`), buyer items and pads, listing and token change;
+  - market intents and receipts, now signed by the BRC-43 key `1sat market record`; receipts name the buyer's output address;
+  - collectables sent and received, phrase-sweep and MNEE sweeps, token sweeps, burns and identity issuance anchors.
+- Coins and items already on the identity address are still recognised, spent and swept. Version 1 market offers already listed still settle and cancel, and identity-signed intents and receipts still verify.
+- A held output on a BRC-29 child is never dropped because the identity-address scan does not show it.
+
 ## [1.3.596] - 2026-10-18
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- Apps allowed to view "all tokens" over BRC-100 saw none. The grant was saved without naming any token, so the bridge filtered every row out and the token demo read a zero DEMO balance after the cancel. The grant now names the tokens you hold, an empty grant asks again, and a token an app deploys joins its own grant.
 
 ## [1.3.595] - 2026-10-18
 

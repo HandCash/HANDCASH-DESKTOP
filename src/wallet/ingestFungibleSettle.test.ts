@@ -393,15 +393,19 @@ describe('collectFungibleTipsPayingUs', () => {
     expect(tips.map((tip) => tip.vout)).toEqual([0])
   })
 
-  it('accepts an output paying the p color child the delivery names for its vout', () => {
-    const child = PrivateKey.fromHex('44'.repeat(32)).toAddress()
+  it('accepts an output paying a child the delivery names for its vout, BRC-29 or earlier p color', () => {
+    const brc29 = PrivateKey.fromHex('44'.repeat(32)).toAddress()
+    const legacy = PrivateKey.fromHex('55'.repeat(32)).toAddress()
     const { tips } = collectFungibleTipsPayingUs({
-      outputs: [tokenOutput(300n, child), tokenOutput(300n, OTHER), tokenOutput(300n, child)],
+      outputs: [tokenOutput(300n, brc29), tokenOutput(300n, OTHER), tokenOutput(300n, brc29), tokenOutput(300n, legacy)],
       address: SELF,
-      derived: new Map([[0, child]]),
+      derived: new Map([
+        [0, [brc29, legacy]],
+        [3, [brc29, legacy]],
+      ]),
       tokenId: SELF_TOKEN,
       amount: '300',
     })
-    expect(tips.map((tip) => tip.vout)).toEqual([0])
+    expect(tips.map((tip) => tip.vout)).toEqual([0, 3])
   })
 })

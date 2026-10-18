@@ -3,6 +3,7 @@ import { Beef, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { settleSealedTips, type SealerPorts } from './sealedTips'
 
 const dest = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+const isDest = (hex: string) => hex === dest.toHex()
 const tip = (n: number) => ({ txid: n.toString(16).padStart(64, '0'), outpoint: `${n.toString(16).padStart(64, '0')}.0` })
 
 /** An item-migrate leg: tips as its first inputs, one dest output each, then change. */
@@ -34,7 +35,7 @@ describe('settleSealedTips', () => {
     const submit = vi.fn(async () => ({ kind: 'accepted' }))
     const seals = new Map(tips.map((t) => [t.outpoint, sealer.txid]))
     const loose = tip(3)
-    const result = await settleSealedTips([...tips, loose], dest.toHex(), ports({
+    const result = await settleSealedTips([...tips, loose], isDest, ports({
       seals,
       signedBody: async (txid) => (txid === sealer.txid ? sealer.atomic : null),
       submit,
@@ -52,7 +53,7 @@ describe('settleSealedTips', () => {
   it('answers tips gone when the sealing transaction is on chain, without posting it', async () => {
     const tips = [tip(4)]
     const submit = vi.fn()
-    const result = await settleSealedTips(tips, dest.toHex(), ports({
+    const result = await settleSealedTips(tips, isDest, ports({
       seals: new Map([[tips[0]!.outpoint, 'a'.repeat(64)]]),
       txExistsOnChain: async () => true,
       submit,
@@ -65,7 +66,7 @@ describe('settleSealedTips', () => {
     const tips = [tip(5)]
     const sealer = leg(tips)
     const seals = new Map([[tips[0]!.outpoint, sealer.txid]])
-    const result = await settleSealedTips(tips, dest.toHex(), ports({
+    const result = await settleSealedTips(tips, isDest, ports({
       seals,
       signedBody: async () => sealer.atomic,
       submit: async () => {
@@ -85,7 +86,7 @@ describe('settleSealedTips', () => {
       [b.outpoint, '2'.repeat(64)],
       [c.outpoint, '3'.repeat(64)],
     ])
-    const result = await settleSealedTips([a, b, c], dest.toHex(), ports({
+    const result = await settleSealedTips([a, b, c], isDest, ports({
       seals,
       signedBody: async (txid) => (txid === '1'.repeat(64) ? null : [1, 2, 3]),
       submit: async (txid) => {

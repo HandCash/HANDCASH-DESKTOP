@@ -343,16 +343,16 @@ describe('pending per-address import cursor', () => {
 })
 
 describe('itemOutputVouts', () => {
-  it('reads each tip’s new output from the signed transaction, skipping change', async () => {
+  it('reads each tip’s own child output from the signed transaction, skipping change', async () => {
     const { itemOutputVouts } = await import('./phraseSweep')
-    const dest = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
-    const change = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const lock = () => new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const [a, b, change, missing] = [lock(), lock(), lock(), lock()]
     const signed = new Transaction()
     signed.addOutput({ lockingScript: change, satoshis: 4_000 })
-    signed.addOutput({ lockingScript: dest, satoshis: 1 })
-    signed.addOutput({ lockingScript: dest, satoshis: 1 })
-    expect(itemOutputVouts(signed, dest.toHex(), 2)).toEqual([1, 2])
-    expect(itemOutputVouts(signed, dest.toHex(), 3)).toEqual([])
-    expect(itemOutputVouts(null, dest.toHex(), 2)).toEqual([])
+    signed.addOutput({ lockingScript: b, satoshis: 1 })
+    signed.addOutput({ lockingScript: a, satoshis: 1 })
+    expect(itemOutputVouts(signed, [a.toHex(), b.toHex()])).toEqual([2, 1])
+    expect(itemOutputVouts(signed, [a.toHex(), missing.toHex()])).toEqual([])
+    expect(itemOutputVouts(null, [a.toHex()])).toEqual([])
   })
 })

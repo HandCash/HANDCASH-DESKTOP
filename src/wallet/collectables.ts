@@ -24,11 +24,25 @@ import { storageRegistry } from '../storage/registry'
 import {
   Beef,
   P2PKH,
-  PrivateKey,
   type SignableTransaction,
   type Transaction,
 } from '@bsv/sdk'
 import { type ActiveWallet } from './session'
+import {
+  lockHolder,
+  primeItemTipKeys,
+  tipKeyFromInstructions,
+  tipKeyFromTags,
+  tipSigningKey,
+} from './token/tipKeys'
+import {
+  heldItemRow,
+  heldRemittance,
+  itemDeliveryRemittance,
+  planItemRecipientKey,
+  type ItemRecipientKey,
+} from './itemRecipientKey'
+import type { ItemTransferAsset } from './messageStore'
 import {
   batchActivityWrites,
   noteOutboundSendComplete,
@@ -121,7 +135,6 @@ import {
   authenticityResultToVerdict,
   type AuthenticityResult,
 } from './oneSatAuthenticity'
-import { scriptPaysAddress } from './ordinalOwnership'
 import { resolveDerivativeContent } from './derivativeContentResolve'
 import {
   liveOneSatKeys,
@@ -2771,11 +2784,12 @@ async function paintSliceArrivals(
     stillCurrent: () => epoch === collectablesAccountEpoch,
   })
   if (epoch !== collectablesAccountEpoch) return
+  for (const o of fresh) tipKeyFromTags(active, o.tags)
   const ours = fresh.filter(
     (o) =>
       !fill.unread.has(o) &&
       o.lockingScript != null &&
-      scriptPaysAddress(o.lockingScript, active.address) === true &&
+      lockHolder(active, o.lockingScript) !== 'other' &&
       isListableItem(o),
   )
   if (ours.length === 0) return
@@ -3541,6 +3555,12 @@ async function listCollectablesNow(
     ...outputs,
     ...pendingSeededItems(outputs, seenNow, wallet.identityKey),
   ]
+  for (const o of outputs) tipKeyFromTags(wallet, o.tags)
+  /** Ours by script: the identity address or a remembered BRC-29 child. Null without a script. */
+  const paysUs = (lockHex: string | null): boolean | null => {
+    const holder = lockHolder(wallet, lockHex)
+    return holder === 'unknown' ? null : holder !== 'other'
+  }
 
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:
   // keepLive | graceHold | keepCovenant | ghostDrop — only ghostDrop relinquish.
@@ -3573,8 +3593,7 @@ async function listCollectablesNow(
       })
       const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
       const lockHex = o.lockingScript?.trim() ? o.lockingScript : null
-      const paysOurAddress =
-        lockHex != null ? scriptPaysAddress(lockHex, wallet.address) : null
+      const paysOurAddress = paysUs(lockHex)
       const fate = ownershipFate({
         tipKind: classifyTipKind(o.lockingScript),
         inLiveSet: false,
@@ -3586,9 +3605,12 @@ async function listCollectablesNow(
         ghosts.push(o)
       else {
         keptMissing.push(o)
-        // Settled, ours by script, and absent from the address scan: only the
-        // chain can say whether the row is still an output.
-        if (fate === 'graceHold' && !unjudged && paysOurAddress !== false) offChainIndex.push(o)
+        // Settled, on our address, and absent from its scan: only the chain can
+        // say whether the row is still an output. A BRC-29 tip is never on the
+        // scanned address, so its absence says nothing.
+        if (fate === 'graceHold' && !unjudged && lockHolder(wallet, lockHex) !== 'derived' && paysOurAddress !== false) {
+          offChainIndex.push(o)
+        }
       }
     }
     for (const g of ghosts) neverOurs.add(outpointKey(g.outpoint))
@@ -3618,8 +3640,7 @@ async function listCollectablesNow(
         continue
       }
       const lockHex = o.lockingScript?.trim() ? o.lockingScript : null
-      const paysOurAddress =
-        lockHex != null ? scriptPaysAddress(lockHex, wallet.address) : null
+      const paysOurAddress = paysUs(lockHex)
       const tipKind = classifyTipKind(o.lockingScript)
       if (paysOurAddress === false && tipKind.kind !== 'covenantLocked') {
         ghosts.push(o)
@@ -3893,15 +3914,18 @@ function formatSendError(err: unknown): Error {
  * An inscribed tip keeps its `ord` envelope alongside the P2PKH branch, so match
  * the branch rather than the whole script.
  */
-function assertOrdinalIsDeviceLocked(
+async function assertOrdinalIsDeviceLocked(
   lockingScript: unknown,
-  wallet: ActiveWallet
-): void {
+  wallet: ActiveWallet,
+  customInstructions?: string,
+): Promise<void> {
   const hex = normalizeLockingScriptHex(lockingScript)
   if (!hex) return
   // Covenant-locked tips cannot be soft-spent; send refuses and UI offers abandon.
   if (isCovenantLockedScript(hex)) return
-  if (!scriptPaysAddress(hex, wallet.address)) {
+  if (customInstructions) tipKeyFromInstructions(wallet, customInstructions)
+  if (lockHolder(wallet, hex) === 'other') await primeItemTipKeys(wallet)
+  if (lockHolder(wallet, hex) === 'other') {
     throw new Error(
       'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.'
     )
@@ -3956,7 +3980,8 @@ function knownTxidsForCollectableSend(
 
 /**
  * BRC-100 only auto-signs the wallet's own BRC-29 change, so the ordinal tip
- * input comes back as a signable transaction for us to unlock with the root key.
+ * input comes back as a signable transaction for us to unlock with the key its
+ * lock names: a BRC-29 child, or the root for tips on the identity address.
  *
  * Covenant-locked tips MUST NOT use the P2PKH unlock template.
  */
@@ -3968,6 +3993,15 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   }
   if (raw instanceof Uint8Array) return Array.from(raw)
   return undefined
+}
+
+/** The item envelope asset: the BRC-29 strings of every output paying the peer. */
+function collectableDeliveryAsset(
+  senderIdentityKey: string,
+  outputs: { vout: number; key: ItemRecipientKey }[],
+): ItemTransferAsset {
+  const remittance = itemDeliveryRemittance(senderIdentityKey, outputs)
+  return remittance ? { kind: 'collectable', remittance } : { kind: 'collectable' }
 }
 
 async function signOrdinalTransfer(args: {
@@ -4041,7 +4075,6 @@ async function signOrdinalTransfer(args: {
     }
   }
 
-  const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     // The sighash covers the source value, so read each value from its source
@@ -4060,7 +4093,7 @@ async function signOrdinalTransfer(args: {
     // exact CHECKSIG failure seen on Pixel Fox ("top stack element must be
     // truthy") before the transaction ever reaches propagation.
     input.unlockingScriptTemplate = unlockSpendableTip(
-      rootKey,
+      await tipSigningKey(args.wallet, lockingScript.toHex()),
       satoshis,
       lockingScript,
     )
@@ -4362,7 +4395,12 @@ export async function sendCollectable(args: {
             'Preparing the collectable for transfer',
             outpoint
           )
-          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel })
+          const recipientKey = planItemRecipientKey(
+            wallet,
+            await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel }),
+            { recipientIdentityKey: args.recipientIdentityKey },
+          )
+          const to = recipientKey.address
 
           let lockingScript: string
           try {
@@ -4511,6 +4549,7 @@ export async function sendCollectable(args: {
 
           const liveKey = outpointKey(outpoint)
           const liveScanAt = cachedLiveOneSats?.at ?? 0
+          if (match.customInstructions) tipKeyFromInstructions(wallet, match.customInstructions)
           const rejectForLiveScan =
             live != null &&
             liveScanAt > 0 &&
@@ -4520,7 +4559,7 @@ export async function sendCollectable(args: {
               firstSeenAt: firstSeenAt.get(liveKey) ?? Date.now(),
               liveScanAt,
               lockingScriptHex: normalizeLockingScriptHex(match.lockingScript),
-              walletAddress: wallet.address,
+              holder: lockHolder(wallet, normalizeLockingScriptHex(match.lockingScript)),
             })
           if (rejectForLiveScan) {
             await assertTipNotProvenSpent(
@@ -4550,7 +4589,7 @@ export async function sendCollectable(args: {
               `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`
             )
           }
-          assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
+          await assertOrdinalIsDeviceLocked(tipLockingScript, wallet, match.customInstructions)
 
           rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
 
@@ -4562,9 +4601,10 @@ export async function sendCollectable(args: {
           ])
 
           const settlePath = chooseItemSettlePath({
-            paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
-            recipientIdentityKey: args.recipientIdentityKey,
+            paysOurAddress: recipientKey.kind === 'self',
+            recipientIdentityKey: recipientKey.kind === 'peer' ? recipientKey.identityKey : null,
           })
+          const deliveryAsset = collectableDeliveryAsset(wallet.identityKey, [{ vout: 0, key: recipientKey }])
           const tipKind = classifyTipKind(tipLockingScript)
           const provenTier = provenTierEarly ?? getProvenVerdict(outpoint)?.tier ?? null
           const sendPath = chooseSendPath({
@@ -4621,7 +4661,7 @@ export async function sendCollectable(args: {
             // createAction files the recipient tip in *this* wallet's `1sat` basket.
             // That is remittance metadata for the sender, not ownership — unless the
             // lock pays us (true self-receive).
-            const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
+            const selfReceive = recipientKey.kind === 'self'
             // Hide spent tip + outbound remittance tip immediately. Post-send we
             // invalidate the live address scan; without a fresh scan, ownership fate is
             // skipped and the filed tip would toast "Item received" on the sender.
@@ -4799,15 +4839,20 @@ export async function sendCollectable(args: {
                     satoshis: 1,
                     outputDescription: 'Collectable transfer',
                     basket: '1sat',
-                    tags,
-                    customInstructions: buildCollectableCustomInstructions({
-                      origin,
-                      name,
-                      app,
-                      ...(collectionId ? { collectionId } : {}),
-                      ...(content ? { content } : {}),
-                      provenance,
-                    }),
+                    ...heldItemRow(
+                      {
+                        tags,
+                        customInstructions: buildCollectableCustomInstructions({
+                          origin,
+                          name,
+                          app,
+                          ...(collectionId ? { collectionId } : {}),
+                          ...(content ? { content } : {}),
+                          provenance,
+                        }),
+                      },
+                      heldRemittance(recipientKey),
+                    ),
                   },
                 ],
                 options: {
@@ -4960,6 +5005,7 @@ export async function sendCollectable(args: {
                     itemOrigin: origin,
                     itemCollectionId: collectionId,
                     itemOutputIndex: 0,
+                    asset: deliveryAsset,
                     atomicBeef,
                     provenance,
                   })
@@ -4985,6 +5031,7 @@ export async function sendCollectable(args: {
                       itemOrigin: origin,
                       itemCollectionId: collectionId,
                       itemOutputIndex: 0,
+                      asset: deliveryAsset,
                       messagebox: friend?.messagebox,
                       provenance: parseProvenanceV2(provenance) ?? undefined,
                     }, accountKeyScopeFor(wallet))
@@ -5010,6 +5057,8 @@ export async function sendCollectable(args: {
                     itemName: name,
                     itemOrigin: origin,
                     itemCollectionId: collectionId,
+                    itemOutputIndex: 0,
+                    asset: deliveryAsset,
                     messagebox: friend?.messagebox,
                     provenance: parseProvenanceV2(provenance) ?? undefined,
                   }, accountKeyScopeFor(wallet))
@@ -5238,10 +5287,13 @@ export async function sendCollectables(
             `Preparing ${outpoints.length} collectables for transfer`,
             outpoints[0],
           )
-          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel })
-          let lockingScript: string
+          const target = await resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel })
+          const recipientKey = planItemRecipientKey(wallet, target, {
+            recipientIdentityKey: args.recipientIdentityKey,
+          })
+          const to = recipientKey.address
           try {
-            lockingScript = new P2PKH().lock(to).toHex()
+            new P2PKH().lock(to)
           } catch {
             throw new Error('Invalid recipient address or identity key')
           }
@@ -5296,7 +5348,7 @@ export async function sendCollectables(
                 firstSeenAt: firstSeenAt.get(liveKey) ?? Date.now(),
                 liveScanAt,
                 lockingScriptHex: normalizeLockingScriptHex(match.lockingScript),
-                walletAddress: wallet.address,
+                holder: lockHolder(wallet, normalizeLockingScriptHex(match.lockingScript)),
               })
             ) {
               await assertTipNotProvenSpent(
@@ -5311,7 +5363,7 @@ export async function sendCollectables(
               beefBin: inputBEEF,
               outpoint,
             })
-            assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
+            await assertOrdinalIsDeviceLocked(tipLockingScript, wallet, match.customInstructions)
             const provenTier = getProvenVerdict(outpoint)?.tier ?? null
             const ready = inspectCollectableSendReady({
               outpoint,
@@ -5417,9 +5469,22 @@ export async function sendCollectables(
             ...prepared.map((item) => item.origin),
           ])
           const settlePath = chooseItemSettlePath({
-            paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
-            recipientIdentityKey: args.recipientIdentityKey,
+            paysOurAddress: recipientKey.kind === 'self',
+            recipientIdentityKey: recipientKey.kind === 'peer' ? recipientKey.identityKey : null,
           })
+          // One prefix per transfer, one child per output.
+          const outputKeys = prepared.map((_, index) =>
+            index === 0 || recipientKey.kind === 'address'
+              ? recipientKey
+              : planItemRecipientKey(wallet, target, {
+                  recipientIdentityKey: args.recipientIdentityKey,
+                  derivationPrefix: recipientKey.remittance.derivationPrefix,
+                }),
+          )
+          const deliveryAsset = collectableDeliveryAsset(
+            wallet.identityKey,
+            outputKeys.map((key, vout) => ({ vout, key })),
+          )
           let result:
             | Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
             | undefined
@@ -5440,22 +5505,27 @@ export async function sendCollectables(
                   inputDescription: '1sat collectable',
                   unlockingScriptLength: 108,
                 })),
-                outputs: prepared.map((item) => ({
-                  lockingScript,
+                outputs: prepared.map((item, index) => ({
+                  lockingScript: new P2PKH().lock(outputKeys[index]!.address).toHex(),
                   satoshis: 1,
                   outputDescription: 'Collectable transfer',
                   basket: '1sat',
-                  tags: item.tags,
-                  customInstructions: buildCollectableCustomInstructions({
-                    origin: item.origin,
-                    name: item.name,
-                    app: item.app,
-                    ...(item.collectionId
-                      ? { collectionId: item.collectionId }
-                      : {}),
-                    ...(item.content ? { content: item.content } : {}),
-                    provenance: item.provenance,
-                  }),
+                  ...heldItemRow(
+                    {
+                      tags: item.tags,
+                      customInstructions: buildCollectableCustomInstructions({
+                        origin: item.origin,
+                        name: item.name,
+                        app: item.app,
+                        ...(item.collectionId
+                          ? { collectionId: item.collectionId }
+                          : {}),
+                        ...(item.content ? { content: item.content } : {}),
+                        provenance: item.provenance,
+                      }),
+                    },
+                    heldRemittance(outputKeys[index]!),
+                  ),
                 })),
                 options: {
                   trustSelf: 'known',
@@ -5539,7 +5609,7 @@ export async function sendCollectables(
           sealedTxid = txid
           sealedBeef = atomicBeef
 
-          const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
+          const selfReceive = recipientKey.kind === 'self'
           const settle: SentItemSettle = 'senderBroadcast'
           const newTips = prepared.map((_, index) =>
             collectableBatchOutputOutpoint(txid, index),
@@ -5654,6 +5724,7 @@ export async function sendCollectables(
                     itemOrigin: item.origin,
                     itemCollectionId: item.collectionId,
                     itemOutputIndex,
+                    asset: deliveryAsset,
                     atomicBeef: batchAtomic,
                     ancestryComplete: true,
                     provenance: item.provenance,
@@ -5670,6 +5741,7 @@ export async function sendCollectables(
                   itemOrigin: item.origin,
                   itemCollectionId: item.collectionId,
                   itemOutputIndex,
+                  asset: deliveryAsset,
                   messagebox: friend?.messagebox,
                   provenance: parseProvenanceV2(item.provenance) ?? undefined,
                 }, accountKeyScopeFor(wallet))

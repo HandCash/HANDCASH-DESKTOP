@@ -11,7 +11,7 @@
  * token id is deploy outpoint (`txid_vout`).
  */
 
-import type { ColorRemittance } from '../colorKeys'
+import type { Remittance } from '../brc29Keys'
 import {
   LEGACY_TOKEN_BASKET,
   P2PFT_BASKET,
@@ -414,8 +414,8 @@ export function buildBsv21CustomInstructions(args: {
   issuer?: string
   /** Deploy cap. Local remittance only — not an on-chain 162 field. */
   maxSupply?: number
-  /** The `p color` remittance of a derived-key tip; without it the key cannot be found again. */
-  remittance?: ColorRemittance
+  /** The BRC-29 remittance of a derived-key tip; without it the key cannot be found again. */
+  remittance?: Remittance
 }): string {
   const body: Record<string, unknown> = {
     p: BSV21_PROTOCOL,

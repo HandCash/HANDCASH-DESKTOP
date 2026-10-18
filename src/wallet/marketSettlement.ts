@@ -1,4 +1,4 @@
-import { getActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 import { type WalletRuntime } from './walletRuntime'
 import {
@@ -6,7 +6,6 @@ import {
   Hash,
   LockingScript,
   P2PKH,
-  PrivateKey,
   PublicKey,
   Transaction,
   UnlockingScript,
@@ -36,6 +35,7 @@ import {
   isCountersignedMarketAsset,
   marketFeePayToAddress,
   markMarketSettlementProgress,
+  marketListingKey,
   MarketListingError,
   reserveMarketListingAuthorization,
   updateMarketListingAuthorization,
@@ -47,6 +47,7 @@ import {
   type MarketListingAuthorization,
   type MarketPurchaseIntent,
   type MarketSettlementReceipt,
+  type MarketSellerKeys,
   type PurchaseMarketListingArgs,
 } from './marketListing'
 import {
@@ -87,6 +88,9 @@ import {
 } from './insufficientFunds'
 import { runExclusiveSpend } from './spendGuard'
 import type { HolderRemittance } from './countersign/holderKeys'
+import { rememberTipKey, selfTokenOutput } from './token/tipKeys'
+import type { Remittance } from './brc29Keys'
+import { heldItemRow } from './itemRecipientKey'
 import { checkCountersignedListing, parseCountersignedListingProof } from './marketCountersigned'
 import { signTipInputs } from './signTipInputs'
 import {
@@ -108,7 +112,6 @@ import {
   WALLET_ACTIVITY_ORIGIN,
   type ActivityItem,
 } from './appActivity'
-import { addressFromIdentityKey } from './friends'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 import { getResolvedInscription } from './inscriptionCache'
 import {
@@ -118,6 +121,11 @@ import {
 
 const PENDING_KEY = storageRegistry.marketPending.key
 const RESPONSE_KEY = storageRegistry.marketResponses.key
+
+/** The held row with the buyer's BRC-29 child written into `customInstructions` and its tag. */
+function heldBuyerRow<T extends { customInstructions: string; tags: string[] }>(held: T, remittance: Remittance | undefined): T {
+  return { ...held, ...heldItemRow(held, remittance) }
+}
 
 function pendingStorageKey(): string {
   return accountLocalKey(PENDING_KEY)
@@ -519,6 +527,17 @@ function isBuyerFundedBsvChangeOutput(
   return decodeBsv21Binary(scriptHex) == null
 }
 
+function isP2pkhLock(scriptHex: string): boolean {
+  return /^76a914[0-9a-f]{40}88ac$/.test(scriptHex)
+}
+
+/** The mainnet address a P2PKH or BSV-21 value lock at `vout` pays, for the settlement receipt. */
+function buyerItemAddress(tx: Transaction, vout: number): string | undefined {
+  const script = tx.outputs[vout]?.lockingScript?.toHex().toLowerCase() ?? ''
+  const p2pkh = isP2pkhLock(script) ? script : decodeBsv21Binary(script)?.restScriptHex?.toLowerCase() ?? ''
+  return isP2pkhLock(p2pkh) ? Utils.toBase58Check(Utils.toArray(p2pkh.slice(6, 46), 'hex'), [0x00]) : undefined
+}
+
 /** 162 value lock whose remainder P2PKH pays the buyer. */
 function isBuyerBsv21ValueLock(
   scriptHex: string,
@@ -541,8 +560,14 @@ export function validateMarketSettlementOutputs(args: {
   buyerAddress?: string
   chain: 'main' | 'test'
   shape: MarketSettlementShape
-  /** A countersigned buyer output: the exact lock the buyer planned for its fresh holder key. */
+  /** The exact buyer item lock the buyer planned; required for countersigned assets. */
   buyerItemLock?: string
+  /**
+   * The buyer's own pad locks, known only to the buyer. A seller sees BRC-29
+   * children it cannot derive and checks pads are plain P2PKH: they are the
+   * buyer's satoshis either way.
+   */
+  buyerPads?: { inputLocks: string[]; returnLock: string }
 }): void {
   if (args.chain !== 'main') {
     throw new Error('Market settlement is mainnet only')
@@ -601,23 +626,30 @@ export function validateMarketSettlementOutputs(args: {
     throw new Error('Settlement item/offer input or output ordering is invalid')
   }
   if (shape.padReturnOutputIndex != null) {
+    const pads = args.buyerPads
     let padSats = 0
-    for (const vin of shape.padVins) {
+    shape.padVins.forEach((vin, i) => {
       const input = args.tx.inputs[vin]
       const source =
         input?.sourceTransaction ?? args.beef.findTxid(String(input?.sourceTXID))?.tx
       const out = input ? source?.outputs[input.sourceOutputIndex] : undefined
+      const lock = out?.lockingScript?.toHex().toLowerCase() ?? ''
       if (
         !out ||
         !Number.isSafeInteger(out.satoshis) ||
         (out.satoshis ?? 0) < 1 ||
-        out.lockingScript?.toHex().toLowerCase() !== buyerChangeLock
+        (pads ? lock !== pads.inputLocks[i]?.toLowerCase() : !isP2pkhLock(lock))
       ) {
         throw new Error('Settlement pad inputs must be buyer P2PKH outputs')
       }
       padSats += out.satoshis!
-    }
-    if (!outputEquals(args.tx, shape.padReturnOutputIndex, padSats, buyerChangeLock)) {
+    })
+    const padReturn = args.tx.outputs[shape.padReturnOutputIndex]
+    const padReturnLock = padReturn?.lockingScript?.toHex().toLowerCase() ?? ''
+    if (
+      padReturn?.satoshis !== padSats ||
+      (pads ? padReturnLock !== pads.returnLock.toLowerCase() : !isP2pkhLock(padReturnLock))
+    ) {
       throw new Error('Settlement pad return must hold exactly the pad satoshis')
     }
   }
@@ -932,20 +964,22 @@ export async function executeMarketPurchase(
     }
     const inputBeef = padded ? padded.beef.toBinary() : listingBeef
     const padSats = padded?.pads.reduce((sum, pad) => sum + pad.satoshis, 0) ?? 0
+    const buyerKey = receive ? null : selfTokenOutput(active)
+    if (buyerKey) rememberTipKey(active, buyerKey.key)
     const buyerLock = receive
       ? receive.lockingScript
       : isBsv21
       ? buildBsv21ValueLock({
           tokenId: listing.origin,
           amount: BigInt(listing.amt!),
-          address: active.address,
+          address: buyerKey!.address,
           layout: bsv21TipLayout({
             lockingScript: Beef.fromBinary(listingBeef)
               .findTxid(itemTxid!)
               ?.tx?.outputs[Number(itemVout)]?.lockingScript?.toHex(),
           }),
         })
-      : new P2PKH().lock(active.address).toHex()
+      : new P2PKH().lock(buyerKey!.address).toHex()
     const sellerInputs: Record<number, { outpoint: string; inputDescription: string; unlockingScriptLength: number }> = {
       [shape.itemVin]: {
         outpoint: normalizeOutpoint(listing.outpoint),
@@ -977,13 +1011,16 @@ export async function executeMarketPurchase(
         outputDescription: 'Market item to buyer',
         ...(receive
           ? { basket: receive.basket, tags: receive.tags, customInstructions: receive.customInstructions }
-          : buildMarketHeldRemittance({
-              assetType: isBsv21 ? 'bsv21' : 'ordinal',
-              origin: listing.origin,
-              amt: listing.amt,
-              name: itemDisplayName,
-              ...(provenance ? { provenance } : {}),
-            })),
+          : heldBuyerRow(
+              buildMarketHeldRemittance({
+                assetType: isBsv21 ? 'bsv21' : 'ordinal',
+                origin: listing.origin,
+                amt: listing.amt,
+                name: itemDisplayName,
+                ...(provenance ? { provenance } : {}),
+              }),
+              buyerKey?.remittance,
+            )),
       },
       [shape.sellerOutputIndex]: {
         lockingScript: sellerLock,
@@ -997,7 +1034,7 @@ export async function executeMarketPurchase(
       },
     }
     if (shape.padReturnOutputIndex != null) {
-      fixedOutputs[shape.padReturnOutputIndex] = marketPadOutput(active.address, padSats)
+      fixedOutputs[shape.padReturnOutputIndex] = marketPadOutput(active, padSats)
     }
     const outputs = Array.from({ length: shape.firstChangeIndex }, (_, vout) => {
       const output = fixedOutputs[vout]
@@ -1005,7 +1042,7 @@ export async function executeMarketPurchase(
       return output
     })
     // Two pads in, one out: replace the spent one from buyer funds.
-    if (padded) outputs.push(marketPadOutput(active.address))
+    if (padded) outputs.push(marketPadOutput(active))
     const createPurchase = () => active.wallet.createAction({
       description: isBsv21 || countersigned === 'csft'
         ? `Buy ${listing.amt?.toLocaleString() ?? ''} ${itemDisplayName}`.replace('  ', ' ')
@@ -1067,16 +1104,23 @@ export async function executeMarketPurchase(
         beef,
         listing,
         buyerIdentityKey: active.identityKey,
-        buyerAddress: active.address,
+        ...(buyerKey ? { buyerAddress: buyerKey.address } : {}),
         chain: active.chain,
         shape,
-        ...(receive ? { buyerItemLock: receive.lockingScript } : {}),
+        buyerItemLock: buyerLock,
+        ...(padded
+          ? {
+              buyerPads: {
+                inputLocks: padded.pads.map((pad) => pad.lockingScript),
+                returnLock: fixedOutputs[shape.padReturnOutputIndex!]!.lockingScript,
+              },
+            }
+          : {}),
       })
       if (padded) {
-        const rootKey = PrivateKey.fromHex(active.rootKeyHex)
         shape.padVins.forEach((vin, i) => {
           settlementTx.inputs[vin]!.unlockingScriptTemplate = new P2PKH().unlock(
-            rootKey,
+            padded.pads[i]!.signingKey,
             'all',
             false,
             padded.pads[i]!.satoshis,
@@ -1174,7 +1218,7 @@ export async function executeMarketPurchase(
           type: 'sign-request' as const,
           saleId,
           buyerIdentityKey: active.identityKey,
-          buyerAddress: active.address,
+          ...(buyerKey ? { buyerAddress: buyerKey.address } : {}),
           intent: args.intent,
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
           listing,
@@ -1233,7 +1277,7 @@ export async function executeMarketPurchase(
       clearSoldListingFromMarket({
         settlementBeef: atomic,
         buyerIdentityKey: active.identityKey,
-        buyerAddress: active.address,
+        buyerAddress: buyerKey?.address,
         listingOutpoints: [listing.outpoint, listing.offerOutpoint],
       })
       if (receive) {
@@ -1690,7 +1734,7 @@ async function signSellerInputs(args: {
     beef,
     listing,
     buyerIdentityKey: args.wire.buyerIdentityKey,
-    buyerAddress: args.wire.buyerAddress ?? addressFromIdentityKey(args.wire.buyerIdentityKey, active.chain),
+    ...(args.wire.buyerAddress ? { buyerAddress: args.wire.buyerAddress } : {}),
     chain: active.chain,
     shape,
   })
@@ -1703,7 +1747,10 @@ async function signSellerInputs(args: {
     txCommitment: marketSettlementCommitment(tx),
     intent,
   })
-  const key = PrivateKey.fromHex(active.rootKeyHex)
+  const key = marketListingKey(
+    active,
+    getMarketListingAuthorization({ outpoint: listing.outpoint, nonce: listing.nonce })?.sellerKeys,
+  )
   const offerSource =
     tx.inputs[offerSubject.vin]?.sourceTransaction ??
     beef.findTxid(String(tx.inputs[offerSubject.vin]?.sourceTXID))?.tx
@@ -1725,6 +1772,31 @@ async function signSellerInputs(args: {
     throw new Error('Seller item/offer signatures missing')
   }
   return { itemUnlockingScript, offerUnlockingScript }
+}
+
+/**
+ * A v2 sale pays the listing's BRC-29 payout child, so it is a BRC-29 payment
+ * to self: internalized in place, no sweep transaction. v1 sales paid the
+ * identity address and still go through the legacy sweep.
+ */
+async function internalizeMarketProceeds(
+  active: ActiveWallet,
+  atomic: number[],
+  outputIndex: number,
+  sellerKeys: MarketSellerKeys,
+  saleId: string,
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await active.wallet.internalizeAction({
+      tx: atomic,
+      outputs: [{ outputIndex, protocol: 'wallet payment', paymentRemittance: sellerKeys.payout }],
+      description: 'Market sale proceeds',
+      labels: ['market-sale', `market-sale:${saleId.slice(0, 32)}`],
+    })
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /** Per-settlement backoff for compact receipts whose tx is not visible yet. */
@@ -1893,6 +1965,7 @@ export async function handleInboundMarketSettlementWire(args: {
         settlementTxid: args.wire.txid,
         sellerOutputIndex: saleShape.sellerOutputIndex,
         feeOutputIndex: saleShape.feeOutputIndex,
+        buyerAddress: buyerItemAddress(finalTx, saleShape.buyerOutputIndex),
       })
     } else {
       // Pre-signed listing: the buyer never asked us to sign, so the transaction
@@ -1951,15 +2024,13 @@ export async function handleInboundMarketSettlementWire(args: {
     chart.send({ type: 'DELIVERED' })
     chart.send({ type: 'BROADCAST_CONFIRMED' })
     if (!progress.proceedsInternalized) {
-      const swept = await sweepVisibleP2pkhOutpoints(
-        active,
-        [`${args.wire.txid}.${sellerOutputIndex}`],
-        atomic,
-      )
-      if (!swept[0]?.success) {
+      const ingested = authorization.sellerKeys
+        ? await internalizeMarketProceeds(active, atomic, sellerOutputIndex, authorization.sellerKeys, args.wire.saleId)
+        : (await sweepVisibleP2pkhOutpoints(active, [`${args.wire.txid}.${sellerOutputIndex}`], atomic))[0]
+      if (!ingested?.success) {
         chart.send({
           type: 'FAIL',
-          error: swept[0]?.error ?? 'Seller proceeds ingest failed',
+          error: ingested?.error ?? 'Seller proceeds ingest failed',
         })
         chart.stop()
         return false

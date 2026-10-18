@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.3.596",
+  "version": "1.3.597",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -36,6 +36,8 @@
     "test:watch": "vitest",
     "test:live-tx": "HANDCASH_LIVE_TX=1 vitest run --config vitest.live.config.ts",
     "test:live-tx:print": "HANDCASH_LIVE_TX=print vitest run --config vitest.live.config.ts",
+    "test:brc100": "vitest run src/contracts/brc100Conformance.test.ts",
+    "test:brc100:live": "vitest run --config vitest.live.config.ts src/contracts/brc100Conformance.live.test.ts",
     "launch": "bash scripts/launch.sh",
     "launch:mac": "bash scripts/launch-mac.sh",
     "version:patch": "node scripts/bump-version.mjs patch",

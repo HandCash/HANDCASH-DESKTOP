@@ -1,5 +1,6 @@
 import {
   Hash,
+  KeyDeriver,
   P2PKH,
   PrivateKey,
   PublicKey,
@@ -11,7 +12,12 @@ import {
 
 /** BRC-48 PushDrop field vocabulary for the HandCash 1Sat market overlay. */
 export const MARKET_OFFER_MAGIC = '1SAT-MARKET'
-export const MARKET_OFFER_VERSION = 1 as const
+/** Version 2 (BRC-254 v2): BRC-29 listing key, BRC-3 signature. Version 1 is read only. */
+export const MARKET_OFFER_VERSION = 2 as const
+export type MarketOfferVersion = 1 | typeof MARKET_OFFER_VERSION
+/** BRC-3 signature of a v2 offer: the seller's child for this protocol, counterparty `anyone`. */
+export const MARKET_OFFER_SIGNATURE_PROTOCOL: [2, string] = [2, '1sat market offer']
+export const MARKET_OFFER_SIGNATURE_KEY_ID = '1'
 export const MARKET_ITEM_VOUT = 0 as const
 export const MARKET_OFFER_VOUT = 1 as const
 export const MARKET_OFFER_DEPOSIT_SATS = 1 as const
@@ -33,9 +39,14 @@ export const MARKET_OVERLAY_HYDRATE_MAX_TXS = 8
 
 export type MarketOfferFields = {
   magic: typeof MARKET_OFFER_MAGIC
-  version: typeof MARKET_OFFER_VERSION
+  version: MarketOfferVersion
   itemVout: typeof MARKET_ITEM_VOUT
   sellerIdentityKey: string
+  /**
+   * v2: the seller's BRC-29 child that locks the offer token and (for `1sat` /
+   * `p2pft`) the listed output. v1 used the identity key for both.
+   */
+  listingKey?: string
   payTo: string
   grossPriceSats: number
   feeIdentityKey: string
@@ -51,10 +62,10 @@ export type MarketOfferFields = {
   messagebox: string
 }
 
-const SIGNED_FIELD_COUNT = 19
-const FIELD_COUNT = 20
+const SIGNED_FIELD_COUNT: Record<MarketOfferVersion, number> = { 1: 19, 2: 20 }
 const OP_CHECKSIG = 0xac
 const OP_2DROP = 0x6d
+const OP_DROP = 0x75
 const OP_0 = 0x00
 const OP_1NEGATE = 0x4f
 const OP_1 = 0x51
@@ -102,16 +113,30 @@ function chunkIsMinimalPush(chunk: { op?: number; data?: number[] }): boolean {
   return op === 0x4e
 }
 
+/** Pushed fields including the signature, and the drops that follow them. */
+function offerShape(pushes: number): number {
+  return 2 + pushes + Math.ceil(pushes / 2)
+}
+
 export function marketOfferUsesMinimalPushes(lockingScriptHex: string): boolean {
   try {
     const chunks = Script.fromHex(lockingScriptHex.trim().toLowerCase()).chunks
-    return (
-      chunks.length === FIELD_COUNT + 12 &&
-      chunks.slice(2, 2 + FIELD_COUNT).every(chunkIsMinimalPush)
-    )
+    const pushes = ([1, 2] as const)
+      .map((v) => SIGNED_FIELD_COUNT[v] + 1)
+      .find((n) => chunks.length === offerShape(n))
+    return pushes != null && chunks.slice(2, 2 + pushes).every(chunkIsMinimalPush)
   } catch {
     return false
   }
+}
+
+/** The child of `seller` a v2 offer signature verifies under (BRC-3, counterparty `anyone`). */
+export function marketOfferSignerKey(sellerIdentityKey: string): PublicKey {
+  return new KeyDeriver('anyone').derivePublicKey(
+    MARKET_OFFER_SIGNATURE_PROTOCOL,
+    MARKET_OFFER_SIGNATURE_KEY_ID,
+    sellerIdentityKey,
+  )
 }
 
 function unsignedBytes(value: number, length: number): number[] {
@@ -156,10 +181,20 @@ export function normalizeMarketOfferFields(
   const feeIdentityKey = PublicKey.fromString(
     value.feeIdentityKey.trim().toLowerCase(),
   ).toString()
+  const version: MarketOfferVersion = value.version === 1 ? 1 : MARKET_OFFER_VERSION
   const payTo = value.payTo.trim()
   const feePayTo = value.feePayTo.trim()
-  if (PublicKey.fromString(sellerIdentityKey).toAddress('mainnet') !== payTo) {
-    throw new Error('Offer payTo does not match seller identity')
+  const identityAddress = PublicKey.fromString(sellerIdentityKey).toAddress('mainnet')
+  let listingKey: string | undefined
+  if (version === 1) {
+    if (identityAddress !== payTo) throw new Error('Offer payTo does not match seller identity')
+  } else {
+    // A BRC-100 wallet never signs with its identity key, so v2 holds nothing there.
+    if (!value.listingKey) throw new Error('Offer listing key is missing')
+    listingKey = PublicKey.fromString(value.listingKey.trim().toLowerCase()).toString()
+    if (listingKey === sellerIdentityKey) throw new Error('Offer listing key is the seller identity key')
+    if (payTo === identityAddress) throw new Error('Offer payTo is the seller identity address')
+    new P2PKH().lock(payTo)
   }
   if (PublicKey.fromString(feeIdentityKey).toAddress('mainnet') !== feePayTo) {
     throw new Error('Offer fee address does not match fee identity')
@@ -194,9 +229,10 @@ export function normalizeMarketOfferFields(
   }
   return {
     magic: MARKET_OFFER_MAGIC,
-    version: MARKET_OFFER_VERSION,
+    version,
     itemVout: MARKET_ITEM_VOUT,
     sellerIdentityKey,
+    ...(listingKey ? { listingKey } : {}),
     payTo,
     grossPriceSats,
     feeIdentityKey,
@@ -235,32 +271,45 @@ export function marketOfferFieldBytes(fields: MarketOfferFields): number[][] {
     Utils.toArray(f.nonce, 'hex'),
     unsignedBytes(f.depositSats, 8),
     utf8(f.messagebox),
+    ...(f.version === 2 ? [Utils.toArray(f.listingKey!, 'hex')] : []),
   ]
+}
+
+/** The key that locks the offer token: the listing key (v2) or the identity key (v1). */
+export function marketOfferLockKey(fields: MarketOfferFields): string {
+  return fields.version === 2 ? fields.listingKey! : fields.sellerIdentityKey
 }
 
 /**
  * Final BRC-48 PushDrop wire format shared with tm_1sat_market.
  *
- * The seller signs the concatenated binary fields. The PushDrop lock itself is
- * seller-controlled, while the embedded signature lets an overlay validate the
- * advert without trusting its database projection.
+ * The seller signs the concatenated binary fields. A v2 offer is signed the way
+ * BRC-100 `createSignature` signs (protocol `1sat market offer`, key ID `1`,
+ * counterparty `anyone`) and locked to the listing key, so any BRC-100 wallet
+ * can write and cancel one. `rootKey` is the seller's root; v1 signs with it raw.
  */
-export function encodeMarketOffer(fields: MarketOfferFields, sellerKey: PrivateKey): string {
+export function encodeMarketOffer(fields: MarketOfferFields, rootKey: PrivateKey): string {
   const normalized = normalizeMarketOfferFields(fields)
-  if (sellerKey.toPublicKey().toString() !== normalized.sellerIdentityKey) {
+  if (rootKey.toPublicKey().toString() !== normalized.sellerIdentityKey) {
     throw new Error('Offer signing key does not match seller identity')
   }
   const offerFields = marketOfferFieldBytes(normalized)
-  const encodedSignature = sellerKey.sign(offerFields.flat()).toDER()
+  const signer =
+    normalized.version === 2
+      ? new KeyDeriver(rootKey).derivePrivateKey(MARKET_OFFER_SIGNATURE_PROTOCOL, MARKET_OFFER_SIGNATURE_KEY_ID, 'anyone')
+      : rootKey
+  const encodedSignature = signer.sign(offerFields.flat()).toDER()
   const signature =
     typeof encodedSignature === 'string'
       ? Utils.toArray(encodedSignature, 'hex')
       : encodedSignature
+  const pushes = [...offerFields, signature]
   const script = new Script()
-  script.writeBin(Utils.toArray(normalized.sellerIdentityKey, 'hex'))
+  script.writeBin(Utils.toArray(marketOfferLockKey(normalized), 'hex'))
   script.writeOpCode(OP_CHECKSIG)
-  for (const field of [...offerFields, signature]) writeMinimalBin(script, field)
-  for (let i = 0; i < FIELD_COUNT / 2; i++) script.writeOpCode(OP_2DROP)
+  for (const field of pushes) writeMinimalBin(script, field)
+  for (let i = 0; i < Math.floor(pushes.length / 2); i++) script.writeOpCode(OP_2DROP)
+  if (pushes.length % 2) script.writeOpCode(OP_DROP)
   return script.toHex()
 }
 
@@ -274,10 +323,15 @@ export function parseMarketOffer(lockingScriptHex: string): MarketOfferFields {
   } catch {
     throw new Error('Invalid market offer PushDrop')
   }
-  if (decoded.fields.length !== FIELD_COUNT) throw new Error('Invalid market offer field count')
   const raw = decoded.fields.map((field) => [...field])
+  const version = raw[1]?.length === 1 ? raw[1][0] : -1
+  if ((version !== 1 && version !== 2) || raw.length !== SIGNED_FIELD_COUNT[version] + 1) {
+    throw new Error('Invalid market offer field count')
+  }
   const expiresAt = readUnsigned(raw[15]!, 8)
   const parsed = normalizeMarketOfferFields({
+    version,
+    ...(version === 2 ? { listingKey: Utils.toHex(raw[19]!) } : {}),
     sellerIdentityKey: Utils.toHex(raw[3]!),
     payTo: text(raw[4]!),
     grossPriceSats: readUnsigned(raw[6]!, 8),
@@ -294,7 +348,7 @@ export function parseMarketOffer(lockingScriptHex: string): MarketOfferFields {
   })
   if (
     text(raw[0]!) !== MARKET_OFFER_MAGIC ||
-    readUnsigned(raw[1]!, 1) !== MARKET_OFFER_VERSION ||
+    readUnsigned(raw[1]!, 1) !== version ||
     readUnsigned(raw[2]!, 4) !== MARKET_ITEM_VOUT ||
     readUnsigned(raw[17]!, 8) !== MARKET_OFFER_DEPOSIT_SATS ||
     readUnsigned(raw[14]!, 1) !== 2
@@ -307,12 +361,15 @@ export function parseMarketOffer(lockingScriptHex: string): MarketOfferFields {
   if (Utils.toHex(raw[9]!) !== Utils.toHex(scriptCommitment(parsed.feePayTo))) {
     throw new Error('Offer fee payout commitment mismatch')
   }
-  if (decoded.lockingPublicKey.toString().toLowerCase() !== parsed.sellerIdentityKey) {
+  if (decoded.lockingPublicKey.toString().toLowerCase() !== marketOfferLockKey(parsed)) {
     throw new Error('Offer seller control mismatch')
   }
+  const signed = SIGNED_FIELD_COUNT[version]
+  const signerKey =
+    version === 2 ? marketOfferSignerKey(parsed.sellerIdentityKey) : decoded.lockingPublicKey
   try {
-    const signature = Signature.fromDER(raw[19]!)
-    if (!decoded.lockingPublicKey.verify(raw.slice(0, SIGNED_FIELD_COUNT).flat(), signature)) {
+    const signature = Signature.fromDER(raw[signed]!)
+    if (!signerKey.verify(raw.slice(0, signed).flat(), signature)) {
       throw new Error('Invalid market offer signature')
     }
   } catch (error) {

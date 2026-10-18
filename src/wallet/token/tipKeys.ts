@@ -1,30 +1,33 @@
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from '../session'
 import {
-  colorPrivateKey,
-  colorPublicKey,
+  brc29PrivateKey,
+  brc29PublicKey,
   freshRemittanceString,
-  readColorRemittance,
-  type ColorRemittance,
-} from '../colorKeys'
+  heldKeyCandidates,
+  readRemittance,
+  remittanceFromTags,
+  selfBrc29Output,
+  type Remittance,
+} from '../brc29Keys'
 import { normalizeTokenId } from './types'
 import { TOKEN_FILING_BASKETS } from './filing'
+import { DIRECT_OFFER_BASKET } from '../directOfferPath'
 import { scriptPaysAddress } from '../ordinalOwnership'
 
 /**
- * Which key signs a token tip. Tips paid to the identity address sign with the
- * root key; tips under a `p color` child sign with the child rebuilt from the
- * remittance recorded in the tip's `customInstructions`. Anything this wallet
- * cannot place keeps the root key, which is what every tip used before
- * derived outputs existed.
+ * Which key signs a token tip. New tips sit under a BRC-29 child rebuilt from
+ * the remittance in the tip's `customInstructions`. Tips earlier releases
+ * wrote sit under a `p color` child of the same remittance or on the identity
+ * address; both stay spendable here and are never written again.
  */
 const P2PKH_RE = /76a914([0-9a-f]{40})88ac/g
 
 type Cache = { identity: string; keys: Map<string, PrivateKey> }
 let cache: Cache | null = null
 
-function cacheFor(active: ActiveWallet): Map<string, PrivateKey> {
-  const identity = active.identityKey.toLowerCase()
+function cacheFor(active: Pick<ActiveWallet, 'identityKey'>): Map<string, PrivateKey> {
+  const identity = (active.identityKey ?? '').toLowerCase()
   if (cache?.identity !== identity) cache = { identity, keys: new Map() }
   return cache.keys
 }
@@ -42,36 +45,37 @@ function identityPkh(active: ActiveWallet): string {
 }
 
 /** Remember a derived key this wallet just wrote or received a tip under. */
-export function rememberTipKey(active: ActiveWallet, key: PrivateKey): void {
+export function rememberTipKey(active: Pick<ActiveWallet, 'identityKey'>, key: PrivateKey): void {
   cacheFor(active).set(pkhOf(key), key)
 }
 
-/** The derived key recorded in one tip's `customInstructions`, when it has one. */
-export function tipKeyFromInstructions(active: ActiveWallet, customInstructions: unknown): PrivateKey | null {
+/** Remember every key the remittance recorded on one tip may name. */
+export function tipKeyFromInstructions(active: ActiveWallet, customInstructions: unknown): void {
   let parsed: unknown = customInstructions
   if (typeof customInstructions === 'string') {
     try {
       parsed = JSON.parse(customInstructions)
     } catch {
-      return null
+      return
     }
   }
-  const remittance = readColorRemittance(parsed)
-  const id = normalizeTokenId(String((parsed as { id?: unknown } | null)?.id ?? ''))
-  if (!remittance || !id) return null
+  const remittance = readRemittance(parsed)
+  if (!remittance) return
+  const id = normalizeTokenId(String((parsed as { id?: unknown } | null)?.id ?? '')) || null
   try {
-    const key = colorPrivateKey(PrivateKey.fromHex(active.rootKeyHex), id, remittance)
-    rememberTipKey(active, key)
-    return key
+    for (const key of heldKeyCandidates(PrivateKey.fromHex(active.rootKeyHex), id, remittance)) rememberTipKey(active, key)
   } catch {
-    return null
+    /* a remittance this wallet cannot derive names no key of ours */
   }
 }
 
-/** Load every derived tip key from the token filings into the cache. */
+/** Baskets whose token rows carry a remittance: the filings, and lots held by a direct offer. */
+const TIP_KEY_BASKETS = [...TOKEN_FILING_BASKETS, DIRECT_OFFER_BASKET] as const
+
+/** Load every derived tip key from the baskets holding token rows into the cache. */
 export async function primeTipKeys(active: ActiveWallet): Promise<void> {
   const startedAt = Date.now()
-  for (const basket of TOKEN_FILING_BASKETS) {
+  for (const basket of TIP_KEY_BASKETS) {
     try {
       const page = await active.wallet.listOutputs({ basket, include: 'locking scripts', includeCustomInstructions: true, limit: 1000 })
       for (const o of page.outputs ?? []) tipKeyFromInstructions(active, o.customInstructions)
@@ -83,52 +87,95 @@ export async function primeTipKeys(active: ActiveWallet): Promise<void> {
   if (ms >= 250) console.info(`[tipKeys] prime done ${ms}ms`)
 }
 
-/** True when the lock pays this wallet's identity address or a derived key it holds. */
-export function ownsTokenLock(active: ActiveWallet, lockingScriptHex: string | undefined): boolean {
-  if (!lockingScriptHex) return false
-  if (active.address && scriptPaysAddress(lockingScriptHex, active.address)) return true
-  if (!active.identityKey) return false
+/** Remember the key an item row's `brc29:` tag names. */
+export function tipKeyFromTags(active: Pick<ActiveWallet, 'identityKey' | 'rootKeyHex'>, tags: readonly string[] | undefined): void {
+  const remittance = remittanceFromTags(tags)
+  if (!remittance) return
+  try {
+    rememberTipKey(active, brc29PrivateKey(PrivateKey.fromHex(active.rootKeyHex), remittance))
+  } catch {
+    /* a remittance this wallet cannot derive names no key of ours */
+  }
+}
+
+const ITEM_PAGE = 500
+
+/**
+ * Load the derived key of every item tip in basket `1sat` from its tag. Tags
+ * only: an item's `customInstructions` carry its provenance BEEF, and reading
+ * them for a whole basket crashed phones.
+ */
+export async function primeItemTipKeys(active: ActiveWallet): Promise<void> {
+  const startedAt = Date.now()
+  try {
+    for (let offset = 0; ; offset += ITEM_PAGE) {
+      const page = await active.wallet.listOutputs({
+        basket: '1sat',
+        includeTags: true,
+        includeCustomInstructions: false,
+        limit: ITEM_PAGE,
+        offset,
+        seekPermission: false,
+      })
+      const outputs = page.outputs ?? []
+      for (const o of outputs) tipKeyFromTags(active, o.tags)
+      if (outputs.length < ITEM_PAGE) break
+    }
+  } catch (err) {
+    console.warn('[tipKeys] 1sat unread', err instanceof Error ? err.message : String(err))
+  }
+  const ms = Date.now() - startedAt
+  if (ms >= 250) console.info(`[tipKeys] item prime done ${ms}ms`)
+}
+
+/**
+ * Who a lock pays, as far as this wallet can tell: its identity address
+ * (earlier releases), a BRC-29 child it remembers, someone else, or nothing
+ * to read. Only `address` locks ever show up in an address scan.
+ */
+export type LockHolder = 'address' | 'derived' | 'other' | 'unknown'
+
+export function lockHolder(active: ActiveWallet, lockingScriptHex: string | null | undefined): LockHolder {
+  if (!lockingScriptHex) return 'unknown'
+  if (active.address && scriptPaysAddress(lockingScriptHex, active.address)) return 'address'
+  const hashes = lockHashes(lockingScriptHex)
+  if (active.identityKey && hashes.includes(identityPkh(active))) return 'address'
   const keys = cacheFor(active)
-  const self = identityPkh(active)
-  return lockHashes(lockingScriptHex).some((h) => h === self || keys.has(h))
+  return hashes.some((h) => keys.has(h)) ? 'derived' : 'other'
+}
+
+/** True when the lock pays a derived key this wallet holds, or its identity address (earlier releases). */
+export function ownsTokenLock(active: ActiveWallet, lockingScriptHex: string | undefined): boolean {
+  const holder = lockHolder(active, lockingScriptHex)
+  return holder === 'address' || holder === 'derived'
 }
 
 /** One derived value output: the address it pays and the remittance that finds its key again. */
-export type ColorOutput = { address: string; remittance: ColorRemittance }
+export type TokenOutputKey = { address: string; remittance: Remittance }
 
 const PEER_KEY_RE = /^0[23][0-9a-f]{64}$/
 
-/** A fresh `p color` child of this wallet (counterparty `self`), with its private key. */
-export function selfColorOutput(
+/** A fresh BRC-29 child of this wallet, with its private key. */
+export function selfTokenOutput(
   active: Pick<ActiveWallet, 'rootKeyHex' | 'identityKey'>,
-  tokenId: string,
   derivationPrefix: string = freshRemittanceString(),
-): ColorOutput & { key: PrivateKey } {
-  const root = PrivateKey.fromHex(active.rootKeyHex)
-  const remittance: ColorRemittance = {
-    derivationPrefix,
-    derivationSuffix: freshRemittanceString(),
-    senderIdentityKey: active.identityKey.toLowerCase(),
-  }
-  const key = colorPrivateKey(root, tokenId, remittance)
-  return { address: key.toAddress(), remittance, key }
+): TokenOutputKey & { key: PrivateKey } {
+  return selfBrc29Output(active, derivationPrefix)
 }
 
-/** A fresh `p color` child of `peerKey`, which only that identity can spend. */
-export function peerColorOutput(
+/** A fresh BRC-29 child of `peerKey`, which only that identity can spend. */
+export function peerTokenOutput(
   active: Pick<ActiveWallet, 'rootKeyHex' | 'identityKey'>,
-  tokenId: string,
   peerKey: string,
   derivationPrefix: string = freshRemittanceString(),
-): ColorOutput {
-  const remittance: ColorRemittance = {
+): TokenOutputKey {
+  const remittance: Remittance = {
     derivationPrefix,
     derivationSuffix: freshRemittanceString(),
     senderIdentityKey: active.identityKey.toLowerCase(),
   }
-  const pub = colorPublicKey(
+  const pub = brc29PublicKey(
     PrivateKey.fromHex(active.rootKeyHex),
-    tokenId,
     remittance.derivationPrefix,
     remittance.derivationSuffix,
     peerKey,
@@ -144,26 +191,25 @@ export function peerColorOutput(
  * self-payee get this wallet's own children. `held` lists the private keys of
  * outputs this wallet keeps.
  */
-export function planColorOutputs(args: {
+export function planTokenOutputs(args: {
   wallet: Pick<ActiveWallet, 'rootKeyHex' | 'identityKey'>
-  tokenId: string
   payeeIsSelf: boolean
   peerKey: string | null
   hasChange: boolean
-}): { payee: ColorOutput | null; change: ColorOutput | null; held: PrivateKey[] } {
+}): { payee: TokenOutputKey | null; change: TokenOutputKey | null; held: PrivateKey[] } {
   const prefix = freshRemittanceString()
   const held: PrivateKey[] = []
-  let payee: ColorOutput | null = null
+  let payee: TokenOutputKey | null = null
   if (args.payeeIsSelf) {
-    const self = selfColorOutput(args.wallet, args.tokenId, prefix)
+    const self = selfTokenOutput(args.wallet, prefix)
     held.push(self.key)
     payee = { address: self.address, remittance: self.remittance }
   } else if (args.peerKey && PEER_KEY_RE.test(args.peerKey)) {
-    payee = peerColorOutput(args.wallet, args.tokenId, args.peerKey, prefix)
+    payee = peerTokenOutput(args.wallet, args.peerKey, prefix)
   }
-  let change: ColorOutput | null = null
+  let change: TokenOutputKey | null = null
   if (args.hasChange) {
-    const self = selfColorOutput(args.wallet, args.tokenId, prefix)
+    const self = selfTokenOutput(args.wallet, prefix)
     held.push(self.key)
     change = { address: self.address, remittance: self.remittance }
   }
@@ -185,6 +231,10 @@ export async function tipSigningKey(
   let key = pick()
   if (!key && hashes.length > 0) {
     await primeTipKeys(active)
+    key = pick()
+  }
+  if (!key && hashes.length > 0) {
+    await primeItemTipKeys(active)
     key = pick()
   }
   return key ?? root

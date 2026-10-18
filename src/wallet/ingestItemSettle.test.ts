@@ -1,7 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { P2PKH, PrivateKey } from '@bsv/sdk'
 import {
   internalizePeerItemSettle,
   itemSettleIsSelfSend,
+  outputsPayingUs,
   pickTipVoutForOriginHint,
 } from './ingestItemSettle'
 
@@ -83,5 +85,27 @@ describe('pickTipVoutForOriginHint', () => {
     expect(
       pickTipVoutForOriginHint(txid, [0, 1], `${'ef'.repeat(32)}_0`),
     ).toBe(1)
+  })
+})
+
+describe('outputsPayingUs', () => {
+  const lock = (address: string) => new P2PKH().lock(address).toHex()
+  const identity = PrivateKey.fromRandom().toAddress()
+  const child = PrivateKey.fromRandom().toAddress()
+  const stranger = PrivateKey.fromRandom().toAddress()
+
+  it('takes a tip on the BRC-29 child the envelope names, and a legacy tip on the identity address', () => {
+    const outputs = [
+      { satoshis: 500, lockingScriptHex: lock(stranger) },
+      { satoshis: 1, lockingScriptHex: lock(child) },
+      { satoshis: 1, lockingScriptHex: lock(identity) },
+      { satoshis: 1, lockingScriptHex: lock(stranger) },
+    ]
+    expect(outputsPayingUs(outputs, identity, new Map([[1, { address: child }]])).tipVouts).toEqual([1, 2])
+  })
+
+  it('ignores a child the envelope names at a different vout', () => {
+    const outputs = [{ satoshis: 1, lockingScriptHex: lock(child) }]
+    expect(outputsPayingUs(outputs, identity, new Map([[3, { address: child }]])).tipVouts).toEqual([])
   })
 })

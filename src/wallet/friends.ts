@@ -179,23 +179,32 @@ export function addressFromIdentityKey(identityKey: string, chain: Chain): strin
   return PublicKey.fromString(identityKey.trim()).toAddress(prefix)
 }
 
-/** Accept a P2PKH address, identity key, or BRC-125 peerpay URI; returns a lockable address. */
-export function resolvePaymentAddress(recipient: string, chain: Chain): string {
+/**
+ * Who a payment goes to. An identity key is paid at a fresh BRC-29 child of
+ * it, never at its own address: a BRC-100 wallet holds no key for the
+ * identity address. A bare address is paid as given.
+ */
+export type PaymentTarget =
+  | { kind: 'identity'; identityKey: string }
+  | { kind: 'address'; address: string }
+
+/** Accept a P2PKH address, identity key, or BRC-125 peerpay URI. */
+export function resolvePaymentTarget(recipient: string): PaymentTarget {
   const value = recipient.trim()
   if (!value) throw new Error('Recipient required')
 
   const peer = tryParsePeerPayUri(value)
-  if (peer) return addressFromIdentityKey(peer.identityKey, chain)
+  if (peer) return { kind: 'identity', identityKey: normalizeIdentityKey(peer.identityKey) }
 
   try {
     new P2PKH().lock(value)
-    return value
+    return { kind: 'address', address: value }
   } catch {
     // not a payment address — try identity key
   }
 
   try {
-    return addressFromIdentityKey(value, chain)
+    return { kind: 'identity', identityKey: PublicKey.fromString(value).toString() }
   } catch {
     if (parseHandleInput(value)) {
       throw new Error(
@@ -206,8 +215,18 @@ export function resolvePaymentAddress(recipient: string, chain: Chain): string {
   }
 }
 
+/** True when the target is this wallet: its identity key, or the identity address earlier releases paid. */
+export function paymentTargetIsSelf(
+  target: PaymentTarget,
+  wallet: { identityKey: string; address: string },
+): boolean {
+  return target.kind === 'identity'
+    ? target.identityKey === normalizeIdentityKey(wallet.identityKey)
+    : target.address === wallet.address
+}
+
 /**
- * Same as resolvePaymentAddress, plus BRC-169 `$handle` / paymail-shaped resolve
+ * Same as resolvePaymentTarget, plus BRC-169 `$handle` / paymail-shaped resolve
  * against BRC-CLOUD. `label` is the recipient the user confirmed; when it is a
  * handle a saved friend pins, the destination must still be that friend's key.
  */
@@ -215,24 +234,28 @@ export async function resolvePaymentRecipient(
   recipient: string,
   chain: Chain,
   opts: { label?: string | null } = {},
-): Promise<string> {
+): Promise<PaymentTarget> {
   const value = recipient.trim()
   if (!value) throw new Error('Recipient required')
 
   // Concrete address / key / peerpay first — never send a base58 address through
   // handle resolve (bare-handle grammar can look similar).
-  let address: string | null = null
+  let target: PaymentTarget | null = null
   try {
-    address = resolvePaymentAddress(value, chain)
+    target = resolvePaymentTarget(value)
   } catch (err) {
     if (!parseHandleInput(value)) throw err
   }
-  if (address == null) {
+  if (target == null) {
     const resolved = await resolvePinnedHandle(value)
-    address = addressFromIdentityKey(resolved.identityKey, chain)
+    target = { kind: 'identity', identityKey: normalizeIdentityKey(resolved.identityKey) }
   }
-  refuseBoundHandleConflict(opts.label, { address }, chain)
-  return address
+  refuseBoundHandleConflict(
+    opts.label,
+    target.kind === 'identity' ? { identityKey: target.identityKey } : { address: target.address },
+    chain,
+  )
+  return target
 }
 
 /** A handle now answers another key than the saved friend that pins it. */

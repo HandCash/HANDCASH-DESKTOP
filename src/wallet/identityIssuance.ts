@@ -1,5 +1,7 @@
-import { Beef, P2PKH, PublicKey } from '@bsv/sdk'
+import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
+import { selfP2pkhOutput } from './brc29Keys'
+import { rememberTipKey, selfTokenOutput } from './token/tipKeys'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 import { isItemIssuanceArgs } from './itemAccess'
 import { issuanceSigner } from './publicIdentities'
@@ -44,14 +46,16 @@ export async function withSigmaAnchor(
   args: Args,
 ): Promise<Args> {
   if (args.inputs?.length) return args
-  const lock = new P2PKH()
-    .lock(PublicKey.fromString(active.identityKey).toAddress())
-    .toHex()
+  // A BRC-29 self child, remembered so the mint's anchor input finds its key.
+  const child = selfTokenOutput(active)
+  rememberTipKey(active, child.key)
+  const anchorRow = selfP2pkhOutput(active, [], child)
+  const lock = anchorRow.lockingScript
   const anchor = await active.wallet.createAction({
     description: 'Sigma issuer anchor',
     outputs: [
       {
-        lockingScript: lock,
+        ...anchorRow,
         satoshis: 2,
         outputDescription: 'Issuer signing anchor',
         basket: 'sigma',

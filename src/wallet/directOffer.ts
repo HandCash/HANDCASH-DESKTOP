@@ -44,7 +44,8 @@ import {
   type DirectOfferState,
 } from './directOfferPath'
 import { chooseMarketCancelReturn } from './marketListingPath'
-import { tipSigningKey } from './token/tipKeys'
+import { rememberTipKey, selfTokenOutput, tipSigningKey } from './token/tipKeys'
+import { selfBrc29Output, type Remittance } from './brc29Keys'
 import type { CountersignedScheme } from './itemAccess'
 import type { HolderRemittance } from './countersign/holderKeys'
 import { holderSignatureValid, readCountersigned, sameKeySets, SWAP_HOLDER_SCOPE } from './countersign/script'
@@ -56,6 +57,8 @@ export type DirectOfferRecord = {
   soldTxid?: string
   collectTxid?: string
   cancelTxid?: string
+  /** Seller: the BRC-29 child `offer.payTo` names. Absent on offers that paid the identity address. */
+  payToRemittance?: Remittance
   /** Basket holding the listed lot; absent means {@link DIRECT_OFFER_BASKET}. A countersigned lot stays in its csft / csnft basket. */
   basket?: typeof DIRECT_OFFER_LEGACY_BASKET | CountersignedScheme
   updatedAt: number
@@ -197,6 +200,7 @@ async function tipsForToken(active: ActiveWallet, tokenId: string) {
   const { listBsv21BinaryTipsForToken } = await import('./token/listTips')
   const listed = await listBsv21BinaryTipsForToken(active, tokenId, {
     includeCustomInstructions: false,
+    inSpend: true,
   })
   return listed.flatMap((t) => {
     const decoded = t.lockingScript ? decodeBsv21Binary(t.lockingScript) : null
@@ -288,11 +292,12 @@ async function listCountersignedLot(
       broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
     },
   })
+  const proceeds = selfBrc29Output(active)
   const sellerUnlockingScript = await signDirectOfferLot({
     listingTx: trade.tx,
     lotVout: 0,
     want: path.want,
-    payTo: active.address,
+    payTo: proceeds.address,
     privateKey: cs.tradeHolderKey(active, path.tokenId, trade.remittance, 0),
   })
   const sym = (deploy.kind === 'item' ? deploy.fields.name : deploy.fields.sym) || deploy.fields.name
@@ -301,7 +306,7 @@ async function listCountersignedLot(
     v: DIRECT_OFFER_VERSION,
     offerId: `${trade.txid}.0`,
     seller: self,
-    payTo: active.address,
+    payTo: proceeds.address,
     give: {
       tokenId: path.tokenId,
       amount: path.amount.toString(),
@@ -314,7 +319,7 @@ async function listCountersignedLot(
     beefB64: Utils.toBase64(trade.atomic),
     createdAt: Date.now(),
   }
-  saveRecord({ offer, role: 'seller', state: 'listed', basket: scheme, updatedAt: Date.now() })
+  saveRecord({ offer, role: 'seller', state: 'listed', basket: scheme, payToRemittance: proceeds.remittance, updatedAt: Date.now() })
   chart.send({ type: 'COMMITTED' })
   recordAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
@@ -342,7 +347,13 @@ export async function createDirectOffer(args: {
     const startedAt = Date.now()
     const active = requireActive()
     const tokenId = normalizeTokenId(String(args.give?.tokenId ?? ''))
+    const phase = (name: string, since: number) => {
+      const ms = Date.now() - since
+      if (ms >= 250) console.info(`[direct-offer] ${name} done ${ms}ms`)
+    }
+    const tipsAt = Date.now()
     const tips = tokenId ? await tipsForToken(active, tokenId) : []
+    phase('tips', tipsAt)
     let plan: ReturnType<typeof planBsv21Send> | null = null
     try {
       if (tokenId && /^\d+$/.test(String(args.give?.amount ?? ''))) {
@@ -352,6 +363,7 @@ export async function createDirectOffer(args: {
       throw new DirectOfferError('bad-amount', err instanceof Error ? err.message : String(err))
     }
     const selected = plan?.selected ?? []
+    const pathAt = Date.now()
     const cosigned =
       selected.length > 0 &&
       (tips.some((t) => t.cosigned && selected.some((s) => s.outpoint === t.outpoint)) ||
@@ -368,6 +380,7 @@ export async function createDirectOffer(args: {
       countersignedGive: giveScheme != null,
       countersignedWant: Boolean(wantTokenId && knownCountersignedProfile(wantTokenId)),
     })
+    phase('path', pathAt)
     const chart = createActor(offerMachine).start()
     chart.send({ type: 'LIST', venue: 'direct', path })
     try {
@@ -380,6 +393,7 @@ export async function createDirectOffer(args: {
       }
       const meta = tips.find((t) => t.sym) ?? tips[0]
       const { splitBsv21CoverToExactAmt } = await import('./marketListing')
+      const splitAt = Date.now()
       const lot = await splitBsv21CoverToExactAmt({
         active,
         origin: path.tokenId,
@@ -391,27 +405,31 @@ export async function createDirectOffer(args: {
         onStaged: (reference) => chart.send({ type: 'STAGED', reference }),
         onSigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
       })
+      phase('split', splitAt)
       const { txid, vout } = splitOutpoint(lot.outpoint)
       chart.send({ type: 'BROADCASTED', txid })
       const listingTx = lot.beef.findTxid(txid)?.tx
       if (!listingTx) throw new Error('Listing transaction missing from its BEEF')
+      const proceeds = selfBrc29Output(active)
       const sellerUnlockingScript = await signDirectOfferLot({
         listingTx,
         lotVout: vout,
         want: path.want,
-        payTo: active.address,
-        privateKey: PrivateKey.fromHex(active.rootKeyHex),
+        payTo: proceeds.address,
+        privateKey: await tipSigningKey(active, lot.lockingScript),
       })
+      const ancestryAt = Date.now()
       const beef = await mergeLocalUnconfirmedAncestry(
         active,
         Array.from(lot.beef.toBinaryAtomic(txid)),
       )
+      phase('ancestry', ancestryAt)
       const offer: DirectOffer = {
         protocol: DIRECT_OFFER_PROTOCOL,
         v: DIRECT_OFFER_VERSION,
         offerId: `${txid}.${vout}`,
         seller: active.identityKey.toLowerCase(),
-        payTo: active.address,
+        payTo: proceeds.address,
         give: {
           tokenId: path.tokenId,
           amount: path.amount.toString(),
@@ -425,7 +443,7 @@ export async function createDirectOffer(args: {
         beefB64: Utils.toBase64(beef),
         createdAt: Date.now(),
       }
-      saveRecord({ offer, role: 'seller', state: 'listed', updatedAt: Date.now() })
+      saveRecord({ offer, role: 'seller', state: 'listed', payToRemittance: proceeds.remittance, updatedAt: Date.now() })
       chart.send({ type: 'COMMITTED' })
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
@@ -599,6 +617,11 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
       inputBeef.atomicTxid = undefined
 
       const price = directOfferPriceOutput(offer)
+      const lotKey = receive ? null : selfTokenOutput(active)
+      const wantChangeKey =
+        offer.want.kind === 'token' && wantChange > 0n && wantLayout
+          ? selfTokenOutput(active, lotKey?.remittance.derivationPrefix)
+          : null
       const priceRemittance =
         settle === 'selfCollect' && offer.want.kind === 'token'
           ? buildBsv21SendRemittance({
@@ -622,7 +645,7 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
               lockingScript: buildBsv21ValueLock({
                 tokenId: offer.give.tokenId,
                 amount: BigInt(offer.give.amount),
-                address: active.address,
+                address: lotKey!.address,
                 layout: decodedLot!.layout,
               }),
               satoshis: 1,
@@ -632,15 +655,16 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
                 amt: BigInt(offer.give.amount),
                 ...(offer.give.sym ? { sym: offer.give.sym } : {}),
                 ...(offer.give.icon ? { icon: offer.give.icon } : {}),
+                remittance: lotKey!.remittance,
               }),
             },
-        ...(offer.want.kind === 'token' && wantChange > 0n && wantLayout
+        ...(offer.want.kind === 'token' && wantChangeKey && wantLayout
           ? [
               {
                 lockingScript: buildBsv21ValueLock({
                   tokenId: offer.want.tokenId,
                   amount: wantChange,
-                  address: active.address,
+                  address: wantChangeKey.address,
                   layout: wantLayout,
                 }),
                 satoshis: 1,
@@ -649,11 +673,14 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
                   tokenId: offer.want.tokenId,
                   amt: wantChange,
                   ...(offer.want.sym ? { sym: offer.want.sym } : {}),
+                  remittance: wantChangeKey.remittance,
                 }),
               },
             ]
           : []),
       ]
+      if (lotKey) rememberTipKey(active, lotKey.key)
+      if (wantChangeKey) rememberTipKey(active, wantChangeKey.key)
       let created: Awaited<ReturnType<typeof active.wallet.createAction>>
       try {
         created = await active.wallet.createAction({
@@ -840,11 +867,26 @@ export async function buyDirectOffer(args: { offer?: unknown }): Promise<{
  * token), then retire the listed lot. Runs outside the spend lease — the
  * sweep takes it itself.
  */
-export async function collectDirectOfferProceeds(args: { offerId?: string; txid?: string }): Promise<{
-  offerId: string
-  txid: string
-  proceeds: 'sats' | 'token'
-}> {
+type CollectResult = { offerId: string; txid: string; proceeds: 'sats' | 'token' }
+
+/** One collect per offer: the self-collect after a buy and an app's own call share it. */
+const collecting = new Map<string, Promise<CollectResult>>()
+
+export function collectDirectOfferProceeds(args: { offerId?: string; txid?: string }): Promise<CollectResult> {
+  const offerId = String(args.offerId ?? '')
+  const record = findRecord(offerId, 'seller')
+  const wantTxid = String(args.txid ?? '').trim().toLowerCase()
+  if (record?.state === 'collected' && record.collectTxid && (!wantTxid || wantTxid === record.collectTxid)) {
+    return Promise.resolve({ offerId: record.offer.offerId, txid: record.collectTxid, proceeds: record.offer.want.kind })
+  }
+  const inFlight = collecting.get(offerId)
+  if (inFlight) return inFlight
+  const run = collectOnce(args).finally(() => collecting.delete(offerId))
+  collecting.set(offerId, run)
+  return run
+}
+
+async function collectOnce(args: { offerId?: string; txid?: string }): Promise<CollectResult> {
   const active = requireActive()
   const record = findRecord(String(args.offerId ?? ''), 'seller')
   if (!record) {
@@ -878,7 +920,22 @@ export async function collectDirectOfferProceeds(args: { offerId?: string; txid?
       throw new DirectOfferError('DIRECT_OFFER_SHAPE_MISMATCH', 'That transaction does not buy this offer.')
     }
     const atomic = Array.from(beef.toBinaryAtomic(path.txid))
-    if (path.proceeds === 'sats') {
+    const remittance = record.payToRemittance
+    if (path.proceeds === 'sats' && remittance) {
+      await active.wallet.internalizeAction({
+        tx: atomic,
+        outputs: [
+          {
+            outputIndex: DIRECT_OFFER_PRICE_VOUT,
+            protocol: 'wallet payment',
+            paymentRemittance: remittance,
+          },
+        ],
+        description: 'Direct offer sale proceeds',
+        labels: [OFFER_LABEL, `direct-offer:${offer.offerId}`],
+      })
+      bumpBalanceAfterHeal()
+    } else if (path.proceeds === 'sats') {
       const { sweepVisibleP2pkhOutpoints } = await import('./importP2pkhFunding')
       const swept = await sweepVisibleP2pkhOutpoints(active, [`${path.txid}.${DIRECT_OFFER_PRICE_VOUT}`], atomic)
       if (!swept[0]?.success) throw new Error(swept[0]?.error ?? 'Sale proceeds sweep failed')
@@ -894,6 +951,20 @@ export async function collectDirectOfferProceeds(args: { offerId?: string; txid?
           amount: offer.want.amount,
           sym: offer.want.sym ?? 'Token',
           dec: offer.want.dec ?? 0,
+          ...(remittance
+            ? {
+                remittance: {
+                  senderIdentityKey: remittance.senderIdentityKey,
+                  outputs: [
+                    {
+                      vout: DIRECT_OFFER_PRICE_VOUT,
+                      derivationPrefix: remittance.derivationPrefix,
+                      derivationSuffix: remittance.derivationSuffix,
+                    },
+                  ],
+                },
+              }
+            : {}),
         },
       })
       if (!ingested.accepted) throw new Error(`Sale token ingest refused (${ingested.reason ?? 'unknown'})`)
@@ -993,6 +1064,8 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
       if (back.kind !== 'brc162' && back.kind !== 'draft-tagged') {
         throw new DirectOfferError('invalid-offer', 'The listed lot does not hold the token and amount the offer names.')
       }
+      const returned = selfTokenOutput(active)
+      rememberTipKey(active, returned.key)
       const created = await active.wallet.createAction({
         description: `Cancel direct offer for ${offer.give.amount} ${offer.give.sym ?? 'tokens'}`,
         labels: [OFFER_LABEL, 'direct-offer-cancel', `direct-offer:${offer.offerId}`],
@@ -1003,7 +1076,7 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
             lockingScript: buildBsv21ValueLock({
               tokenId: back.tokenId,
               amount: back.amount,
-              address: active.address,
+              address: returned.address,
               layout: back.kind,
             }),
             satoshis: 1,
@@ -1013,6 +1086,7 @@ export async function cancelDirectOffer(args: { offerId?: string }): Promise<{
               amt: BigInt(offer.give.amount),
               ...(offer.give.sym ? { sym: offer.give.sym } : {}),
               ...(offer.give.icon ? { icon: offer.give.icon } : {}),
+              remittance: returned.remittance,
             }),
           },
         ],

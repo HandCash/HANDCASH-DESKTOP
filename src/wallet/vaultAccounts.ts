@@ -28,7 +28,12 @@ import {
 
 export { VAULT_ACCOUNT_PROTOCOL, accountKeyId } from './vaultMaster'
 
-export type ReservedKeyRefusal = 'account-protocol' | 'asset-protocol' | 'self-linkage'
+export type ReservedKeyRefusal =
+  | 'account-protocol'
+  | 'asset-protocol'
+  | 'admin-protocol'
+  | 'permission-scheme'
+  | 'self-linkage'
 
 /**
  * Keys only wallet code signs with: HCT holder, issuer and fee keys (BRC-255
@@ -54,6 +59,12 @@ const WALLET_ASSET_PROTOCOLS = new Set([
  *
  * `asset-protocol`: a key the wallet signs asset custody with.
  *
+ * `admin-protocol`: BRC-44 reserves every name starting with `admin` for the
+ * wallet itself, at every security level.
+ *
+ * `permission-scheme`: BRC-98 reserves `p <scheme> …`; a wallet refuses any
+ * scheme it does not implement for applications. The bridge implements none.
+ *
  * `self-linkage`: linkage with the wallet itself is the BRC-42 offset of its
  * `self` children (counterparty linkage yields all of them, specific linkage
  * one). Those children are additive, so an offset plus the child key is the
@@ -67,13 +78,10 @@ export function reservedKeyRefusal(
 ): ReservedKeyRefusal | null {
   if (!args || typeof args !== 'object') return null
   const { protocolID, counterparty } = args as { protocolID?: unknown; counterparty?: unknown }
-  if (
-    Array.isArray(protocolID) &&
-    typeof protocolID[1] === 'string' &&
-    protocolID[1].toLowerCase().trim() === VAULT_ACCOUNT_PROTOCOL[1]
-  ) {
-    return 'account-protocol'
-  }
+  const name = Array.isArray(protocolID) && typeof protocolID[1] === 'string' ? protocolID[1].toLowerCase().trim() : null
+  if (name === VAULT_ACCOUNT_PROTOCOL[1]) return 'account-protocol'
+  if (name?.startsWith('admin')) return 'admin-protocol'
+  if (name?.startsWith('p ')) return 'permission-scheme'
   if (
     Array.isArray(protocolID) &&
     typeof protocolID[1] === 'string' &&

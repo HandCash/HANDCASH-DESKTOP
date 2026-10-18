@@ -76,9 +76,11 @@ import { getActiveWallet } from './session'
  * - **Indexer role** → Finder, never Judge. May add a coin this device cannot
  *   yet prove. Must not reclassify, detach, or prune a cheque the local BEEF
  *   / headers still prove. Explorer 404 is silence, not cancel.
- * - **Key discipline** → identity / receive may be a stable key (handle,
- *   BRC-29). Managed change is derived per `createAction` and is not that
- *   identity address reused as the only change key.
+ * - **Key discipline** → the identity key names the wallet (handle, BRC-29
+ *   counterparty); it never locks an output. A BRC-100 wallet never signs
+ *   with it (BRC-42/43), so every output this wallet writes sits on a BRC-29
+ *   child (`brc29Keys.ts`) whose remittance localState keeps. Managed change
+ *   is derived per `createAction`.
  * - **Settlement kinds** → signed Atomic BEEF is already a cheque
  *   (`unconfirmed`). `headerProven` is inclusion. Pay `pendingChange` is
  *   unconfirmed SPV we own, not a processor queue. Arcade accept is cashing

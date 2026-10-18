@@ -23,7 +23,7 @@ import {
   type Bsv21SendTip,
 } from './sendPlan'
 import { p2pkhScriptHex } from '../ordinalOwnership'
-import { rememberTipKey, selfColorOutput } from './tipKeys'
+import { rememberTipKey, selfTokenOutput } from './tipKeys'
 import { listBsv21BinaryTips } from './listTips'
 import { chooseBsv21ValueTipPath, recoverBsv21TipsFromLocalBeef } from './send'
 import type { Bsv21BurnPlan, BurnRefusalReason } from '../burnPlan'
@@ -291,7 +291,7 @@ export async function burnBsv21Tokens(args: {
       console.warn(`[bsv21-burn] refused before build: ${plan.reason}`)
     }
     const change = plan.path === 'burnBsv21' ? plan.changeAmount : 0n
-    const changeKey = change > 0n ? selfColorOutput(active, tokenId) : null
+    const changeKey = change > 0n ? selfTokenOutput(active) : null
     const recoverSatoshis = plan.path === 'burnBsv21' ? plan.recoverSatoshis : 0
     const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
 

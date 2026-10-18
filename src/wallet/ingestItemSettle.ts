@@ -3,8 +3,10 @@ import { getActiveWallet } from './session'
 /**
  * Payee ingest of a P2P item settle (Atomic BEEF from messagebox).
  *
- * Internalize every 1-sat tip that pays this wallet. Re-posting the same signed
- * BEEF is harmless redundancy; the sender already owns normal propagation.
+ * Internalize every 1-sat tip that pays this wallet: a BRC-29 child named by
+ * the envelope remittance, or the identity address earlier releases paid.
+ * Re-posting the same signed BEEF is harmless redundancy; the sender already
+ * owns normal propagation.
  * If the box has no Atomic BEEF, SPV-fetch by txid.
  * Address scan remains the last-resort custody path. Item identity is BRC-150
  * (offline tip→origin proof) resolved from the origin hint + normal inscription
@@ -13,8 +15,11 @@ import { getActiveWallet } from './session'
  * Batch transfers notify once per item with the same BEEF. Earlier code only
  * kept the first 1-sat tip, so the second fox never entered the basket.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, PrivateKey } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
+import { brc29PrivateKey, readDeliveryRemittance, type Remittance } from './brc29Keys'
+import { heldItemRow } from './itemRecipientKey'
+import { rememberTipKey } from './token/tipKeys'
 
 import {
   atomicBeefForSubject,
@@ -138,6 +143,42 @@ function originForTipVout(
   return defaultTipOrigin(txid, vout)
 }
 
+/**
+ * The one-sat item tips and the first BSV-21 value output of a peer transfer
+ * that pay this wallet: a BRC-29 child the envelope remittance names, or the
+ * identity address senders before 1.3.597 used.
+ */
+export function outputsPayingUs(
+  outputs: readonly { satoshis?: number; lockingScriptHex?: string }[],
+  identityAddress: string,
+  delivered: ReadonlyMap<number, { address: string }>,
+): { tipVouts: number[]; tokenVout: number; tokenAmount: bigint; tokenId: string | null; tokenSym: string; tokenDec: number } {
+  const out = { tipVouts: [] as number[], tokenVout: -1, tokenAmount: 0n, tokenId: null as string | null, tokenSym: 'Token', tokenDec: 0 }
+  outputs.forEach(({ satoshis, lockingScriptHex: hex }, i) => {
+    if (!hex) return
+    const child = delivered.get(i)
+    if (child && scriptPaysAddress(hex, child.address)) {
+      if (satoshis === 1 && !decodeBsv21Binary(hex) && !decodeBProtocol(hex)) out.tipVouts.push(i)
+      return
+    }
+    if (!scriptPaysAddress(hex, identityAddress)) return
+    const binary = decodeBsv21Binary(hex)
+    if (binary && binary.amount > 0n && binary.role !== 'authority') {
+      if (out.tokenVout < 0) {
+        out.tokenVout = i
+        out.tokenAmount = binary.amount
+        out.tokenId = binary.tokenId ?? null
+        out.tokenSym = binary.payload?.sym?.trim() || out.tokenSym
+        out.tokenDec = binary.payload?.dec ?? 0
+      }
+      return
+    }
+    if (decodeBProtocol(hex)) return
+    if (satoshis === 1) out.tipVouts.push(i)
+  })
+  return out
+}
+
 export async function internalizePeerItemSettle(opts: {
   txid: string
   tx?: number[]
@@ -151,6 +192,8 @@ export async function internalizePeerItemSettle(opts: {
   provenance?: unknown
   /** Per-vout identities merged from every inbox card sharing this txid. */
   items?: ItemTransferMember[]
+  /** `meta.asset.remittance`: the BRC-29 strings of each output paying this wallet. */
+  remittance?: unknown
   /** Inbox hints race sender postBeef and therefore use a short retry backoff. */
   beefPurpose?: AtomicBeefPurpose
 }): Promise<IngestItemSettleResult> {
@@ -227,6 +270,17 @@ export async function internalizePeerItemSettle(opts: {
     }
   }
 
+  // The BRC-29 child each delivered output pays, so a tip off the identity
+  // address is still recognised as ours.
+  const root = PrivateKey.fromHex(active.rootKeyHex)
+  const delivered = new Map<number, { address: string; remittance: Remittance }>()
+  for (const [vout, remittance] of readDeliveryRemittance(opts.remittance)) {
+    try {
+      delivered.set(vout, { address: brc29PrivateKey(root, remittance).toAddress(), remittance })
+    } catch {
+      /* strings this wallet cannot derive name no output of ours */
+    }
+  }
   const tipVouts: number[] = []
   const originHint = opts.origin?.trim()
   let name = opts.name?.trim() || 'Collectable'
@@ -239,31 +293,16 @@ export async function internalizePeerItemSettle(opts: {
       clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'beef-missing-tx' }
     }
-    const outputs = tx.outputs ?? []
-    let tokenVout = -1
-    let tokenAmount = 0n
-    let tokenId = ''
-    let tokenSym = 'Token'
-    let tokenDec = 0
-    for (let i = 0; i < outputs.length; i++) {
-      const out = outputs[i]
-      const sats = out?.satoshis
-      const hex = out?.lockingScript?.toHex()
-      if (!hex || !scriptPaysAddress(hex, active.address)) continue
-      const binary = decodeBsv21Binary(hex)
-      if (binary && binary.amount > 0n && binary.role !== 'authority') {
-        if (tokenVout < 0) {
-          tokenVout = i
-          tokenAmount = binary.amount
-          tokenId = binary.tokenId ?? `${id}_${i}`
-          tokenSym = binary.payload?.sym?.trim() || tokenSym
-          tokenDec = binary.payload?.dec ?? 0
-        }
-        continue
-      }
-      if (decodeBProtocol(hex)) continue
-      if (sats === 1) tipVouts.push(i)
-    }
+    const paying = outputsPayingUs(
+      (tx.outputs ?? []).map((out) => ({ satoshis: out?.satoshis, lockingScriptHex: out?.lockingScript?.toHex() })),
+      active.address,
+      delivered,
+    )
+    tipVouts.push(...paying.tipVouts)
+    const { tokenVout, tokenAmount } = paying
+    const tokenId = paying.tokenId ?? (tokenVout >= 0 ? `${id}_${tokenVout}` : '')
+    const tokenSym = paying.tokenSym
+    const tokenDec = paying.tokenDec
     if (tipVouts.length === 0 && tokenVout >= 0 && tokenAmount > 0n) {
       clearInboundReceivePending(id)
       const { internalizePeerFungibleSettle } = await import('./token')
@@ -381,24 +420,33 @@ export async function internalizePeerItemSettle(opts: {
         protocol: 'basket insertion' as const,
         insertionRemittance: {
           basket: '1sat',
-          tags: stampBrc164Id([
-            'ordinal',
-            `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
-            ...(tipName ? [`name:${tipName.slice(0, 80)}`] : []),
-            ...(tipApp ? [`app:${tipApp.slice(0, 40)}`] : []),
-            ...(tipCollection
-              ? [`collection:${tipCollection.slice(0, 80)}`]
-              : []),
-          ]),
-          customInstructions: buildInternalizeCustomInstructions({
-            origin,
-            name: tipName,
-            app: tipApp,
-            collectionId: tipCollection,
-          }),
+          ...heldItemRow(
+            {
+              tags: stampBrc164Id([
+                'ordinal',
+                `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
+                ...(tipName ? [`name:${tipName.slice(0, 80)}`] : []),
+                ...(tipApp ? [`app:${tipApp.slice(0, 40)}`] : []),
+                ...(tipCollection
+                  ? [`collection:${tipCollection.slice(0, 80)}`]
+                  : []),
+              ]),
+              customInstructions: buildInternalizeCustomInstructions({
+                origin,
+                name: tipName,
+                app: tipApp,
+                collectionId: tipCollection,
+              }),
+            },
+            delivered.get(vout)?.remittance,
+          ),
         },
       }
     })
+    for (const vout of tipVouts) {
+      const child = delivered.get(vout)
+      if (child) rememberTipKey(active, brc29PrivateKey(root, child.remittance))
+    }
 
     await withRestoredInternalizeStatus(id, () =>
       active.wallet.internalizeAction({

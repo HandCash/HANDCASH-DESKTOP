@@ -8,6 +8,8 @@ import { postForeignInputAction, type ForeignInput } from '../phraseSweep'
 import { runExclusiveSpend } from '../spendGuard'
 import { isInsufficientFundsError } from '../insufficientFunds'
 import { buildBsv21TransferLockingScript } from '../token/legacyInscribe'
+import { buildBsv21SendRemittance } from '../token/sendPlan'
+import { rememberTipKey, selfTokenOutput } from '../token/tipKeys'
 import { detectCosignFromLockingScript } from '../token/tipKind'
 import { sweepMneeFromKey, type MneeHold } from '../mnee'
 import { MNEE_TOKEN_ID, isMneeTokenId } from '../mneeTip'
@@ -232,11 +234,14 @@ export async function sweepTokensFromAddress(args: {
       })
     }
 
+    const tokenId = token.id
     for (let i = 0; i < moving.length; i += MAX_TOKEN_INPUTS_PER_TX) {
       const group = moving.slice(i, i + MAX_TOKEN_INPUTS_PER_TX)
       const total = group.reduce((sum, tip) => sum + tip.amt, 0n).toString()
+      const dest = selfTokenOutput(active)
+      rememberTipKey(active, dest.key)
       const { lockingScript } = buildBsv21TransferLockingScript({
-        address: active.address,
+        address: dest.address,
         tokenId: token.id,
         amt: total,
         sym: token.sym,
@@ -252,13 +257,22 @@ export async function sweepTokensFromAddress(args: {
               spendKey,
               inputBeef: built.beef,
               inputs: group.map((tip) => tip.input),
-              // No basket: chain ingest imports it from this wallet's address
-              // into `bsv21` with the same lineage checks as any received token.
+              // Filed straight into `bsv21` under a BRC-29 self child: the
+              // address scan cannot see a child, and the decision above
+              // already proved each input's lineage.
               outputs: [
                 {
                   lockingScript,
                   satoshis: 1,
                   outputDescription: `Imported ${token.sym}`.slice(0, 50),
+                  ...buildBsv21SendRemittance({
+                    tokenId,
+                    amt: BigInt(total),
+                    sym: token.sym,
+                    dec: token.dec,
+                    ...(token.icon ? { icon: token.icon } : {}),
+                    remittance: dest.remittance,
+                  }),
                 },
               ],
               labels: ['bsv21', 'legacy-import'],

@@ -23,6 +23,21 @@ vi.mock('./durableStorage', () => ({
     state.values.delete(key)
   },
 }))
+const anchorChild = vi.hoisted(() => ({
+  remittance: { derivationPrefix: 'anchor', derivationSuffix: 'one', senderIdentityKey: '' },
+}))
+vi.mock('./token/tipKeys', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./token/tipKeys')>()
+  const { brc29PrivateKey } = await import('./brc29Keys')
+  return {
+    ...actual,
+    selfTokenOutput: (active: ActiveWallet) => {
+      const remittance = { ...anchorChild.remittance, senderIdentityKey: active.identityKey }
+      const key = brc29PrivateKey(PrivateKey.fromHex(active.rootKeyHex), remittance)
+      return { address: key.toAddress(), remittance, key }
+    },
+  }
+})
 vi.mock('./beefCache', () => ({
   rememberBeefBinary: vi.fn(),
   hydrateInputBeef: async (_active: unknown, beef: Beef) => beef.toBinary(),
@@ -44,6 +59,7 @@ import {
 import { encodeBsv21Binary } from './token/decode162'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
 import { resetIssuerIdentitiesForTests } from './issuerIdentities'
+import { brc29PrivateKey } from './brc29Keys'
 
 const root = PrivateKey.fromHex('01'.padStart(64, '0'))
 const issuer = PrivateKey.fromHex('02'.padStart(64, '0'))
@@ -57,6 +73,15 @@ function importIssuer(): string {
   return id
 }
 const lock = new P2PKH().lock(root.toAddress()).toHex()
+/** The anchor sits on a BRC-29 self child of the wallet, never its identity address. */
+const anchorLock = new P2PKH()
+  .lock(
+    brc29PrivateKey(root, {
+      ...anchorChild.remittance,
+      senderIdentityKey: root.toPublicKey().toString(),
+    }).toAddress(),
+  )
+  .toHex()
 function sourceBeef(): { tx: number[]; txid: string } {
   const tx = new Transaction()
   tx.addInput({
@@ -64,7 +89,7 @@ function sourceBeef(): { tx: number[]; txid: string } {
     sourceOutputIndex: 0,
     unlockingScript: Script.fromHex(''),
   })
-  tx.addOutput({ satoshis: 2, lockingScript: Script.fromHex(lock) })
+  tx.addOutput({ satoshis: 2, lockingScript: Script.fromHex(anchorLock) })
   const beef = new Beef()
   beef.mergeTransaction(tx)
   return { tx: beef.toBinary(), txid: tx.id('hex') }
@@ -204,7 +229,7 @@ describe('standard issuer-backed minting', () => {
           expect.objectContaining({
             basket: 'sigma',
             satoshis: 2,
-            lockingScript: lock,
+            lockingScript: anchorLock,
           }),
         ],
       }),

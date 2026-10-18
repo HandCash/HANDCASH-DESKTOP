@@ -681,7 +681,7 @@ const COUNTERSIGN = `stateDiagram-v2
   note right of holderSigning
     Holder signs ALL|ANYONECANPAY; token
     inputs only, one satoshi per output.
-    Each output is a fresh p color child
+    Each output is a fresh BRC-29 child
     (recipient's, or own for change); each
     request lists every output with a
     linkage sealed to the acceptor it goes to.

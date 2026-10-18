@@ -16,6 +16,8 @@ import {
   parseMneeTip,
 } from './mneeTip'
 import type { ActiveWallet } from './session'
+import { selfBrc29Output, type Remittance } from './brc29Keys'
+import { heldItemRow } from './itemRecipientKey'
 
 /**
  * MNEE — the USD stablecoin issued as a cosigned BSV-21 token.
@@ -372,9 +374,11 @@ export async function sweepMneeFromKey(args: {
   let unfinished: string | null = null
   for (let i = 0; i < tips.length; i += MAX_INPUTS_PER_TX) {
     const group = tips.slice(i, i + MAX_INPUTS_PER_TX)
+    // Each sweep lands on a fresh BRC-29 self child, recorded on the filed row.
+    const dest = selfBrc29Output(active)
     let signed: Awaited<ReturnType<typeof buildMneeSweep>>
     try {
-      signed = await buildMneeSweep({ key, tips: group, recipient: active.address, config })
+      signed = await buildMneeSweep({ key, tips: group, recipient: dest.address, config })
     } catch (err) {
       if (moved === 0n) return { kind: 'refused', reason: 'belowFee', message: messageOf(err) }
       unfinished = messageOf(err)
@@ -410,15 +414,21 @@ export async function sweepMneeFromKey(args: {
       ticket,
       inputBeef: Array.from(built.beef),
       amount: signed.amount,
+      remittance: dest.remittance,
+      sleep,
     })
     filedAll &&= filed
   }
   return { kind: 'moved', amount: moved, fee: fees, txid: lastTxid, filed: filedAll, held, unfinished }
 }
 
+const FILE_ATTEMPTS = 3
+
 /**
- * File the received output in basket `1sat`. The transaction is already on
- * its way through MNEE, so a refusal here only defers the card to Refresh.
+ * File the received output in basket `1sat` under its BRC-29 child. The
+ * transaction is already on its way through MNEE; the address scan cannot find
+ * a child, so filing retries, and a final refusal logs the remittance that
+ * recovers the output.
  */
 async function fileInCollect(args: {
   active: ActiveWallet
@@ -426,7 +436,34 @@ async function fileInCollect(args: {
   ticket: MneeTicket
   inputBeef: number[]
   amount: bigint
+  remittance: Remittance
+  sleep: (ms: number) => Promise<void>
 }): Promise<boolean> {
+  let last = ''
+  for (let attempt = 1; attempt <= FILE_ATTEMPTS; attempt++) {
+    const error = await fileOnce(args)
+    if (error == null) return true
+    last = error
+    if (attempt < FILE_ATTEMPTS) await args.sleep(TICKET_POLL_MS * attempt)
+  }
+  const { derivationPrefix, derivationSuffix, senderIdentityKey } = args.remittance
+  appendAppLog(
+    'warn',
+    `[mnee] file refused ${args.ticket.txid}: ${last} — output 0 is held under BRC-29 ` +
+      `prefix=${derivationPrefix} suffix=${derivationSuffix} sender=${senderIdentityKey}`,
+  )
+  return false
+}
+
+/** One filing attempt: null when filed, else why not. */
+async function fileOnce(args: {
+  active: ActiveWallet
+  signed: Transaction
+  ticket: MneeTicket
+  inputBeef: number[]
+  amount: bigint
+  remittance: Remittance
+}): Promise<string | null> {
   const { active, ticket } = args
   try {
     let hex = ticket.txHex
@@ -453,30 +490,34 @@ async function fileInCollect(args: {
           protocol: 'basket insertion',
           insertionRemittance: {
             basket: '1sat',
-            tags: stampBrc164Id([
-              'ordinal',
-              MNEE_TAG,
-              `origin:${ticket.txid}.0`,
-              `name:${name.slice(0, 80)}`,
-              `app:${MNEE_SYMBOL.toLowerCase()}`,
-              `collection:${MNEE_COLLECTION_ID}`,
-            ]),
-            customInstructions: buildInternalizeCustomInstructions({
-              origin,
-              name,
-              app: MNEE_SYMBOL,
-              collectionId: MNEE_COLLECTION_ID,
-            }),
+            ...heldItemRow(
+              {
+                tags: stampBrc164Id([
+                  'ordinal',
+                  MNEE_TAG,
+                  `origin:${ticket.txid}.0`,
+                  `name:${name.slice(0, 80)}`,
+                  `app:${MNEE_SYMBOL.toLowerCase()}`,
+                  `collection:${MNEE_COLLECTION_ID}`,
+                ]),
+                customInstructions: buildInternalizeCustomInstructions({
+                  origin,
+                  name,
+                  app: MNEE_SYMBOL,
+                  collectionId: MNEE_COLLECTION_ID,
+                }),
+              },
+              args.remittance,
+            ),
           },
         },
       ],
       seekPermission: false,
     })
     markOneSatImported([`${ticket.txid}.0`])
-    return true
+    return null
   } catch (err) {
-    appendAppLog('warn', `[mnee] filed later — ${ticket.txid}: ${messageOf(err)}`)
-    return false
+    return messageOf(err)
   }
 }
 

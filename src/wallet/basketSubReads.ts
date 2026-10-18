@@ -39,6 +39,11 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
     subRows?: number
     /** Each slice's rows as they land, before the whole page answers. */
     onSlice?: (rows: O[]) => void
+    /**
+     * The read runs inside the spend region. Yielding to "a spend needs
+     * storage" would then wait on itself until the cap.
+     */
+    inSpend?: boolean
   } = {},
 ): Promise<{ outputs: O[]; totalOutputs?: number; slices: number; yieldedMs: number }> {
   const limit = args.limit ?? 10
@@ -54,7 +59,7 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
     // A macrotask, not a microtask: the tap that starts a send is a task, and
     // it has to run before this loop takes the lock again.
     await new Promise((resolve) => setTimeout(resolve, 0))
-    if (spendWaiting()) yieldedMs += await letSpendPass()
+    if (!opts.inSpend && spendWaiting()) yieldedMs += await letSpendPass()
     const want = Math.min(subRows, limit - outputs.length)
     const at = skip + outputs.length
     const page = await listOutputs({

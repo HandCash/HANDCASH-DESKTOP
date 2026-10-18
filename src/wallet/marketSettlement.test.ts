@@ -144,7 +144,8 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
     expiresAt: fields.expiresAt,
     nonce: fields.nonce,
   }
-  const validate = (opts?: { buyerAddress?: string }) =>
+  const padLock = new P2PKH().lock(buyerAddress).toHex()
+  const validate = (opts?: { buyerAddress?: string; sellerView?: boolean }) =>
     validateMarketSettlementOutputs({
       tx,
       beef,
@@ -153,6 +154,9 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
       buyerAddress: opts?.buyerAddress ?? buyerAddress,
       chain: 'main',
       shape,
+      ...(shape.padReturnOutputIndex != null && !opts?.sellerView
+        ? { buyerPads: { inputLocks: shape.padVins.map(() => padLock), returnLock: padLock } }
+        : {}),
     })
   return { tx, listing, validate: () => validate(), validateAs: validate, buyer, seller, fee, shape }
 }
@@ -194,6 +198,20 @@ describe('market exact settlement contract', () => {
     tx.inputs[shape.padVins[0]!]!.sourceTXID = stranger.id('hex') as string
     tx.inputs[shape.padVins[0]!]!.sourceOutputIndex = 0
     expect(validate).toThrow(/pad inputs/i)
+  })
+
+  it('a seller, who cannot derive the buyer pad children, accepts any P2PKH pad but nothing else', () => {
+    const { tx, validateAs, shape } = fixture('ordinal')
+    const child = new Transaction()
+    child.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()) })
+    child.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('006a') })
+    const pad = tx.inputs[shape.padVins[0]!]!
+    pad.sourceTransaction = child
+    pad.sourceTXID = child.id('hex') as string
+    pad.sourceOutputIndex = 0
+    expect(() => validateAs({ sellerView: true })).not.toThrow()
+    pad.sourceOutputIndex = 1
+    expect(() => validateAs({ sellerView: true })).toThrow(/pad inputs/i)
   })
 
   it('accepts private wallet-derived buyer BSV change', () => {

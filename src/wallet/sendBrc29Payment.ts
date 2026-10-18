@@ -1629,6 +1629,7 @@ export async function ingestPaymentsFromTipHints(
                     collectionId: hint.itemCollectionId,
                     provenance: hint.provenance,
                     items: hint.items,
+                    remittance: asset?.kind === 'collectable' ? asset.remittance : undefined,
                     beefPurpose: 'inboundItemHint',
                   }),
               )

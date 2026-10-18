@@ -91,7 +91,7 @@ export type ResolveResult =
 export function resolveCountersignTransfer(
   tx: Transaction,
   deploys: ReadonlyMap<string, CountersignDeploy>,
-  /** Holder pubkey hashes this wallet holds: its identity hash and the `p color` children it can derive. */
+  /** Holder pubkey hashes this wallet holds: its identity hash and the derived children it can rebuild. */
   heldHashes?: ReadonlySet<string>,
 ): ResolveResult {
   const ins = new Map<string, bigint>()

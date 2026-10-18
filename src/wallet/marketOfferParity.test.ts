@@ -4,7 +4,7 @@
  * round-trips through our own parser cannot see a divergence, so this decodes
  * the wallet's script with the overlay's verifier itself.
  */
-import { LockingScript, PrivateKey, PublicKey } from '@bsv/sdk'
+import { LockingScript, PrivateKey, PublicKey, PushDrop } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 // eslint-disable-next-line import/no-relative-parent-imports
 import { decodeOfferScript } from '../../../BRC-CLOUD/src/marketOverlayProtocol.js'
@@ -16,6 +16,7 @@ import {
 import {
   encodeMarketOffer,
   MARKET_OFFER_MAGIC,
+  marketOfferSignerKey,
   parseMarketOffer,
   type MarketOfferFields,
 } from './marketOverlayProtocol'
@@ -73,5 +74,45 @@ describe('market offer script parity with tm_1sat_market', () => {
   it('round-trips our own parser on the same bytes', () => {
     const value = fields()
     expect(parseMarketOffer(encodeMarketOffer(value, sellerKey))).toEqual(value)
+  })
+})
+
+describe('market offer v2: every key reachable through BRC-100', () => {
+  const listingKey = PrivateKey.fromHex('2'.padStart(64, '0'))
+  const payout = PrivateKey.fromHex('3'.padStart(64, '0'))
+  const v2 = (overrides: Partial<MarketOfferFields> = {}): MarketOfferFields =>
+    fields({
+      version: 2,
+      listingKey: listingKey.toPublicKey().toString(),
+      payTo: payout.toAddress('mainnet'),
+      ...overrides,
+    })
+
+  it('locks to the listing key and signs as BRC-3, and the overlay admits it', () => {
+    const hex = encodeMarketOffer(v2(), sellerKey)
+    expect(PushDrop.decode(LockingScript.fromHex(hex), 'before').lockingPublicKey.toString()).toBe(
+      listingKey.toPublicKey().toString(),
+    )
+    const offer = overlayDecode(hex)
+    expect(offer.version).toBe(2)
+    expect(offer.listingKey).toBe(listingKey.toPublicKey().toString())
+    expect(offer.sellerPayoutAddress).toBe(payout.toAddress('mainnet'))
+    expect(parseMarketOffer(hex)).toEqual(v2())
+  })
+
+  it('verifies under the child BRC-100 createSignature uses, not the identity key', async () => {
+    const { ProtoWallet } = await import('@bsv/sdk')
+    const viaWallet = await new ProtoWallet(sellerKey).getPublicKey({
+      protocolID: [2, '1sat market offer'],
+      keyID: '1',
+      counterparty: 'anyone',
+      forSelf: true,
+    })
+    expect(marketOfferSignerKey(sellerKey.toPublicKey().toString()).toString()).toBe(viaWallet.publicKey)
+  })
+
+  it('refuses identity-address payout and an identity listing key', () => {
+    expect(() => encodeMarketOffer(v2({ payTo: sellerKey.toPublicKey().toAddress('mainnet') }), sellerKey)).toThrow(/identity address/)
+    expect(() => encodeMarketOffer(v2({ listingKey: sellerKey.toPublicKey().toString() }), sellerKey)).toThrow(/identity key/)
   })
 })

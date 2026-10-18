@@ -11,7 +11,6 @@ import {
 } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
-  addressFromIdentityKey,
   getFriendById,
   listFriends,
   subscribeFriends,
@@ -692,14 +691,6 @@ export function MessagesPanel({
       playWalletSound('error')
       return
     }
-    let address = ''
-    try {
-      address = addressFromIdentityKey(friend.identityKey, chain)
-    } catch {
-      setHint('Could not resolve payment address.')
-      playWalletSound('error')
-      return
-    }
     appendMessage(friend.id, {
       direction: 'out',
       kind,
@@ -707,7 +698,6 @@ export function MessagesPanel({
       meta: {
         amountLabel: resolved.amountLabel ?? amount.label,
         sats: resolved.sats,
-        to: address,
         payeeIdentityKey: friend.identityKey,
         friendLabel: friend.label,
         memo,
@@ -915,14 +905,7 @@ export function MessagesPanel({
     }
 
     if (!activeFriend) return
-    let address = ''
-    try {
-      address = addressFromIdentityKey(activeFriend.identityKey, chain)
-    } catch {
-      address = ''
-    }
-    const line = address || activeFriend.identityKey
-    const ok = await copyText(line)
+    const ok = await copyText(activeFriend.identityKey)
     appendMessage(activeFriend.id, {
       direction: 'system',
       kind: 'whois',
@@ -930,8 +913,7 @@ export function MessagesPanel({
         'Only you — not sent',
         activeFriend.label,
         activeFriend.identityKey,
-        address ? address : null,
-        ok ? 'Copied receive address' : null,
+        ok ? 'Copied wallet key' : null,
       ]
         .filter(Boolean)
         .join('\n'),

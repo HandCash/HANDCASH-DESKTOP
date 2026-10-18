@@ -11,11 +11,13 @@ import { getWalletRuntime } from '../walletRuntime'
 import { runExclusiveSpend } from '../spendGuard'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { normalizeTokenId } from '../token/types'
-import { readDeliveryRemittance, type ColorRemittance } from '../colorKeys'
+import { heldP2pkhSigningKey, readDeliveryRemittance, selfP2pkhOutput, type Remittance } from '../brc29Keys'
 import {
   deliveryOutputsFor,
   deliveryOutputsFromEntries,
+  heldHolderKey,
   holderKeyAsset,
+  holderKeyScheme,
   holderPkhFor,
   holderPrivateKey,
   holderRemittanceOf,
@@ -179,8 +181,8 @@ export type CountersignHolding = {
   assetId: string
   amount: bigint
   lockingScript: string
-  /** The `p color` remittance of the holder key; absent for an identity-key holding. */
-  remittance?: ColorRemittance
+  /** The BRC-29 (or earlier `p color`) remittance of the holder key; absent for an identity-key holding. */
+  remittance?: Remittance
   /** Held by a market listing (only returned with `includeListed`). */
   listed?: true
 }
@@ -205,26 +207,28 @@ function selfPkh(active: ActiveWallet): string {
   return pubkeyHashHex(active.identityKey.toLowerCase())
 }
 
-/** The key that signs as holder of one output. */
-function holderKeyOf(active: ActiveWallet, holding: Pick<CountersignHolding, 'assetId' | 'outpoint' | 'remittance'>): PrivateKey {
+/** The key that signs as holder of one output: the remittance's child its lock names, or the root for an identity-key holding. */
+function holderKeyOf(
+  active: ActiveWallet,
+  holding: Pick<CountersignHolding, 'assetId' | 'outpoint' | 'remittance' | 'lockingScript'>,
+): PrivateKey {
   const root = rootKeyOf(active)
-  return holding.remittance
-    ? holderPrivateKey(root, holderKeyAsset(holding.assetId, holding.outpoint), holding.remittance)
-    : root
+  if (!holding.remittance) return root
+  const asset = holderKeyAsset(holding.assetId, holding.outpoint)
+  const pkh = readCountersigned(LockingScript.fromHex(holding.lockingScript))?.holderPkhHex
+  return (pkh ? heldHolderKey(root, asset, holding.remittance, pkh) : null) ?? holderPrivateKey(root, asset, holding.remittance, 'brc29')
 }
 
 /** Holder hashes of one transfer that this wallet keeps, with the remittance each is filed with. */
-function heldHashes(active: ActiveWallet, tx: Transaction, remittances: ReadonlyMap<number, ColorRemittance>): Map<string, ColorRemittance | null> {
-  const held = new Map<string, ColorRemittance | null>([[selfPkh(active), null]])
+function heldHashes(active: ActiveWallet, tx: Transaction, remittances: ReadonlyMap<number, Remittance>): Map<string, Remittance | null> {
+  const held = new Map<string, Remittance | null>([[selfPkh(active), null]])
   const root = rootKeyOf(active)
   for (const [vout, remittance] of remittances) {
     const script = tx.outputs[vout]?.lockingScript
     const read = script ? readCountersigned(script) : null
     if (!read?.assetId) continue
     try {
-      const key = holderPrivateKey(root, read.assetId, remittance)
-      const pkh = Utils.toHex(Hash.hash160(key.toPublicKey().encode(true) as number[]))
-      if (pkh === read.holderPkhHex) held.set(pkh, remittance)
+      if (heldHolderKey(root, read.assetId, remittance, read.holderPkhHex)) held.set(read.holderPkhHex.toLowerCase(), remittance)
     } catch {
       // A malformed row derives nothing; the output stays unclaimed.
     }
@@ -233,7 +237,7 @@ function heldHashes(active: ActiveWallet, tx: Transaction, remittances: Readonly
 }
 
 /** The remittance rows of the outputs this wallet keeps from its own transfer. */
-function ownRemittances(active: ActiveWallet, remittance: HolderRemittance | undefined): Map<number, ColorRemittance> {
+function ownRemittances(active: ActiveWallet, remittance: HolderRemittance | undefined): Map<number, Remittance> {
   const self = active.identityKey.toLowerCase()
   return new Map(
     (remittance?.outputs ?? [])
@@ -488,7 +492,7 @@ export async function listCountersignedHoldings(
     if (read.holderPkhHex !== self) {
       if (!remittance) return []
       try {
-        const key = holderKeyOf(active, { assetId: id, outpoint, remittance })
+        const key = holderKeyOf(active, { assetId: id, outpoint, remittance, lockingScript: o.lockingScript })
         if (Utils.toHex(Hash.hash160(key.toPublicKey().encode(true) as number[])) !== read.holderPkhHex) return []
       } catch {
         return []
@@ -556,7 +560,7 @@ function countersignedInstructions(
   assetId: string | null,
   deploy: { kind: string; fields: Pick<CountersignDeployFields, 'sym' | 'dec' | 'name' | 'col'> },
   amount: bigint,
-  remittance?: ColorRemittance | null,
+  remittance?: Remittance | null,
 ): string {
   return JSON.stringify({
     ...(assetId ? { id: assetId } : {}),
@@ -572,15 +576,23 @@ function countersignedInstructions(
 
 // ── Fee inputs ─────────────────────────────────────────────────────────────
 
-type FeeCoin = { txid: string; vout: number; satoshis: number; lockingScript: string }
+/** A fee coin sits on a BRC-29 self child; coins minted before 1.3.597 on the identity address. */
+type FeeCoin = { txid: string; vout: number; satoshis: number; lockingScript: string; signingKey: PrivateKey }
 
 async function listFeeCoins(active: ActiveWallet, exclude: ReadonlySet<string>): Promise<FeeCoin[]> {
-  const lock = new P2PKH().lock(active.address).toHex().toLowerCase()
-  const page = await active.wallet.listOutputs({ basket: FEE_BASKET, include: 'locking scripts', limit: 100 })
+  const page = await active.wallet.listOutputs({
+    basket: FEE_BASKET,
+    include: 'locking scripts',
+    includeTags: true,
+    includeCustomInstructions: true,
+    limit: 100,
+  })
   return (page.outputs ?? []).flatMap((o) => {
     const [txid, vout] = o.outpoint.replace('_', '.').split('.')
-    if (o.spendable === false || (o.lockingScript ?? '').toLowerCase() !== lock || exclude.has(o.outpoint)) return []
-    return [{ txid: txid!, vout: Number(vout), satoshis: o.satoshis, lockingScript: o.lockingScript! }]
+    if (o.spendable === false || exclude.has(o.outpoint)) return []
+    const signingKey = heldP2pkhSigningKey(active, o)
+    if (!signingKey) return []
+    return [{ txid: txid!, vout: Number(vout), satoshis: o.satoshis, lockingScript: o.lockingScript!, signingKey }]
   })
 }
 
@@ -590,11 +602,10 @@ async function mintFeeCoins(active: ActiveWallet): Promise<void> {
     description: 'Countersign fee inputs',
     labels: [LABEL, 'countersign-fee'],
     outputs: Array.from({ length: FEE_COIN_BATCH }, () => ({
-      lockingScript: new P2PKH().lock(active.address).toHex(),
+      ...selfP2pkhOutput(active, ['countersign-fee']),
       satoshis: FEE_COIN_SATS,
       outputDescription: 'Countersign fee input',
       basket: FEE_BASKET,
-      tags: ['countersign-fee'],
     })),
     options: { randomizeOutputs: false, noSend: true, acceptDelayedBroadcast: true },
   })
@@ -700,12 +711,11 @@ async function fundWithFeeCoins(
   return coins
 }
 
-async function signFeeInputs(active: ActiveWallet, tx: Transaction, coins: FeeCoin[], from: number): Promise<void> {
-  const root = rootKeyOf(active)
+async function signFeeInputs(tx: Transaction, coins: FeeCoin[], from: number): Promise<void> {
   for (let vin = from; vin < tx.inputs.length; vin++) {
     const coin = coins[vin - from]!
     tx.inputs[vin]!.unlockingScript = await new P2PKH()
-      .unlock(root, 'all', false, coin.satoshis, new P2PKH().lock(active.address))
+      .unlock(coin.signingKey, 'all', false, coin.satoshis, LockingScript.fromHex(coin.lockingScript))
       .sign(tx, vin)
   }
 }
@@ -847,7 +857,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
       }
       const self = active.identityKey.toLowerCase()
       const deployHolder = planHolderRemittance([{ vout: 0, identityKey: self }])
-      const deployRemittance: ColorRemittance = {
+      const deployRemittance: Remittance = {
         derivationPrefix: deployHolder.prefix,
         derivationSuffix: deployHolder.outputs[0]!.derivationSuffix,
         senderIdentityKey: self,
@@ -857,7 +867,7 @@ export async function issueCountersignedAsset(args: IssueCountersignedArgs): Pro
         deployLock = countersignDeployLock({
           supply: BigInt(supplyRaw),
           payload,
-          holderPkhHex: holderPkhFor(rootKeyOf(active), 'ISSUE', deployHolder.prefix, deployHolder.outputs[0]!),
+          holderPkhHex: holderPkhFor(rootKeyOf(active), 'ISSUE', deployHolder, deployHolder.outputs[0]!),
           sets,
         }).toHex()
       } catch (err) {
@@ -1174,7 +1184,7 @@ async function acceptRequest(
       holderPublicKey: holders[vin]!.publicKey,
     })
   }
-  await signFeeInputs(active, tx, coins, tokenInputs)
+  await signFeeInputs(tx, coins, tokenInputs)
   for (let vin = 0; vin < tokenInputs; vin++) {
     if (!inputScriptValid(tx, vin)) throw new Error(`Countersigned input ${vin} does not verify`)
   }
@@ -1558,7 +1568,7 @@ async function countersignReleased(
       holderPublicKey: holders[vin]!.publicKey,
     })
   }
-  await signFeeInputs(active, tx, coins, tokenInputs)
+  await signFeeInputs(tx, coins, tokenInputs)
   for (let vin = 0; vin < tokenInputs; vin++) {
     if (!inputScriptValid(tx, vin)) throw new Error(`Released input ${vin} does not verify`)
   }
@@ -1744,7 +1754,7 @@ export async function transferCountersignedAsset(args: {
           lockingScript: countersignedLock({
             assetId: path.assetId,
             amount: amounts[output.vout]!,
-            holderPkhHex: holderPkhFor(root, path.assetId, remittance.prefix, output),
+            holderPkhHex: holderPkhFor(root, path.assetId, remittance, output),
             sets: deploy!.sets,
           }),
           satoshis: 1,
@@ -1762,7 +1772,7 @@ export async function transferCountersignedAsset(args: {
       // A quorum signs one fixed transaction, so the holder pays its fee.
       const feeCoins =
         path.path === 'quorum' ? await fundWithFeeCoins(active, tx, state, path.cosigners.threshold) : []
-      if (feeCoins.length) await signFeeInputs(active, tx, feeCoins, selected.length)
+      if (feeCoins.length) await signFeeInputs(tx, feeCoins, selected.length)
       const efBytes = tx.toEF()
       const requestId = requestIdOf(efBytes)
       const ownRecipients = () => recipientEntries(root, path.assetId, remittance, self)
@@ -1940,7 +1950,7 @@ async function fileResolvedOutputs(
   tx: Transaction,
   deploys: Map<string, CountersignDeploy>,
   deploy: CountersignDeploy,
-  held: ReadonlyMap<string, ColorRemittance | null>,
+  held: ReadonlyMap<string, Remittance | null>,
   /** Plain outputs of the same transaction this wallet keeps (a trade's offer token). */
   extra: ReadonlyArray<{ outputIndex: number; basket: string; tags: string[]; customInstructions?: string }> = [],
   /** More tags on this wallet's asset outputs, by output index. */
@@ -2250,7 +2260,7 @@ export async function countersignTrade(args: {
   return { unlocks, branch, acceptedBy }
 }
 
-/** One output of a trade this wallet funds: units held under a fresh `p color` child, or a plain output. */
+/** One output of a trade this wallet funds: units held under a fresh BRC-29 child, or a plain output. */
 export type TradeOutput =
   | { kind: 'asset'; amount: bigint; identityKey: string; tags?: string[] }
   | {
@@ -2334,7 +2344,7 @@ export async function runFundedCountersignedTrade(args: {
       lockingScript: countersignedLock({
         assetId,
         amount: output.amount,
-        holderPkhHex: holderPkhFor(root, assetId, remittance.prefix, remittance.outputs.find((o) => o.vout === vout)!),
+        holderPkhHex: holderPkhFor(root, assetId, remittance, remittance.outputs.find((o) => o.vout === vout)!),
         sets: deploy!.sets,
       }),
       satoshis: 1,
@@ -2355,7 +2365,7 @@ export async function runFundedCountersignedTrade(args: {
   for (const [i, input] of (args.plainInputs ?? []).entries()) {
     tx.inputs[plainFrom + i]!.unlockingScript = await input.sign(tx, plainFrom + i)
   }
-  await signFeeInputs(active, tx, coins, plainFrom + (args.plainInputs?.length ?? 0))
+  await signFeeInputs(tx, coins, plainFrom + (args.plainInputs?.length ?? 0))
   const requestId = requestIdOf(tx.toEF())
   state.swaps[requestId] = { requestId, assetId, inputs, feeCoins: coins.map(feeCoinKey), state: 'open', at: Date.now() }
   writeCountersignState(state)
@@ -2447,16 +2457,21 @@ export async function countersignedDeploy(active: ActiveWallet, assetId: string,
 export function tradeHolderKey(active: ActiveWallet, assetId: string, remittance: HolderRemittance, vout: number): PrivateKey {
   const output = remittance.outputs.find((o) => o.vout === vout)
   if (!output) throw new Error(`Output ${vout} has no holder in this trade`)
-  return holderPrivateKey(rootKeyOf(active), assetId, {
-    derivationPrefix: remittance.prefix,
-    derivationSuffix: output.derivationSuffix,
-    senderIdentityKey: active.identityKey.toLowerCase(),
-  })
+  return holderPrivateKey(
+    rootKeyOf(active),
+    assetId,
+    {
+      derivationPrefix: remittance.prefix,
+      derivationSuffix: output.derivationSuffix,
+      senderIdentityKey: active.identityKey.toLowerCase(),
+    },
+    holderKeyScheme(remittance),
+  )
 }
 
 /**
  * The output a buyer writes for units it receives in a trade: a countersigned
- * lock to a fresh `p color` child, and its csft / csnft filing.
+ * lock to a fresh BRC-29 child, and its csft / csnft filing.
  */
 export function planCountersignedReceive(
   active: ActiveWallet,
@@ -2470,7 +2485,7 @@ export function planCountersignedReceive(
   const lockingScript = countersignedLock({
     assetId: deploy.assetId,
     amount,
-    holderPkhHex: holderPkhFor(rootKeyOf(active), deploy.assetId, remittance.prefix, output),
+    holderPkhHex: holderPkhFor(rootKeyOf(active), deploy.assetId, remittance, output),
     sets: deploy.sets,
   }).toHex()
   return {
@@ -2826,7 +2841,7 @@ async function spendBeacon(
   for (const output of args.outputs) tx.addOutput(output)
   const coins = await fundWithFeeCoins(active, tx, state, args.signatures)
   tx.inputs[0]!.unlockingScript = args.unlock(tx)
-  await signFeeInputs(active, tx, coins, 1)
+  await signFeeInputs(tx, coins, 1)
   if (!inputScriptValid(tx, 0)) throw new Error('The beacon spend does not verify')
   const txid = String(tx.id('hex')).toLowerCase()
   const atomic = await atomicBeefFor(active, tx, state)
@@ -2933,7 +2948,7 @@ async function proposeSharedBeacon(active: ActiveWallet, assetId: string): Promi
       })
       tx.addOutput({ lockingScript: beaconLock(deploy.sets), satoshis: 1 })
       const coins = await fundWithFeeCoins(active, tx, state, deploy.sets.issuer.threshold)
-      await signFeeInputs(active, tx, coins, 1)
+      await signFeeInputs(tx, coins, 1)
       const efHex = Utils.toHex(tx.toEF())
       const next: BeaconProposal = {
         proposal: requestIdOf(tx.toEF()),

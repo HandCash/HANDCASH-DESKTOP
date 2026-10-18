@@ -26,6 +26,7 @@ import {
   parseMneeTip,
 } from './mneeTip'
 import type { ActiveWallet } from './session'
+import { brc29PrivateKey, remittanceFromTags } from './brc29Keys'
 
 const APPROVER = PrivateKey.fromRandom().toPublicKey().toString()
 const FEE_ADDRESS = PrivateKey.fromRandom().toPublicKey().toAddress()
@@ -240,7 +241,7 @@ describe('cosignedMatches', () => {
 describe('sweepMneeFromKey', () => {
   const key = PrivateKey.fromRandom()
   const address = key.toPublicKey().toAddress()
-  const recipient = PrivateKey.fromRandom().toPublicKey().toAddress()
+  const root = PrivateKey.fromRandom()
   const source = sourceTx([
     { script: mneeOutputScriptHex(address, 300_000n, APPROVER) },
     { script: mneeOutputScriptHex(address, 200_000n, APPROVER) },
@@ -290,7 +291,9 @@ describe('sweepMneeFromKey', () => {
     const internalizeAction = vi.fn(async () => ({ accepted: true }))
     const active = {
       chain,
-      address: recipient,
+      address: root.toAddress(),
+      identityKey: root.toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
       services: { getRawTx: vi.fn() },
       wallet: { internalizeAction },
     } as unknown as ActiveWallet
@@ -315,6 +318,13 @@ describe('sweepMneeFromKey', () => {
     )
     expect(Beef.fromBinary(args.tx).atomicTxid).toBe(final)
     expect(importGuard.markOneSatImported).toHaveBeenCalledWith([`${final}.0`])
+    // The sweep lands on the BRC-29 self child its row records, never the identity address.
+    const remittance = remittanceFromTags(args.outputs[0].insertionRemittance.tags)
+    expect(remittance).not.toBeNull()
+    expect(JSON.parse(args.outputs[0].insertionRemittance.customInstructions)).toMatchObject(remittance!)
+    const child = brc29PrivateKey(root, remittance!).toAddress()
+    expect(submitted[0]!.outputs[0]!.lockingScript.toHex()).toBe(mneeOutputScriptHex(child, 499_900n, APPROVER))
+    expect(child).not.toBe(root.toAddress())
   })
 
   it('does not file a transaction the cosigner changed', async () => {

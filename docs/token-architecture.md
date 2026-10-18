@@ -73,7 +73,7 @@ Legacy JSON BSV-21 (`application/bsv-20`) is read-only. New token transactions u
 
 - Every selected input's rest script is classified (`chooseBsv21BatchSendPath`) **before** `createAction`; cosigner / covenant / unknown locks refuse by name.
 - A payee that resolves to this wallet (combine, self-send) keeps its output in basket `p2pft`; the card is repainted with every held output.
-- Value outputs lock to fresh BRC-207 `p color` children (`planColorOutputs` in `token/tipKeys.ts`): the payee's child when it has an identity to deliver to, this wallet's own for change. The remittance strings sit in each kept output's `customInstructions`, and the delivery carries the payee's in `meta.asset.remittance`. A derived output cannot be found by an address scan; remittance is custody.
+- Value outputs lock to fresh BRC-29 children (`planTokenOutputs` in `token/tipKeys.ts`, keys in `brc29Keys.ts`), which any BRC-100 wallet reaches through `getPublicKey` / `createSignature`; nothing new locks to an identity address: the payee's child when it has an identity to deliver to, this wallet's own for change. The remittance strings sit in each kept output's `customInstructions`, and the delivery carries the payee's in `meta.asset.remittance`. A derived output cannot be found by an address scan; remittance is custody.
 - `dec` travels from the card → remittance → Activity → peer envelope; it is never hard-coded.
 - `issuerAttested` means the Sigma signer **is** the claimed issuer (address match); a Sigma block by anyone else does not attest a remittance claim.
 

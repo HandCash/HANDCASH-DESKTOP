@@ -51,7 +51,6 @@ import {
 } from './token'
 import { stampBrc164Id } from './itemAccess'
 import { withVisibleOnChainBeef } from './legacyBeef'
-import { scriptPaysAddress } from './ordinalOwnership'
 import {
   describeInsufficientFunds,
   isInsufficientFundsError,
@@ -65,7 +64,7 @@ import { markItemsConsumed } from './sentItemGuard'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { type ActiveWallet } from './session'
-import { ownsTokenLock, primeTipKeys, tipSigningKey } from './token/tipKeys'
+import { ownsTokenLock, primeItemTipKeys, primeTipKeys, rememberTipKey, selfTokenOutput, tipSigningKey } from './token/tipKeys'
 
 type SelfPayment = {
   lockingScript: string
@@ -286,8 +285,9 @@ async function executeBurnPlan(args: {
   const self = await deriveSelfPayment(args.active)
   const outputs: BurnOutput[] = []
   if (args.plan.path === 'burnBsv21') {
+    // The burn inscription's sat is spent dust; it still sits on a BRC-29 child.
     const burn = buildBsv21BurnLockingScript({
-      address: args.active.address,
+      address: selfTokenOutput(args.active).address,
       tokenId: args.plan.tokenId,
       amt: args.plan.burnAmount.toString(),
     })
@@ -298,9 +298,11 @@ async function executeBurnPlan(args: {
     })
     if (args.plan.changeAmount > 0n) {
       const amount = args.plan.changeAmount.toString()
+      const change = selfTokenOutput(args.active)
+      rememberTipKey(args.active, change.key)
       outputs.push({
         lockingScript: buildBsv21TransferLockingScript({
-          address: args.active.address,
+          address: change.address,
           tokenId: args.plan.tokenId,
           amt: amount,
           sym: args.symbol,
@@ -327,6 +329,7 @@ async function executeBurnPlan(args: {
           icon: args.icon,
           dec: args.dec,
           issuer: args.issuer,
+          remittance: change.remittance,
         }),
       })
     }
@@ -960,10 +963,12 @@ export async function burnOneSat(
           `Could not load the source transaction needed to burn this item: ${loadFailure.loadError}`
         )
       }
+      if (hydrated.some((tip) => 'lockingScript' in tip && tip.lockingScript && !ownsTokenLock(active, tip.lockingScript))) {
+        await primeItemTipKeys(active)
+      }
       const plan = planOneSatBurn({
         tips: hydrated,
-        ownsLockingScript: (script) =>
-          scriptPaysAddress(script, active.address),
+        ownsLockingScript: (script) => ownsTokenLock(active, script),
       })
       if (plan.path === 'refuse') throw refusalMessage(plan.reason)
       const result = await executeBurnPlan({

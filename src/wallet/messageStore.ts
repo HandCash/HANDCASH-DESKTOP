@@ -6,7 +6,7 @@ import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { storageRegistry } from '../storage/registry'
 import { listFriends, type Friend } from './friends'
-import type { DeliveryRemittance } from './colorKeys'
+import type { DeliveryRemittance } from './brc29Keys'
 
 const STORAGE_KEY_BASE = storageRegistry.messages.key
 const LEGACY_KEY = storageRegistry.legacyChat.key
@@ -46,7 +46,11 @@ export type ChatAttachment = {
 
 /** Asset carried by an item-settle message. Absent means legacy collectable. */
 export type ItemTransferAsset =
-  | { kind: 'collectable' }
+  | {
+      kind: 'collectable'
+      /** How the recipient finds the BRC-29 key of each item output paying it. */
+      remittance?: DeliveryRemittance
+    }
   | {
       kind: 'fungible'
       tokenId: string
@@ -55,7 +59,7 @@ export type ItemTransferAsset =
       dec: number
       icon?: string
       issuer?: string
-      /** BRC-251: how the recipient finds the `p color` key of each output paying it. */
+      /** BRC-251: how the recipient finds the BRC-29 key of each output paying it. */
       remittance?: DeliveryRemittance
     }
 

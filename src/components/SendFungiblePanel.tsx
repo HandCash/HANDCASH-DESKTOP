@@ -14,10 +14,11 @@ import {
   type FungibleToken,
 } from '../wallet/token'
 import {
-  addressFromIdentityKey,
   identityKeyFromRecipient,
   listFriends,
-  resolvePaymentAddress,
+  normalizeIdentityKey,
+  paymentTargetIsSelf,
+  resolvePaymentTarget,
   searchFriends,
   subscribeFriends,
   createPinnedHandleResolveDebouncer,
@@ -79,7 +80,7 @@ function resolvedRecipientName(
   return null
 }
 
-export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
+export function SendFungiblePanel({ tokenId, onSent }: Props) {
   const [token, setToken] = useState<FungibleToken | null>(
     () => getFungible(tokenId),
   )
@@ -194,7 +195,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     const peer = tryParsePeerPayUri(trimmed)
     if (peer) {
       try {
-        setTo(addressFromIdentityKey(peer.identityKey, chain))
+        setTo(normalizeIdentityKey(peer.identityKey))
         setRecipientIdentityKey(peer.identityKey)
         void import('../wallet/handleResolve')
           .then(({ resolveHandleByIdentityKey }) =>
@@ -218,7 +219,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
       setRecipientIdentityKey(null)
       handleResolveRef.current.schedule(trimmed, {
         onResolved: (resolved) => {
-          setTo(addressFromIdentityKey(resolved.identityKey, chain))
+          setTo(normalizeIdentityKey(resolved.identityKey))
           setRecipientIdentityKey(resolved.identityKey)
           setFriendLabel(resolved.display)
           setRecipientProtocols(resolved.protocols ?? [])
@@ -238,7 +239,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     let key = identityKeyFromRecipient(trimmed)
     if (!key && wallet?.address && wallet.identityKey) {
       try {
-        if (resolvePaymentAddress(trimmed, chain) === wallet.address) {
+        if (paymentTargetIsSelf(resolvePaymentTarget(trimmed), wallet)) {
           key = wallet.identityKey
         }
       } catch {
@@ -251,10 +252,9 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const selectFriend = (friend: Friend) => {
     handleResolveRef.current.cancel()
     try {
-      const address = addressFromIdentityKey(friend.identityKey, chain)
       setRecipientQuery(friend.label)
       setShowMatches(false)
-      setTo(address)
+      setTo(normalizeIdentityKey(friend.identityKey))
       setRecipientIdentityKey(friend.identityKey)
       setFriendLabel(friend.label)
       setRecipientProtocols(friend.protocols ?? [])
@@ -319,7 +319,8 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     if (!token) return
     try {
       parseFungibleSendAmount(amount, token)
-      const address = resolvePaymentAddress(to, chain)
+      const target = resolvePaymentTarget(to)
+      const address = target.kind === 'identity' ? target.identityKey : target.address
       setTo(address)
       setError(null)
       sendUi({

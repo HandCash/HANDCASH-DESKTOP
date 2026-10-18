@@ -261,6 +261,8 @@ function sessionFacts(header, events) {
     // Timed work whose span overlapped blocked time. Spans from different
     // workloads can overlap each other, so shares may sum above 1.
     workloads: workloads.rows,
+    // Longest timed phases, freeze or not.
+    slowPhases: slowPhaseFacts(events),
     // The last line logged before each freeze began. Lines *after* a freeze
     // are callbacks that were queued behind it, so only the preceding line
     // can name what was running when the thread stopped.
@@ -417,6 +419,25 @@ const WAIT_SPAN_MS = 60_000
  * fell inside spans of each workload. A log line cannot be written while the
  * thread is blocked, so a span that *contains* a freeze was running across it.
  */
+/**
+ * The longest `[tag] <phase> done <N>ms` lines whether or not a freeze
+ * overlapped them: a spend that waits without blocking the thread shows here
+ * and nowhere in `workloads`.
+ */
+function slowPhaseFacts(events, limit = 25) {
+  const rows = []
+  for (const e of events) {
+    const tag = TAG_RE.exec(e.text)
+    if (!tag) continue
+    const d = DURATION_RE.exec(tag[2])
+    if (!d) continue
+    const ms = Number(d[2] ?? d[3])
+    if (!Number.isFinite(ms) || ms < 250) continue
+    rows.push({ ms, endedAt: new Date(e.at).toISOString(), line: e.text.slice(0, 200) })
+  }
+  return rows.sort((a, b) => b.ms - a.ms).slice(0, limit)
+}
+
 function workloadOverlap(events, stalls, blockedMsTotal) {
   const spans = []
   const waits = []

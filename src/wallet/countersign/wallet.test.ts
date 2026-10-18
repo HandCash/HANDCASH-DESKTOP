@@ -229,7 +229,7 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
     expect(assets).toEqual([expect.objectContaining({ assetId: issued.assetId, held: '60', issuer: true })])
   })
 
-  it('holds under p color children and delivers the remittance the recipient derives from', async () => {
+  it('holds under BRC-29 children and delivers the remittance the recipient derives from', async () => {
     const issued = await issueCountersignedAsset({ kind: 'token', sym: 'OAK', supply: '10', release: custodians })
     const deployLock = readCountersigned(rows.find((r) => r.outpoint === issued.assetId.replace('_', '.'))!.lockingScript)!
     expect(deployLock.holderPkhHex).not.toBe(pubkeyHashHex(identityKey))
@@ -250,7 +250,7 @@ describe('countersigned wallet flows (issuer is the local acceptor)', () => {
     }
     expect(delivery.senderIdentityKey).toBe(identityKey)
     expect(delivery.outputs.map((o) => o.vout)).toEqual([0])
-    const derived = holderPrivateKey(recipientKey, issued.assetId, { ...delivery.outputs[0]!, senderIdentityKey: identityKey })
+    const derived = holderPrivateKey(recipientKey, issued.assetId, { ...delivery.outputs[0]!, senderIdentityKey: identityKey }, 'brc29')
     expect(pubkeyHashHex(derived.toPublicKey().toString())).toBe(payee.holderPkhHex)
 
     const held = await listCountersignedHoldings(active as never, issued.assetId)

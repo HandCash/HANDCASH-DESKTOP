@@ -38,7 +38,7 @@ import {
   classifyBsv21TipKind,
 } from './tipKind'
 import { interpretBsv21SendPath } from './sendMachine'
-import { planColorOutputs, rememberTipKey, tipSigningKey } from './tipKeys'
+import { planTokenOutputs, rememberTipKey, tipSigningKey } from './tipKeys'
 import {
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
@@ -77,7 +77,7 @@ import {
   resumeCollectableVerifyWalk,
 } from '../collectables'
 import { scheduleHistoryBackupPush } from '../deviceSync'
-import { listFriends, resolvePaymentRecipient } from '../friends'
+import { listFriends, paymentTargetIsSelf, resolvePaymentRecipient } from '../friends'
 import { stampBrc164Id } from '../itemAccess'
 import { signTipInputs } from '../signTipInputs'
 import { isCovenantLockedScript } from '../collectableTipKind'
@@ -713,18 +713,21 @@ export async function sendBsv21Tokens(args: {
         args.skipPeerNotify ? 'Combining tips…' : 'Preparing token…',
         primary.outpoint,
       )
-      const to = await preSign.step(
+      const target = await preSign.step(
         'resolving the recipient',
         resolvePaymentRecipient(args.toAddress, wallet.chain, { label: args.friendLabel }),
       )
       // Resolved, not typed: a handle or another encoding of this wallet is a
       // self-send too. Self outputs stay in the p2pft filing.
-      const payeeIsSelf = paymentPaysThisWallet({
-        payeeAddress: to,
-        walletAddress: wallet.address,
-        recipientIdentityKey: args.recipientIdentityKey,
-        walletIdentityKey: wallet.identityKey,
-      })
+      const payeeIsSelf =
+        paymentTargetIsSelf(target, wallet) ||
+        paymentPaysThisWallet({
+          payeeAddress: target.kind === 'address' ? target.address : '',
+          walletAddress: wallet.address,
+          recipientIdentityKey: args.recipientIdentityKey,
+          walletIdentityKey: wallet.identityKey,
+        })
+      const to = target.kind === 'address' ? target.address : ''
       const issuer = (() => {
         for (const tip of listed162) {
           if (tip.tokenId === tokenId && tip.issuer) return tip.issuer
@@ -747,16 +750,21 @@ export async function sendBsv21Tokens(args: {
         args.icon ||
         listed162.find((t) => t.tokenId === tokenId && t.icon)?.icon
       const peerKey =
-        args.skipPeerNotify
+        args.skipPeerNotify || payeeIsSelf
           ? null
-          : args.recipientIdentityKey?.trim().toLowerCase() || null
-      const keys = planColorOutputs({
+          : target.kind === 'identity'
+            ? target.identityKey
+            : args.recipientIdentityKey?.trim().toLowerCase() || null
+      const keys = planTokenOutputs({
         wallet,
-        tokenId,
         payeeIsSelf,
         peerKey,
         hasChange: plan.changeAmt > 0n,
       })
+      if (!keys.payee && !to) {
+        console.warn('[bsv21] refuse reason=identity-payee-undelivered — no BRC-29 child without a delivery')
+        throw new Error('This recipient is an identity key; the transfer must be delivered to it')
+      }
       let plannedOutputs
       try {
         plannedOutputs = buildBsv21SendOutputs({

@@ -16,10 +16,11 @@ import {
 import { sendCollectablesRun } from '../wallet/collectableSendRunExecutor'
 import { isItemSent } from '../wallet/sentItemGuard'
 import {
-  addressFromIdentityKey,
   identityKeyFromRecipient,
   listFriends,
-  resolvePaymentAddress,
+  normalizeIdentityKey,
+  paymentTargetIsSelf,
+  resolvePaymentTarget,
   searchFriends,
   subscribeFriends,
   createPinnedHandleResolveDebouncer,
@@ -89,7 +90,6 @@ function resolvedRecipientName(
 export function SendCollectablePanel({
   outpoint,
   outpoints,
-  chain,
   onSent,
 }: Props) {
   const requestedOutpoints = useMemo(
@@ -223,7 +223,7 @@ export function SendCollectablePanel({
     const peer = tryParsePeerPayUri(trimmed)
     if (peer) {
       try {
-        setTo(addressFromIdentityKey(peer.identityKey, chain))
+        setTo(normalizeIdentityKey(peer.identityKey))
         setRecipientIdentityKey(peer.identityKey)
       } catch (err) {
         setTo('')
@@ -238,7 +238,7 @@ export function SendCollectablePanel({
       setRecipientIdentityKey(null)
       handleResolveRef.current.schedule(trimmed, {
         onResolved: (resolved) => {
-          setTo(addressFromIdentityKey(resolved.identityKey, chain))
+          setTo(normalizeIdentityKey(resolved.identityKey))
           setRecipientIdentityKey(resolved.identityKey)
           setFriendLabel(resolved.display)
           setError(null)
@@ -256,7 +256,7 @@ export function SendCollectablePanel({
     let key = identityKeyFromRecipient(trimmed)
     if (!key && wallet?.address && wallet.identityKey) {
       try {
-        if (resolvePaymentAddress(trimmed, chain) === wallet.address) {
+        if (paymentTargetIsSelf(resolvePaymentTarget(trimmed), wallet)) {
           key = wallet.identityKey
         }
       } catch {
@@ -269,10 +269,9 @@ export function SendCollectablePanel({
   const selectFriend = (friend: Friend) => {
     handleResolveRef.current.cancel()
     try {
-      const address = addressFromIdentityKey(friend.identityKey, chain)
       setRecipientQuery(friend.label)
       setShowMatches(false)
-      setTo(address)
+      setTo(normalizeIdentityKey(friend.identityKey))
       setRecipientIdentityKey(friend.identityKey)
       setFriendLabel(friend.label)
       setError(null)
@@ -375,7 +374,8 @@ export function SendCollectablePanel({
 
   const goReview = () => {
     try {
-      const address = resolvePaymentAddress(to, chain)
+      const target = resolvePaymentTarget(to)
+      const address = target.kind === 'identity' ? target.identityKey : target.address
       setTo(address)
       setError(null)
       sendUi({

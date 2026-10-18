@@ -50,7 +50,7 @@ export type SealedTipsResult<T> = {
 
 export async function settleSealedTips<T extends { outpoint: string; txid: string }>(
   items: readonly T[],
-  destLockHex: string,
+  isDestLock: (lockingScriptHex: string) => boolean,
   ports: SealerPorts,
 ): Promise<SealedTipsResult<T>> {
   const result: SealedTipsResult<T> = { free: [], released: [], moved: [], gone: [], held: [], sealers: new Map() }
@@ -70,7 +70,7 @@ export async function settleSealedTips<T extends { outpoint: string; txid: strin
     else if (fate.kind === 'released') result.released.push(...tips)
     else if (fate.kind === 'held') result.held.push(...tips)
     else {
-      const vouts = tipVouts(fate.tx, destLockHex)
+      const vouts = tipVouts(fate.tx, isDestLock)
       for (const item of tips) {
         const vout = vouts.get(normalizeOutpointKey(item.outpoint))
         result.moved.push({ item, txid: sealer, ...(vout !== undefined ? { vout } : {}) })
@@ -109,15 +109,14 @@ function txOf(atomic: number[], txid: string): Transaction | null {
 
 /**
  * Output holding each tip in an item-migrate leg. The leg names its tips as its
- * first inputs and pays each to `destLockHex`, one sat, in the same order.
+ * first inputs and pays each to a lock of this wallet, one sat, in the same order.
  */
-function tipVouts(tx: Transaction | null, destLockHex: string): Map<string, number> {
+function tipVouts(tx: Transaction | null, isDestLock: (lockingScriptHex: string) => boolean): Map<string, number> {
   const out = new Map<string, number>()
   if (!tx) return out
-  const want = destLockHex.toLowerCase()
   const dest: number[] = []
   tx.outputs.forEach((output, vout) => {
-    if (output.satoshis === 1 && output.lockingScript.toHex().toLowerCase() === want) dest.push(vout)
+    if (output.satoshis === 1 && isDestLock(output.lockingScript.toHex().toLowerCase())) dest.push(vout)
   })
   tx.inputs.forEach((input, i) => {
     if (i >= dest.length) return

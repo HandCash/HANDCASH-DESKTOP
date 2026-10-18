@@ -24,7 +24,7 @@ export type SellerInput = {
   bound: { satoshis: number; lockingScript: string }
   /** BRC-48 PushDrop lock: `<pubkey> OP_CHECKSIG`, so the unlock is the signature alone. */
   checksigOnly?: boolean
-  /** Signs this input instead of the shared key: a countersigned item's `p color` holder key. */
+  /** Signs this input instead of the shared key: a countersigned item's holder key. */
   privateKey?: PrivateKey
 }
 

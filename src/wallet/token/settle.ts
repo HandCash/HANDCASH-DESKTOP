@@ -11,7 +11,7 @@ import { getActiveWallet } from '../session'
  * WhatsOnChain walk. Miner postBeef runs after internalize.
  */
 import { Beef, PrivateKey } from '@bsv/sdk'
-import { colorPrivateKey, readDeliveryRemittance, type ColorRemittance } from '../colorKeys'
+import { heldKeyCandidates, readDeliveryRemittance, type Remittance } from '../brc29Keys'
 import { rememberTipKey } from './tipKeys'
 import type { AtomicBeefPurpose } from '../beefCache'
 import {
@@ -99,8 +99,8 @@ export function collectFungibleTipsPayingUs(args: {
     lockingScript?: { toHex(): string } | null
   } | null>
   address: string
-  /** vout → the derived `p color` address the delivery says that output pays. */
-  derived?: ReadonlyMap<number, string>
+  /** vout → every derived address the delivery's remittance may name for that output. */
+  derived?: ReadonlyMap<number, readonly string[]>
   tokenId: string
   amount: string
 }): { tips: PayingTip[]; sym?: string; icon?: string; issuer?: string } {
@@ -111,12 +111,12 @@ export function collectFungibleTipsPayingUs(args: {
   for (let i = 0; i < args.outputs.length; i++) {
     const output = args.outputs[i]
     const scriptHex = output?.lockingScript?.toHex()
-    const derivedAddress = args.derived?.get(i)
+    const derivedAddresses = args.derived?.get(i) ?? []
     if (
       output?.satoshis !== 1 ||
       !scriptHex ||
       !(scriptPaysAddress(scriptHex, args.address) ||
-        (derivedAddress != null && scriptPaysAddress(scriptHex, derivedAddress)))
+        derivedAddresses.some((address) => scriptPaysAddress(scriptHex, address)))
     ) {
       continue
     }
@@ -252,8 +252,8 @@ export async function internalizePeerFungibleSettle(opts: {
    * Receiving forever (hc-a580a, 438497125f03, 2026-09-27).
    */
   const tips: { vout: number; encoding: 'binary' | 'json' }[] = []
-  /** Outputs paying a `p color` child of ours, from `meta.asset.remittance` (BRC-251). */
-  const derived = new Map<number, { address: string; remittance: ColorRemittance; key: PrivateKey }>()
+  /** Children of ours named by `meta.asset.remittance` (BRC-251): BRC-29, or `p color` from earlier senders. */
+  const derived = new Map<number, { remittance: Remittance; keys: PrivateKey[] }>()
   let parsedBeef: Beef | null = null
   let resolvedSym = opts.token.sym
   let resolvedIcon = opts.token.icon
@@ -269,8 +269,7 @@ export async function internalizePeerFungibleSettle(opts: {
     }
     for (const [vout, remittance] of readDeliveryRemittance(opts.token.remittance)) {
       try {
-        const key = colorPrivateKey(PrivateKey.fromHex(active.rootKeyHex), tokenId, remittance)
-        derived.set(vout, { address: key.toAddress(), remittance, key })
+        derived.set(vout, { remittance, keys: heldKeyCandidates(PrivateKey.fromHex(active.rootKeyHex), tokenId, remittance) })
       } catch {
         /* a remittance this wallet cannot derive pays no key of ours */
       }
@@ -278,7 +277,7 @@ export async function internalizePeerFungibleSettle(opts: {
     const matched = collectFungibleTipsPayingUs({
       outputs: tx.outputs,
       address: active.address,
-      derived: new Map([...derived].map(([vout, d]) => [vout, d.address])),
+      derived: new Map([...derived].map(([vout, d]) => [vout, d.keys.map((k) => k.toAddress())])),
       tokenId,
       amount,
     })
@@ -390,11 +389,12 @@ export async function internalizePeerFungibleSettle(opts: {
     }
   }
 
-  /** The derived key of an accepted tip, unless the tip pays our identity address. */
+  /** The derived key an accepted tip pays, with its remittance, unless it pays our identity address. */
   const heldDerived = (vout: number) => {
     const d = derived.get(vout)
     const hex = parsedBeef?.findTxid(id)?.tx?.outputs[vout]?.lockingScript?.toHex()
-    return d && hex && scriptPaysAddress(hex, d.address) ? d : undefined
+    const key = d && hex ? d.keys.find((k) => scriptPaysAddress(hex, k.toAddress())) : undefined
+    return d && key ? { remittance: d.remittance, key } : undefined
   }
   const tipVout = tips[0]!.vout
   const tipOp = `${id}.${tipVout}`

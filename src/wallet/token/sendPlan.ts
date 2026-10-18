@@ -16,7 +16,7 @@
  * tx). Overlay and market decode the image from that BEEF — no indexer.
  */
 import { Beef, type Transaction } from '@bsv/sdk'
-import type { ColorRemittance } from '../colorKeys'
+import type { Remittance } from '../brc29Keys'
 import {
   BSV21_BASKET,
   buildBsv21CustomInstructions,
@@ -360,7 +360,7 @@ export function buildBsv21SendRemittance(args: {
   issuer?: string
   icon?: string
   maxSupply?: number
-  remittance?: ColorRemittance
+  remittance?: Remittance
 }): { basket: typeof BSV21_BASKET; tags: string[]; customInstructions: string } {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -413,9 +413,9 @@ export function buildBsv21SendOutputs(args: {
    * drops it and the card forgets the balance at change 0.
    */
   payeeIsSelf?: boolean
-  /** `p color` remittance of each output whose address is a derived child. */
-  payeeRemittance?: ColorRemittance
-  changeRemittance?: ColorRemittance
+  /** BRC-29 remittance of each output whose address is a derived child. */
+  payeeRemittance?: Remittance
+  changeRemittance?: Remittance
 }): Bsv21SendOutput[] {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)

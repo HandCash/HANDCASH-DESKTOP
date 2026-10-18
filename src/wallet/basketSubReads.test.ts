@@ -22,6 +22,18 @@ function basket(n: number) {
 }
 
 describe('listOutputsInSlices', () => {
+  it('never yields to the spend it runs inside', async () => {
+    spend.waiting = 1
+    try {
+      const { listOutputs, rows } = basket(25)
+      const read = await listOutputsInSlices(listOutputs, { limit: 1000, offset: 0 }, { subRows: 10, inSpend: true })
+      expect(read.outputs).toHaveLength(rows.length)
+      expect(read.yieldedMs).toBe(0)
+    } finally {
+      spend.waiting = 0
+    }
+  })
+
   it('reads one page as newest-first slices in order', async () => {
     const { listOutputs, calls, rows } = basket(250)
     const read = await listOutputsInSlices(listOutputs, { limit: 1000, offset: -1 }, { subRows: 100 })

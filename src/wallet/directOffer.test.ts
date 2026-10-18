@@ -313,6 +313,25 @@ describe('offerMachine on the direct venue', () => {
     expect(actor.getSnapshot().value).toBe('committed')
   })
 
+  it('answers a second collect of an already collected offer with its result', async () => {
+    const { collectDirectOfferProceeds } = await import('./directOffer')
+    const offer = offerFixture()
+    const txid = 'c'.repeat(64)
+    durable.set(
+      'acct:handcash.market.directOffers.v1',
+      JSON.stringify([{ offer, role: 'seller', state: 'collected', soldTxid: txid, collectTxid: txid, updatedAt: 1 }]),
+    )
+    try {
+      await expect(collectDirectOfferProceeds({ offerId: offer.offerId, txid })).resolves.toEqual({
+        offerId: offer.offerId,
+        txid,
+        proceeds: offer.want.kind,
+      })
+    } finally {
+      durable.delete('acct:handcash.market.directOffers.v1')
+    }
+  })
+
   it('stops allowing abort once the cheque is broadcast', () => {
     const actor = createActor(offerMachine).start()
     actor.send({

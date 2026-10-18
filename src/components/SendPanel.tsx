@@ -19,8 +19,9 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
-  addressFromIdentityKey,
+  identityKeyFromRecipient,
   listFriends,
+  normalizeIdentityKey,
   searchFriends,
   subscribeFriends,
   createPinnedHandleResolveDebouncer,
@@ -279,19 +280,14 @@ export function SendPanel({
 
   const selectFriend = (friend: Friend) => {
     handleResolveRef.current.cancel()
-    try {
-      const address = addressFromIdentityKey(friend.identityKey, chain)
-      setRecipientQuery(friend.label)
-      setShowFriendMatches(false)
-      send({
-        type: 'EDIT',
-        to: address,
-        friendLabel: friend.label,
-        payeeIdentityKey: friend.identityKey,
-      })
-    } catch (err) {
-      onFail(err instanceof Error ? err.message : String(err))
-    }
+    setRecipientQuery(friend.label)
+    setShowFriendMatches(false)
+    send({
+      type: 'EDIT',
+      to: normalizeIdentityKey(friend.identityKey),
+      friendLabel: friend.label,
+      payeeIdentityKey: friend.identityKey,
+    })
   }
 
   const applyRecipientInput = (value: string) => {
@@ -318,41 +314,35 @@ export function SendPanel({
     }
     const peer = tryParsePeerPayUri(value)
     if (peer) {
-      try {
-        const address = addressFromIdentityKey(peer.identityKey, chain)
-        const patch: {
-          to: string
-          friendLabel: null
-          payeeIdentityKey: string
-          amount?: string
-        } = {
-          to: address,
-          friendLabel: null,
-          payeeIdentityKey: peer.identityKey,
-        }
-        if (peer.sats != null) {
-          if (currency === 'usd' && usdPerBsv != null && usdPerBsv > 0) {
-            const usd = satsToUsd(peer.sats, usdPerBsv)
-            patch.amount = String(Number(usd.toFixed(4)))
-          } else {
-            patch.amount = String(peer.sats / 1e8)
-          }
-        }
-        send({ type: 'EDIT', ...patch })
-        return
-      } catch (err) {
-        onFail(err instanceof Error ? err.message : String(err))
+      const patch: {
+        to: string
+        friendLabel: null
+        payeeIdentityKey: string
+        amount?: string
+      } = {
+        to: normalizeIdentityKey(peer.identityKey),
+        friendLabel: null,
+        payeeIdentityKey: peer.identityKey,
       }
+      if (peer.sats != null) {
+        if (currency === 'usd' && usdPerBsv != null && usdPerBsv > 0) {
+          const usd = satsToUsd(peer.sats, usdPerBsv)
+          patch.amount = String(Number(usd.toFixed(4)))
+        } else {
+          patch.amount = String(peer.sats / 1e8)
+        }
+      }
+      send({ type: 'EDIT', ...patch })
+      return
     }
     if (parseHandleInput(value)) {
       // Until this handle resolves, the previous recipient must not stay payable under it.
       send({ type: 'EDIT', to: '', friendLabel: null, payeeIdentityKey: null })
       handleResolveRef.current.schedule(value, {
         onResolved: (resolved) => {
-          const address = addressFromIdentityKey(resolved.identityKey, chain)
           send({
             type: 'EDIT',
-            to: address,
+            to: normalizeIdentityKey(resolved.identityKey),
             friendLabel: resolved.display,
             payeeIdentityKey: resolved.identityKey,
           })
@@ -365,7 +355,7 @@ export function SendPanel({
       type: 'EDIT',
       to: value.trim(),
       friendLabel: null,
-      payeeIdentityKey: null,
+      payeeIdentityKey: identityKeyFromRecipient(value),
     })
   }
 

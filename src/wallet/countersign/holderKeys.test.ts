@@ -1,16 +1,20 @@
-import { PrivateKey } from '@bsv/sdk'
+import { KeyDeriver, PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
+import { BRC29_PROTOCOL } from '../brc29Keys'
 import { pubkeyHashHex } from './script'
 import {
   deliveryOutputsFor,
   deliveryOutputsFromEntries,
+  heldHolderKey,
   holderKeyAsset,
+  holderKeyScheme,
   holderPkhFor,
   holderPrivateKey,
   planHolderRemittance,
   provenRecipientPkh,
   readRecipientEntries,
   recipientEntries,
+  type HolderRemittance,
 } from './holderKeys'
 
 const ASSET = `${'cd'.repeat(32)}_0`
@@ -26,36 +30,60 @@ describe('countersigned holder keys', () => {
     { vout: 1, identityKey: pub(sender) },
   ])
 
-  it('locks each output to a child its holder derives from the delivery', () => {
+  it('plans BRC-29 keys', () => {
+    expect(holderKeyScheme(remittance)).toBe('brc29')
+  })
+
+  it('locks each output to the BRC-29 child any BRC-100 wallet of its holder derives', () => {
     const [payee, change] = remittance.outputs
-    const payeePkh = holderPkhFor(sender, ASSET, remittance.prefix, payee!)
+    const payeePkh = holderPkhFor(sender, ASSET, remittance, payee!)
     expect(payeePkh).not.toBe(pkh(recipient))
+    const viaWallet = new KeyDeriver(recipient).derivePrivateKey(
+      BRC29_PROTOCOL,
+      `${remittance.prefix} ${payee!.derivationSuffix}`,
+      pub(sender),
+    )
+    expect(pubkeyHashHex(pub(viaWallet))).toBe(payeePkh)
     const [row] = deliveryOutputsFor(remittance, pub(recipient))
-    const key = holderPrivateKey(recipient, ASSET, { ...row!, senderIdentityKey: pub(sender) })
+    const key = holderPrivateKey(recipient, ASSET, { ...row!, senderIdentityKey: pub(sender) }, 'brc29')
     expect(pubkeyHashHex(pub(key))).toBe(payeePkh)
-    const own = holderPrivateKey(sender, ASSET, {
-      derivationPrefix: remittance.prefix,
-      derivationSuffix: change!.derivationSuffix,
-      senderIdentityKey: pub(sender),
-    })
-    expect(pubkeyHashHex(pub(own))).toBe(holderPkhFor(sender, ASSET, remittance.prefix, change!))
+    const own = holderPrivateKey(
+      sender,
+      ASSET,
+      { derivationPrefix: remittance.prefix, derivationSuffix: change!.derivationSuffix, senderIdentityKey: pub(sender) },
+      'brc29',
+    )
+    expect(pubkeyHashHex(pub(own))).toBe(holderPkhFor(sender, ASSET, remittance, change!))
+  })
+
+  it('still finds the key of an output an earlier release held under p color', () => {
+    const legacy: HolderRemittance = { prefix: remittance.prefix, outputs: remittance.outputs }
+    expect(holderKeyScheme(legacy)).toBe('legacy-color')
+    const legacyPkh = holderPkhFor(sender, ASSET, legacy, legacy.outputs[0]!)
+    expect(legacyPkh).not.toBe(holderPkhFor(sender, ASSET, remittance, remittance.outputs[0]!))
+    const row = { derivationPrefix: legacy.prefix, derivationSuffix: legacy.outputs[0]!.derivationSuffix, senderIdentityKey: pub(sender) }
+    expect(pubkeyHashHex(pub(heldHolderKey(recipient, ASSET, row, legacyPkh)!))).toBe(legacyPkh)
+    expect(heldHolderKey(recipient, ASSET, row, pkh(acceptor))).toBeNull()
   })
 
   it('proves each holder to the acceptor it was encrypted for, and to nobody else', async () => {
-    const entries = await recipientEntries(sender, ASSET, remittance, pub(acceptor))
-    for (const [i, entry] of entries.entries()) {
-      expect(provenRecipientPkh(acceptor, pub(sender), ASSET, entry)).toBe(
-        holderPkhFor(sender, ASSET, remittance.prefix, remittance.outputs[i]!),
-      )
-      expect(provenRecipientPkh(PrivateKey.fromRandom(), pub(sender), ASSET, entry)).toBeNull()
+    for (const plan of [remittance, { prefix: remittance.prefix, outputs: remittance.outputs }]) {
+      const entries = await recipientEntries(sender, ASSET, plan, pub(acceptor))
+      for (const [i, entry] of entries.entries()) {
+        expect(provenRecipientPkh(acceptor, pub(sender), ASSET, entry)).toBe(holderPkhFor(sender, ASSET, plan, plan.outputs[i]!))
+        expect(provenRecipientPkh(PrivateKey.fromRandom(), pub(sender), ASSET, entry)).toBeNull()
+      }
     }
+  })
+
+  it('carries the key scheme on the wire', async () => {
+    const entries = await recipientEntries(sender, ASSET, remittance, pub(acceptor))
+    expect(readRecipientEntries(entries).every((e) => e.keyScheme === 'brc29')).toBe(true)
   })
 
   it('proves to a local acceptor that is also the sender', async () => {
     const [entry] = await recipientEntries(sender, ASSET, remittance, pub(sender))
-    expect(provenRecipientPkh(sender, pub(sender), ASSET, entry!)).toBe(
-      holderPkhFor(sender, ASSET, remittance.prefix, remittance.outputs[0]!),
-    )
+    expect(provenRecipientPkh(sender, pub(sender), ASSET, entry!)).toBe(holderPkhFor(sender, ASSET, remittance, remittance.outputs[0]!))
   })
 
   it('reads an entry without linkage as an identity-key holder', () => {
@@ -69,7 +97,7 @@ describe('countersigned holder keys', () => {
     expect(deliveryOutputsFromEntries(entries, pub(acceptor))).toEqual([])
   })
 
-  it('keeps the ISSUE key for a deploy output', () => {
+  it('keeps the ISSUE key for a legacy deploy output', () => {
     expect(holderKeyAsset(ASSET, ASSET.replace('_', '.'))).toBe('ISSUE')
     expect(holderKeyAsset(ASSET, `${'ef'.repeat(32)}.1`)).toBe(ASSET)
   })

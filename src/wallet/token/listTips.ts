@@ -350,7 +350,7 @@ function decodeContinuingRemittanceTip(
  *
  * The guard exists because `listOutputs` keeps returning a tip a send already
  * spent, so "in our basket" alone cannot clear a mark. Two facts together can:
- * the tip pays **us** (the identity address or a `p color` child we hold), and the hiding transaction is the tip's *own* — a spent
+ * the tip pays **us** (a derived child we hold, or the identity address of an earlier release), and the hiding transaction is the tip's *own* — a spent
  * input is never an output of the transaction that spent it, and a payee
  * output the sender hid pays the payee, not the sender. What remains is the
  * receiving account reading a mark the sending account wrote when both shared
@@ -587,7 +587,7 @@ export async function listBsv21BinaryTips(
 export async function listBsv21BinaryTipsForToken(
   wallet: ActiveWallet,
   tokenId: string,
-  opts: { includeCustomInstructions?: boolean } = {},
+  opts: { includeCustomInstructions?: boolean; inSpend?: boolean } = {},
 ): Promise<Bsv21Utxo[]> {
   const id = normalizeTokenId(tokenId)
   if (!id) return []
@@ -601,6 +601,7 @@ export async function listBsv21BinaryTipsForToken(
             includeCustomInstructions: opts.includeCustomInstructions,
             tags: [tag],
             strict: true,
+            inSpend: opts.inSpend,
           }),
         ),
       )
@@ -745,6 +746,7 @@ async function listBasketTips(
     includeCustomInstructions?: boolean
     tags?: string[]
     strict?: boolean
+    inSpend?: boolean
   } = {},
 ): Promise<ListedOutput[]> {
   try {
@@ -763,7 +765,7 @@ async function listBasketTips(
           seekPermission: false,
         }) as Promise<{ outputs?: ListedOutput[] }>,
       { limit: 1000, offset: 0 },
-      { subRows: BASKET_SUB_READ_ROWS },
+      { subRows: BASKET_SUB_READ_ROWS, inSpend: opts.inSpend },
     )
     return listed.outputs
   } catch (error) {

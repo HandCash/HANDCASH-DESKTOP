@@ -1,59 +1,71 @@
 /**
  * Buyer pads for ordinal market settlements (`marketSettlementLayout.ts`).
- * A pad is a root-key P2PKH output in basket `market-pads`: the toolbox tracks
- * it but never funds with it, and the buyer signs it with the root key.
+ * A pad is a P2PKH output on a fresh BRC-29 self child in basket
+ * `market-pads`, its remittance in `customInstructions` and a `brc29:` tag:
+ * the toolbox tracks it but never funds with it, and the buyer signs it with
+ * that child. Pads minted before 1.3.597 sit on the identity address and are
+ * spent with the root key until they are gone.
  * A settlement returns both pads' satoshis in one output and mints a fresh
  * one-sat pad from change, so a buyer keeps two between purchases.
  */
-import { Beef, P2PKH } from '@bsv/sdk'
+import { Beef, type PrivateKey } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { getBeefForTxidCached } from './beefCache'
 import { MARKET_PAD_BASKET, MARKET_PAD_COUNT } from './marketSettlementLayout'
+import { heldP2pkhSigningKey, selfP2pkhOutput } from './brc29Keys'
 
 export type MarketPad = {
   outpoint: string
   satoshis: number
   lockingScript: string
+  signingKey: PrivateKey
 }
 
 export const MARKET_PAD_TAG = 'market-pad'
 
-export function marketPadOutput(address: string, satoshis = 1): {
+export type MarketPadOutput = {
   lockingScript: string
   satoshis: number
   outputDescription: string
   basket: string
   tags: string[]
-} {
+  customInstructions: string
+}
+
+/** A fresh pad output on a BRC-29 self child. */
+export function marketPadOutput(
+  active: Pick<ActiveWallet, 'rootKeyHex' | 'identityKey'>,
+  satoshis = 1,
+): MarketPadOutput {
   return {
-    lockingScript: new P2PKH().lock(address).toHex(),
+    ...selfP2pkhOutput(active, [MARKET_PAD_TAG]),
     satoshis,
     outputDescription: 'Market ordinal pad',
     basket: MARKET_PAD_BASKET,
-    tags: [MARKET_PAD_TAG],
   }
 }
 
 async function listPads(active: ActiveWallet): Promise<MarketPad[]> {
-  const lock = new P2PKH().lock(active.address).toHex().toLowerCase()
   const page = await active.wallet.listOutputs({
     basket: MARKET_PAD_BASKET,
     include: 'locking scripts',
+    includeTags: true,
+    includeCustomInstructions: true,
     limit: 50,
   })
   return (page.outputs ?? [])
-    .filter(
-      (o) =>
-        o.spendable !== false &&
-        (o.lockingScript ?? '').toLowerCase() === lock &&
-        Number.isSafeInteger(o.satoshis) &&
-        o.satoshis >= 1,
-    )
-    .map((o) => ({
-      outpoint: o.outpoint.replace('_', '.'),
-      satoshis: o.satoshis,
-      lockingScript: o.lockingScript!,
-    }))
+    .flatMap((o) => {
+      if (o.spendable === false || !Number.isSafeInteger(o.satoshis) || o.satoshis < 1) return []
+      const signingKey = heldP2pkhSigningKey(active, o)
+      return signingKey
+        ? [{
+            outpoint: o.outpoint.replace('_', '.'),
+            satoshis: o.satoshis,
+            lockingScript: o.lockingScript!,
+            signingKey,
+          }]
+        : []
+    })
     .sort((a, b) => a.satoshis - b.satoshis)
 }
 
@@ -70,7 +82,7 @@ export async function ensureMarketPads(
     const created = await active.wallet.createAction({
       description: 'Market ordinal pads',
       labels: ['market-v3', MARKET_PAD_TAG],
-      outputs: Array.from({ length: missing }, () => marketPadOutput(active.address)),
+      outputs: Array.from({ length: missing }, () => marketPadOutput(active)),
       options: { randomizeOutputs: false, noSend: true, acceptDelayedBroadcast: true },
     })
     const txid = created.txid?.toLowerCase() ?? ''

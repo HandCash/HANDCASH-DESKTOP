@@ -6,6 +6,7 @@ import {
   Beef,
   BigNumber,
   Hash,
+  KeyDeriver,
   P2PKH,
   PrivateKey,
   PublicKey,
@@ -99,7 +100,9 @@ import {
 import { DIRECT_OFFER_BASKET } from './directOfferPath'
 import { signSellerInputs } from './offerSeal'
 import { SELLER_SIGHASH } from './offerTerms'
-import { rememberTipKey, selfColorOutput, tipSigningKey } from './token/tipKeys'
+import { rememberTipKey, selfTokenOutput, tipSigningKey } from './token/tipKeys'
+import { heldItemRow } from './itemRecipientKey'
+import { brc29PrivateKey, selfBrc29Output, withRemittance, type Remittance } from './brc29Keys'
 import {
   checkCountersignedListing,
   parseCountersignedListingProof,
@@ -205,6 +208,12 @@ export type MarketSettlementReceipt = {
   sellerOutputIndex: number
   feeOutputIndex: number
   settledAt: number
+  /**
+   * The address the buyer item output pays: a BRC-29 child of the buyer, never
+   * its identity address. Signed when present; receipts from 1.3.596 and
+   * earlier omit it and the index derives the identity address.
+   */
+  buyerAddress?: string
   signature: string
 }
 
@@ -260,6 +269,38 @@ export type MarketListingAuthorization = {
   proceedsInternalized?: boolean
   itemRetired?: boolean
   listing?: MarketListingAdvert
+  /** BRC-29 children of a v2 listing; absent for v1, which used the identity key. */
+  sellerKeys?: MarketSellerKeys
+}
+
+/**
+ * The seller's BRC-29 children for one v2 listing (BRC-254): the listing key
+ * locks the listed output and the offer token, the payout receives the sale.
+ * Kept on the authorization and on the offer output, which BRC-39 backs up.
+ */
+export type MarketSellerKeys = { listing: Remittance; payout: Remittance }
+
+function planMarketSellerKeys(active: ActiveWallet): {
+  listingKey: PrivateKey
+  listingAddress: string
+  payTo: string
+  keys: MarketSellerKeys
+} {
+  const listing = selfBrc29Output(active)
+  const payout = selfBrc29Output(active, listing.remittance.derivationPrefix)
+  rememberTipKey(active, listing.key)
+  return {
+    listingKey: listing.key,
+    listingAddress: listing.address,
+    payTo: payout.address,
+    keys: { listing: listing.remittance, payout: payout.remittance },
+  }
+}
+
+/** The key that signs a listing's offer token and plain listed output: BRC-29 (v2) or the root (v1). */
+export function marketListingKey(active: ActiveWallet, sellerKeys?: MarketSellerKeys): PrivateKey {
+  const root = PrivateKey.fromHex(active.rootKeyHex)
+  return sellerKeys ? brc29PrivateKey(root, sellerKeys.listing) : root
 }
 
 /** HCT shares the p2pft / p2pnft filings but is neither an ordinal nor a BRC-162 tip. */
@@ -536,6 +577,14 @@ export function classifyMarketListingAsset(args: {
  * Fungibles: basket `bsv21`, 163 amt/id copied from the 162 tip.
  * Collectables use basket `1sat`.
  */
+/** Files the listing key's remittance on the listed output so BRC-39 carries it and listings recognise it. */
+function heldWithListingKey(
+  keys: MarketSellerKeys,
+  held: { basket: string; tags: string[]; customInstructions: string },
+): { basket: string; tags: string[]; customInstructions: string } {
+  return { ...held, ...heldItemRow(held, keys.listing) }
+}
+
 export function buildMarketHeldRemittance(args: {
   assetType: MarketAssetType
   origin: string
@@ -629,6 +678,7 @@ export function settlementReceiptPreimage(
     String(receipt.sellerOutputIndex),
     String(receipt.feeOutputIndex),
     String(receipt.settledAt),
+    ...(receipt.buyerAddress ? [receipt.buyerAddress] : []),
   ].join('\n')
 }
 
@@ -748,8 +798,22 @@ export function hashMarketProvenance(
   }
 }
 
-function rawSignatureHex(rootKeyHex: string, preimage: string): string {
-  const signature = PrivateKey.fromHex(rootKeyHex).sign(
+/**
+ * Purchase intents and settlement receipts (BRC-254 §9) are signed the way
+ * BRC-100 `createSignature` signs: the signer's child for this protocol, key ID
+ * `1`, counterparty `anyone`. Records from 1.3.596 and earlier were signed raw
+ * by the identity key and still verify.
+ */
+const MARKET_RECORD_SIGNATURE_PROTOCOL: [2, string] = [2, '1sat market record']
+const MARKET_RECORD_SIGNATURE_KEY_ID = '1'
+
+function recordSignatureHex(rootKeyHex: string, preimage: string): string {
+  const signer = new KeyDeriver(PrivateKey.fromHex(rootKeyHex)).derivePrivateKey(
+    MARKET_RECORD_SIGNATURE_PROTOCOL,
+    MARKET_RECORD_SIGNATURE_KEY_ID,
+    'anyone',
+  )
+  const signature = signer.sign(
     Utils.toArray(preimage, 'utf8'),
     undefined,
     true
@@ -760,8 +824,22 @@ function rawSignatureHex(rootKeyHex: string, preimage: string): string {
   ])
 }
 
+function verifyRecordSignature(identityKey: string, signatureHex: string, preimage: string): boolean {
+  let child: PublicKey
+  try {
+    child = new KeyDeriver('anyone').derivePublicKey(
+      MARKET_RECORD_SIGNATURE_PROTOCOL,
+      MARKET_RECORD_SIGNATURE_KEY_ID,
+      identityKey,
+    )
+  } catch {
+    return false
+  }
+  return verifyRawSignature(child, signatureHex, preimage) || verifyRawSignature(identityKey, signatureHex, preimage)
+}
+
 function verifyRawSignature(
-  identityKey: string,
+  signerKey: string | PublicKey,
   signatureHex: string,
   preimage: string
 ): boolean {
@@ -774,7 +852,7 @@ function verifyRawSignature(
     )
     return signature.verify(
       Utils.toArray(preimage, 'utf8'),
-      PublicKey.fromString(identityKey)
+      typeof signerKey === 'string' ? PublicKey.fromString(signerKey) : signerKey
     )
   } catch {
     return false
@@ -853,7 +931,7 @@ export function verifyMarketPurchaseIntent(
     Math.abs(now - intent.createdAt) <= 15 * 60_000 &&
     intent.expiresAt != null &&
     intent.expiresAt > now &&
-    verifyRawSignature(
+    verifyRecordSignature(
       intent.buyer,
       intent.signature,
       purchaseIntentPreimage(intent)
@@ -875,7 +953,7 @@ export function verifyMarketSettlementReceipt(
     isMarketPayoutIndexPair(receipt.sellerOutputIndex, receipt.feeOutputIndex) &&
     Number.isSafeInteger(receipt.settledAt) &&
     Math.abs(now - receipt.settledAt) <= 15 * 60_000 &&
-    verifyRawSignature(
+    verifyRecordSignature(
       receipt.seller,
       receipt.signature,
       settlementReceiptPreimage(receipt)
@@ -1374,16 +1452,22 @@ export async function splitBsv21CoverToExactAmt(args: {
   }
   const changeAmt = coverSum - requested
   const layout = bsv21SpendLayout(args.covers)
-  const changeKey = changeAmt > 0n ? selfColorOutput(args.active, args.origin) : null
+  const lotKey = selfTokenOutput(args.active)
+  const changeKey = changeAmt > 0n ? selfTokenOutput(args.active, lotKey.remittance.derivationPrefix) : null
   const listedLock = buildBsv21ValueLock({
     tokenId: args.origin,
     amount: requested,
-    address: args.active.address,
+    address: lotKey.address,
     layout,
   })
   const vin0 = args.covers[0]
   if (!vin0) throw new Error('Not enough units available to list that amount.')
   const itemTxid = vin0.outpoint.slice(0, 64)
+  const splitPhase = (name: string, since: number) => {
+    const ms = Date.now() - since
+    if (ms >= 250) console.info(`[list-split] ${name} done ${ms}ms`)
+  }
+  const beefAt = Date.now()
   const splitBeef = await getBeefForTxidCached(args.active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
   for (const extra of args.covers.slice(1)) {
     const extraTxid = extra.outpoint.slice(0, 64)
@@ -1398,6 +1482,8 @@ export async function splitBsv21CoverToExactAmt(args: {
       // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
     }
   }
+  splitPhase(`input beef (${args.covers.length} cover)`, beefAt)
+  const createAt = Date.now()
   const created = await args.active.wallet.createAction({
     description: purpose.description,
     labels: [...purpose.labels],
@@ -1417,16 +1503,17 @@ export async function splitBsv21CoverToExactAmt(args: {
           amt: requested,
           icon: args.icon,
           ...(args.sym ? { sym: args.sym } : {}),
+          remittance: lotKey.remittance,
         }),
         ...(purpose.lotBasket ? { basket: purpose.lotBasket } : {}),
       },
-      ...(changeAmt > 0n
+      ...(changeKey
         ? [
             {
               lockingScript: buildBsv21ValueLock({
                 tokenId: args.origin,
                 amount: changeAmt,
-                address: changeKey?.address ?? args.active.address,
+                address: changeKey.address,
                 layout,
               }),
               satoshis: 1,
@@ -1436,7 +1523,7 @@ export async function splitBsv21CoverToExactAmt(args: {
                 amt: changeAmt,
                 icon: args.icon,
                 ...(args.sym ? { sym: args.sym } : {}),
-                ...(changeKey ? { remittance: changeKey.remittance } : {}),
+                remittance: changeKey.remittance,
               }),
             },
           ]
@@ -1448,6 +1535,7 @@ export async function splitBsv21CoverToExactAmt(args: {
       trustSelf: 'known',
     },
   })
+  splitPhase('createAction', createAt)
   const signable = created.signableTransaction
   if (!signable) throw new Error('BSV-21 list split did not return a signable action')
   let reference: string | null = signable.reference
@@ -1506,16 +1594,19 @@ export async function splitBsv21CoverToExactAmt(args: {
       spends[i] = { unlockingScript }
     }
     if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
+    rememberTipKey(args.active, lotKey.key)
     if (changeKey) rememberTipKey(args.active, changeKey.key)
     args.onSigned?.()
     // The cover may be a deploy still queued for miners. An inline broadcast
     // then fails "missing inputs" and the toolbox throws review; the signed
     // send outbox below retries until the parent lands.
+    const signAt = Date.now()
     const signed = await args.active.wallet.signAction({
       reference,
       spends,
       options: { noSend: true },
     })
+    splitPhase('signAction', signAt)
     // Signed: the toolbox holds this spend, so it is never aborted from here.
     reference = null
     const txid = signed.txid?.toLowerCase() ?? ''
@@ -2117,9 +2208,11 @@ async function createMarketListingAdvertExclusive(
   const exactFeeSats = Math.floor(
     (priceSats * MARKET_FEE_BASIS_POINTS) / 10_000
   )
+  const seller = planMarketSellerKeys(active)
   const fields = normalizeMarketOfferFields({
     sellerIdentityKey: active.identityKey,
-    payTo: active.address,
+    listingKey: seller.listingKey.toPublicKey().toString(),
+    payTo: seller.payTo,
     grossPriceSats: priceSats,
     feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
     feePayTo: MARKET_FEE_PAY_TO_ADDRESS,
@@ -2132,17 +2225,17 @@ async function createMarketListingAdvertExclusive(
     nonce,
     messagebox: publicMessageboxBase(args.messagebox),
   })
-  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
-  const offerLockingScript = encodeMarketOffer(fields, offerKey)
+  const offerKey = seller.listingKey
+  const offerLockingScript = encodeMarketOffer(fields, PrivateKey.fromHex(active.rootKeyHex))
   const itemLockingScript =
     listedAsset === 'bsv21'
       ? buildBsv21ValueLock({
           tokenId: origin,
           amount: BigInt(amt!),
-          address: active.address,
+          address: seller.listingAddress,
           layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
         })
-      : new P2PKH().lock(active.address).toHex()
+      : new P2PKH().lock(seller.listingAddress).toHex()
   const path = chooseMarketListingPath({
     itemOutpoint: listingOutpoint,
     satoshis: output.satoshis ?? 0,
@@ -2175,6 +2268,11 @@ async function createMarketListingAdvertExclusive(
     }
   }
   const inputBEEF = listingBeef.toBinary()
+  const listChangeKey =
+    listedAsset === 'bsv21' && tipAmt != null && amt != null && tipAmt > amt
+      ? selfTokenOutput(active, seller.keys.listing.derivationPrefix)
+      : null
+  if (listChangeKey) rememberTipKey(active, listChangeKey.key)
   let reference: string | null = null
   let signedTxid: string | null = null
   let signedAtomic: number[] | null = null
@@ -2200,7 +2298,7 @@ async function createMarketListingAdvertExclusive(
           lockingScript: itemLockingScript,
           satoshis: 1,
           outputDescription: 'Held market item',
-          ...buildMarketHeldRemittance({
+          ...heldWithListingKey(seller.keys, buildMarketHeldRemittance({
             assetType: listedAsset,
             origin,
             amt,
@@ -2213,7 +2311,7 @@ async function createMarketListingAdvertExclusive(
               ? { provenance: provenance }
               : {}),
             extraTags: ['market-held'],
-          }),
+          })),
         },
         {
           lockingScript: offerLockingScript,
@@ -2221,15 +2319,15 @@ async function createMarketListingAdvertExclusive(
           outputDescription: 'BRC-48 market offer',
           basket: 'market-offers',
           tags: ['brc48', `nonce:${nonce}`, `origin:${origin.replace('_', '.')}`],
-          customInstructions: JSON.stringify({ fields }),
+          customInstructions: JSON.stringify({ fields, sellerKeys: seller.keys }),
         },
-        ...(listedAsset === 'bsv21' && tipAmt != null && amt != null && tipAmt > amt
+        ...(listChangeKey && tipAmt != null && amt != null
           ? [
               {
                 lockingScript: buildBsv21ValueLock({
                   tokenId: origin,
                   amount: BigInt(tipAmt - amt),
-                  address: active.address,
+                  address: listChangeKey.address,
                   layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
                 }),
                 satoshis: 1,
@@ -2239,6 +2337,7 @@ async function createMarketListingAdvertExclusive(
                   amt: BigInt(tipAmt - amt),
                   icon: lockTip?.icon,
                   ...(lockTip?.sym ? { sym: lockTip.sym } : {}),
+                  remittance: listChangeKey.remittance,
                 }),
               },
             ]
@@ -2418,6 +2517,7 @@ async function createMarketListingAdvertExclusive(
       createdAt: listedAt,
       updatedAt: listedAt,
       listing: advert,
+      sellerKeys: seller.keys,
     })
     if (
       !advert.settlementUnlocks?.itemUnlockingScript ||
@@ -2632,9 +2732,11 @@ async function createCountersignedListing(
   const proof: CountersignedListingProof = { v: 253, assetId, kind: deploy.kind, amt: requested.toString() }
   const digest = hashMarketProvenance(proof)
   const nonce = randomNonce()
+  const seller = planMarketSellerKeys(active)
   const fields = normalizeMarketOfferFields({
     sellerIdentityKey: active.identityKey,
-    payTo: active.address,
+    listingKey: seller.listingKey.toPublicKey().toString(),
+    payTo: seller.payTo,
     grossPriceSats: priceSats,
     feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
     feePayTo: MARKET_FEE_PAY_TO_ADDRESS,
@@ -2647,8 +2749,8 @@ async function createCountersignedListing(
     nonce,
     messagebox: publicMessageboxBase(args.messagebox),
   })
-  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
-  const offerLockingScript = encodeMarketOffer(fields, offerKey)
+  const offerKey = seller.listingKey
+  const offerLockingScript = encodeMarketOffer(fields, PrivateKey.fromHex(active.rootKeyHex))
   const path = chooseMarketListingPath({
     itemOutpoint: normalizeOutpoint(holding.outpoint),
     satoshis: 1,
@@ -2673,7 +2775,7 @@ async function createCountersignedListing(
           file: {
             basket: 'market-offers',
             tags: ['brc48', `nonce:${nonce}`, `origin:${assetId.replace('_', '.')}`],
-            customInstructions: JSON.stringify({ fields }),
+            customInstructions: JSON.stringify({ fields, sellerKeys: seller.keys }),
           },
         },
         ...(covered > requested ? [{ kind: 'asset' as const, amount: covered - requested, identityKey: self }] : []),
@@ -2737,6 +2839,7 @@ async function createCountersignedListing(
       createdAt: listedAt,
       updatedAt: listedAt,
       listing: advert,
+      sellerKeys: seller.keys,
     })
     chart.send({ type: 'COMMITTED' })
     scheduleHistoryBackupPush('market-list')
@@ -2801,7 +2904,7 @@ async function cancelCountersignedListing(args: {
   if (!source || source.holding.assetId !== normalizeOutpoint(listing.origin)) {
     throw new MarketListingError('MARKET_CANCEL_REFUSED', 'This wallet no longer holds the listed output. Nothing was spent.')
   }
-  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
+  const offerKey = marketListingKey(active, current.sellerKeys)
   const offerOut = listingTx.outputs[MARKET_OFFER_VOUT]
   if (!offerOut?.lockingScript || offerOut.satoshis !== MARKET_OFFER_DEPOSIT_SATS) {
     throw new Error('Cancellation needs the offer output of the listing transaction')
@@ -3084,7 +3187,7 @@ export async function createMarketPurchaseIntent(args: {
   }
   return {
     ...unsigned,
-    signature: rawSignatureHex(
+    signature: recordSignatureHex(
       active.rootKeyHex,
       purchaseIntentPreimage(unsigned)
     ),
@@ -3096,6 +3199,7 @@ export function createMarketSettlementReceipt(args: {
   settlementTxid: string
   sellerOutputIndex: number
   feeOutputIndex: number
+  buyerAddress?: string
 }): MarketSettlementReceipt {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
@@ -3118,10 +3222,11 @@ export function createMarketSettlementReceipt(args: {
     sellerOutputIndex: args.sellerOutputIndex,
     feeOutputIndex: args.feeOutputIndex,
     settledAt: Date.now(),
+    ...(args.buyerAddress ? { buyerAddress: args.buyerAddress } : {}),
   }
   return {
     ...unsigned,
-    signature: rawSignatureHex(
+    signature: recordSignatureHex(
       active.rootKeyHex,
       settlementReceiptPreimage(unsigned)
     ),
@@ -3530,16 +3635,24 @@ async function createCancelMarketListingAdvertExclusive(args: {
     if (back.kind === 'refuse') {
       throw new MarketListingError('MARKET_CANCEL_REFUSED', MARKET_CANCEL_RETURN_REFUSAL[back.reason])
     }
+    // The offer input signs ALL, which is what lets the index accept a return
+    // to a fresh child rather than the listing's payout lock.
+    const returnKey = selfTokenOutput(active)
+    rememberTipKey(active, returnKey.key)
     const returnLock =
       back.kind === 'ordinal'
-        ? new P2PKH().lock(active.address).toHex()
+        ? new P2PKH().lock(returnKey.address).toHex()
         : buildBsv21ValueLock({
             tokenId: back.tokenId,
             amount: back.amount,
-            address: active.address,
+            address: returnKey.address,
             layout: back.kind,
           })
-    const heldRemittance = await listedItemRemittance(active, listing, assetType)
+    const listedRemittance = await listedItemRemittance(active, listing, assetType)
+    const heldRemittance =
+      back.kind === 'ordinal'
+        ? { ...listedRemittance, ...heldItemRow(listedRemittance, returnKey.remittance) }
+        : { ...listedRemittance, customInstructions: withRemittance(listedRemittance.customInstructions, returnKey.remittance) }
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',
       labels: ['market-v3', 'brc48', 'market-cancel'],
@@ -3593,7 +3706,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
     ) {
       throw new Error('Cancellation must spend item then offer and return the item at output zero')
     }
-    const key = PrivateKey.fromHex(active.rootKeyHex)
+    const key = marketListingKey(active, current.sellerKeys)
     const spends: Record<number, { unlockingScript: string }> = {}
     for (const vin of [0, 1]) {
       const input = tx.inputs[vin]!
@@ -3606,7 +3719,13 @@ async function createCancelMarketListingAdvertExclusive(args: {
       }
       const template =
         vin === 0
-          ? new P2PKH().unlock(await tipSigningKey(active, lockingScript.toHex()), 'all', false, satoshis, lockingScript)
+          ? new P2PKH().unlock(
+              current.sellerKeys ? key : await tipSigningKey(active, lockingScript.toHex()),
+              'all',
+              false,
+              satoshis,
+              lockingScript,
+            )
           : checksigOnlyUnlock(key, satoshis, lockingScript)
       const unlockingScript = (await template.sign(tx, vin)).toHex()
       if (!unlockingScript) throw new Error('Cancellation signature missing')

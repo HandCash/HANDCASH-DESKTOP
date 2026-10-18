@@ -88,13 +88,13 @@ describe('handle key pinning', () => {
     expect(() => refuseHandleKeyChange(resolved)).toThrow(HandleKeyChangedError)
   })
 
-  it('refuses a typed handle that now resolves elsewhere, before any address is built', async () => {
+  it('refuses a typed handle that now resolves elsewhere, before any key is derived', async () => {
     const saved = freshIdentityKey()
     addFriend({ label: '$alice', identityKey: saved, handle: '$alice' })
     resolveAnswer.identityKey = freshIdentityKey()
     await expect(resolvePaymentRecipient('$alice', 'main')).rejects.toThrow(HandleKeyChangedError)
     resolveAnswer.identityKey = saved
-    await expect(resolvePaymentRecipient('$alice', 'main')).resolves.toBe(addressFromIdentityKey(saved, 'main'))
+    await expect(resolvePaymentRecipient('$alice', 'main')).resolves.toEqual({ kind: 'identity', identityKey: saved })
   })
 
   it('checks the confirmed destination against the pin right before signing', () => {

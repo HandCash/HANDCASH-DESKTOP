@@ -91,7 +91,12 @@ export async function sendSatsToAddress(opts: {
           const active = getActiveWallet()
           if (!active) throw new Error('Wallet locked')
 
-          const to = await resolvePaymentRecipient(opts.to, active.chain, { label: opts.friendLabel })
+          const target = await resolvePaymentRecipient(opts.to, active.chain, { label: opts.friendLabel })
+          if (target.kind !== 'address') {
+            console.warn('[send] refuse reason=identity-recipient — identity keys are paid over BRC-29')
+            throw new Error('This recipient is an identity key; it is paid at a BRC-29 key, not an address')
+          }
+          const to = target.address
           noteOutboundSendPending({
             pendingId: pending.id,
             sats: satoshis,

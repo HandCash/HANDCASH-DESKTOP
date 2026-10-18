@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
-  addressFromIdentityKey,
   friendHasFixedHandle,
   getFriendById,
   removeFriend,
@@ -57,13 +56,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     return <p className="connected-empty-line">Friend not found</p>
   }
 
-  let address = ''
-  try {
-    address = addressFromIdentityKey(friend.identityKey, chain)
-  } catch {
-    address = 'Invalid key'
-  }
-
   const handleFixed = friendHasFixedHandle(friend)
   const displayHandle = (friend.handle?.trim() || friend.label).trim()
 
@@ -85,11 +77,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
 
   const copyKey = async () => {
     await copyText(friend.identityKey, { label: 'wallet key' })
-  }
-
-  const copyAddress = async () => {
-    if (!address || address === 'Invalid key') return
-    await copyText(address, { label: 'address' })
   }
 
   const askForCard = () =>
@@ -216,25 +203,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             className="friend-copy-action"
             aria-label="Copy wallet key"
             onClick={() => void copyKey()}
-          >
-            <CopyIcon size={16} />
-            Copy
-          </button>
-        </div>
-
-        <div className="friend-copy-row">
-          <div>
-            <span className="field-static-label">Receive address</span>
-            <span className="mono wallet-detail-value" title={address}>
-              {address}
-            </span>
-          </div>
-          <button
-            type="button"
-            className="friend-copy-action"
-            aria-label="Copy receive address"
-            onClick={() => void copyAddress()}
-            disabled={address === 'Invalid key'}
           >
             <CopyIcon size={16} />
             Copy
