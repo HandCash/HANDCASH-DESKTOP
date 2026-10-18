@@ -61,6 +61,16 @@ describe('insufficientFundsMessage', () => {
     )
   })
 
+  it('names held change when the balance covers the spend', () => {
+    const message = insufficientFundsMessage({
+      confirmedSats: 290_256,
+      confirmingSats: 0,
+      neededSats: 2_101,
+    })
+    expect(message).toContain('miners have not accepted yet')
+    expect(message).not.toContain('Not enough')
+  })
+
   it('never leaks the raw toolbox satoshi arithmetic', () => {
     const message = insufficientFundsMessage({
       confirmedSats: 2,

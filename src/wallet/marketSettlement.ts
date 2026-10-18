@@ -1006,9 +1006,7 @@ export async function executeMarketPurchase(
     })
     // Two pads in, one out: replace the spent one from buyer funds.
     if (padded) outputs.push(marketPadOutput(active.address))
-    let created: Awaited<ReturnType<typeof active.wallet.createAction>>
-    try {
-      created = await active.wallet.createAction({
+    const createPurchase = () => active.wallet.createAction({
       description: isBsv21 || countersigned === 'csft'
         ? `Buy ${listing.amt?.toLocaleString() ?? ''} ${itemDisplayName}`.replace('  ', ' ')
         : `Buy ${itemDisplayName}`,
@@ -1030,6 +1028,18 @@ export async function executeMarketPurchase(
         trustSelf: 'known',
       },
     })
+    let created: Awaited<ReturnType<typeof active.wallet.createAction>>
+    try {
+      created = await createPurchase().catch(async (err: unknown) => {
+        if (!isInsufficientFundsError(err)) throw err
+        // Change behind a parent miners already took is selectable once pinned;
+        // a parent still unbroadcast stays held and the buy refuses below.
+        const { healAppHeldChange } = await import('./staleOutputRelease')
+        const freed = await healAppHeldChange()
+        if (freed <= 0) throw err
+        console.info(`[market-buy] retrying after freeing ${freed} app-held parent(s)`)
+        return createPurchase()
+      })
     } catch (err) {
       if (isInsufficientFundsError(err)) {
         throw new MarketListingError(

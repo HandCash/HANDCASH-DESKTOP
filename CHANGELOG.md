@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.591] - 2026-10-18
+
+### Fixed
+
+- Buying a market listing no longer refuses with "Not enough spendable BSV" on a funded wallet when its change sits behind a parent miners already accepted (for example the token demo's own mint or listing). The buy frees that change and retries once, the same heal app actions already get.
+- When the balance covers a spend but its change is still waiting on a payment miners have not accepted, the error now says so instead of reporting a shortfall that contradicts the numbers it shows.
+
 ## [1.3.590] - 2026-10-18
 
 ### Fixed

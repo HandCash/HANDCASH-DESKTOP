@@ -32,12 +32,19 @@ function bsv(satoshis: number): string {
     .replace(/\.$/, '')
 }
 
+/** Well above any network fee a single wallet spend pays. */
+const FEE_HEADROOM_SATS = 1_000
+
 /**
  * Wording for a spend the wallet could not fund.
  *
  * `confirmingSats` only earns the "still confirming" message when it actually
  * closes the gap — otherwise the user is genuinely short and saying "wait"
  * would be a lie they could wait on forever.
+ *
+ * `balance()` counts spendable change whose parent is still `nosend` /
+ * `unsent`, which `createAction` cannot select. When that balance covers the
+ * spend with room for any fee, the refusal is held change, not a shortfall.
  */
 export function insufficientFundsMessage(opts: {
   confirmedSats: number
@@ -48,6 +55,9 @@ export function insufficientFundsMessage(opts: {
   const confirming = Math.max(0, Math.trunc(opts.confirmingSats))
   const needed = Math.max(0, Math.trunc(opts.neededSats))
 
+  if (confirmed >= needed + FEE_HEADROOM_SATS) {
+    return `Your ${bsv(confirmed)} BSV is change from a payment miners have not accepted yet. Try again in a moment — nothing was sent.`
+  }
   if (confirming > 0 && confirmed + confirming >= needed) {
     if (confirmed < needed) {
       return `Your balance includes change from a recent payment. The wallet chains unconfirmed change automatically — try again. If this keeps happening, open Refresh once.`
