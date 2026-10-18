@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.594] - 2026-10-18
+
+### Fixed
+
+- Cancelling a token listing no longer reports a zero balance right after it succeeds. Since 1.3.590 the cancel signs without an inline broadcast and left propagation to the background, so its returned tokens stayed in an unbroadcast (`nosend`) transaction when the call returned. The cancel now waits for its own miner submission and, when Arcade accepts it, pins the transaction before returning. A cancel queued behind a listing still waiting for miners returns as before and the signed send outbox finishes it.
+
 ## [1.3.593] - 2026-10-18
 
 ### Fixed

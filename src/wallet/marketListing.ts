@@ -3626,7 +3626,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
       chart.send({ type: 'RECOVER' })
       throw new Error('Cancellation broadcast result is unknown')
     }
-    const { registerSignedSend, startSignedSendPropagation } = await import(
+    const { registerSignedSend, propagateSignedSend } = await import(
       './signedSendLifecycle'
     )
     const signedCancel = await registerSignedSend({
@@ -3641,7 +3641,13 @@ async function createCancelMarketListingAdvertExclusive(args: {
       txid,
     })
     chart.send({ type: 'COMMITTED' })
-    startSignedSendPropagation(signedCancel)
+    // The returned asset counts once the cancel leaves `nosend`; a caller that
+    // reads its balance on return must see it whenever the network took it.
+    const submitted = await propagateSignedSend(signedCancel).catch(() => null)
+    if (submitted?.kind === 'accepted') {
+      const { pinBroadcastLocalTx } = await import('./staleOutputRelease')
+      await pinBroadcastLocalTx(txid, beefBytes).catch(() => false)
+    }
     await repaintReturnedItem(active, listing, assetType, `${txid}.0`)
     scheduleHistoryBackupPush('market-list')
     return {
