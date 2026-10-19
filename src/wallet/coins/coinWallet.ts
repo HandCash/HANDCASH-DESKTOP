@@ -916,6 +916,33 @@ export function createCoinWallet(binding: CoinBinding) {
     return null
   }
 
+  /**
+   * The transaction in the history of `address` paying exactly `litoshi` to
+   * `scriptPubKey`, with the vout of every script in `with`; null while none
+   * has. Found by its hash, never trusted further: `proveLock` still decides.
+   */
+  async function findLock(
+    address: string,
+    scriptPubKey: Uint8Array,
+    litoshi: bigint,
+    with_: { scriptPubKey: Uint8Array; litoshi: bigint }[] = [],
+  ): Promise<{ txid: string; vout: number; also: (number | null)[] } | null> {
+    const history = src().scriptHistory
+    if (!history) throw new Error(`The ${label} source cannot list an address's transactions`)
+    const pays = (tx: LtcTx, script: Uint8Array, value: bigint) => {
+      const i = tx.outputs.findIndex((o) => o.value === value && sameBytes(o.script, script))
+      return i < 0 ? null : i
+    }
+    for (const txid of await history(address)) {
+      const tx = proofRules.parseTx(fromHex(await src().txHex(txid)))
+      if (ltcTxid(tx) !== txid) continue
+      const vout = pays(tx, scriptPubKey, litoshi)
+      if (vout === null) continue
+      return { txid, vout, also: with_.map((w) => pays(tx, w.scriptPubKey, w.litoshi)) }
+    }
+    return null
+  }
+
   /** Broadcast a transaction this wallet built outside its payment record (a swap claim or refund). Safe to repeat. */
   async function broadcastRaw(hex: string, txid: string): Promise<'sent' | 'known'> {
     const known = await src()
@@ -1222,6 +1249,7 @@ export function createCoinWallet(binding: CoinBinding) {
     fundLocks,
     proveLock,
     spenderOf,
+    findLock,
     broadcastRaw,
     receiveScript,
     feeRate: () => src().feeRate(),

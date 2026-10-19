@@ -96,6 +96,11 @@ let replayedFor: string | null = null
 const checkAt = new Map<string, number>()
 /** What each swap was last logged waiting on this session, so every upload names what a stuck swap waits for. */
 const waitLogged = new Map<string, string>()
+/** When each swap's counterparty lock was last searched for on chain. */
+const lockSearchedAt = new Map<string, number>()
+const LOCK_SEARCH_MS = 60_000
+/** Swaps whose lock already ran the once-a-session heal for being short. */
+const healedShort = new Set<string>()
 
 /** How long a swap waiting on `step` can go unexamined: chain reads are spent only when an answer could change the step. */
 function recheckAfter(step: SettleStep): number {
@@ -225,6 +230,7 @@ export async function cancelOwnSwapOffer(nonce: string): Promise<void> {
 // ── Box ───────────────────────────────────────────────────────────────────
 
 /** Whether this wallet can lock its leg as `role`, counting what it already promised to swaps it has not locked yet. */
+/** Whether this wallet can lock its leg of `terms` beside every swap it has promised and not yet locked. BSV reads the live balance: a cached one accepted a take the wallet could not fund. */
 async function canLock(role: SwapRole, terms: SwapTerms): Promise<string | null> {
   const leg = swapLegs(terms)[role]
   const promised = activeSwaps()
@@ -234,7 +240,7 @@ async function canLock(role: SwapRole, terms: SwapTerms): Promise<string | null>
   try {
     if (leg.chain === 'bsv') {
       const { assertSendableBalanceForReview } = await import('../sendPayment')
-      await assertSendableBalanceForReview(Number(units))
+      await assertSendableBalanceForReview(Number(units), { fresh: true })
       return null
     }
     const { coinWalletOf } = await import('../coinMethods')
@@ -484,6 +490,7 @@ async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gathered> 
       presigned: !!r.own.refunds?.length && r.own.refunds.every((x) => x.cosig),
       feeUnspent: feeSpend?.kind === 'unspent',
       unsent,
+      started: !r.own.funding && !!r.own.fundingStartedAt,
     },
     peer: {
       funded: !!r.peer.funding && !r.peer.refused && peerSighting?.kind !== 'refused',
@@ -493,6 +500,28 @@ async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gathered> 
     },
   }
   return { facts, ownSpend, feeSpend, peerSpend, peerSighting }
+}
+
+/**
+ * The counterparty's lock, read off its chain when its `funded` message is
+ * missing: the lock's script is fixed by the terms, so a box outage cannot
+ * hide a lock that is there. Burial and amount are still proven in `gather`.
+ */
+async function findPeerLock(r: SettleRecord): Promise<SettleRecord> {
+  const agreed = agreedOf(r)
+  if (!agreed || r.peer.funding || r.declined || (r.role === 'taker' && !r.own.funding)) return r
+  const last = lockSearchedAt.get(r.terms.swapId) ?? 0
+  if (Date.now() - last < LOCK_SEARCH_MS) return r
+  lockSearchedAt.set(r.terms.swapId, Date.now())
+  const outs = legOutputs(agreed, peerLegId(r))
+  const chain = await legChainOf(swapLegs(r.terms)[peerLegId(r)].chain)
+  const found = await chain.findLock(outs.main, outs.fee).catch((err: unknown) => {
+    warn(r.terms.swapId, `lock search deferred — ${err instanceof Error ? err.message : String(err)}`)
+    return null
+  })
+  if (!found) return r
+  log(r.terms.swapId, `counterparty lock found on chain ${found.txid.slice(0, 12)}`)
+  return updateSwap(r.terms.swapId, (rec) => (rec.peer.funding ? null : { ...rec, peer: { ...rec.peer, funding: found } })) ?? r
 }
 
 /** What the chain showed, written back before any step acts on it. */
@@ -607,14 +636,26 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
     const already = Object.entries(wallet.store.read().payments).find(([, p]) => p.lock?.swapId === r.terms.swapId)
     let txid: string | undefined = already?.[0]
     if (!txid) {
-      if (r.own.fundingStartedAt) throw new Error('a lock was started and is not in the coin record; not locking twice')
+      if (r.own.fundingStartedAt) {
+        // The coin record holds a lock before it can be broadcast: an interrupted start left nothing out. Judge the swap again.
+        updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, fundingStartedAt: undefined } }))
+        throw new Error('an interrupted lock left nothing signed; judging the swap again')
+      }
       updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, fundingStartedAt: Date.now() } }))
       const locks = [outs.main, ...(outs.fee ? [outs.fee] : [])]
-      const sent = await wallet.fundLocks(
-        locks.map((l) => ({ script: l.scriptPubKey, litoshi: l.amount, address: l.address! })),
-        { swapId: r.terms.swapId, note: `Swap lock for ${SWAP_ASSET_INFO[swapLegs(agreed)[peerLegId(r)].chain].ticker}` },
-      )
-      txid = sent.ltcTxid
+      try {
+        const sent = await wallet.fundLocks(
+          locks.map((l) => ({ script: l.scriptPubKey, litoshi: l.amount, address: l.address! })),
+          { swapId: r.terms.swapId, note: `Swap lock for ${SWAP_ASSET_INFO[swapLegs(agreed)[peerLegId(r)].chain].ticker}` },
+        )
+        txid = sent.ltcTxid
+      } catch (err) {
+        // The coin record holds a lock from the moment it is signed, before any broadcast: none there means none can be out.
+        if (!Object.values(wallet.store.read().payments).some((p) => p.lock?.swapId === r.terms.swapId)) {
+          updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, fundingStartedAt: undefined } }))
+        }
+        throw err
+      }
     }
     funding = { txid, main: 0, ...(outs.fee ? { fee: 1 } : {}) }
     journalOwnLocks(active, r, funding, outs)
@@ -625,6 +666,43 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
   await announceFunded(active, { ...r, own: { ...r.own, funding } }, beef).catch((err: unknown) => {
     warn(r.terms.swapId, `funded notice deferred — ${err instanceof Error ? err.message : String(err)}`)
   })
+}
+
+const shortOfFunds = (err: unknown) => err instanceof Error && /insufficient funds/i.test(err.message)
+
+/**
+ * Fund, healing once when the wallet reports itself short: coins it holds
+ * may be marked spent by a transaction it wrongly wrote off. Still short on
+ * a fresh balance read, this wallet withdraws from the swap by name rather
+ * than retrying until the window closes; the counterparty's lock (if any)
+ * waits out its own lock time, as after any decline.
+ */
+async function fundOrWithdraw(active: ActiveWallet, r: SettleRecord): Promise<'locked' | 'withdrew'> {
+  try {
+    await fund(active, r)
+    return 'locked'
+  } catch (err) {
+    if (!shortOfFunds(err) || readSettleState().swaps[r.terms.swapId]?.own.funding) throw err
+  }
+  if (!healedShort.has(r.terms.swapId)) {
+    healedShort.add(r.terms.swapId)
+    const { restoreFailedLocalTxsKnownOnChain } = await import('../staleOutputRelease')
+    const startedAt = Date.now()
+    const restored = await restoreFailedLocalTxsKnownOnChain().catch(() => 0)
+    log(r.terms.swapId, `short to lock: restored ${restored} landed spend(s) done ${Date.now() - startedAt}ms`)
+    try {
+      await fund(active, r)
+      return 'locked'
+    } catch (err) {
+      if (!shortOfFunds(err) || readSettleState().swaps[r.terms.swapId]?.own.funding) throw err
+    }
+  }
+  const short = await canLock(r.role, r.terms)
+  if (!short) throw new Error('Insufficient funds to lock right now; trying again')
+  updateSwap(r.terms.swapId, (x) => ({ ...x, declined: short }))
+  warn(r.terms.swapId, `withdrew: ${short} to lock`)
+  await sendSettle(active, r.counterparty, { t: r.role === 'maker' ? 'decline' : 'abort', swapId: r.terms.swapId, reason: short }).catch(() => {})
+  return 'withdrew'
 }
 
 const overBoxLimit = (err: unknown) => err instanceof Error && /exceeds the BRC-33 body limit/.test(err.message)
@@ -826,8 +904,9 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
   const c = chart(record)
   const savePhase = () => updateSwap(record.terms.swapId, (x) => (x.phase === c.phase() ? null : { ...x, phase: c.phase() }))
   try {
-    const g = await gather(active, record)
-    const r = recordFacts(record, g)
+    const seen = await findPeerLock(record)
+    const g = await gather(active, seen)
+    const r = recordFacts(seen, g)
     await reportFee(r)
     const step = nextSettleStep(r.terms, g.facts)
     if (step.kind === 'wait') {
@@ -859,7 +938,10 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
           await requestPresign(active, r)
           break
         case 'fund':
-          await fund(active, r)
+          if ((await fundOrWithdraw(active, r)) === 'withdrew') {
+            c.take({ type: 'FAIL', error: 'withdrew before locking' })
+            return step
+          }
           break
         case 'claim':
           await claim(active, r)
@@ -954,6 +1036,8 @@ export function resetSwapSettleForTest(): void {
   replayedFor = null
   checkAt.clear()
   waitLogged.clear()
+  lockSearchedAt.clear()
+  healedShort.clear()
 }
 
 /** Rebuild swaps whose record this install lost (a restore) from the custody journal, so their locks still settle. */

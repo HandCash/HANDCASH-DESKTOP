@@ -2821,6 +2821,7 @@ const EXOLIX_UNAVAILABLE_RE = /^\[swap\] exolix (\S+) status unavailable — (.+
 const EXOLIX_PAYOUT_RE = /^\[swap\] exolix (\S+) payout ([0-9a-f]+)$/
 const SETTLE_LINE_RE = /^\[swap-settle\] ([0-9a-f?]{8}) (.+)$/
 const SETTLE_PASS_RE = /^\[swap-settle\] pass done (\d+)ms/
+const SETTLE_LOCK_CONFLICT_RE = /^\[swap-settle\] lock ([0-9a-f]{12}) refused — its ancestry spends (.+)$/
 
 /**
  * Every swap the session touched, one row per swap: Exolix exchanges by id
@@ -2834,6 +2835,8 @@ function swapFacts(events) {
   const direct = new Map()
   let passes = 0
   let slowestPassMs = 0
+  // BSV locks refused before broadcast (1.3.614+): their unproven ancestry spends one coin twice.
+  const lockConflicts = []
   const ex = (id) => {
     if (!exolix.has(id)) exolix.set(id, { id, pair: null, deposit: null, payout: null, status: null, moves: [], unavailable: 0, lastError: null, lastAt: 0 })
     return exolix.get(id)
@@ -2855,11 +2858,13 @@ function swapFacts(events) {
       r.moves.push(`${m[2]}→${m[3]}`)
       r.status = m[3]
       r.lastAt = e.at
+    } else if ((m = SETTLE_LOCK_CONFLICT_RE.exec(t))) {
+      lockConflicts.push({ lock: m[1], spends: m[2] })
     } else if ((m = SETTLE_PASS_RE.exec(t))) {
       passes += 1
       slowestPassMs = Math.max(slowestPassMs, Number(m[1]))
     } else if ((m = SETTLE_LINE_RE.exec(t))) {
-      if (!direct.has(m[1])) direct.set(m[1], { id: m[1], lines: 0, warnings: 0, trail: [], done: null, tower: null, last: null, lastAt: 0 })
+      if (!direct.has(m[1])) direct.set(m[1], { id: m[1], lines: 0, warnings: 0, trail: [], done: null, tower: null, peerLockFromChain: false, withdrew: null, last: null, lastAt: 0 })
       const r = direct.get(m[1])
       r.lines += 1
       if (e.level === 'warn') r.warnings += 1
@@ -2868,6 +2873,10 @@ function swapFacts(events) {
       // Maker only (1.3.613+): its presigned claim reached a watchtower, or could not be made.
       const tower = /^claim watchtower armed at (.+)$/.exec(m[2]) ?? /^no claim watchtower: (.+)$/.exec(m[2])
       if (tower) r.tower = m[2].startsWith('no ') ? `none: ${tower[1]}` : `armed: ${tower[1]}`
+      // 1.3.614+: the counterparty's lock was read off its chain (its box message never came), or this wallet withdrew short.
+      if (m[2].startsWith('counterparty lock found on chain')) r.peerLockFromChain = true
+      const withdrew = /^withdrew: (.+)$/.exec(m[2])
+      if (withdrew) r.withdrew = withdrew[1]
       if (r.trail[r.trail.length - 1] !== m[2]) r.trail.push(m[2])
       if (r.trail.length > 6) r.trail.shift()
       r.last = m[2]
@@ -2878,6 +2887,7 @@ function swapFacts(events) {
   return {
     exolix: [...exolix.values()].map((r) => ({ ...r, open: !FINAL.has(r.status ?? '') })),
     direct: [...direct.values()].map((r) => ({ ...r, open: r.done === null })),
+    lockConflicts,
     passes,
     slowestPassMs,
   }

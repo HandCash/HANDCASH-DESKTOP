@@ -1,5 +1,6 @@
 import { Beef, P2PKH, PrivateKey, Transaction, Utils } from '@bsv/sdk'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
+import { ancestryConflicts } from '../beefSubset'
 import type { LockSighting } from '../coins/coinWallet'
 import type { SwapAsset } from './assets'
 import { fillClaim, presignClaim, type ClaimTemplate } from './claimTower'
@@ -41,6 +42,13 @@ export interface SwapLegChain {
   /** Where a lock stands. On BSV `beef` is the Atomic BEEF the payer sent. */
   proveLock(outpoint: Outpoint, lock: LegScript, beef?: string): Promise<LockSighting>
   spendOf(outpoint: Outpoint, lock: LegScript, hash: Bytes): Promise<LegSpend>
+  /**
+   * The counterparty's lock, found on chain at its agreed script when its
+   * `funded` message never came. Null when none is there yet, or the chain
+   * cannot be searched by script: a BSV lock is only provable from the BEEF
+   * its payer sends.
+   */
+  findLock(main: LegScript, fee: LegScript | null): Promise<{ txid: string; main: number; fee?: number } | null>
   /** Sign a claim or refund of `coins` into this wallet. `value` fixes the output (a pre-signed BSV refund). */
   spendLock(args: {
     coins: HtlcCoin[]
@@ -69,6 +77,13 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
   return {
     chain,
     proveLock: (outpoint, lock) => wallet.proveLock(outpoint, lock.scriptPubKey, lock.amount),
+    async findLock(main, fee) {
+      if (!main.address) return null
+      const found = await wallet.findLock(main.address, main.scriptPubKey, main.amount, fee ? [{ scriptPubKey: fee.scriptPubKey, litoshi: fee.amount }] : [])
+      if (!found) return null
+      const feeVout = found.also[0]
+      return { txid: found.txid, main: found.vout, ...(feeVout !== null && feeVout !== undefined ? { fee: feeVout } : {}) }
+    },
     async spendOf(outpoint, lock, hash) {
       if (!lock.address) return { kind: 'unknown', detail: 'a coin lock has an address' }
       try {
@@ -192,6 +207,7 @@ async function bsvBlockTime(height: number): Promise<number | undefined> {
 
 export const bsvLegChain: SwapLegChain = {
   chain: 'bsv',
+  findLock: async () => null,
   async proveLock(outpoint, lock, beef) {
     if (!beef) return { kind: 'unchecked', detail: 'no BEEF for the lock' }
     let tx: Transaction
@@ -302,20 +318,33 @@ function bsvLockSpend(signed: { txid: string; hex: string; value: bigint }, sour
 export async function prepareBsvLock(outputs: readonly LegScript[], swapId: string): Promise<{ txid: string; beef: string }> {
   const { requireActiveWallet } = await import('./settlePorts')
   const active = requireActiveWallet()
-  const created = await active.wallet.createAction({
-    description: 'Swap lock',
-    labels: ['swap', `swap:${swapId}`],
-    outputs: outputs.map((o, i) => ({ lockingScript: toHex(o.scriptPubKey), satoshis: Number(o.amount), outputDescription: i === 0 ? 'Swap lock' : 'Swap fee lock' })),
-    options: { noSend: true, randomizeOutputs: false, acceptDelayedBroadcast: true },
-  })
-  const txid = created.txid?.toLowerCase() ?? ''
-  const atomic = created.tx ? Array.from(created.tx) : []
-  if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) throw new Error('The swap lock was not signed')
-  bsvLockTx(b64(atomic), txid).outputs.forEach((o, i) => {
-    const want = outputs[i]
-    if (want && (o.lockingScript.toHex() !== toHex(want.scriptPubKey) || BigInt(o.satoshis ?? 0) !== want.amount)) throw new Error('The swap lock was built with other outputs')
-  })
-  return { txid, beef: b64(atomic) }
+  for (let attempt = 0; ; attempt++) {
+    const created = await active.wallet.createAction({
+      description: 'Swap lock',
+      labels: ['swap', `swap:${swapId}`],
+      outputs: outputs.map((o, i) => ({ lockingScript: toHex(o.scriptPubKey), satoshis: Number(o.amount), outputDescription: i === 0 ? 'Swap lock' : 'Swap fee lock' })),
+      options: { noSend: true, randomizeOutputs: false, acceptDelayedBroadcast: true },
+    })
+    const txid = created.txid?.toLowerCase() ?? ''
+    const atomic = created.tx ? Array.from(created.tx) : []
+    if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) throw new Error('The swap lock was not signed')
+    bsvLockTx(b64(atomic), txid).outputs.forEach((o, i) => {
+      const want = outputs[i]
+      if (want && (o.lockingScript.toHex() !== toHex(want.scriptPubKey) || BigInt(o.satoshis ?? 0) !== want.amount)) throw new Error('The swap lock was built with other outputs')
+    })
+    const conflicts = ancestryConflicts(Beef.fromBinary(atomic), txid)
+    if (conflicts.length === 0) return { txid, beef: b64(atomic) }
+    // A lock no miner can take would hold the taker's side for nothing: never write it down or send it.
+    await abortBsvLock(txid)
+    const named = conflicts.map((c) => `${c.outpoint.slice(0, 12)} by ${c.spenders.map((s) => s.slice(0, 12)).join(' and ')}`).join('; ')
+    console.warn(`[swap-settle] lock ${txid.slice(0, 12)} refused — its ancestry spends ${named}`)
+    if (attempt > 0) throw new Error('Your BSV coins are out of step with the chain. Run Settings → Heal, then lock again.')
+    const { restoreOnChainLocalTx } = await import('../staleOutputRelease')
+    const spenders = new Set(conflicts.flatMap((c) => c.spenders).filter((s) => s !== txid))
+    let restored = 0
+    for (const spender of spenders) if (await restoreOnChainLocalTx(spender)) restored += 1
+    console.info(`[swap-settle] lock heal restored ${restored} of ${spenders.size} landed spend(s)`)
+  }
 }
 
 /** Broadcast a prepared BSV lock (in v1, once its refunds are co-signed). */

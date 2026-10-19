@@ -436,13 +436,17 @@ export async function refreshSpendableBalance(): Promise<number> {
  * Fast pre-review gate — read local confirmed balance only.
  * Does not promote change or sweep scripts (Review must stay snappy).
  */
-export async function assertSendableBalanceForReview(satoshis: number): Promise<number> {
+export async function assertSendableBalanceForReview(
+  satoshis: number,
+  /** `fresh`: read the store even when the proven total covers it — a promise made now is kept hours later. */
+  opts?: { fresh?: boolean },
+): Promise<number> {
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const confirmed = await readConfirmedSpendable(active, satoshis)
+  const confirmed = await readConfirmedSpendable(active, opts?.fresh ? undefined : satoshis)
   if (satoshis <= confirmed) return confirmed
 
   let confirming = 0

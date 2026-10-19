@@ -284,6 +284,14 @@ describe('next step', () => {
     expect(nextSettleStep(t, facts({ own: leg({ unsent: true }) }))).toEqual({ kind: 'request-presign' })
   })
 
+  it('a lock that may already be signed is resolved before a decline or an expiry closes the swap over it', () => {
+    const m = (o: Partial<SettleFacts>) => facts({ role: 'maker', secretKnown: false, ownOnBsv: false, ...o })
+    const started = leg({ started: true })
+    expect(nextSettleStep(t2, m({ own: started, declined: true }))).toEqual({ kind: 'fund' })
+    expect(nextSettleStep(t2, m({ own: started, now: at(t2.t2) }))).toEqual({ kind: 'fund' })
+    expect(nextSettleStep(t2, m({ declined: true }))).toEqual({ kind: 'done', outcome: 'declined' })
+  })
+
   it('maker: funds only after the taker lock is buried, and not too close to T2', () => {
     const m = (o: Partial<SettleFacts>) => facts({ role: 'maker', secretKnown: false, ownOnBsv: false, ...o })
     expect(nextSettleStep(t, m({}))).toEqual({ kind: 'wait', for: 'peer-funding' })

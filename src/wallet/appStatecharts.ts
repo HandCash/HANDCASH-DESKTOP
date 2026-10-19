@@ -720,6 +720,7 @@ const SWAP_SETTLE = `stateDiagram-v2
   presigning --> ended : DONE declined | expired
   locking --> locking : FAIL · FUND (retry; never a second lock)
   locking --> locked : OK (funding recorded)
+  locking --> ended : DONE declined | expired (nothing signed: short after one heal, or past the window)
   locked --> claiming : CLAIM (peer lock buried · secret known)
   locked --> refunding : REFUND | REFUND_FEE (past the lock time)
   claiming --> locked : OK | FAIL

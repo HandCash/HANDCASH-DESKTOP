@@ -98,6 +98,30 @@ export function unprovenAncestry(source: BeefSource, txid: string): string[] {
     .map((btx) => btx.txid.toLowerCase())
 }
 
+/**
+ * Outpoints that two transactions of `txid`'s unproven ancestry both spend.
+ * Any one makes the package unminable: a miner rejects it however often it
+ * is sent. Built from local state that marked a spend dead after it landed.
+ */
+export function ancestryConflicts(source: BeefSource, txid: string): Array<{ outpoint: string; spenders: [string, string] }> {
+  const spentBy = new Map<string, { txid: string; mined: boolean }>()
+  const conflicts: Array<{ outpoint: string; spenders: [string, string] }> = []
+  walkAncestry(source, [txid], (btx) => {
+    if (btx.isTxidOnly || !btx.tx) return
+    const spender = { txid: btx.txid.toLowerCase(), mined: btx.bumpIndex !== undefined }
+    for (const input of btx.tx.inputs) {
+      const parent = (input.sourceTXID ?? input.sourceTransaction?.id('hex'))?.toLowerCase()
+      if (!parent) continue
+      const outpoint = `${parent}.${input.sourceOutputIndex}`
+      const prior = spentBy.get(outpoint)
+      // Two mined spends cannot conflict; the package only fails on one it would have to broadcast.
+      if (prior && prior.txid !== spender.txid && !(prior.mined && spender.mined)) conflicts.push({ outpoint, spenders: [prior.txid, spender.txid] })
+      else if (!prior) spentBy.set(outpoint, spender)
+    }
+  })
+  return conflicts
+}
+
 /** Raw bytes one txid's ancestry adds, keyed by txid so legs can dedupe shared parents. */
 export function ancestryBytes(source: BeefSource, txid: string): Map<string, number> {
   const bytes = new Map<string, number>()

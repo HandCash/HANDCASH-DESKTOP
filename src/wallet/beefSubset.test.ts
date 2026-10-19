@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Beef, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import { BeefShelf, beefSubset, prefixWithinBeefBudget, unprovenAncestry } from './beefSubset'
+import { ancestryConflicts, BeefShelf, beefSubset, prefixWithinBeefBudget, unprovenAncestry } from './beefSubset'
 
 const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
 
@@ -98,6 +98,22 @@ describe('unprovenAncestry', () => {
   it('is only the subject when its parents are proven', () => {
     const { beef, mintA } = fixture()
     expect(unprovenAncestry(beef, mintA.id('hex'))).toEqual([mintA.id('hex')])
+  })
+})
+
+describe('ancestryConflicts', () => {
+  it('names an outpoint two unproven ancestors both spend: no miner takes the package', () => {
+    const { beef, g1, mintA, mintC } = fixture()
+    const lockTx = tx([mintA, mintC])
+    beef.mergeRawTx(lockTx.toBinary())
+    expect(ancestryConflicts(beef, lockTx.id('hex'))).toEqual([{ outpoint: `${g1.id('hex')}.0`, spenders: expect.arrayContaining([mintA.id('hex'), mintC.id('hex')]) }])
+  })
+
+  it('is empty for an ancestry that spends each outpoint once', () => {
+    const { beef, mintA, mintB } = fixture()
+    const lockTx = tx([mintA, mintB])
+    beef.mergeRawTx(lockTx.toBinary())
+    expect(ancestryConflicts(beef, lockTx.id('hex'))).toEqual([])
   })
 })
 

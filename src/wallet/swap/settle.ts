@@ -421,6 +421,8 @@ export type LegFacts = {
   feeUnspent?: boolean
   /** Own leg: the lock is proven never to reach the chain (a coin it spent went elsewhere). */
   unsent?: boolean
+  /** Own leg: a lock was begun and may be signed, not yet recorded as funded. Resolved by `fund` before anything ends the swap. */
+  started?: boolean
 }
 
 export type SettleFacts = {
@@ -475,6 +477,8 @@ export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
   }
   // Nothing of this wallet's is locked: no refund to wait for, and no claim against a counterparty it never paid.
   if (f.own.funded && f.own.unsent) return { kind: 'done', outcome: 'unsent' }
+  // A lock that may be signed is found or ruled out before a decline or an expiry can close the swap over it.
+  if (f.own.started && !f.own.funded) return { kind: 'fund' }
   if (f.declined && !f.own.funded) return { kind: 'done', outcome: 'declined' }
 
   const presigns = terms.v === 1 && f.ownOnBsv
