@@ -112,8 +112,12 @@ export function esploraLtcChain(base = LITECOINSPACE_API): LtcChain {
       return text(base, `/tx/${hash(txid, 'txid')}/hex`)
     },
     async txStatus(txid) {
-      const s = await json<{ confirmed?: boolean; block_height?: number }>(base, `/tx/${hash(txid, 'txid')}/status`)
-      return { confirmed: s.confirmed === true, ...(typeof s.block_height === 'number' ? { blockHeight: s.block_height } : {}) }
+      const id = hash(txid, 'txid')
+      const s = await json<{ confirmed?: boolean; block_height?: number }>(base, `/tx/${id}/status`)
+      if (s.confirmed === true) return { confirmed: true, ...(typeof s.block_height === 'number' ? { blockHeight: s.block_height } : {}) }
+      // litecoinspace answers `{"confirmed":false}` for a txid it has never seen; only the body 404s.
+      await text(base, `/tx/${id}/hex`)
+      return { confirmed: false }
     },
     async merkleProof(txid) {
       const p = await json<{ block_height?: number; merkle?: string[]; pos?: number }>(base, `/tx/${hash(txid, 'txid')}/merkle-proof`)

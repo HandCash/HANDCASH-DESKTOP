@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.622] - 2026-10-19
+
+### Fixed
+
+- A swap's LTC lock could be marked sent without ever reaching the network, and its confirmations then stayed at 0 forever. Before broadcasting, the wallet asks the explorer whether it already knows the transaction. litecoinspace answers "unconfirmed" for a transaction it has never seen, so the wallet took that as already broadcast and skipped it, and every rebroadcast check skipped it the same way. Unconfirmed now counts only when the explorer also has the transaction itself. An unknown one is broadcast, rebroadcast while it waits, and reported as gone to the swap. Swap claims and refunds on LTC use the same check.
+
 ## [1.3.621] - 2026-10-19
 
 ### Fixed
