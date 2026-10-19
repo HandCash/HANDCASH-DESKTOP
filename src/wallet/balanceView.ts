@@ -102,6 +102,18 @@ function positiveId(value: unknown): number | null {
 }
 
 /**
+ * Local transactions found `completed` (proven), per wallet storage. Proven is
+ * final, so the answer outlives one scan: re-asking it for every spent change
+ * output on each balance read held a phone's storage lock 40s in 28 pages.
+ */
+const settledTxIds = new WeakMap<object, Set<number>>()
+function settledTxIdsOf(storage: object): Set<number> {
+  let set = settledTxIds.get(storage)
+  if (set == null) settledTxIds.set(storage, (set = new Set()))
+  return set
+}
+
+/**
  * Change of live local txs that toolbox `balance()` does not yet count
  * (`spendable: false`). Inputs of those txs are excluded via `spentLive`.
  *
@@ -131,10 +143,12 @@ export async function unconfirmedChangeSats(opts?: {
   }
   type ScanRow = OwnedCashRow & { transactionId?: number; txid?: string; vout?: number }
   const txCache = new Map<number, TxLiveness>()
+  const settled = settledTxIdsOf(storage)
   let extra = 0
 
   const livenessOf = async (sp: ScanStorage, txId: number | null): Promise<TxLiveness> => {
     if (txId == null) return 'none'
+    if (settled.has(txId)) return 'settled'
     const cached = txCache.get(txId)
     if (cached != null) return cached
     if (typeof sp.findTransactions !== 'function') {
@@ -149,6 +163,7 @@ export async function unconfirmedChangeSats(opts?: {
       })
       const live = txLivenessFromStatus(rows?.[0]?.status)
       txCache.set(txId, live)
+      if (live === 'settled') settled.add(txId)
       return live
     } catch {
       txCache.set(txId, 'none')

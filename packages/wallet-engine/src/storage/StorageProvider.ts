@@ -1551,40 +1551,66 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
    */
   async reconcileCompletedProvenTxReqs(): Promise<{ log: string }> {
     let log = ''
+    for (const { req, outputs } of await this.completedProvenTxReqsToReconcile()) {
+      log += await this.reconcileCompletedProvenTxReq(req, await this.proofRecoveryVerdicts(outputs))
+    }
+    return { log }
+  }
+
+  /**
+   * Completed proof requests not yet fanned out to their transactions, each
+   * with the outputs of its failed local copies: what proof recovery must
+   * check on chain. Storage reads only, so a caller holding a storage lock for
+   * this can release it before `proofRecoveryVerdicts` goes to the network.
+   */
+  async completedProvenTxReqsToReconcile(): Promise<Array<{ req: TableProvenTxReq; outputs: TableOutput[] }>> {
     const reqs = await this.findProvenTxReqs({
       partial: { status: 'completed', notified: false }
     })
-
-    for (const reqApi of reqs) {
-      const req = new EntityProvenTxReq(reqApi)
-      if (req.provenTxId == null || req.provenTxId <= 0) {
-        log += `completed req ${req.id} cannot reconcile without provenTxId\n`
-        continue
-      }
-
-      const provenApi = verifyOneOrNone(
-        await this.findProvenTxs({
-          partial: { provenTxId: req.provenTxId }
-        })
+    const out: Array<{ req: TableProvenTxReq; outputs: TableOutput[] }> = []
+    for (const req of reqs) {
+      const failed = (await this.findTransactions({ partial: { txid: req.txid }, noRawTx: true })).filter(
+        transaction => transaction.status === 'failed'
       )
-      if (provenApi == null) {
-        log += `completed req ${req.id} cannot reconcile missing provenTx ${req.provenTxId}\n`
-        continue
-      }
-
-      await this.reconcileProvenTxReqTransactions(req, new EntityProvenTx(provenApi))
-      if (req.notified) log += `completed req ${req.id} transaction notifications reconciled\n`
+      out.push({ req, outputs: await this.proofRecoveryOutputs(failed) })
     }
+    return out
+  }
 
-    return { log }
+  /**
+   * Reconcile one completed proof request with UTXO verdicts prepared outside
+   * any storage lock. An output the verdicts do not cover (it appeared since)
+   * aborts this request's repair; the next review prepares it again.
+   */
+  async reconcileCompletedProvenTxReq(
+    reqApi: TableProvenTxReq,
+    verdicts: Map<number, boolean | undefined>
+  ): Promise<string> {
+    const req = new EntityProvenTxReq(reqApi)
+    if (req.provenTxId == null || req.provenTxId <= 0) {
+      return `completed req ${req.id} cannot reconcile without provenTxId\n`
+    }
+    const provenApi = verifyOneOrNone(
+      await this.findProvenTxs({
+        partial: { provenTxId: req.provenTxId }
+      })
+    )
+    if (provenApi == null) {
+      return `completed req ${req.id} cannot reconcile missing provenTx ${req.provenTxId}\n`
+    }
+    await this.reconcileProvenTxReqTransactions(req, new EntityProvenTx(provenApi), verdicts)
+    return req.notified ? `completed req ${req.id} transaction notifications reconciled\n` : ''
   }
 
   private async prepareProofRecoveryOutputVerdicts(
     transactions: TableTransaction[]
   ): Promise<Map<number, boolean | undefined>> {
-    const verdicts = new Map<number, boolean | undefined>()
-    if (transactions.length === 0) return verdicts
-    const services = this.getServices()
+    return await this.proofRecoveryVerdicts(await this.proofRecoveryOutputs(transactions))
+  }
+
+  /** Every output of `transactions`, its locking script hydrated: what proof recovery checks on chain. */
+  private async proofRecoveryOutputs(transactions: TableTransaction[]): Promise<TableOutput[]> {
+    const all: TableOutput[] = []
     for (const transaction of transactions) {
       const outputs = await this.findOutputs({
         partial: {
@@ -1593,19 +1619,33 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
         }
       })
       for (const output of outputs) {
-        const outputId = verifyId(output.outputId)
         await this.validateOutputScript(output)
-        if (output.lockingScript == null) {
-          verdicts.set(outputId, undefined)
-          continue
-        }
-        const classification = await classifyOutputUtxo(services, output)
-        // Proof recovery must not turn provider absence into a spent verdict.
-        // Leave the output's current state unchanged when no UTXO service can
-        // answer conclusively; the validated proof still repairs transaction
-        // and consumed-input state.
-        verdicts.set(outputId, classification.verdict === 'unknown' ? undefined : classification.verdict === 'unspent')
+        all.push(output)
       }
+    }
+    return all
+  }
+
+  /**
+   * Whether each output is still a UTXO, from external services. Reads no
+   * storage: call it holding no storage lock.
+   */
+  async proofRecoveryVerdicts(outputs: TableOutput[]): Promise<Map<number, boolean | undefined>> {
+    const verdicts = new Map<number, boolean | undefined>()
+    if (outputs.length === 0) return verdicts
+    const services = this.getServices()
+    for (const output of outputs) {
+      const outputId = verifyId(output.outputId)
+      if (output.lockingScript == null) {
+        verdicts.set(outputId, undefined)
+        continue
+      }
+      const classification = await classifyOutputUtxo(services, output)
+      // Proof recovery must not turn provider absence into a spent verdict.
+      // Leave the output's current state unchanged when no UTXO service can
+      // answer conclusively; the validated proof still repairs transaction
+      // and consumed-input state.
+      verdicts.set(outputId, classification.verdict === 'unknown' ? undefined : classification.verdict === 'unspent')
     }
     return verdicts
   }
@@ -1701,7 +1741,9 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
   async unfailTransactionsForProof(
     req: EntityProvenTxReq,
     indent = 0,
-    requestUpdate?: Pick<TableProvenTxReqDynamics, 'status' | 'attempts'>
+    requestUpdate?: Pick<TableProvenTxReqDynamics, 'status' | 'attempts'>,
+    /** UTXO verdicts already prepared outside any storage lock. */
+    prepared?: Map<number, boolean | undefined>
   ): Promise<string> {
     const transactions = await this.findTransactions({
       partial: { txid: req.txid },
@@ -1724,7 +1766,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
 
     // UTXO checks can call external services. Complete every check before
     // opening the write transaction so network latency never holds DB locks.
-    const outputVerdicts = await this.prepareProofRecoveryOutputVerdicts(transactionsToRepair)
+    const outputVerdicts = prepared ?? (await this.prepareProofRecoveryOutputVerdicts(transactionsToRepair))
 
     return await this.transaction(async trx => {
       let log = ''
@@ -1756,7 +1798,11 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
     })
   }
 
-  private async reconcileProvenTxReqTransactions(req: EntityProvenTxReq, proven: EntityProvenTx): Promise<void> {
+  private async reconcileProvenTxReqTransactions(
+    req: EntityProvenTxReq,
+    proven: EntityProvenTx,
+    prepared?: Map<number, boolean | undefined>
+  ): Promise<void> {
     // A transaction can be internalized concurrently by several users. Their
     // transaction rows share a txid but race while merging the JSON notify
     // list, so a last-writer-wins update can omit one local copy. A valid proof
@@ -1806,7 +1852,7 @@ export abstract class StorageProvider extends StorageReaderWriter implements Wal
         throw new WERR_INTERNAL(`Transactions for ${req.txid} repeatedly changed to failed during proof recovery.`)
       }
       repairAttempts++
-      await this.unfailTransactionsForProof(req)
+      await this.unfailTransactionsForProof(req, 0, undefined, prepared)
     }
   }
 

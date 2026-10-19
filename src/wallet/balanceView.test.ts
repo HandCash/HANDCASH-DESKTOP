@@ -213,6 +213,17 @@ describe('unconfirmedChangeSats', () => {
     })
   })
 
+  it('asks about a proven transaction once per wallet, not on every balance read', async () => {
+    findOutputs.mockResolvedValue([
+      { satoshis: 5_000, change: true, spendable: false, transactionId: 3, spentBy: 4, lockingScript: sampleScript, txid: LIVE_TXID, vout: 1 },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
+    expect(findTransactions).toHaveBeenCalledTimes(2)
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
+    expect(findTransactions).toHaveBeenCalledTimes(2)
+  })
+
   it('does not re-credit completed change restored from BRC-39 history', async () => {
     findOutputs.mockResolvedValue([
       {

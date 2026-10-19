@@ -84,4 +84,66 @@ describe('reviewStatus on IndexedDB', () => {
     expect(log).toContain(`output ${freed} updated to spendable`)
     expect(log).toContain(`output ${terminalChange} updated to not spendable`)
   })
+
+  it('walks a settled failed transaction once a session, and again only once its row changes', async () => {
+    const { storage, userId } = await openStorage()
+    const txid = randomTxid()
+    const transactionId = await storage.insertTransaction({
+      ...stamp, transactionId: 0, userId, status: 'failed', reference: `ref-${txid.slice(0, 8)}`,
+      isOutgoing: true, satoshis: -1, description: 'review', version: 1, lockTime: 0, txid,
+    })
+    const walks = () => findOutputs.mock.calls.filter(([args]) => args.partial?.spentBy === transactionId).length
+    const findOutputs = vi.spyOn(storage, 'findOutputs')
+
+    await storage.reviewStatus({ agedLimit: new Date() })
+    expect(walks()).toBe(1)
+    await storage.reviewStatus({ agedLimit: new Date() })
+    expect(walks()).toBe(1)
+
+    await storage.updateTransaction(transactionId, { updated_at: new Date() } as never)
+    await storage.reviewStatus({ agedLimit: new Date() })
+    expect(walks()).toBe(2)
+  })
+})
+
+describe('TaskReviewStatus', () => {
+  it('checks UTXOs holding no storage lock, and one bad request defers only itself', async () => {
+    const { TaskReviewStatus } = await import('../../packages/wallet-engine/src/monitor/tasks/TaskReviewStatus')
+    let held = false
+    const heldDuringCheck: boolean[] = []
+    const reconciled: number[] = []
+    const sp = {
+      completedProvenTxReqsToReconcile: async () => [
+        { req: { provenTxReqId: 1 }, outputs: [] },
+        { req: { provenTxReqId: 2 }, outputs: [] },
+      ],
+      proofRecoveryVerdicts: async () => {
+        heldDuringCheck.push(held)
+        await new Promise((r) => setTimeout(r, 1))
+        return new Map()
+      },
+      reconcileCompletedProvenTxReq: async (req: { provenTxReqId: number }) => {
+        if (req.provenTxReqId === 1) throw new Error('Output 7 changed while preparing proof recovery.')
+        reconciled.push(req.provenTxReqId)
+        return `completed req ${req.provenTxReqId} transaction notifications reconciled\n`
+      },
+      reviewStatus: async () => ({ log: '' }),
+    }
+    const storage = {
+      async runAsStorageProvider<T>(body: (active: typeof sp) => Promise<T>): Promise<T> {
+        held = true
+        try {
+          return await body(sp)
+        } finally {
+          held = false
+        }
+      },
+    }
+    const task = new TaskReviewStatus({ storage } as never)
+    const log = await task.runTask()
+    expect(heldDuringCheck).toEqual([false, false])
+    expect(reconciled).toEqual([2])
+    expect(log).toContain('completed req 1 deferred: Output 7 changed')
+    expect(log).toContain('completed req 2 transaction notifications reconciled')
+  })
 })

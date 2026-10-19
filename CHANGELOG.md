@@ -1,10 +1,26 @@
 # Changelog
 
+## [1.3.615] - 2026-10-19
+
+### Fixed
+
+- Signing on a phone waited up to a minute. The wallet's background status review held the storage lock for its whole run, 66 s at worst, while it asked network services about outputs of payments that had reached the chain after being marked failed. Every send queued behind it. The review now reads under the lock, checks the network holding none, and takes the lock once per repair. A repair whose outputs changed meanwhile waits for the next run instead of failing the whole review. It also no longer re-walks payments it already settled this session, unless one has changed.
+- The confirming-change part of the balance asked about every spent change output's transactions on each read, about 1.4 s of storage lock per page on a phone. Proven transactions are now asked about once a session.
+- Slow phases of the status review log their timing (`[monitor] ReviewStatus <phase> done <N>ms`), so triage can attribute a wait to them.
+
 ## [1.3.614] - 2026-10-19
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- A direct swap no longer broadcasts a BSV lock that no miner can accept. The lock was built on coins the wallet had written off as spent by failed payments that later reached the chain, so its own history spent one coin twice. The wallet now checks every lock's unconfirmed history before writing it down. When it finds a coin spent twice, it restores the payments that landed, drops the bad lock and builds it once more. If the lock is still bad, it stops and names Settings → Heal.
+- A swap the wallet accepted but could not fund kept retrying until its window closed. Its balance check had read a cached total. The check before taking on a swap now reads the live balance. A lock that fails for want of funds gets one heal (payments marked failed that are on the chain come back). If the wallet is still short after that, it withdraws by name, and the other side refunds at its lock time.
+- A Litecoin, Bitcoin or Dogecoin lock that failed before it was signed (offline, busy storage, short) left the swap marked "started" for good, and every later attempt refused to lock twice. Nothing signed means nothing sent, so the swap is now tried again.
+- A swap that is still locking can now end as declined or expired. Before, it was refused on every pass. A lock that may already be signed is always found first.
+- When the counterparty's "locked" message is lost, the wallet now finds a coin-chain lock on the chain at the address the terms fix, at most once a minute, and proves it as before. A message box outage no longer turns a swap into two refunds.
+
+### Tests
+
+- End-to-end swaps between two wallets through the real runner, store, scripts and signatures: both online, maker away with the watchtower claiming, maker never locking, taker never claiming, a message box outage, a lock failing before signing, a maker short at lock time, and a taker short at take.
 
 ## [1.3.613] - 2026-10-19
 
