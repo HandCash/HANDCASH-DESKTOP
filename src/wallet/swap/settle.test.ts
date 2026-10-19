@@ -22,6 +22,7 @@ import {
   swapSettlePub,
   swapWindows,
   takeFits,
+  takerLockSeenBy,
   takerLockTooLate,
   takerTotals,
   type AgreedTerms,
@@ -294,8 +295,14 @@ describe('next step', () => {
 
   it('maker: funds only after the taker lock is buried, and not too close to T2', () => {
     const m = (o: Partial<SettleFacts>) => facts({ role: 'maker', secretKnown: false, ownOnBsv: false, ...o })
-    expect(nextSettleStep(t, m({}))).toEqual({ kind: 'wait', for: 'peer-funding' })
-    expect(nextSettleStep(t, m({ now: now + 2 * 3600_000 }))).toEqual({ kind: 'done', outcome: 'expired' })
+    const seenBy = takerLockSeenBy(t) * 1000
+    expect(nextSettleStep(t, m({}))).toEqual({ kind: 'wait', for: 'peer-funding', until: seenBy })
+    // The taker stops trying at an hour; a lock signed at its last minute may be announced (or mined) later, so the maker waits until it no longer counts.
+    expect(nextSettleStep(t, m({ now: now + 3600_000 + 60_000 }))).toMatchObject({ kind: 'wait', for: 'peer-funding' })
+    expect(nextSettleStep(t, m({ now: seenBy }))).toMatchObject({ kind: 'wait', for: 'peer-funding' })
+    expect(nextSettleStep(t, m({ now: seenBy + 1000 }))).toEqual({ kind: 'done', outcome: 'expired' })
+    expect(takerLockTooLate({ ...t, v: 2 } as typeof t, takerLockSeenBy(t))).toBe(false)
+    expect(takerLockTooLate({ ...t, v: 2 } as typeof t, takerLockSeenBy(t) + 1)).toBe(true)
     expect(nextSettleStep(t, m({ peer: leg({ funded: true }) }))).toMatchObject({ kind: 'wait', for: 'peer-burial' })
     expect(nextSettleStep(t, m({ peer: leg({ funded: true, buried: true }) }))).toEqual({ kind: 'fund' })
     expect(nextSettleStep(t, m({ peer: leg({ funded: true, buried: true }), now: at(t.t2 - w1.makerFundBeforeT2) }))).toEqual({ kind: 'done', outcome: 'expired' })

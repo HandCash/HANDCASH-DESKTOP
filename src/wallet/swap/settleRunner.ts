@@ -221,6 +221,10 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
       c.take({ type: 'OK' })
     } catch (err) {
       c.take({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      // A coin chain judges a lock time by its median block time, up to an hour or so behind the clock.
+      if ((step.kind === 'refund' || step.kind === 'refund-fee') && err instanceof Error && /non-?final/i.test(err.message)) {
+        throw new Error("the chain's clock has not reached the lock time yet; trying again")
+      }
       throw err
     } finally {
       savePhase()

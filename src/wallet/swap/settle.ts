@@ -342,8 +342,11 @@ export function checkTake(
  */
 export function takerLockTooLate(terms: SwapTerms, blockTime: number | undefined): boolean {
   if (terms.v !== 2 || blockTime === undefined) return false
-  return blockTime > SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S + BLOCK_TIME_LEEWAY_S
+  return blockTime > takerLockSeenBy(terms)
 }
+
+/** The last moment a taker lock still counts (unix seconds): the taker's window plus block-time leeway. A maker waits for it this long. */
+export const takerLockSeenBy = (terms: SwapTerms): number => SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S + BLOCK_TIME_LEEWAY_S
 
 // ── Messages (box `swap-settle`, sealed to the counterparty) ──────────────
 
@@ -503,7 +506,8 @@ export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
   if (!f.own.funded) {
     const fundBy = terms.t2 - w.makerFundBeforeT2
     if (nowS >= fundBy) return { kind: 'done', outcome: 'expired' }
-    if (!f.peer.funded) return nowS > SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S ? { kind: 'done', outcome: 'expired' } : { kind: 'wait', for: 'peer-funding' }
+    // The taker stops trying to lock at TAKER_FUND_WITHIN_S; the maker waits as long as a lock that late may take to be seen (`takerLockTooLate`).
+    if (!f.peer.funded) return nowS > takerLockSeenBy(terms) ? { kind: 'done', outcome: 'expired' } : { kind: 'wait', for: 'peer-funding', until: takerLockSeenBy(terms) * 1000 }
     if (!f.peer.buried) return { kind: 'wait', for: 'peer-burial', until: fundBy * 1000 }
     if (presigns && !f.own.presigned) return { kind: 'request-presign' }
     return { kind: 'fund' }

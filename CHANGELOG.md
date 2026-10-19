@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.620] - 2026-10-19
+
+### Fixed
+
+- A maker ended a swap at the same moment the taker stopped trying to lock: an hour after the take. A taker lock signed in its last minute, whose notice arrived late (or whose chain the maker could not read just then), left the taker's coins locked for three days for nothing. The maker now waits for the taker's lock until it would no longer count anyway, three hours after the take (the hour to lock plus the two hours already allowed for block timestamps), and the waiting state says until when.
+- A refund tried right at its lock time is refused by coin chains until their median block time catches up, up to about an hour on Bitcoin. The wallet already retried; the swap now says "the chain's clock has not reached the lock time yet; trying again" instead of the raw "non-final" error. The BRC-256 draft states both.
+
 ## [1.3.619] - 2026-10-19
 
 ### Fixed

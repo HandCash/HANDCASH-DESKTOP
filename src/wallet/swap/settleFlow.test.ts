@@ -37,6 +37,8 @@ type Chain = { txs: Map<string, LtcTx>; spentBy: Map<string, string>; minedAt: M
 let blocksHeld = false
 const mempool = new Set<string>()
 const mineAll = () => mempool.clear()
+/** How far each chain's median block time trails the clock: lock times are judged against it. */
+let medianLagS = 0
 const chains = new Map<SwapAsset, Chain>()
 const chainOf = (c: SwapAsset): Chain => {
   if (!chains.has(c)) chains.set(c, { txs: new Map(), spentBy: new Map(), minedAt: new Map(), online: true })
@@ -47,7 +49,7 @@ function broadcast(c: SwapAsset, tx: LtcTx): 'sent' | 'known' {
   const txid = ltcTxid(tx)
   if (ch.txs.has(txid)) return 'known'
   const nowS = Math.floor(Date.now() / 1000)
-  if (tx.locktime >= 500_000_000 && tx.locktime > nowS) throw new Error('non-final: lock time not passed')
+  if (tx.locktime >= 500_000_000 && tx.locktime > nowS - medianLagS) throw new Error('non-final: lock time not passed')
   for (const i of tx.inputs) {
     const by = ch.spentBy.get(`${i.txid}:${i.vout}`)
     if (by && by !== txid) throw new Error(`double spend of ${i.txid.slice(0, 8)}:${i.vout}`)
@@ -245,6 +247,7 @@ beforeEach(() => {
   chains.clear()
   blocksHeld = false
   mempool.clear()
+  medianLagS = 0
   balances.clear()
   payments.clear()
   durable.clear()
@@ -366,6 +369,40 @@ describe('a direct swap between two wallets', () => {
     await settle(taker)
     expect(recordOf(taker, swapId).outcome).toBe('refunded')
     expect(heldBy('doge', receiveScriptOf(taker, 'doge'))).toBeGreaterThan(0n)
+  })
+
+  it("a refund tried before the chain's median time reaches the lock time waits, then lands", async () => {
+    const offer = publish('ltc', 'doge')
+    balances.set('maker:ltc', 0n)
+    const swapId = await take(offer, PAY)
+    await settle(maker) // cannot lock: declines
+    medianLagS = 30 * 60
+    at(T0 + 72 * H + 60_000)
+    await settle(taker)
+    const early = recordOf(taker, swapId)
+    expect(early.own.refunded).toBeUndefined()
+    expect(early.lastError).toBe("the chain's clock has not reached the lock time yet; trying again")
+    at(T0 + 72 * H + 31 * 60_000)
+    await settle(taker)
+    expect(recordOf(taker, swapId).outcome).toBe('refunded')
+    expect(heldBy('doge', receiveScriptOf(taker, 'doge'))).toBeGreaterThan(0n)
+  })
+
+  it('a maker still takes a lock the taker signed in its last minute but announced late', async () => {
+    const offer = publish('ltc', 'doge')
+    const swapId = await take(offer, PAY)
+    // The funded notice never reaches the maker's box, and the maker comes online past the taker's hour unable to read the lock's chain.
+    box = box.filter((m) => !m.body.includes('"t":"funded"'))
+    at(T0 + 90 * 60_000)
+    chainOf('doge').online = false
+    await settle(maker)
+    expect(recordOf(maker, swapId).outcome).toBeUndefined()
+    chainOf('doge').online = true
+    at(T0 + 100 * 60_000)
+    await settle(maker)
+    expect(recordOf(maker, swapId).own.funding).toBeDefined()
+    await settleBoth()
+    expect(recordOf(taker, swapId).outcome).toBe('swapped')
   })
 
   it('taker never claims: the maker refunds at its lock time and the taker refunds at its own', async () => {
