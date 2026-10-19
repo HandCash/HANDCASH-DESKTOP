@@ -203,6 +203,7 @@ function sessionFacts(header, events) {
   const spendPrep = spendPrepFacts(events)
   const notifications = notificationFacts(events)
   const deadCoins = deadCoinFacts(events)
+  const swaps = swapFacts(events)
   const receiptReplays = receiptReplayFacts(events)
   const serverWallet = serverWalletFacts(events)
   const tokenSends = tokenSendFacts(events)
@@ -297,6 +298,9 @@ function sessionFacts(header, events) {
     // sweeps (`[dead-coins] sweep`) that clear the rest, and `peerDevice`:
     // reads of another install's BRC-39 upload and the coins it had spent.
     deadCoins,
+    // Exolix exchanges and direct swaps the session touched: last status or
+    // step of each, and whether it is still open (`[swap]`, `[swap-settle]`).
+    swaps,
     // Old item receipts re-merged into Activity, and announced cards that left
     // and re-entered the inventory cache (`[collectables] re-entered`).
     receiptReplays,
@@ -2807,6 +2811,73 @@ function identityCardFacts(events) {
     }
   }
   return { peers, failures: failures.slice(0, 10), oversized }
+}
+
+const EXOLIX_CREATED_RE = /^\[swap\] exolix (\S+) created (.+)$/
+const EXOLIX_DEPOSIT_RE = /^\[swap\] exolix (\S+) deposit (\S+)(?: (\S+))?/
+const EXOLIX_DEPOSIT_FAILED_RE = /^\[swap\] exolix (\S+) deposit failed — (.+)$/
+const EXOLIX_STATUS_RE = /^\[swap\] exolix (\S+) (\S+) → (\S+)$/
+const EXOLIX_UNAVAILABLE_RE = /^\[swap\] exolix (\S+) status unavailable — (.+)$/
+const EXOLIX_PAYOUT_RE = /^\[swap\] exolix (\S+) payout ([0-9a-f]+)$/
+const SETTLE_LINE_RE = /^\[swap-settle\] ([0-9a-f?]{8}) (.+)$/
+const SETTLE_PASS_RE = /^\[swap-settle\] pass done (\d+)ms/
+
+/**
+ * Every swap the session touched, one row per swap: Exolix exchanges by id
+ * (created, deposit, each status move, status reads that failed) and direct
+ * swaps by the first 8 hex of the swap id (each `[swap-settle]` line, in
+ * order). A swap with no closing line is open as far as this session knows;
+ * `last` is the newest thing it said.
+ */
+function swapFacts(events) {
+  const exolix = new Map()
+  const direct = new Map()
+  let passes = 0
+  let slowestPassMs = 0
+  const ex = (id) => {
+    if (!exolix.has(id)) exolix.set(id, { id, pair: null, deposit: null, payout: null, status: null, moves: [], unavailable: 0, lastError: null, lastAt: 0 })
+    return exolix.get(id)
+  }
+  for (const e of events) {
+    const t = e.text
+    let m
+    if ((m = EXOLIX_CREATED_RE.exec(t))) Object.assign(ex(m[1]), { pair: m[2], lastAt: e.at })
+    else if ((m = EXOLIX_DEPOSIT_FAILED_RE.exec(t))) Object.assign(ex(m[1]), { deposit: `failed: ${m[2]}`, lastAt: e.at })
+    else if ((m = EXOLIX_DEPOSIT_RE.exec(t))) Object.assign(ex(m[1]), { deposit: m[3] ? `${m[2]} ${m[3]}` : m[2], lastAt: e.at })
+    else if ((m = EXOLIX_PAYOUT_RE.exec(t))) Object.assign(ex(m[1]), { payout: m[2], lastAt: e.at })
+    else if ((m = EXOLIX_UNAVAILABLE_RE.exec(t))) {
+      const r = ex(m[1])
+      r.unavailable += 1
+      r.lastError = m[2]
+      r.lastAt = e.at
+    } else if ((m = EXOLIX_STATUS_RE.exec(t))) {
+      const r = ex(m[1])
+      r.moves.push(`${m[2]}→${m[3]}`)
+      r.status = m[3]
+      r.lastAt = e.at
+    } else if ((m = SETTLE_PASS_RE.exec(t))) {
+      passes += 1
+      slowestPassMs = Math.max(slowestPassMs, Number(m[1]))
+    } else if ((m = SETTLE_LINE_RE.exec(t))) {
+      if (!direct.has(m[1])) direct.set(m[1], { id: m[1], lines: 0, warnings: 0, trail: [], done: null, last: null, lastAt: 0 })
+      const r = direct.get(m[1])
+      r.lines += 1
+      if (e.level === 'warn') r.warnings += 1
+      const done = /^done: (\w+)/.exec(m[2])
+      if (done) r.done = done[1]
+      if (r.trail[r.trail.length - 1] !== m[2]) r.trail.push(m[2])
+      if (r.trail.length > 6) r.trail.shift()
+      r.last = m[2]
+      r.lastAt = e.at
+    }
+  }
+  const FINAL = new Set(['success', 'overdue', 'refunded'])
+  return {
+    exolix: [...exolix.values()].map((r) => ({ ...r, open: !FINAL.has(r.status ?? '') })),
+    direct: [...direct.values()].map((r) => ({ ...r, open: r.done === null })),
+    passes,
+    slowestPassMs,
+  }
 }
 
 function deadCoinFacts(events) {

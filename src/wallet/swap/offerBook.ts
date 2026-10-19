@@ -124,6 +124,18 @@ export type OfferBookPage = {
   filled: ReadonlyMap<string, bigint>
 }
 
+/**
+ * The page as this wallet sees it: an offer counts as filled by at least what
+ * its own open takes hold, which the maker has not reported yet (and may never
+ * report while it is offline).
+ */
+export function withOwnTakes(page: OfferBookPage, own: ReadonlyMap<string, bigint>): OfferBookPage {
+  if (own.size === 0) return page
+  const filled = new Map(page.filled)
+  for (const [nonce, taken] of own) if (taken > (filled.get(nonce) ?? 0n)) filled.set(nonce, taken)
+  return { ...page, filled }
+}
+
 /** Every standing offer the book holds, each verified here; anything that fails is dropped and counted. */
 export async function browseSwapOffers(filter: { give?: SwapAsset; get?: SwapAsset; maker?: string } = {}, deps: OfferBookDeps = {}): Promise<SignedSwapOffer[]> {
   return (await browseSwapOfferBook(filter, deps)).offers

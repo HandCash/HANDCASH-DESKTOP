@@ -241,12 +241,18 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv {
   overflow: hidden;
 }
 
+/* Compact ticker: coin | sparkline | price, with the range change under the price. */
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-market-body {
   flex: 1 1 auto;
   min-width: 0;
-  flex-direction: row;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(56px, 1fr) auto;
+  grid-template-areas:
+    'asset spark price'
+    'asset spark change';
   align-items: center;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 2px;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-cover {
@@ -436,13 +442,11 @@ html:is(.platform-mobile, .layout-compact) .empty-state {
   padding: 16px 14px;
 }
 
-/* Compact BSV ticker: logo/name | sparkline | price */
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-row {
-  flex: 0 1 auto;
+  grid-area: asset;
   min-width: 0;
-  max-width: 42%;
+  max-width: 42vw;
   gap: 8px;
-  order: 1;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn,
@@ -495,30 +499,10 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   color: #b91c1c !important;
 }
 
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage {
-  display: block !important;
-  order: 2;
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 56px;
-  min-height: 28px;
-  height: 28px;
-  margin: 0 4px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-panel {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  pointer-events: none;
-  transform: none;
-  transition: opacity 160ms ease;
-  overflow: hidden;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage[data-aeon-state~='chart'] .bsv-stage-chart {
-  opacity: 1;
-  pointer-events: none;
+/* The stage has no box here: its sparkline and change button sit in the ticker grid. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart {
+  display: contents !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-about {
@@ -527,28 +511,40 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-about {
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty {
+  grid-area: spark;
   width: 100%;
   height: 28px;
   margin: 0;
 }
 
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart {
-  flex-direction: row;
-  align-items: center;
-  gap: 4px;
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart > :first-child {
+  grid-area: change;
+  justify-self: end;
+  align-self: start;
+  margin: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart .bsv-change {
-  flex-shrink: 0;
   pointer-events: auto;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart > .skeleton-line {
+  width: 48px !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
+  width: 72px !important;
+  height: 18px !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
-  order: 3;
+  grid-area: price;
+  justify-self: end;
+  align-self: end;
   margin: 0;
-  flex-shrink: 0;
   font-size: 1.05rem;
+  line-height: 1.15;
   letter-spacing: 0.02em;
 }
 

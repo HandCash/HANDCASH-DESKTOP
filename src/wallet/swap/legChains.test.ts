@@ -63,3 +63,22 @@ describe('judgeSpend', () => {
     expect(judgeSpend('ltc', claim.tx, outpoint, sha256(fromHex('cd'.repeat(32)))).kind).toBe('refunded')
   })
 })
+
+describe('the lean lock BEEF a funded notice falls back to', () => {
+  it('carries the lock transaction alone, as Atomic BEEF of its txid', async () => {
+    const { P2PKH, Transaction } = await import('@bsv/sdk')
+    const { leanBsvLockBeef, bsvLockTx } = await import('./legChains')
+    const parent = new Transaction()
+    parent.addOutput({ lockingScript: new P2PKH().lock(claimKey.toAddress()), satoshis: 200_000 })
+    const lock = new Transaction()
+    lock.addInput({ sourceTransaction: parent, sourceOutputIndex: 0, unlockingScript: new P2PKH().lock(refundKey.toAddress()) })
+    lock.addOutput({ lockingScript: new P2PKH().lock(cosignKey.toAddress()), satoshis: 100_000 })
+    const txid = lock.id('hex')
+    const full = Buffer.from(lock.toAtomicBEEF(true)).toString('base64')
+    const lean = leanBsvLockBeef(full, txid)
+    expect(lean.length).toBeLessThan(full.length)
+    const back = bsvLockTx(lean, txid)
+    expect(back.id('hex')).toBe(txid)
+    expect(back.outputs[0]!.satoshis).toBe(100_000)
+  })
+})

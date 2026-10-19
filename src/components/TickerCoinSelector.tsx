@@ -8,7 +8,7 @@ import {
   formatPct,
   formatPriceUsd,
   getCachedBsvMarket,
-  refreshBsvMarket,
+  refreshMarketBoard,
   subscribeBsvMarket,
   type MarketCoin,
 } from '../wallet/bsvMarket'
@@ -31,7 +31,7 @@ export function TickerCoinSelector({ selected, onPick }: { selected: MarketCoin;
   const [, priced] = useReducer((n: number) => n + 1, 0)
   useEffect(() => {
     const unsub = subscribeBsvMarket(priced)
-    for (const coin of TICKER_COIN_ORDER) void refreshBsvMarket(false, coin)
+    void refreshMarketBoard()
     return unsub
   }, [])
 

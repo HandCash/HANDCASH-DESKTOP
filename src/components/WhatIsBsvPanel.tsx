@@ -89,10 +89,10 @@ function heldLabel(coin: MarketCoin, heldBsvSats: number | null, heldCoins: Reco
     const units = heldCoins[coin]
     if (units === 0n) return null
     const usd = coinUsd(coin, units, priceUsd)
-    return `You hold ${formatCoin(coin, units)} ${COIN_INFO[coin].ticker}${usd == null ? '' : ` · ${formatUsd(usd)}`}`
+    return `${formatCoin(coin, units)} ${COIN_INFO[coin].ticker}${usd == null ? '' : ` · ${formatUsd(usd)}`}`
   }
   if (!heldBsvSats) return null
-  return `You hold ${formatBsvSignificant(heldBsvSats, 5)}${priceUsd == null ? '' : ` · ${formatUsdFromSats(heldBsvSats, priceUsd)}`}`
+  return `${formatBsvSignificant(heldBsvSats, 5)}${priceUsd == null ? '' : ` · ${formatUsdFromSats(heldBsvSats, priceUsd)}`}`
 }
 
 export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) {
@@ -177,8 +177,8 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
               tabIndex={showingToast ? -1 : undefined}
             />
             <span className="bsv-logo-btn" aria-hidden>
-              {coin === 'ltc' ? (
-                <TickerCoinMark coin="ltc" size={44} />
+              {coin !== 'bsv' ? (
+                <TickerCoinMark coin={coin} size={44} />
               ) : !logoFrameReady ? (
                 <Skeleton className="bsv-logo-skeleton" width={44} height={44} radius={12} />
               ) : (

@@ -108,3 +108,13 @@ describe('offer book', () => {
     await expect(publishSwapOffer(drafted.draft, { rootKeyHex: root.toHex() }, { fetch: refusing, now: () => NOW })).rejects.toThrow('too-many-open-offers')
   })
 })
+
+describe('withOwnTakes', () => {
+  it('counts an offer as filled by at least what this wallet\'s own takes hold', async () => {
+    const { withOwnTakes } = await import('./offerBook')
+    const page = { offers: [], filled: new Map([['a', 5n], ['b', 50n]]) }
+    const seen = withOwnTakes(page, new Map([['a', 20n], ['b', 10n], ['c', 7n]]))
+    expect([...seen.filled]).toEqual([['a', 20n], ['b', 50n], ['c', 7n]])
+    expect(withOwnTakes(page, new Map())).toBe(page)
+  })
+})

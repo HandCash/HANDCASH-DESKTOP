@@ -4,6 +4,7 @@ import { swapSettleMachine, type SwapSettleEvent, type SwapSettlePhase } from '.
 import { fromHex, toHex } from '../ltc/litecoin'
 import type { LockSighting } from '../coins/coinWallet'
 import { SWAP_ASSET_INFO, unitsToDecimal } from './assets'
+import { followedSwapRecords, refreshSwapRecords } from './exolixSwap'
 import type { HtlcCoin } from './htlc'
 import {
   abortBsvLock,
@@ -12,6 +13,7 @@ import {
   bsvSelfOutput,
   commitBsvLock,
   cosignBsvRefund,
+  leanBsvLockBeef,
   legChainOf,
   prepareBsvLock,
   type LegSpend,
@@ -22,6 +24,7 @@ import {
   judgeTakeRoom,
   legOutputs,
   nextSettleStep,
+  offerRemaining,
   proposeTerms,
   secretHash,
   settleKeyOf,
@@ -29,6 +32,7 @@ import {
   swapSecret,
   swapSettleKey,
   swapSettlePub,
+  takeFits,
   takerLockTooLate,
   takerTotals,
   type AgreedTerms,
@@ -136,8 +140,32 @@ const eventOf = (step: Exclude<SettleStep, { kind: 'wait' }>): SwapSettleEvent =
  * when it next is. If it declines (the offer was used up first), the lock
  * returns at T1.
  */
+/**
+ * How much of each offer this wallet's own takes still hold: every take not
+ * ended `declined` or `expired`. A take locks at once, so a second take of an
+ * offer the first already fills would lock coins the maker can only decline.
+ */
+export function ownTakenOf(): ReadonlyMap<string, bigint> {
+  const taken = new Map<string, bigint>()
+  for (const s of Object.values(readSettleState().swaps)) {
+    if (s.role !== 'taker' || s.outcome === 'declined' || s.outcome === 'expired') continue
+    const nonce = s.terms.offer.nonce
+    taken.set(nonce, (taken.get(nonce) ?? 0n) + BigInt(s.terms.pay))
+  }
+  return taken
+}
+
 export async function takeSwapOffer(offer: SignedSwapOffer, pay: bigint): Promise<SettleRecord> {
   const active = requireActiveWallet()
+  const mine = Object.values(readSettleState().swaps).filter((s) => s.role === 'taker' && s.terms.offer.nonce === offer.nonce)
+  const left = offerRemaining(offer, mine)
+  if (!takeFits(offer, left, pay)) {
+    throw new Error(
+      left < BigInt(offer.minGet)
+        ? 'You already took this offer. Your swap is in progress above.'
+        : `You already took part of this offer; at most ${unitsToDecimal(offer.get, left)} ${SWAP_ASSET_INFO[offer.get].ticker} of it is left.`,
+    )
+  }
   const proposed = proposeTerms(offer, pay, { identityKey: active.identityKey.toLowerCase(), root: rootOf(active) }, { now: Date.now() })
   if (!proposed.ok) throw new Error(`This offer cannot be taken (${proposed.reason}).`)
   const terms = proposed.terms
@@ -574,21 +602,34 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
     updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, funding } }))
   }
   log(r.terms.swapId, `locked ${unitsToDecimal(leg.chain, leg.amount + leg.fee)} ${SWAP_ASSET_INFO[leg.chain].ticker} in ${funding.txid.slice(0, 12)}`)
-  await announceFunded(active, { ...r, own: { ...r.own, funding } }, beef)
+  // The lock stands; the notice is retried while the swap waits on the peer.
+  await announceFunded(active, { ...r, own: { ...r.own, funding } }, beef).catch((err: unknown) => {
+    warn(r.terms.swapId, `funded notice deferred — ${err instanceof Error ? err.message : String(err)}`)
+  })
 }
+
+const overBoxLimit = (err: unknown) => err instanceof Error && /exceeds the BRC-33 body limit/.test(err.message)
 
 async function announceFunded(active: ActiveWallet, r: SettleRecord, beef?: string): Promise<void> {
   const funding = r.own.funding
   if (!funding) return
-  await sendSettle(active, r.counterparty, {
-    t: 'funded',
-    swapId: r.terms.swapId,
-    leg: ownLegId(r),
-    txid: funding.txid,
-    main: funding.main,
-    ...(funding.fee !== undefined ? { fee: funding.fee } : {}),
-    ...(beef ? { beef } : {}),
-  })
+  const funded = (b?: string) =>
+    sendSettle(active, r.counterparty, {
+      t: 'funded',
+      swapId: r.terms.swapId,
+      leg: ownLegId(r),
+      txid: funding.txid,
+      main: funding.main,
+      ...(funding.fee !== undefined ? { fee: funding.fee } : {}),
+      ...(b ? { beef: b } : {}),
+    })
+  try {
+    await funded(beef)
+  } catch (err) {
+    if (!beef || !overBoxLimit(err)) throw err
+    log(r.terms.swapId, `lock ancestry over the message box limit; sending the lock alone`)
+    await funded(leanBsvLockBeef(beef, funding.txid))
+  }
   updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, fundedSentAt: Date.now() } }))
 }
 
@@ -696,6 +737,9 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
     const step = nextSettleStep(r.terms, g.facts)
     if (step.kind === 'wait') {
       savePhase()
+      if (record.waiting?.for !== step.for) {
+        log(r.terms.swapId, `waiting for ${step.for}${step.until ? ` until ${new Date(step.until).toISOString()}` : ''}`)
+      }
       updateSwap(r.terms.swapId, (x) => ({ ...x, waiting: { for: step.for, ...(step.until ? { until: step.until } : {}) }, lastError: undefined }))
       if (step.for === 'peer-funding' && r.own.funding && (!r.own.fundedSentAt || Date.now() - r.own.fundedSentAt > FUNDED_RETRY_MS)) {
         await announceFunded(active, r, r.own.prepared?.beef)
@@ -750,7 +794,8 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
 // ── Service ───────────────────────────────────────────────────────────────
 
 /**
- * One pass: the box at most every 20 s, each moving swap at most every 30 s.
+ * One pass: the box at most every 20 s, each moving swap at most every 30 s,
+ * and every Exolix exchange still moving at the same pace, Swap panel open or not.
  * Never on an account held by another device; every lock and claim is
  * guarded again where it spends.
  */
@@ -792,6 +837,7 @@ export async function serveSwapSettle(opts?: { force?: boolean }): Promise<void>
         const step = await advance(active, record)
         checkAt.set(record.terms.swapId, Date.now() + recheckAfter(step))
       }
+      if (followedSwapRecords().length > 0) await refreshSwapRecords()
     }
   } finally {
     serving = false

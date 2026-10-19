@@ -1,4 +1,4 @@
-import { P2PKH, PrivateKey, Transaction, Utils } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, Transaction, Utils } from '@bsv/sdk'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
 import type { LockSighting } from '../coins/coinWallet'
 import type { SwapAsset } from './assets'
@@ -94,6 +94,17 @@ const b64 = (bytes: number[] | Uint8Array) => Utils.toBase64(Array.from(bytes))
 const unb64 = (text: string) => Utils.toArray(text, 'base64')
 
 /** The lock transaction an Atomic BEEF carries, refused unless it is `txid`. */
+/**
+ * The lock transaction alone, as Atomic BEEF: what the counterparty's check
+ * reads (the outputs; the merkle path it fetches itself). A lock funded from
+ * long unconfirmed change carries an ancestry larger than a message box takes.
+ */
+export function leanBsvLockBeef(beef: string, txid: string): string {
+  const lean = new Beef()
+  lean.mergeRawTx(bsvLockTx(beef, txid).toBinary())
+  return b64(lean.toBinaryAtomic(txid))
+}
+
 export function bsvLockTx(beef: string, txid: string): Transaction {
   const tx = Transaction.fromAtomicBEEF(unb64(beef))
   if (tx.id('hex') !== txid) throw new Error('the lock BEEF is for another transaction')
@@ -188,11 +199,15 @@ export const bsvLegChain: SwapLegChain = {
   },
   async spendLock({ coins, key, path, fixed, sourceBeef, label }) {
     const lockTxid = coins[0]!.txid
-    if (!sourceBeef) {
+    const provenSource = async () => {
       const { requireActiveWallet } = await import('./settlePorts')
       const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
-      sourceBeef = b64(await getAtomicBeefBinaryForTxid(requireActiveWallet(), lockTxid))
+      return b64(await getAtomicBeefBinaryForTxid(requireActiveWallet(), lockTxid))
     }
+    // A claimed lock is buried, so its own proof is the claim's ancestry. The
+    // payer's BEEF may be the lean lock alone, which no miner takes as a parent.
+    if (path.kind === 'claim') sourceBeef = (await provenSource().catch(() => undefined)) ?? sourceBeef
+    if (!sourceBeef) sourceBeef = await provenSource()
     const out = fixed ?? (await bsvSelfOutput())
     const signed = signHtlcSpend('bsv', {
       coins,

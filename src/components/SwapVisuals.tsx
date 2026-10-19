@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
+import { SWAP_TONE_LABEL, type SwapTone } from '../wallet/swap/swapView'
 import { TickerCoinMark } from './TickerCoinSelector'
 import { FriendsIcon, SwapIcon } from './icons'
 
@@ -52,29 +53,11 @@ export function SwapRouteBadge({ kind }: { kind: 'direct' | 'exolix' }) {
   )
 }
 
-type SwapTone = 'done' | 'moving' | 'returned' | 'stopped'
-
-/** Exolix statuses and stages, and direct-swap outcomes; anything else is still moving. */
-const TONES: Record<string, SwapTone> = {
-  success: 'done',
-  swapped: 'done',
-  refunded: 'returned',
-  created: 'stopped',
-  'pay-failed': 'stopped',
-  overdue: 'stopped',
-  declined: 'stopped',
-  expired: 'stopped',
-  missed: 'stopped',
-  refused: 'stopped',
-}
-
-const TONE_LABEL: Record<SwapTone, string> = { done: 'Done', moving: 'In progress', returned: 'Refunded', stopped: 'Stopped' }
-
-export function SwapStatusPill({ state }: { state: string }) {
-  const tone = TONES[state] ?? 'moving'
+/** Done, in progress, refunded or stopped: the same words for a swap on every screen. */
+export function SwapStatusPill({ tone }: { tone: SwapTone }) {
   return (
     <span data-aeon-scope="swap-status" data-tone={tone}>
-      {TONE_LABEL[tone]}
+      {SWAP_TONE_LABEL[tone]}
     </span>
   )
 }

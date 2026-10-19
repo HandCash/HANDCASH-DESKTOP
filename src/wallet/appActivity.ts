@@ -125,6 +125,27 @@ export type ActivityEntry = {
   archivedAt?: number;
   /** Sender's wallet identity key on a peer receive; Activity shows the profile it presented. */
   from?: string;
+  /** Set on the row that names a swap; projected from the swap stores, never stored. */
+  swap?: ActivitySwap;
+};
+
+/** `sendGroupId` of a swap's row and of every transaction folded under it. */
+export const SWAP_ACTIVITY_PREFIX = "swap:";
+
+/** A swap as its Activity row shows it (`swapView.ts`), JSON-safe. */
+export type ActivitySwap = {
+  /** `direct:<swapId>` or `exolix:<exchange id>`. */
+  id: string;
+  route: "direct" | "exolix";
+  from: CoinChain | "bsv";
+  to: CoinChain | "bsv";
+  state: string;
+  tone: "done" | "moving" | "returned" | "stopped";
+  /** "Swapped BSV for LTC": the verb says where it stands, like every other row. */
+  title: string;
+  status: string;
+  /** What this wallet receives, in units of `to` (8 decimals). */
+  receive: string;
 };
 
 function normalizeIdentityKeyField(value: unknown): string | undefined {

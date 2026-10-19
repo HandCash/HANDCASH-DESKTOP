@@ -282,7 +282,99 @@ async function fetchCoinGecko(id: string): Promise<{
   }
 }
 
-export async function refreshBsvMarket(force = false, coin: MarketCoin = 'bsv'): Promise<BsvMarketStats | null> {
+type BoardRow = {
+  id?: string
+  current_price?: number
+  circulating_supply?: number | null
+  price_change_percentage_24h_in_currency?: number | null
+  price_change_percentage_7d_in_currency?: number | null
+  price_change_percentage_30d_in_currency?: number | null
+  sparkline_in_7d?: { price?: number[] }
+}
+
+const finite = (n: unknown): number | null => (typeof n === 'number' && Number.isFinite(n) ? n : null)
+
+/** One coin's stats from a `/coins/markets` row, keeping the cached 30-day series the row does not carry. */
+export function statsFromBoardRow(coin: MarketCoin, row: BoardRow, cached: BsvMarketStats | null, now: number): BsvMarketStats | null {
+  const priceUsd = finite(row.current_price)
+  if (priceUsd == null || !(priceUsd > 0)) return null
+  const week = (row.sparkline_in_7d?.price ?? []).filter((n) => Number.isFinite(n))
+  const sparklines: BsvSparklines = {
+    '24h': week.length >= 2 ? downsample(week.slice(-24)) : (cached?.sparklines['24h'] ?? []),
+    '7d': week.length >= 2 ? downsample(week) : (cached?.sparklines['7d'] ?? []),
+    '30d': cached?.sparklines['30d'] ?? [],
+  }
+  const supply = finite(row.circulating_supply)
+  return {
+    priceUsd,
+    change24hPct: finite(row.price_change_percentage_24h_in_currency) ?? pctFromSeries(sparklines['24h']),
+    change7dPct: finite(row.price_change_percentage_7d_in_currency) ?? pctFromSeries(sparklines['7d']),
+    change30dPct: finite(row.price_change_percentage_30d_in_currency) ?? cached?.change30dPct ?? null,
+    totalSupply: COINS[coin].totalSupply,
+    minedSupply: supply && supply > 0 ? supply : (cached?.minedSupply ?? COINS[coin].totalSupply),
+    sparklines,
+    sparkline: sparklines['24h'],
+    fetchedAt: now,
+  }
+}
+
+let boardInFlight: Promise<void> | null = null
+
+/**
+ * Every coin the ticker can show, priced in one CoinGecko request. The coin
+ * list must not fan out one detail request per coin: the free tier refuses
+ * the burst and every uncached coin would show no price.
+ */
+export function refreshMarketBoard(force = false): Promise<void> {
+  if (boardInFlight) return boardInFlight
+  const all = Object.keys(COINS) as MarketCoin[]
+  if (isFxRateLimited()) return Promise.resolve()
+  const fresh = (c: MarketCoin) => {
+    const s = readCache(c)
+    return !!s && Date.now() - s.fetchedAt < CACHE_TTL_MS
+  }
+  if (!force && all.every(fresh)) return Promise.resolve()
+  boardInFlight = (async () => {
+    try {
+      const ids = all.map((c) => COINS[c].gecko).join(',')
+      const res = await fetch(
+        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${ids}&price_change_percentage=24h,7d,30d&sparkline=true`,
+      )
+      if (res.status === 429) {
+        noteFxRateLimited()
+        return
+      }
+      if (!res.ok) return
+      const rows = (await res.json()) as BoardRow[]
+      if (!Array.isArray(rows)) return
+      const now = Date.now()
+      for (const coin of all) {
+        const row = rows.find((r) => r.id === COINS[coin].gecko)
+        const stats = row ? statsFromBoardRow(coin, row, readCache(coin), now) : null
+        if (stats) writeCache(coin, stats)
+      }
+    } catch {
+      // keep what is cached
+    } finally {
+      boardInFlight = null
+    }
+  })()
+  return boardInFlight
+}
+
+const inFlight: Partial<Record<MarketCoin, Promise<BsvMarketStats | null>>> = {}
+
+export function refreshBsvMarket(force = false, coin: MarketCoin = 'bsv'): Promise<BsvMarketStats | null> {
+  const running = inFlight[coin]
+  if (running) return running
+  const run = refreshCoin(force, coin).finally(() => {
+    delete inFlight[coin]
+  })
+  inFlight[coin] = run
+  return run
+}
+
+async function refreshCoin(force: boolean, coin: MarketCoin): Promise<BsvMarketStats | null> {
   const cached = readCache(coin)
   if (isFxRateLimited()) return cached
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached

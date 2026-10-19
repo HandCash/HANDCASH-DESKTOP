@@ -17373,6 +17373,35 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   }
 }
 
+/* A swap in Activity and its detail: the coin pair fills the row's icon slot. */
+:is([data-aeon-scope='activity-row'][data-aeon-part='swap'], [data-aeon-scope='swap-detail']) .history-icon-wrap {
+  display: grid;
+  place-items: center;
+}
+
+[data-aeon-scope='swap-detail'] .payment-details-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-aeon-scope='swap-detail'] [data-aeon-part='route'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+[data-aeon-scope='swap-detail'] [data-aeon-part='route'] [data-aeon-scope='swap-route-badge'] {
+  width: 22px;
+  height: 22px;
+}
+
+[data-aeon-scope='swap-detail'] [data-aeon-part='route'] [data-aeon-scope='swap-route-badge'] svg {
+  width: 13px;
+  height: 13px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-aeon-scope='swap-status'][data-tone='moving']::before {
     animation: none;

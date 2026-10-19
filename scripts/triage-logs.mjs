@@ -689,6 +689,22 @@ function report(state, answers) {
     for (const f of idCards.failures) console.log(`  ${f.step} failed: ${f.error}`)
   }
 
+  const swaps = latest.swaps
+  if (swaps && (swaps.exolix.length || swaps.direct.length)) {
+    const ago = (at) => (at ? `${Math.round((Date.now() - at) / 60_000)}m ago` : '')
+    console.log('\nSwaps (code-counted):')
+    for (const r of swaps.exolix) {
+      console.log(`  exolix ${r.id} ${r.open ? 'OPEN' : 'final'} · status ${r.status ?? 'unknown'} · deposit ${r.deposit ?? 'none logged'}${r.payout ? ` · payout ${r.payout}` : ''}${r.pair ? ` · ${r.pair}` : ''} · ${ago(r.lastAt)}`)
+      if (r.moves.length) console.log(`    moves: ${r.moves.join(', ')}`)
+      if (r.unavailable) console.log(`    status unavailable ×${r.unavailable}: ${r.lastError}`)
+    }
+    for (const r of swaps.direct) {
+      console.log(`  direct ${r.id} ${r.open ? 'OPEN' : `done ${r.done}`} · ${r.lines} line(s), ${r.warnings} warning(s) · last: ${r.last} · ${ago(r.lastAt)}`)
+      for (const line of r.trail.slice(0, -1)) console.log(`    · ${line}`)
+    }
+    if (swaps.passes) console.log(`  settle passes ${swaps.passes}, slowest ${swaps.slowestPassMs}ms`)
+  }
+
   const dead = latest.deadCoins
   const peer = dead?.peerDevice
   const peerActive = peer && (peer.reads || peer.unread || peer.spent)

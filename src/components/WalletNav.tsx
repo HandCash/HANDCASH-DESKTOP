@@ -68,6 +68,7 @@ import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
 import { ReceivePanel } from './ReceivePanel'
 import { SwapOffersPanel } from './SwapOffersPanel'
+import { SwapDetailPanel } from './SwapDetailPanel'
 import { SwapPanel } from './SwapPanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
@@ -431,6 +432,7 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'receive') return [root, { label: 'Receive' }]
     if (stageChild.type === 'swap') return [root, { label: 'Swap' }]
     if (stageChild.type === 'swap-offers') return [root, { label: 'Swap', onClick: openSwapFlow }, { label: 'Offers' }]
+    if (stageChild.type === 'swap-detail') return [root, { label: 'Swap' }]
     if (stageChild.type === 'dev-keys') return [root, { label: 'Developer keys' }]
     if (stageChild.type === 'ticker-coins') return [root, { label: 'Ticker' }]
     if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
@@ -670,6 +672,7 @@ export const WalletNav = memo(function WalletNav({
                 <SwapPanel address={profile.address} identityKey={profile.identityKey} chain={profile.chain} onFail={onFail} />
               )}
               {stageChild.type === 'swap-offers' && <SwapOffersPanel identityKey={profile.identityKey} />}
+              {stageChild.type === 'swap-detail' && <SwapDetailPanel swapId={stageChild.swapId} chain={profile.chain} />}
               {stageChild.type === 'payment' && (
                 <PaymentDetailsPanel entryId={stageChild.entryId} chain={profile.chain} />
               )}

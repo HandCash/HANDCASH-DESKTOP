@@ -5,15 +5,14 @@ import { stateToAttr } from '@aeon-ui/core'
 import { Button, ListRow, StatusBanner } from '@aeon-ui/react'
 import { Switch } from '@aeon-ui/ui'
 import { swapMachine } from '../machines/swapMachine'
-import { useDirectSwaps, useSwapRecords, useHeldCoins } from '../features/swap'
+import { useRecentSwaps, useHeldCoins } from '../features/swap'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
-import { getCachedBsvMarket, refreshBsvMarket } from '../wallet/bsvMarket'
-import { openSwapOffers } from '../wallet/navStore'
+import { getCachedBsvMarket, refreshMarketBoard } from '../wallet/bsvMarket'
+import { openSwapDetails, openSwapOffers } from '../wallet/navStore'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
 import { decimalToUnits, SWAP_ASSET_INFO, SWAP_ASSETS, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
-import { EXOLIX_FINAL, refreshSwapRecords, type SwapRecord } from '../wallet/swap/exolixSwap'
 import { draftOfferAtMarket, type SwapOfferDraft } from '../wallet/swap/offerBook'
 import { feeLegOf } from '../wallet/swap/fee'
 import { MAKER_FUND_WITHIN_S, MAKER_LOCK_S, TAKER_LOCK_S } from '../wallet/swap/settle'
@@ -36,7 +35,6 @@ type Props = {
 }
 
 const QUOTE_DEBOUNCE_MS = 500
-const STATUS_POLL_MS = 30_000
 const RECENT_SWAPS = 5
 
 const fmt = (asset: SwapAsset, units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
@@ -85,28 +83,6 @@ function startedText(started: SwapStart): string {
 
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} hours`
 
-function recordText(record: SwapRecord): string {
-  if (record.stage === 'created') return 'Opened, deposit not paid'
-  if (record.stage === 'pay-failed') return `Deposit not paid${record.error ? ` — ${record.error}` : ''}`
-  switch (record.status) {
-    case 'wait':
-      return 'Deposit sent, Exolix waiting for it'
-    case 'confirmation':
-    case 'confirmed':
-      return 'Exolix confirming your deposit'
-    case 'exchanging':
-      return 'Exolix swapping'
-    case 'sending':
-      return 'Exolix paying out to this wallet'
-    case 'success':
-      return 'Paid out to this wallet'
-    case 'overdue':
-      return 'Expired at Exolix'
-    case 'refunded':
-      return 'Refunded to this wallet'
-  }
-}
-
 /** The coin worth most in this wallet pays by default; into BSV, or out of BSV into BTC. */
 function defaultPair(held: Record<SwapAsset, bigint>): { from: SwapAsset; to: SwapAsset } {
   const worth = (a: SwapAsset) => usdOf(a, held[a]) ?? (held[a] > 0n ? 0 : -1)
@@ -125,7 +101,6 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   const bsvSats = useDisplayBalanceSats({ identityKey, chain })
   const coins = useHeldCoins()
   const held: Record<SwapAsset, bigint> = { bsv: BigInt(Math.max(0, Math.floor(bsvSats))), ...coins }
-  const records = useSwapRecords()
   const payLabel = useId()
   const getLabel = useId()
   const payLeg = useRef<HTMLElement>(null)
@@ -144,7 +119,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   )
   const [snap, send] = useMachine(machine)
   const { request, quote, picked, refusal, started, failure, draft, published } = snap.context
-  const directSwaps = useDirectSwaps()
+  const recentSwaps = useRecentSwaps()
 
   const [pair, setPair] = useState(() => defaultPair(held))
   const { from, to } = pair
@@ -166,7 +141,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   const editable = view === 'form'
 
   useEffect(() => {
-    for (const asset of SWAP_ASSETS) void refreshBsvMarket(false, asset)
+    void refreshMarketBoard()
   }, [])
 
   useEffect(() => {
@@ -193,16 +168,6 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view])
-
-  const openCount = records.filter((r) => r.stage === 'paid' && !EXOLIX_FINAL.includes(r.status)).length
-  useEffect(() => {
-    if (openCount === 0) return
-    void refreshSwapRecords()
-    const timer = setInterval(() => {
-      if (!document.hidden) void refreshSwapRecords()
-    }, STATUS_POLL_MS)
-    return () => clearInterval(timer)
-  }, [openCount])
 
   const chosen = current ? (quote?.routes[picked] ?? null) : null
   const pick = (leg: 'from' | 'to') => (next: SwapAsset) => {
@@ -244,19 +209,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   const payUsd = pay > 0n ? usdOf(from, pay) : null
   const getUsd = chosen ? usdOf(to, chosen.receive) : null
 
-  const recent = [
-    ...directSwaps.map((swap) => ({ key: swap.swapId, route: 'direct', from: swap.from, to: swap.to, raw: swap.state, state: stateToAttr(swap.state), label: swap.title, detail: swap.status })),
-    ...records.map((r) => ({
-      key: r.id,
-      route: 'exolix',
-      from: r.from,
-      to: r.to,
-      raw: r.stage === 'paid' ? r.status : r.stage,
-      state: stateToAttr(r.stage === 'paid' ? r.status : r.stage),
-      label: `${fmt(r.from, BigInt(r.pay))} → ${fmt(r.to, BigInt(r.receive))}`,
-      detail: recordText(r),
-    })),
-  ].slice(0, RECENT_SWAPS)
+  const recent = recentSwaps.slice(0, RECENT_SWAPS)
 
   return (
     <div className="nav-child-panel" data-aeon-scope="swap" data-aeon-state={stateToAttr(snap.value)}>
@@ -444,15 +397,22 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
           <span data-aeon-part="leg-label">Recent swaps</span>
           <ul>
             {recent.map((row) => (
-              <li key={row.key}>
-                <ListRow.Root data-aeon-state={row.state} data-route={row.route}>
+              <li key={row.id}>
+                <ListRow.Root
+                  data-aeon-state={stateToAttr(row.state)}
+                  data-route={row.route}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    openSwapDetails(row.id)
+                  }}
+                >
                   <ListRow.Leading>
                     <SwapPairMark from={row.from} to={row.to} />
                   </ListRow.Leading>
-                  <ListRow.Label>{row.label}</ListRow.Label>
-                  <ListRow.Description>{row.detail}</ListRow.Description>
+                  <ListRow.Label>{row.title}</ListRow.Label>
+                  <ListRow.Description>{row.status}</ListRow.Description>
                   <ListRow.Trailing>
-                    <SwapStatusPill state={row.raw} />
+                    <SwapStatusPill tone={row.tone} />
                   </ListRow.Trailing>
                 </ListRow.Root>
               </li>

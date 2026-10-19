@@ -4,15 +4,15 @@ import { fromPromise } from 'xstate'
 import { stateToAttr } from '@aeon-ui/core'
 import { Button, Field, ListRow, StatusBanner } from '@aeon-ui/react'
 import { amountFits, roomOf, swapOffersMachine } from '../machines/swapOffersMachine'
-import { getCachedBsvMarket, refreshBsvMarket } from '../wallet/bsvMarket'
-import { openSwapFlow } from '../wallet/navStore'
+import { getCachedBsvMarket, refreshMarketBoard } from '../wallet/bsvMarket'
+import { openSwapDetails, openSwapFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { decimalToUnits, SWAP_ASSET_INFO, SWAP_ASSETS, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
+import { decimalToUnits, SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
 import { fillOffer, fillsInParts, type SignedSwapOffer } from '../wallet/swap/offer'
-import { browseSwapOfferBook } from '../wallet/swap/offerBook'
+import { browseSwapOfferBook, withOwnTakes } from '../wallet/swap/offerBook'
 import { MAKER_FUND_WITHIN_S, previewTake } from '../wallet/swap/settle'
-import { cancelOwnSwapOffer, takeSwapOffer } from '../wallet/swap/settleRunner'
-import { useDirectSwaps } from '../features/swap'
+import { cancelOwnSwapOffer, ownTakenOf, takeSwapOffer } from '../wallet/swap/settleRunner'
+import { useRecentSwaps } from '../features/swap'
 import { SwapPairMark, SwapStatusPill, SwapSummary } from './SwapVisuals'
 
 const fmt = (asset: SwapAsset, units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
@@ -54,7 +54,7 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
     () =>
       swapOffersMachine.provide({
         actors: {
-          load: fromPromise(() => browseSwapOfferBook()),
+          load: fromPromise(async () => withOwnTakes(await browseSwapOfferBook(), ownTakenOf())),
           cancel: fromPromise(({ input }) => cancelOwnSwapOffer(input)),
           take: fromPromise(async ({ input }) => {
             await takeSwapOffer(input.offer, input.pay)
@@ -65,11 +65,11 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
   )
   const [snap, send] = useMachine(machine, { input: { self: identityKey } })
   const { offers, cancelling, taking, failure } = snap.context
-  const swaps = useDirectSwaps()
+  const swaps = useRecentSwaps('direct')
   const now = Date.now()
 
   useEffect(() => {
-    for (const asset of SWAP_ASSETS) void refreshBsvMarket(false, asset)
+    void refreshMarketBoard()
   }, [])
 
   const mine = offers.filter((o) => o.maker === identityKey)
@@ -99,15 +99,21 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
           <span data-aeon-part="leg-label">Your swaps</span>
           <ul>
             {swaps.map((swap) => (
-              <li key={swap.swapId}>
-                <ListRow.Root data-aeon-state={stateToAttr(swap.state)}>
+              <li key={swap.id}>
+                <ListRow.Root
+                  data-aeon-state={stateToAttr(swap.state)}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    openSwapDetails(swap.id)
+                  }}
+                >
                   <ListRow.Leading>
                     <SwapPairMark from={swap.from} to={swap.to} />
                   </ListRow.Leading>
                   <ListRow.Label>{swap.title}</ListRow.Label>
                   <ListRow.Description>{swap.status}</ListRow.Description>
                   <ListRow.Trailing>
-                    <SwapStatusPill state={swap.state} />
+                    <SwapStatusPill tone={swap.tone} />
                   </ListRow.Trailing>
                 </ListRow.Root>
               </li>

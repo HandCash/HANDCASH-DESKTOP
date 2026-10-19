@@ -47,7 +47,10 @@ export type SwapRecord = {
   payout: string
   stage: SwapRecordStage
   status: ExolixStatus
+  /** The deposit this wallet paid. */
   txid?: string
+  /** Exolix's payout (or refund) transaction, once it names one. */
+  payoutTxid?: string
   error?: string
   createdAt: number
   updatedAt: number
@@ -72,6 +75,7 @@ type ExchangeBody = {
   depositAddress?: unknown
   withdrawalAddress?: unknown
   status?: unknown
+  hashOut?: { hash?: unknown } | null
   message?: unknown
   errors?: unknown
 }
@@ -163,11 +167,24 @@ export async function createExolixExchange(
   return exchange
 }
 
-/** Exolix's current status for an exchange. */
-export async function fetchExolixStatus(exchange: { id: string; from: SwapAsset; to: SwapAsset }, opts: { fetch?: typeof fetch } = {}): Promise<ExolixStatus> {
+/** Exolix's current status for an exchange, and its payout transaction once it names one. */
+export async function fetchExolixStatus(
+  exchange: { id: string; from: SwapAsset; to: SwapAsset },
+  opts: { fetch?: typeof fetch } = {},
+): Promise<{ status: ExolixStatus; payoutTxid?: string }> {
   const body = await exolixCall(`${EXOLIX_TX_URL}/${encodeURIComponent(exchange.id)}`, { method: 'GET' }, opts.fetch ?? fetch)
-  return readExchange(body, exchange.from, exchange.to).status
+  const { status } = readExchange(body, exchange.from, exchange.to)
+  const hash = typeof body.hashOut?.hash === 'string' ? body.hashOut.hash.trim().toLowerCase() : ''
+  return /^[0-9a-f]{64}$/.test(hash) ? { status, payoutTxid: hash } : { status }
 }
+
+/** How long a finished exchange is still asked for the payout transaction it has not named. */
+const PAYOUT_FOLLOW_MS = 2 * 24 * 3600_000
+
+/** Still worth asking Exolix about: not finished, or just finished without naming its payout yet. */
+const followed = (r: SwapRecord, now: number) =>
+  r.stage === 'paid' &&
+  (!EXOLIX_FINAL.includes(r.status) || (r.status !== 'overdue' && !r.payoutTxid && now - r.updatedAt < PAYOUT_FOLLOW_MS))
 
 // ── Records ────────────────────────────────────────────────────────────────
 
@@ -196,15 +213,20 @@ export function subscribeSwapRecords(listener: () => void): () => void {
   }
 }
 
+/** Every exchange Exolix has not finished (or not named the payout of); one call each. */
+export function followedSwapRecords(now = Date.now()): SwapRecord[] {
+  return readSwapRecords().filter((r) => followed(r, now))
+}
+
 /** Ask Exolix about every swap it has not finished; one call per open swap. */
 export async function refreshSwapRecords(opts: { fetch?: typeof fetch; now?: () => number } = {}): Promise<void> {
-  const open = readSwapRecords().filter((r) => r.stage === 'paid' && !EXOLIX_FINAL.includes(r.status))
-  for (const record of open) {
+  for (const record of followedSwapRecords((opts.now ?? Date.now)())) {
     try {
-      const status = await fetchExolixStatus(record, opts)
-      if (status !== record.status) {
-        console.info(`[swap] exolix ${record.id} ${record.status} → ${status}`)
-        writeSwapRecord({ ...record, status, updatedAt: (opts.now ?? Date.now)() })
+      const { status, payoutTxid } = await fetchExolixStatus(record, opts)
+      if (status !== record.status || (payoutTxid && payoutTxid !== record.payoutTxid)) {
+        if (status !== record.status) console.info(`[swap] exolix ${record.id} ${record.status} → ${status}`)
+        if (payoutTxid && payoutTxid !== record.payoutTxid) console.info(`[swap] exolix ${record.id} payout ${payoutTxid.slice(0, 12)}`)
+        writeSwapRecord({ ...record, status, ...(payoutTxid ? { payoutTxid } : {}), updatedAt: (opts.now ?? Date.now)() })
       }
     } catch (err) {
       console.warn(`[swap] exolix ${record.id} status unavailable — ${err instanceof Error ? err.message : String(err)}`)

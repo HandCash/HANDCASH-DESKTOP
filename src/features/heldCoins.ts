@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { subscribeAppActivity } from './activity'
-import { getCachedBsvMarket, refreshBsvMarket, subscribeBsvMarket } from '../wallet/bsvMarket'
+import { getCachedBsvMarket, refreshMarketBoard, subscribeBsvMarket } from '../wallet/bsvMarket'
 import { COIN_CHAINS, type CoinChain } from '../wallet/coins/coinChains'
 import { COIN_WALLETS as WALLETS } from './coinWallets'
 
@@ -11,14 +11,14 @@ export function getHeldCoin(chain: CoinChain): bigint {
 
 /**
  * Told when any coin record changes, and on every account switch (which
- * writes activity). Each coin held refreshes its price once.
+ * writes activity). Held coins are priced once, in one request.
  */
 export function subscribeHeldCoins(listener: () => void): () => void {
   const stops = COIN_CHAINS.map((chain) => {
     WALLETS[chain].ensureMigrated()
-    if (getHeldCoin(chain) > 0n) void refreshBsvMarket(false, chain)
     return WALLETS[chain].subscribe(listener)
   })
+  if (COIN_CHAINS.some((chain) => getHeldCoin(chain) > 0n)) void refreshMarketBoard()
   stops.push(subscribeAppActivity(listener))
   return () => {
     for (const stop of stops) stop()

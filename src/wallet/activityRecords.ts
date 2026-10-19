@@ -22,6 +22,7 @@ import {
   isBurnActivity,
   isEventActivity,
   isFailedActivity,
+  SWAP_ACTIVITY_PREFIX,
   type ActivityEntry,
 } from './appActivity'
 import { JOB_GROUP_PREFIX } from '../machines/walletJobMachine'
@@ -100,6 +101,11 @@ export type ActivityFold =
    * import of 300 items is one thing the user asked for, not 60 receipts.
    */
   | { kind: 'job'; key: string }
+  /**
+   * Every transaction of one swap — deposit and payout, or lock, claim and
+   * refund — on whichever chains and origins, under the row naming the swap.
+   */
+  | { kind: 'swap'; key: string }
 
 
 function txidOf(entry: ActivityEntry): string | null {
@@ -157,6 +163,8 @@ export function chooseActivityFold(
   selfDeals: ReadonlySet<string> = new Set(),
 ): ActivityFold {
   const group = (entry.sendGroupId ?? '').trim()
+  // A failed lock or deposit is still part of its swap, which says so.
+  if (group.startsWith(SWAP_ACTIVITY_PREFIX)) return { kind: 'swap', key: group }
   // Failed send legs are cleared and retried independently. A grouped burn is
   // one atomic transaction attempt with no per-NFT retry, so its members must
   // remain one truthful failed record rather than exploding into N rows.
@@ -297,6 +305,7 @@ export function activityBatchName(batch: ActivityBatch): string {
 }
 
 function subjectRank(entry: ActivityEntry): number {
+  if (entry.swap) return -1
   if (MARKET_SUBJECT_METHODS.has(entry.method)) return 0
   if (entry.item) return 1
   if (MARKET_METHODS.has(entry.method)) return 2

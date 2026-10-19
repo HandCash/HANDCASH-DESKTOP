@@ -62,6 +62,7 @@ import {
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
+  type ActivitySwap,
 } from "../wallet/appActivity";
 import { getTxByTxid } from "../wallet/txStore";
 import {
@@ -114,13 +115,14 @@ import {
 } from "../wallet/paymentFilters";
 import {
   formatPrimaryFromSats,
+  formatUsd,
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from "../wallet/fx";
-import { refreshBsvMarket } from "../wallet/bsvMarket";
-import { coinActivityUsdLabel } from "../wallet/heldValue";
+import { refreshMarketBoard } from "../wallet/bsvMarket";
+import { coinActivityUsdLabel, coinUsd } from "../wallet/heldValue";
 import { useCoinPrices } from "../features/heldCoins";
-import { COIN_CHAINS, type CoinChain } from "../wallet/coins/coinChains";
+import { COIN_CHAINS, COIN_INFO, formatCoin, type CoinChain } from "../wallet/coins/coinChains";
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -169,6 +171,9 @@ import { useCoinDepositByTxid } from "../features/coinDeposits";
 import { describeDeposit, depositWaiting as isDepositWaiting } from "../wallet/coins/depositPhase";
 import { CoinDepositBadge } from "./CoinDepositProgress";
 import { TickerCoinMark } from "./TickerCoinSelector";
+import { SwapActivityRow } from "./activity/SwapActivityRow";
+import { useSwapViews } from "../features/swap";
+import { foldSwapActivity } from "../wallet/swap/swapActivity";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24;
@@ -481,6 +486,19 @@ function withNetwork(network: string | null, detail: string | null): string | nu
 }
 
 const NO_COIN_PRICES: Record<CoinChain, number | null> = { ltc: null, bch: null, btc: null, doge: null };
+
+/** What a swap brings in, priced the way the feed prices a BSV or coin row. */
+function swapAmountLabel(
+  swap: ActivitySwap,
+  currency: DisplayCurrency,
+  usdPerBsv: number | null,
+  coinPrices: Record<CoinChain, number | null>
+): string {
+  const units = BigInt(swap.receive);
+  if (swap.to === "bsv") return formatPrimaryFromSats(Number(units), currency, usdPerBsv);
+  const usd = currency === "usd" ? coinUsd(swap.to, units, coinPrices[swap.to] ?? null) : null;
+  return usd == null ? `${formatCoin(swap.to, units)} ${COIN_INFO[swap.to].ticker}` : formatUsd(usd);
+}
 
 function HistoryRow({
   entry,
@@ -1047,9 +1065,7 @@ export function ActivityFeed({
     ? COIN_CHAINS.filter((chain) => entries.some((e) => e.item?.backedBy === chain)).join(",")
     : "";
   useEffect(() => {
-    for (const chain of COIN_CHAINS) {
-      if (shownCoins.split(",").includes(chain)) void refreshBsvMarket(false, chain);
-    }
+    if (shownCoins) void refreshMarketBoard();
   }, [shownCoins]);
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
@@ -1071,19 +1087,29 @@ export function ActivityFeed({
     ? phraseImport
     : null;
   const jobs = useWalletJobs();
+  const swaps = useSwapViews();
 
   // A job's own row speaks for it until it leaves; then its rows fold into one record.
   // Keyed on which jobs exist, not on their progress: a running import ticks
   // its job many times a second and must not recompose the feed each time.
   const jobIdKey = [...walletJobIds(jobs)].join("\0");
+  const filtersActive =
+    filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
+    filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
+    filters.origin !== DEFAULT_PAYMENT_FILTERS.origin ||
+    filters.status !== DEFAULT_PAYMENT_FILTERS.status;
+  const filtering = showFilters && filtersActive;
   const filtered = useMemo(() => {
     const jobIds = new Set(jobIdKey ? jobIdKey.split("\0") : []);
     const settled =
       jobIds.size > 0
         ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
         : entries;
-    return showFilters ? filterPaymentActivity(settled, filters) : settled;
-  }, [entries, jobIdKey, filters, showFilters]);
+    const shown = showFilters ? filterPaymentActivity(settled, filters) : settled;
+    // One record per swap, its transactions folded under it; a filtered feed
+    // keeps a swap when one of its transactions passed.
+    return foldSwapActivity(shown, swaps, { onlyWithLegs: filtering });
+  }, [entries, jobIdKey, filters, showFilters, filtering, swaps]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
   const records = useMemo(
@@ -1111,12 +1137,6 @@ export function ActivityFeed({
     [records]
   );
   useStickNewestToTop(listRef, newest, shownKeys);
-
-  const filtersActive =
-    filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
-    filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
-    filters.origin !== DEFAULT_PAYMENT_FILTERS.origin ||
-    filters.status !== DEFAULT_PAYMENT_FILTERS.status;
 
   // Count from the store, not the capped feed. Transfers the recipient can
   // still broadcast are excluded. Signed sends whose inputs are still unspent
@@ -1303,7 +1323,16 @@ export function ActivityFeed({
             aria-hidden
           />
         ) : null}
-        {visibleRecords.map((record, index) => (
+        {visibleRecords.map((record, index) => record.subject.swap ? (
+          <SwapActivityRow
+            key={recordKeys[windowed.start + index] ?? record.key}
+            rowKey={recordKeys[windowed.start + index] ?? record.key}
+            swap={record.subject.swap}
+            amount={swapAmountLabel(record.subject.swap, currency, usdPerBsv, coinPrices)}
+            when={showWhen ? formatWhen(record.entries.reduce((at, leg) => Math.max(at, leg.at), 0)) : null}
+            newest={windowed.start === 0 && index === 0}
+          />
+        ) : (
           <HistoryRow
             key={recordKeys[windowed.start + index] ?? record.key}
             rowKey={recordKeys[windowed.start + index] ?? record.key}

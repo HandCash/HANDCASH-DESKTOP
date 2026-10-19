@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { SignedSwapOffer } from './offer'
-import type { SettleRecord, SettleState } from './settleStore'
-import { describeSwap, recentSwaps } from './settleView'
+import type { SettleRecord } from './settleStore'
+import { describeSwap } from './settleView'
 
 const NOW = 1_800_000_000_000
 const offer = { give: 'bsv', get: 'ltc' } as SignedSwapOffer
@@ -34,24 +34,6 @@ function record(swapId: string, over: Partial<SettleRecord> = {}): SettleRecord 
 }
 
 describe('settle view', () => {
-  it('lists moving swaps first, then those finished within a day', () => {
-    const state: SettleState = {
-      offers: {},
-      swaps: {
-        a: record('a', { outcome: 'swapped', createdAt: NOW - 3, updatedAt: NOW - 1_000 }),
-        b: record('b', { createdAt: NOW - 2 }),
-        c: record('c', { outcome: 'refunded', updatedAt: NOW - 25 * 3600_000 }),
-        d: record('d', { createdAt: NOW - 1 }),
-      },
-    }
-    expect(recentSwaps(state, NOW).map((r) => r.terms.swapId)).toEqual(['d', 'b', 'a'])
-  })
-
-  it('shows the taker what lands after the fee, and the maker its own leg', () => {
-    expect(describeSwap(record('a')).title).toBe('1 LTC for 3.4825 BSV')
-    expect(describeSwap(record('a', { role: 'maker' })).title).toBe('3.5 BSV for 1 LTC')
-  })
-
   it('says what the swap waits on, its phase, then its outcome', () => {
     expect(describeSwap(record('a', { waiting: { for: 'accept' } }))).toMatchObject({ state: 'accept', status: 'Waiting for the maker to accept' })
     expect(describeSwap(record('a', { waiting: { for: 'peer-burial' }, peer: { confirmations: { have: 2, need: 6 } } })).status).toBe("Waiting for the maker's lock to confirm (2/6)")

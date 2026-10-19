@@ -40,6 +40,8 @@ export type NavChild =
   | { type: 'receive' }
   | { type: 'swap' }
   | { type: 'swap-offers' }
+  /** One swap, either route: `direct:<swapId>` or `exolix:<exchange id>`. */
+  | { type: 'swap-detail'; swapId: string }
   | { type: 'ticker-coins' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
@@ -343,6 +345,11 @@ export function openSwapFlow() {
 /** The swap offer book: standing offers, this wallet's first. */
 export function openSwapOffers() {
   openNavChild('activity', { type: 'swap-offers' })
+}
+
+/** One swap and every transaction of it. */
+export function openSwapDetails(swapId: string) {
+  openNavChild('activity', { type: 'swap-detail', swapId })
 }
 
 export function openPaymentDetails(entryId: string) {
