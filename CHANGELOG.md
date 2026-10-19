@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.609] - 2026-10-18
+
+### Added
+
+- Swap offers can be filled in parts. When you publish an offer, switch on "Let takers fill part of it" and anyone can take a part, down to a smallest take sized so its claim fee stays small. The offer stays listed until what is left is below that. Takers choose how much to put in, from the smallest take up to what is left.
+
+### Changed
+
+- Direct swaps no longer need the other wallet to be online. Taking an offer locks your side at once. The maker's wallet has up to 28 hours to lock its side, the next time it is opened, and your wallet claims once that lock confirms. Locks now stand for 48 hours (maker) and 72 hours (taker), so each wallet needs opening about once a day while a swap runs.
+- BSV swap locks refund without the other side's signature. The refund proves its own lock time on chain, so nobody has to answer before a BSV lock goes out. Swaps started on 1.3.608 still settle the old way.
+- A maker judges a take by the time it was made, so a take sent while the maker was away is honoured even if the offer expired since. A take whose lock landed more than 3 hours after it was made is refused.
+
 ## [1.3.608] - 2026-10-18
 
 ### Added
