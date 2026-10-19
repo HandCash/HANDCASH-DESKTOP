@@ -3762,6 +3762,8 @@ const MINER_OUTCOMES = [
   ['landed', /^\[landing\] ([0-9a-f]{12}) landed\b/],
   ['dead', /^\[landing\] ([0-9a-f]{12}) dead\b/],
   ['repostedOutsideArcade', /^\[landing\] ([0-9a-f]{12}) re-posted outside Arcade\b/],
+  // Arcade named the cheque's unproven parents too (1.3.611+): they never reached a node.
+  ['repostedToArcade', /^\[landing\] ([0-9a-f]{12}) re-posted to Arcade\b/],
   ['stillUnlanded', /^\[landing\] ([0-9a-f]{12}) still unlanded\b/],
   ['certaintyRetire', /^\[certainty\] ([0-9a-f]{12}) retire\b/],
   ['certaintyRefused', /^\[certainty\] ([0-9a-f]{12}) refused\b/],

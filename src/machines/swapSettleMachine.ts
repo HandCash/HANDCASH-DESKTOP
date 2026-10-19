@@ -13,8 +13,9 @@ import type { SettleOutcome } from '../wallet/swap/settle'
  * and the maker once the taker's lock is buried, whenever it next runs.
  *
  * `settled`: both sides claimed. `refunded`: each payer took its lock back.
- * `ended`: declined or expired before this wallet locked anything. `missed`:
- * the maker's wallet was away past the taker's lock time.
+ * `ended`: declined or expired before this wallet locked anything, or its
+ * lock proven never to reach the chain (`unsent`). `missed`: the maker's
+ * wallet was away past the taker's lock time.
  */
 
 export type SwapSettlePhase = 'negotiating' | 'presigning' | 'locking' | 'locked' | 'claiming' | 'refunding' | 'settled' | 'refunded' | 'ended' | 'missed'
@@ -41,6 +42,7 @@ export const swapSettleMachine = setup({
     refundedBack: outcome('refunded'),
     missed: outcome('missed'),
     nothingLocked: outcome('declined', 'expired'),
+    lockUnsent: outcome('unsent'),
   },
 }).createMachine({
   id: 'swapSettle',
@@ -70,6 +72,7 @@ export const swapSettleMachine = setup({
           { guard: 'swapped', target: 'settled' },
           { guard: 'refundedBack', target: 'refunded' },
           { guard: 'missed', target: 'missed' },
+          { guard: 'lockUnsent', target: 'ended' },
         ],
       },
     },

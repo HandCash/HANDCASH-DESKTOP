@@ -11,9 +11,11 @@
  *   names another spender of an input, or it spends change of a cheque
  *   already proven dead. The send is failed as a closure, the dead coins are hidden under
  *   their named spender, the pool is swept, and Activity says "not sent".
- * - `waiting`: Arcade still retrying with nothing proven. Once per watch the
- *   body is re-posted to the non-Arcade miners — Arcade's first success ends
- *   the toolbox round, so a stall inside Arcade otherwise reaches nobody else.
+ * - `waiting`: not on chain, nothing proven, and Arcade not holding it. Once a
+ *   session the body is re-posted naming every unproven parent it carries —
+ *   to Arcade too when there are any, then to the other miners. Arcade's first
+ *   success ends the toolbox round, and a cheque named alone whose parents
+ *   never left the device is refused for missing inputs everywhere.
  *
  * Unlock replays every pinned cheque that never landed, oldest first, so a
  * night of sends Arcade could not land is repaired on the next launch.
@@ -37,6 +39,7 @@ import {
   type LandingFate,
 } from './kernel/landingFate'
 import type { ArcadeTxFate } from './arcadeV2'
+import type { PostBeefServiceResult } from './postBeefResult'
 
 /** Pauses between Arcade reads for one cheque (≈31 min in all). */
 const WATCH_DELAYS_MS = [
@@ -58,6 +61,10 @@ export { noteTxLanded, txLanded } from './landedTx'
 
 const watching = new Set<string>()
 const unlockedRuntimes = new Set<string>()
+/** Cheques re-posted this session: once each, a dead body is refused again anyway. */
+const reposted = new Set<string>()
+/** Parents a re-post got a miner to take; cheques built on the same chain skip them. */
+const relayed = new Set<string>()
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -65,6 +72,26 @@ export function resetArcadeLandingForTests(): void {
   resetLandedTxForTests()
   watching.clear()
   unlockedRuntimes.clear()
+  reposted.clear()
+  relayed.clear()
+}
+
+/**
+ * Not on chain, no input proven spent, and Arcade not holding it in its own
+ * queue: the body (with its parents) goes out again, once per session.
+ */
+async function repostIfUnheld(
+  round: LandingRound,
+  txid: string,
+  runtime: WalletRuntime,
+  owner: BoundAccountKeyScope,
+  atomic?: number[],
+): Promise<void> {
+  if (round.fate.kind !== 'waiting' || !round.evidence || round.arcade.kind === 'queued') return
+  if (reposted.has(txid)) return
+  reposted.add(txid)
+  const body = atomic ?? (await chequeBody(txid, owner))
+  if (body?.length && runtimeIsCurrent(runtime)) await repostWithAncestry(runtime.instance.services, txid, body)
 }
 
 export function toLandingArcade(fate: ArcadeTxFate, isLanded: (status: string) => boolean): LandingArcade {
@@ -198,10 +225,14 @@ async function retireDeadCheque(args: {
 }
 
 /**
- * Hand the body to every non-Arcade miner until one accepts it. Best effort:
- * a dead body is refused there too, and a live one lands without Arcade.
+ * Hand the body and every unproven parent it carries to the miners, parents
+ * first. Each service posts only the txids it is named, so a cheque named
+ * alone whose parents never left the device is refused for missing inputs
+ * everywhere, Arcade included. Arcade is named the parents too, then every
+ * other miner until one takes the cheque. Best effort: a dead body is refused
+ * there too, and a live one lands without Arcade.
  */
-async function repostOutsideArcade(
+async function repostWithAncestry(
   services: Services,
   txid: string,
   atomic: number[],
@@ -218,16 +249,36 @@ async function repostOutsideArcade(
   ).postBeefServices?.services
   if (!Array.isArray(list)) return
   const { Beef } = await import('@bsv/sdk')
-  const { isArcadeNamedService, summarizePostBeef } = await import('./postBeefResult')
-  for (const entry of list) {
-    if (isArcadeNamedService(entry.name) || typeof entry.service !== 'function') continue
+  const { unprovenAncestry } = await import('./beefSubset')
+  const { isArcadeNamedService, summarizePostBeef, txidRowLooksAccepted } = await import('./postBeefResult')
+  let named: string[]
+  try {
+    named = unprovenAncestry(Beef.fromBinary(atomic), txid).filter((id) => id === txid || !relayed.has(id))
+  } catch {
+    return
+  }
+  if (!named.includes(txid)) named.push(txid)
+  const parents = named.length - 1
+  const arcadeFirst = [
+    ...(parents > 0 ? list.filter((entry) => isArcadeNamedService(entry.name)) : []),
+    ...list.filter((entry) => !isArcadeNamedService(entry.name)),
+  ]
+  for (const entry of arcadeFirst) {
+    if (typeof entry.service !== 'function') continue
+    const arcade = isArcadeNamedService(entry.name)
     try {
-      const result = await entry.service(Beef.fromBinary(atomic), [txid])
+      const result = await entry.service(Beef.fromBinary(atomic), named)
+      const rows = (result as PostBeefServiceResult).txidResults ?? []
+      for (const row of rows) {
+        const id = normalizeTxid(row.txid ?? '')
+        if (id && id !== txid && txidRowLooksAccepted(row)) relayed.add(id)
+      }
+      const took = rows.some((row) => normalizeTxid(row.txid ?? '') === txid && txidRowLooksAccepted(row))
       const summary = summarizePostBeef([{ name: entry.name, ...(result as object) }])
       console.info(
-        `[landing] ${txid.slice(0, 12)} re-posted outside Arcade via ${entry.name}: ${summary.detail}`,
+        `[landing] ${txid.slice(0, 12)} re-posted ${arcade ? 'to' : 'outside'} Arcade via ${entry.name} parents=${parents} took=${took}: ${summary.detail}`,
       )
-      if (summary.accepted) return
+      if (took && !arcade) return
     } catch (err) {
       console.info(
         `[landing] ${txid.slice(0, 12)} re-post via ${entry.name} failed`,
@@ -315,7 +366,6 @@ export function watchArcadeLanding(
   const owner = opts?.owner ?? accountKeyScopeFor(runtime.instance)
   void (async () => {
     const { txIsArcadeRejected } = await import('./arcadeSubmitGuard')
-    let reposted = false
     for (const wait of WATCH_DELAYS_MS) {
       await delay(wait)
       if (!runtimeIsCurrent(runtime) || txIsArcadeRejected(id)) return
@@ -328,11 +378,7 @@ export function watchArcadeLanding(
         toast: true,
       })
       if (round.fate.kind === 'landed' || round.fate.kind === 'dead') return
-      if (!reposted && round.arcade.kind === 'stalled' && round.evidence) {
-        reposted = true
-        const body = opts?.atomic ?? (await chequeBody(id, owner))
-        if (body?.length) await repostOutsideArcade(runtime.instance.services, id, body)
-      }
+      await repostIfUnheld(round, id, runtime, owner, opts?.atomic)
     }
     console.info(
       `[landing] ${id.slice(0, 12)} still unlanded after ${Date.now() - since}ms — Arcade keeps retrying; checked again at unlock`,
@@ -392,11 +438,12 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
     for (const [i, pin] of pins.entries()) {
       if (i > 0) await delay(UNLOCK_GAP_MS)
       if (!runtimeIsCurrent(runtime)) return
+      const atomic = (await chequeBody(pin.txid, owner)) ?? undefined
       const round = await checkLanding({
         txid: pin.txid,
         runtime,
         owner,
-        atomic: (await chequeBody(pin.txid, owner)) ?? undefined,
+        atomic,
         since: pin.at,
         toast: false,
       })
@@ -404,6 +451,7 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
       else if (round.fate.kind === 'dead') tally.dead += 1
       else {
         tally.waiting += 1
+        await repostIfUnheld(round, pin.txid, runtime, owner, atomic)
         if (now - pin.at < WATCH_SPAN_MS) {
           watchArcadeLanding(pin.txid, { owner, since: pin.at })
         }

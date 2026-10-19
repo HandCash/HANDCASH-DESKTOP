@@ -1,10 +1,31 @@
 # Changelog
 
+## [1.3.611] - 2026-10-19
+
+### Fixed
+
+- A payment whose earlier parents never reached a miner stayed unsent for good: the wallet re-posted it naming only itself, so every miner refused it for missing inputs. It now re-posts it with every unconfirmed parent it carries, parents first, to Arcade and then to the other miners, each parent once. This also runs at unlock for payments older than half an hour, so a direct swap lock stuck this way goes out on the next launch.
+- A direct swap whose own BSV lock is proven never to reach the chain now ends as "Your lock never reached the chain; nothing was locked" instead of waiting days for a refund of coins that never left. The counterparty is told, and the lock leaves the custody journal.
+- Swap logs name what every waiting swap waits for once each session, not only when it changes.
+
 ## [1.3.610] - 2026-10-19
+
+### Added
+
+- Swaps show in Activity as one row each, whether wallet to wallet or through Exolix. The row says what you swap, where it stands, what lands in your wallet, and spins while it runs. Its deposit, locks, claim, payout and refunds fold under it instead of showing as separate sends. Tapping it opens the swap with every transaction on its own chain's explorer. The Swap screen and the offer book open the same page.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Exolix swaps are followed in the background, with the Swap screen open or not, and the wallet records Exolix's payout transaction so the coins it pays fold under the swap.
+- Ticker prices come from one batched request for every coin, so prices no longer go missing when the price service limits bursts. Each coin shows its own logo, and "You hold" is gone from the ticker.
+- On phones, the ticker's change percentage sits under the price.
+
+### Fixed
+
+- A direct swap whose BSV lock was funded from long unconfirmed change could stay in progress: the notice that the lock went out was larger than a message box takes. The wallet now sends the lock transaction alone when the full ancestry does not fit, and the counterparty fetches the proof itself.
+- Taking an offer you already took is refused before anything locks, with how much of it is left when it fills in parts. Taken offers count your own takes even before the offer book catches up.
+- A claim of a BSV lock carries the lock's own proof, not only the counterparty's copy.
+- Swap logs say what a waiting swap waits for and until when.
 
 ## [1.3.609] - 2026-10-18
 

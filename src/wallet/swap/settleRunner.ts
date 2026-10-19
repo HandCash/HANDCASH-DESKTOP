@@ -45,7 +45,7 @@ import {
   type SwapTerms,
 } from './settle'
 import type { FeeLockReport } from './feeClaim'
-import { ackSettleBox, journalSwapLock, journalSwapLockSpent, readSettleBox, reportFeeLock, requireActiveWallet, sendSettle } from './settlePorts'
+import { ackSettleBox, bsvLockProvenUnsent, journalSwapLock, journalSwapLockSpent, readSettleBox, reportFeeLock, requireActiveWallet, sendSettle } from './settlePorts'
 import { activeSwaps, markOfferCancelled, putSwap, readSettleState, rememberPublishedOffer, updateSwap, writeSettleState, type SettleRecord } from './settleStore'
 import type { SwapOfferDraft } from './offerBook'
 import type { SignedSwapOffer } from './offer'
@@ -79,6 +79,8 @@ let serving = false
 let replayedFor: string | null = null
 /** When each swap is next worth a look; a message for it or a forced pass looks sooner. */
 const checkAt = new Map<string, number>()
+/** What each swap was last logged waiting on this session, so every upload names what a stuck swap waits for. */
+const waitLogged = new Map<string, string>()
 
 /** How long a swap waiting on `step` can go unexamined: chain reads are spent only when an answer could change the step. */
 function recheckAfter(step: SettleStep): number {
@@ -450,6 +452,7 @@ async function gather(r: SettleRecord): Promise<Gathered> {
     }
     if (outs.fee && r.peer.funding.fee === undefined) peerSighting = { kind: 'refused', reason: 'no-fee', detail: 'the lock carries no fee output' }
   }
+  const unsent = own.chain === 'bsv' && !!r.own.funding && !r.own.refunded && (await bsvLockProvenUnsent(r.own.funding.txid))
   const secretKnown = r.role === 'taker' || !!r.secret || ownSpend?.kind === 'claimed'
   const facts: SettleFacts = {
     role: r.role,
@@ -465,6 +468,7 @@ async function gather(r: SettleRecord): Promise<Gathered> {
       refunded: !!r.own.refunded || ownSpend?.kind === 'refunded',
       presigned: !!r.own.refunds?.length && r.own.refunds.every((x) => x.cosig),
       feeUnspent: feeSpend?.kind === 'unspent',
+      unsent,
     },
     peer: {
       funded: !!r.peer.funding && !r.peer.refused && peerSighting?.kind !== 'refused',
@@ -722,6 +726,12 @@ async function finish(active: ActiveWallet, r: SettleRecord, step: Extract<Settl
   if (step.outcome === 'expired' && !r.own.funding && !r.declined) {
     await sendSettle(active, r.counterparty, { t: 'abort', swapId: r.terms.swapId, reason: 'expired' }).catch(() => {})
   }
+  if (step.outcome === 'unsent' && r.own.funding) {
+    // The journal kept the lock as recoverable custody; there is none.
+    journalSwapLockSpent(active, `${r.own.funding.txid}.${r.own.funding.main}`)
+    if (r.own.funding.fee !== undefined) journalSwapLockSpent(active, `${r.own.funding.txid}.${r.own.funding.fee}`)
+    if (!r.declined) await sendSettle(active, r.counterparty, { t: 'abort', swapId: r.terms.swapId, reason: 'lock never reached the chain' }).catch(() => {})
+  }
   updateSwap(r.terms.swapId, (x) => ({ ...x, outcome: step.outcome, waiting: undefined }))
   log(r.terms.swapId, `done: ${step.outcome}`)
 }
@@ -737,7 +747,8 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
     const step = nextSettleStep(r.terms, g.facts)
     if (step.kind === 'wait') {
       savePhase()
-      if (record.waiting?.for !== step.for) {
+      if (waitLogged.get(r.terms.swapId) !== step.for) {
+        waitLogged.set(r.terms.swapId, step.for)
         log(r.terms.swapId, `waiting for ${step.for}${step.until ? ` until ${new Date(step.until).toISOString()}` : ''}`)
       }
       updateSwap(r.terms.swapId, (x) => ({ ...x, waiting: { for: step.for, ...(step.until ? { until: step.until } : {}) }, lastError: undefined }))
@@ -852,6 +863,7 @@ export function resetSwapSettleForTest(): void {
   serving = false
   replayedFor = null
   checkAt.clear()
+  waitLogged.clear()
 }
 
 /** Rebuild swaps whose record this install lost (a restore) from the custody journal, so their locks still settle. */

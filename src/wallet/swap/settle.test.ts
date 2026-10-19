@@ -276,6 +276,14 @@ describe('next step', () => {
     expect(nextSettleStep(t, facts({ own: leg({ funded: true, feeUnspent: true }), peer, now: at(t.t1) }))).toEqual({ kind: 'refund-fee' })
   })
 
+  it('a lock proven never on chain ends the swap: no refund to wait for, no claim against an unpaid peer', () => {
+    const own = leg({ funded: true, presigned: true, unsent: true })
+    expect(nextSettleStep(t, facts({ own }))).toEqual({ kind: 'done', outcome: 'unsent' })
+    expect(nextSettleStep(t, facts({ own, peer: leg({ funded: true, buried: true }) }))).toEqual({ kind: 'done', outcome: 'unsent' })
+    expect(nextSettleStep(t, facts({ own, declined: true, now: at(t.t1) }))).toEqual({ kind: 'done', outcome: 'unsent' })
+    expect(nextSettleStep(t, facts({ own: leg({ unsent: true }) }))).toEqual({ kind: 'request-presign' })
+  })
+
   it('maker: funds only after the taker lock is buried, and not too close to T2', () => {
     const m = (o: Partial<SettleFacts>) => facts({ role: 'maker', secretKnown: false, ownOnBsv: false, ...o })
     expect(nextSettleStep(t, m({}))).toEqual({ kind: 'wait', for: 'peer-funding' })

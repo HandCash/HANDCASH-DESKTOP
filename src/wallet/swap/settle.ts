@@ -419,6 +419,8 @@ export type LegFacts = {
   presigned?: boolean
   /** Own leg: its fee output is still unspent (HandCash has not claimed it). */
   feeUnspent?: boolean
+  /** Own leg: the lock is proven never to reach the chain (a coin it spent went elsewhere). */
+  unsent?: boolean
 }
 
 export type SettleFacts = {
@@ -439,8 +441,9 @@ export type SettleFacts = {
  * `swapped`: both claimed. `refunded`: each payer took its lock back.
  * `declined` / `expired`: ended before this wallet locked anything.
  * `missed`: the maker's wallet was away past T1, so the taker holds both sides.
+ * `unsent`: this wallet's lock never reached the chain, so nothing was locked.
  */
-export type SettleOutcome = 'swapped' | 'refunded' | 'declined' | 'expired' | 'missed'
+export type SettleOutcome = 'swapped' | 'refunded' | 'declined' | 'expired' | 'missed' | 'unsent'
 
 export type SettleWait = 'accept' | 'presign' | 'peer-funding' | 'peer-burial' | 'secret' | 'locktime'
 
@@ -470,6 +473,8 @@ export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
     if (!f.own.feeUnspent) return { kind: 'done', outcome: 'swapped' }
     return nowS >= ownLock ? { kind: 'refund-fee' } : { kind: 'wait', for: 'locktime', until: ownLock * 1000 }
   }
+  // Nothing of this wallet's is locked: no refund to wait for, and no claim against a counterparty it never paid.
+  if (f.own.funded && f.own.unsent) return { kind: 'done', outcome: 'unsent' }
   if (f.declined && !f.own.funded) return { kind: 'done', outcome: 'declined' }
 
   const presigns = terms.v === 1 && f.ownOnBsv

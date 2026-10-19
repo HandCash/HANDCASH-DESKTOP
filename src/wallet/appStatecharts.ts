@@ -727,6 +727,7 @@ const SWAP_SETTLE = `stateDiagram-v2
   locked --> settled : DONE swapped
   locked --> refunded : DONE refunded
   locked --> missed : DONE missed (taker refunded first)
+  locked --> ended : DONE unsent (own lock proven never on chain)
   settled --> [*]
   refunded --> [*]
   ended --> [*]

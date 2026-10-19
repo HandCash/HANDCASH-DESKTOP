@@ -88,6 +88,16 @@ export function beefSubset(source: BeefSource, txids: Iterable<string>): Beef {
   return out
 }
 
+/**
+ * `txid` and every unproven ancestor `source` holds, parents first: what a
+ * broadcaster has to be named when the network never saw the parents.
+ */
+export function unprovenAncestry(source: BeefSource, txid: string): string[] {
+  return beefSubset(source, [txid])
+    .txs.filter((btx) => !btx.isTxidOnly && btx.bumpIndex === undefined)
+    .map((btx) => btx.txid.toLowerCase())
+}
+
 /** Raw bytes one txid's ancestry adds, keyed by txid so legs can dedupe shared parents. */
 export function ancestryBytes(source: BeefSource, txid: string): Map<string, number> {
   const bytes = new Map<string, number>()

@@ -34,7 +34,7 @@ describe('swapSettleMachine', () => {
   })
 
   it('names each locked outcome honestly', () => {
-    const end = (outcome: 'swapped' | 'refunded' | 'missed') => {
+    const end = (outcome: 'swapped' | 'refunded' | 'missed' | 'unsent') => {
       const actor = at('locked')
       actor.send({ type: 'DONE', outcome })
       return actor.getSnapshot()
@@ -42,6 +42,8 @@ describe('swapSettleMachine', () => {
     expect(end('swapped').value).toBe('settled')
     expect(end('refunded').value).toBe('refunded')
     expect(end('missed').value).toBe('missed')
+    expect(end('unsent').value).toBe('ended')
+    expect(can('negotiating', { type: 'DONE', outcome: 'unsent' })).toBe(false)
     expect(end('swapped').status).toBe('done')
   })
 

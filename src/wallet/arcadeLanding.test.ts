@@ -88,7 +88,8 @@ vi.mock('./minerSubmit', () => ({
 }))
 vi.mock('./recompose', () => ({ isRecomposeInFlight: () => false }))
 vi.mock('./toast', () => ({ toastError: (...a: unknown[]) => toastError(...a) }))
-vi.mock('./signedChequeArchive', () => ({ signedChequeAtomic: () => null }))
+let bodies: Record<string, number[]> = {}
+vi.mock('./signedChequeArchive', () => ({ signedChequeAtomic: (txid: string) => bodies[txid] ?? null }))
 
 const stalled: ArcadeTxFate = {
   kind: 'stalled',
@@ -124,6 +125,8 @@ describe('arcadeLanding', () => {
       [SLOW]: [`${'e5'.repeat(32)}.0`],
     }
     spentBy = { [DEAD_INPUT]: SPENDER }
+    bodies = {}
+    ;(runtime.instance as unknown as { services: unknown }).services = {}
     const { resetArcadeLandingForTests } = await import('./arcadeLanding')
     resetArcadeLandingForTests()
   })
@@ -167,6 +170,68 @@ describe('arcadeLanding', () => {
     fates[SLOW] = { kind: 'accepted', status: 'SEEN_ON_NETWORK' }
     await vi.advanceTimersByTimeAsync(15_000)
     expect(txLanded(SLOW)).toBe(true)
+    expect(calls).toEqual([])
+  })
+
+  it('unlock re-posts a stalled cheque with the parents the network never saw, Arcade first, each parent once', async () => {
+    const { Beef, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } = await import('@bsv/sdk')
+    const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
+    const spend = (parent: InstanceType<typeof Transaction>, vout: number) => {
+      const t = new Transaction()
+      t.addInput({ sourceTXID: parent.id('hex'), sourceOutputIndex: vout, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+      t.addOutput({ lockingScript: lock, satoshis: 1 })
+      return t
+    }
+    const mined = new Transaction()
+    mined.addInput({ sourceTXID: '00'.repeat(32), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    mined.addOutput({ lockingScript: lock, satoshis: 2 })
+    mined.addOutput({ lockingScript: lock, satoshis: 2 })
+    const parent = new Transaction()
+    parent.addInput({ sourceTXID: mined.id('hex'), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    parent.addOutput({ lockingScript: lock, satoshis: 1 })
+    parent.addOutput({ lockingScript: lock, satoshis: 1 })
+    const first = spend(parent, 0)
+    const second = spend(parent, 1)
+    const body = (t: InstanceType<typeof Transaction>) => {
+      const beef = new Beef()
+      beef.mergeRawTx(mined.toBinary(), beef.mergeBump(new MerklePath(9, [[{ offset: 0, hash: mined.id('hex'), txid: true }]])))
+      beef.mergeRawTx(parent.toBinary())
+      beef.mergeRawTx(t.toBinary())
+      return beef.toBinary()
+    }
+    const [p, a, b] = [parent, first, second].map((t) => t.id('hex'))
+    const posts: string[] = []
+    const service = (name: string) => ({
+      name,
+      service: async (_beef: unknown, txids: string[]) => {
+        posts.push(`${name}:${txids.map((id) => id.slice(0, 4)).join(',')}`)
+        return { status: 'success', txidResults: txids.map((txid) => ({ txid, status: 'success' })) }
+      },
+    })
+    ;(runtime.instance as unknown as { services: unknown }).services = {
+      postBeefServices: { services: [service('arcade'), service('WoC')] },
+    }
+    const now = Date.now()
+    pins = [
+      { txid: a!, at: now - 3 * HOUR },
+      { txid: b!, at: now - 2 * HOUR },
+    ]
+    fates = { [a!]: stalled, [b!]: stalled }
+    inputsOf = { [a!]: [`${p}.0`], [b!]: [`${p}.1`] }
+    bodies = { [a!]: body(first), [b!]: body(second) }
+    // Loaded ahead: a first dynamic import takes real time the fake clock does not advance.
+    await Promise.all([import('./beefSubset'), import('./postBeefResult')])
+
+    const { scheduleUnlockLandingPass } = await import('./arcadeLanding')
+    scheduleUnlockLandingPass(runtime)
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    const short = (id: string) => id.slice(0, 4)
+    expect(posts).toEqual([
+      `arcade:${short(p!)},${short(a!)}`,
+      `WoC:${short(p!)},${short(a!)}`,
+      `WoC:${short(b!)}`,
+    ])
     expect(calls).toEqual([])
   })
 

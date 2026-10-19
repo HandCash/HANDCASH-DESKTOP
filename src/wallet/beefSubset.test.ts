@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Beef, LockingScript, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
-import { BeefShelf, beefSubset, prefixWithinBeefBudget } from './beefSubset'
+import { BeefShelf, beefSubset, prefixWithinBeefBudget, unprovenAncestry } from './beefSubset'
 
 const lock = new P2PKH().lock(PrivateKey.fromRandom().toAddress())
 
@@ -78,6 +78,26 @@ describe('beefSubset', () => {
   it('carries far fewer bytes than the whole import package', () => {
     const { beef, mintA } = fixture()
     expect(beefSubset(beef, [mintA.id('hex')]).toBinary().length).toBeLessThan(beef.toBinary().length / 2)
+  })
+})
+
+describe('unprovenAncestry', () => {
+  it('names every unproven parent before its child, ending at the subject, and stops at proofs', () => {
+    const { beef, g1, mintA, mintC } = fixture()
+    const child = tx([mintA, mintC])
+    const grandchild = tx([child])
+    beef.mergeRawTx(child.toBinary())
+    beef.mergeRawTx(grandchild.toBinary())
+    const ids = unprovenAncestry(beef, grandchild.id('hex'))
+    expect(ids).toHaveLength(4)
+    expect(ids.at(-1)).toBe(grandchild.id('hex'))
+    expect(ids).not.toContain(g1.id('hex'))
+    expect(ids.indexOf(child.id('hex'))).toBeGreaterThan(Math.max(ids.indexOf(mintA.id('hex')), ids.indexOf(mintC.id('hex'))))
+  })
+
+  it('is only the subject when its parents are proven', () => {
+    const { beef, mintA } = fixture()
+    expect(unprovenAncestry(beef, mintA.id('hex'))).toEqual([mintA.id('hex')])
   })
 })
 

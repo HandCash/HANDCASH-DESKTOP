@@ -36,6 +36,12 @@ export function journalSwapLockSpent(active: ActiveWallet, outpoint: string): vo
   append(active, [{ k: 'spent', op: custodyOp(outpoint) }], `the spend of ${outpoint}`)
 }
 
+/** A BSV lock the landing watch proved will never be mined: a coin it spends went to another transaction. */
+export async function bsvLockProvenUnsent(txid: string): Promise<boolean> {
+  const { txIsArcadeRejected } = await import('../arcadeSubmitGuard')
+  return txIsArcadeRejected(txid)
+}
+
 export async function sendSettle(active: ActiveWallet, to: string, message: SettleMessage): Promise<void> {
   const { sendSealedToPeerBox } = await import('../messageTransport')
   await sendSealedToPeerBox(active.rootKeyHex, to, SWAP_SETTLE_BOX, JSON.stringify(message))

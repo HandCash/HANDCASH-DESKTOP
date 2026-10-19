@@ -52,6 +52,7 @@ const TONES: Record<string, SwapTone> = {
   declined: 'stopped',
   expired: 'stopped',
   missed: 'stopped',
+  unsent: 'stopped',
   refused: 'stopped',
 }
 
@@ -157,7 +158,7 @@ export function directSwapView(record: SettleRecord): SwapView {
     title: title(from, pay, to, receive),
     status: row.status,
     legs: legsOf([
-      ['lock', from, record.own.funding?.txid ?? record.own.prepared?.txid],
+      ['lock', from, record.outcome === 'unsent' ? undefined : (record.own.funding?.txid ?? record.own.prepared?.txid)],
       ['peer-lock', to, record.peer.funding?.txid],
       ['claim', to, record.peer.claim?.txid],
       ['refund', from, record.own.refund?.txid],

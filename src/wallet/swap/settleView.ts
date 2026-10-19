@@ -29,6 +29,8 @@ export function describeSwap(r: SettleRecord): SwapStanding {
       return row('expired', 'Expired before anything was locked')
     case 'missed':
       return row('missed', 'The taker refunded before this wallet claimed')
+    case 'unsent':
+      return row('unsent', 'Your lock never reached the chain; nothing was locked')
   }
   if (r.declined && r.own.funding) return row('declined', `Declined by ${peer} (${r.declined}); your lock comes back at its lock time${until(r.waiting?.until)}`)
   if (r.peer.refused) return row('refused', `${peer[0]!.toUpperCase()}${peer.slice(1)}'s lock does not match the terms; yours refunds at its lock time`)
