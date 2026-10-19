@@ -1,12 +1,13 @@
 # Coins of other chains
 
 Specs for holding, swapping and wrapping coins of other UTXO chains. BRC-213
-(native coins, [#337](https://github.com/bsv-blockchain/BRCs/pull/337)) and
+(native coins, [#337](https://github.com/bsv-blockchain/BRCs/pull/337)),
 BRC-214 (asset profiles, [#338](https://github.com/bsv-blockchain/BRCs/pull/338))
 and BRC-256 (swaps, [#339](https://github.com/bsv-blockchain/BRCs/pull/339))
 are BSVA drafts; numbers are proposed, not assigned. BRC-212 (wrapping by an
 issuer's reserve) stays held back: that is custody. The working drafts live in
-the sibling checkouts `../BRCs-212`, `../BRCs-213`, `../BRCs-214`; this folder
+the sibling checkouts `../BRCs-212`, `../BRCs-213`, `../BRCs-214` and
+`../BRCs-256`; this folder
 is the source, so copy changes from here (absolute BRC links become `../`).
 
 | Doc | What | Code |
