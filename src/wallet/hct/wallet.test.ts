@@ -2,9 +2,9 @@ import { Beef, LockingScript, P2PKH, PrivateKey, Random, Transaction, UnlockingS
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { hctHolderPublicKey } from './keys'
 import { hctHeldLock, readHct } from './script'
-import ltcDeposit from '../wltc/fixtures/deposit.json'
-import { setLtcAnchorForTest } from '../wltc/headers'
-import { fromHex, ltcTxid, parseLtcTx, reversed, serializeLtcTxNoWitness, toHex } from '../wltc/litecoin'
+import ltcDeposit from '../ltc/fixtures/deposit.json'
+import { setLtcAnchorForTest } from '../ltc/headers'
+import { fromHex, ltcTxid, parseLtcTx, reversed, serializeLtcTxNoWitness, toHex } from '../ltc/litecoin'
 
 type Row = {
   outpoint: string
@@ -200,7 +200,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueHctAsset, mintHctAsset, transferHctAsset, burnHctUnits, listHctAssets, serveHctBox, proveHctBacking, adoptSignedHctAction, HctRefusal } = await import('./wallet')
+const { issueHctAsset, mintHctAsset, transferHctAsset, preflightHctTransfer, burnHctUnits, listHctAssets, serveHctBox, proveHctBacking, adoptSignedHctAction, HctRefusal } = await import('./wallet')
 const { readHctState, writeHctState } = await import('./state')
 
 const alice = makeInstall()
@@ -467,7 +467,7 @@ describe('open HCT wallet', () => {
     send.mockRestore()
   })
 
-  it('credits backed units at once, moves them only once their deposit is proven, and ships the proof', async () => {
+  it('credits backed units at once and moves them only once their deposit is proven', async () => {
     const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
     const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
     const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
@@ -484,7 +484,7 @@ describe('open HCT wallet', () => {
     )
     const listed = async () => (await as(frank, () => listHctAssets())).assets.find((a) => a.assetId === token.assetId)
     expect(await listed()).toMatchObject({ balance: '1000', locked: '1000', backedBy: 'ltc' })
-    await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '10' }))).rejects.toMatchObject({ reason: 'insufficient' })
+    await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: frank.identityKey, amount: '10' }))).rejects.toMatchObject({ reason: 'insufficient' })
     await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '5' }, { backing: { deposit } }))).rejects.toMatchObject({ reason: 'awaiting-backing' })
     await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '5' }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
 
@@ -497,18 +497,29 @@ describe('open HCT wallet', () => {
     await expect(as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '500' }, { backing: { deposit } }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
     const minted = await as(frank, () => mintHctAsset({ assetId: token.assetId, amount: '500' }, { backing: { deposit: second } }))
     expect(await listed()).toMatchObject({ balance: '1500', locked: '500' })
-    await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1001' }))).rejects.toMatchObject({ reason: 'insufficient' })
-    await as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '400' }))
-    await as(gina, () => serveHctBox({ force: true }))
-    expect(await balanceOf(gina, token.assetId)).toBe('400')
-    expect(gina.chain.backing.has(token.txid)).toBe(true)
+    await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: frank.identityKey, amount: '1001' }))).rejects.toMatchObject({ reason: 'insufficient' })
 
     await expect(as(frank, () => proveHctBacking(token.assetId, minted.txid, proof))).rejects.toThrow(/does not check/)
     await as(frank, () => proveHctBacking(token.assetId, minted.txid, secondProof))
     expect((await listed())?.locked).toBeUndefined()
-    await as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1100' }))
-    await as(gina, () => serveHctBox({ force: true }))
-    expect(await balanceOf(gina, token.assetId)).toBe('1500')
-    expect(gina.chain.backing.has(minted.txid)).toBe(true)
+    await as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: frank.identityKey, amount: '1100' }))
+    expect(await balanceOf(frank, token.assetId)).toBe('1500')
+  })
+
+  it('never lets a backed token leave its issuer: anyone else would hold a claim only the issuer can pay', async () => {
+    const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
+    const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
+    const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
+    const frank = makeInstall()
+    const gina = makeInstall()
+    const token = await as(frank, () =>
+      issueHctAsset({ kind: 'token', sym: 'wLTC', supply: '1000', dec: 8, auth: true }, { backing: { deposit, bk: { chain: 'ltc', reserve } } }),
+    )
+    setLtcAnchorForTest({ check: async () => ({ kind: 'buried' }) })
+    await as(frank, () => proveHctBacking(token.assetId, token.txid, proof))
+    await expect(as(frank, () => preflightHctTransfer({ assetId: token.assetId, recipient: gina.identityKey, amount: '1' }))).rejects.toMatchObject({ reason: 'custodial' })
+    await expect(as(frank, () => transferHctAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1' }))).rejects.toMatchObject({ reason: 'custodial' })
+    expect(await balanceOf(frank, token.assetId)).toBe('1000')
+    expect(await balanceOf(gina, token.assetId)).toBeUndefined()
   })
 })

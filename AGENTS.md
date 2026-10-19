@@ -47,6 +47,7 @@
 | BRC / migrate rules | `.cursor/rules/brc100-bsva.mdc` |
 | Wallet layer SSoT | `src/wallet/layers.ts` |
 | P2P / remittance / messagebox | `docs/wallet-p2p-messagebox.md` |
+| Coins of other chains, swaps, wrapping (held back from BSVA) | `docs/bsva/brcs/coins/README.md` |
 | Aeon engine (vendored) | `vendor/aeon-ui-engine/CONSUMER.md` |
 | Aeon engine (upstream, if cloned) | `~/AeonUI/AGENTS.md` |
 | App overview | `README.md` |

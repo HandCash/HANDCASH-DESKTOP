@@ -3,7 +3,7 @@ import { useActivityAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { AppAvatar } from './AppAvatar'
 import { AssetIssuers } from './AssetIssuers'
-import { LtcDepositDetails } from './LtcDepositDetails'
+import { CoinDepositDetails } from './CoinDepositDetails'
 import { ReceiveIcon } from './icons'
 import { HistoryActionBadge, HistoryAppBadge, HistoryIconCluster } from './RecentActivity'
 import { appDisplayName } from '../wallet/appIdentity'
@@ -13,6 +13,7 @@ import {
   activityEntryTitle,
   activityRecipientLabel,
   activityTokenAmountDisplay,
+  coinActivityChain,
   getActivityById,
   isEventActivity,
   isFailedActivity,
@@ -32,6 +33,7 @@ import {
 } from '../wallet/appActivity'
 import { inFlightSettlementLabel } from '../wallet/settlementCopy'
 import { getTxByTxid } from '../wallet/txStore'
+import { normalizeTokenId } from '../wallet/token/types'
 import { viewActivityItem } from '../wallet/activityItemView'
 import { activityContactLink } from '../wallet/itemHistory'
 import {
@@ -50,12 +52,15 @@ import {
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from '../wallet/fx'
+import { coinActivityUsdLabel } from '../wallet/heldValue'
+import { useCoinPrices } from '../features/heldCoins'
+import { COIN_INFO, type CoinChain } from '../wallet/coins/coinChains'
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
-import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
+import { coinTxExplorerUrl, isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
 import {
@@ -131,9 +136,9 @@ function itemLinkOutpoint(item: ActivityItem | undefined): string | null {
   return held?.outpoint ?? null
 }
 
+/** BSV-21 ids open the token's details; an HCT asset id (40 hex) has none to open. */
 function tokenLinkId(item: ActivityItem | undefined): string | null {
-  const id = item?.tokenId?.trim().toLowerCase()
-  return id || null
+  return item?.tokenId ? normalizeTokenId(item.tokenId) : null
 }
 
 function eventStatusLabel(recorded: string): string {
@@ -212,10 +217,12 @@ function PaymentBreakdownRow({
   entry,
   currency,
   usdPerBsv,
+  coinPrices,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
   usdPerBsv: number | null
+  coinPrices: Record<CoinChain, number | null>
 }) {
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const named = shown ? { ...entry, item: shown } : entry
@@ -229,7 +236,7 @@ function PaymentBreakdownRow({
   const amount =
     token || (!item && entry.sats > 0)
       ? token
-        ? activityTokenAmountDisplay(named)
+        ? (currency === 'usd' ? coinActivityUsdLabel(named, coinPrices) : null) ?? activityTokenAmountDisplay(named)
         : `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
       : null
   const itemOutpoint = itemLinkOutpoint(shown)
@@ -311,6 +318,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [currency, setCurrency] = useState<DisplayCurrency>(() =>
     getDisplayCurrency(),
   )
+  const coinPrices = useCoinPrices()
   const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
     kind: 'notAttempt',
   })
@@ -364,8 +372,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     )
   }
 
-  if (entry.method === 'wltc-credit') {
-    return <LtcDepositDetails entry={entry} chain={chain} />
+  const receivedCoin = entry.method.endsWith('-receive') ? coinActivityChain(entry) : null
+  if (receivedCoin) {
+    return <CoinDepositDetails chain={receivedCoin} entry={entry} />
   }
 
   if (isEventActivity(entry)) {
@@ -471,12 +480,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       }
     : null
   const viewed = shownItem ? { ...entry, item: shownItem } : entry
-  const primary = token
+  const coinUsdLabel = token && currency === 'usd' ? coinActivityUsdLabel(viewed, coinPrices) : null
+  const primary = coinUsdLabel
+    ? coinUsdLabel
+    : token
     ? activityTokenAmountDisplay(viewed)
     : item
     ? shownItem?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const secondary = item
+  const secondary = coinUsdLabel
+    ? activityTokenAmountDisplay(viewed)
+    : item
     ? token
       ? minted
         ? shownItem?.name
@@ -507,8 +521,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const moneyLeg = moneyLegForEntry(entry, recent)
   const breakdown = expandedActivityLegs(entry, recent)
   const showBreakdown = breakdown.length > 1
+  const coinChain = coinActivityChain(entry)
   const explorer = isExplorerTxid(entry.txid)
-    ? txExplorerUrl(entry.txid!, chain)
+    ? coinChain ? coinTxExplorerUrl(coinChain, entry.txid) : txExplorerUrl(entry.txid!, chain)
     : null
 
   const retryAttempt = async () => {
@@ -648,7 +663,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                 className="payment-details-woc"
                 onClick={() => openExplorer(explorer)}
               >
-                Open in WhatsOnChain
+                {coinChain ? 'Open in explorer' : 'Open in WhatsOnChain'}
               </button>
             ) : null}
           </div>
@@ -686,6 +701,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               entry={leg}
               currency={currency}
               usdPerBsv={usdPerBsv}
+              coinPrices={coinPrices}
             />
           ))}
         </ol>
@@ -723,6 +739,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       <dl className="payment-details-meta">
         <dt>Type</dt>
         <dd>{detailLabel}</dd>
+        {coinChain ? (
+          <>
+            <dt>Network</dt>
+            <dd>{COIN_INFO[coinChain].label}</dd>
+          </>
+        ) : null}
         {moneyLeg ? (
           <>
             <dt>{moneyLeg.kind === 'spent' ? 'Paid' : 'Proceeds'}</dt>

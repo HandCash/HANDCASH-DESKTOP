@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LiveAction } from '../../wallet/actionLifecycle'
-import { WALLET_ACTIVITY_ORIGIN, type ActivityEntry } from '../../wallet/appActivity'
+import { WALLET_ACTIVITY_ORIGIN, activityEntryTitle, type ActivityEntry } from '../../wallet/appActivity'
 import {
   activityRowState,
   activityRowStateLabel,
@@ -190,5 +190,13 @@ describe('activityRowState', () => {
       status: 'failed',
       failureReason: 'No funds',
     })
+  })
+
+  it('fails a key-only request as itself, never as a send', () => {
+    const row = liveActionEntry(
+      live({ face: 'failed', method: 'createSignature', origin: 'https://app.example.com', error: 'Reserved' }),
+    )
+    expect(row.kind).toBe('event')
+    expect(activityEntryTitle(row)).toBe('Example signature failed')
   })
 })

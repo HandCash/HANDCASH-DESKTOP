@@ -28,6 +28,7 @@ import {
   assessPeerBsv21Support,
   peerBsv21SupportWarning,
 } from '../wallet/peerTokenCapability'
+import { readPeerProtocols } from '../wallet/walletProtocols'
 import {
   clearNavChild,
   openFungibleDetails,
@@ -91,6 +92,7 @@ export function SendFungiblePanel({ tokenId, onSent }: Props) {
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [recipientProtocols, setRecipientProtocols] = useState<string[]>([])
+  const [signedProtocols, setSignedProtocols] = useState<{ identityKey: string; protocols: string[] } | null>(null)
   const [showMatches, setShowMatches] = useState(false)
   const [sendSnapshot, sendUi] = useMachine(assetSendMachine, {
     input: { needsQuantity: true },
@@ -166,6 +168,19 @@ export function SendFungiblePanel({ tokenId, onSent }: Props) {
     })
   }, [pathVerdict.allowed, pathVerdict.error, sendUi])
 
+  useEffect(() => {
+    if (!recipientIdentityKey) return
+    let live = true
+    void readPeerProtocols(recipientIdentityKey).then((read) => {
+      if (live && read.kind === 'record') {
+        setSignedProtocols({ identityKey: recipientIdentityKey, protocols: read.protocols })
+      }
+    })
+    return () => {
+      live = false
+    }
+  }, [recipientIdentityKey])
+
   const friendProtocols =
     recipientIdentityKey != null
       ? listFriends().find(
@@ -177,7 +192,11 @@ export function SendFungiblePanel({ tokenId, onSent }: Props) {
       recipientIdentityKey,
       destination: to,
       protocols:
-        recipientProtocols.length > 0 ? recipientProtocols : friendProtocols,
+        signedProtocols?.identityKey === recipientIdentityKey
+          ? signedProtocols.protocols
+          : recipientProtocols.length > 0
+            ? recipientProtocols
+            : friendProtocols,
     }),
   )
 

@@ -56,6 +56,31 @@ describe('Select', () => {
     expect(root).not.toContainElement(listbox)
   })
 
+  it('sizes the listbox to anchorRef instead of the trigger', async () => {
+    const user = userEvent.setup()
+    const anchor = document.createElement('div')
+    anchor.getBoundingClientRect = () => ({ x: 10, y: 10, left: 10, top: 10, right: 330, bottom: 50, width: 320, height: 40, toJSON: () => ({}) })
+    document.body.append(anchor)
+    const anchorRef = { current: anchor }
+
+    render(
+      <Select.Root value="a">
+        <Select.Trigger>
+          <Select.ValueText>Alpha</Select.ValueText>
+        </Select.Trigger>
+        <Select.Positioner anchorRef={anchorRef} data-testid="positioner">
+          <Select.Content>
+            <Select.Item value="a">Alpha</Select.Item>
+          </Select.Content>
+        </Select.Positioner>
+      </Select.Root>,
+    )
+
+    await user.click(screen.getByRole('button'))
+    expect(screen.getByTestId('positioner').style.width).toBe('320px')
+    anchor.remove()
+  })
+
   it('closes on escape', async () => {
     const user = userEvent.setup()
 

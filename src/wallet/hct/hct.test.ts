@@ -23,9 +23,9 @@ import {
 } from './script'
 import { checkHctTx, readHctDeploy, walkHct, type HctDeploy } from './validity'
 import { hctBackingScript, readBackingOutputs, type HctBackingProof } from './backing'
-import ltcDeposit from '../wltc/fixtures/deposit.json'
-import { setLtcAnchorForTest, type LtcBurialAnchor } from '../wltc/headers'
-import { fromHex, parseLtcTx, toHex } from '../wltc/litecoin'
+import ltcDeposit from '../ltc/fixtures/deposit.json'
+import { setLtcAnchorForTest, type LtcBurialAnchor } from '../ltc/headers'
+import { fromHex, parseLtcTx, toHex } from '../ltc/litecoin'
 
 const pub = (key: PrivateKey) => key.toPublicKey().toString()
 const identity = PrivateKey.fromRandom()

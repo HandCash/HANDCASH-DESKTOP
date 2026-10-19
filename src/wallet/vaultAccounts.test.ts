@@ -86,7 +86,7 @@ describe('vaultAccounts (BRC-208)', () => {
   })
 
   it('refuses keys and signatures under asset custody protocols', () => {
-    for (const name of ['hct holder', 'HCT  Holder ', 'hct issuer', 'hct fee', 'countersign release', 'countersign decision']) {
+    for (const name of ['hct holder', 'HCT  Holder ', 'hct issuer', 'hct fee', 'countersign release', 'countersign decision', 'wltc reserve', 'BCH Coin', 'btc coin', 'doge coin', 'ltc coin payment', 'BTC Coin Payment', 'bch coin payment', 'doge coin payment', 'swap order']) {
       for (const method of ['createSignature', 'getPublicKey', 'revealSpecificKeyLinkage', 'encrypt']) {
         expect(reservedKeyRefusal(method, { protocolID: [2, name], keyID: 'a b', counterparty: 'self' }, undefined)).toBe(
           'asset-protocol',

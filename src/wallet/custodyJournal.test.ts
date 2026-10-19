@@ -88,6 +88,31 @@ describe('custody journal', () => {
     expect(j.custodyJournalSummary(alice)).toMatchObject({ recipes: 3, spent: 1, unspentSats: 100 })
   })
 
+  it('keeps swap locks apart from BSV recipes, refusing malformed ones and keeping only a whole refund', async () => {
+    const j = await load()
+    const swapId = 'cd'.repeat(16)
+    const lock = { p: 'swap lock', chain: 'LTC', swapId, role: 'taker', side: 'own', terms: '{"v":1}' }
+    const refund = { to: '76a9' + '00'.repeat(20) + '88ac', value: '99960', prefix: 'p', suffix: 's', cosig: '30' + 'ab'.repeat(35) }
+    j.appendCustody(alice, [
+      { k: 'out', op: `${txA}.0`, sats: 100_000, r: lock },
+      { k: 'out', op: `${txA}.1`, sats: 500, r: { ...lock, chain: 'bsv', side: 'fee', refund } },
+      { k: 'out', op: `${txA}.2`, sats: 500, r: { ...lock, chain: 'bsv', refund: { ...refund, cosig: 'zz' } } },
+      { k: 'out', op: `${txA}.3`, sats: 1, r: { ...lock, role: 'judge' } },
+      { k: 'out', op: `${txA}.4`, sats: 1, r: { ...lock, swapId: 'short' } },
+      { k: 'out', op: `${txA}.5`, sats: 1, r: { ...lock, terms: '' } },
+      { k: 'out', op: `${txB}.0`, sats: 50, r: pay('q') },
+    ])
+    const swaps = j.unspentSwapCustody(alice)
+    expect(swaps.map((s) => s.op)).toEqual([`${txA}.0`, `${txA}.1`, `${txA}.2`])
+    expect(swaps[0]!.r).toEqual({ ...lock, chain: 'ltc' })
+    expect(swaps[1]!.r.refund).toEqual(refund)
+    expect(swaps[2]!.r.refund).toBeUndefined()
+    const bsv = j.custodyEntries(alice).flatMap((e) => (e.k === 'out' && j.isBsvRecipe(e.r) ? [e.op] : []))
+    expect(bsv).toEqual([`${txB}.0`])
+    j.appendCustody(alice, [{ k: 'spent', op: `${txA}.0` }])
+    expect(j.unspentSwapCustody(alice).map((s) => s.op)).toEqual([`${txA}.1`, `${txA}.2`])
+  })
+
   it('keeps each vault account in its own journal', async () => {
     const j = await load()
     j.appendCustody(alice, [{ k: 'out', op: `${txA}.0`, sats: 1, r: pay('p') }])

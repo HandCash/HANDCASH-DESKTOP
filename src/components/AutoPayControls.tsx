@@ -179,13 +179,14 @@ export function connectPermissionNote(
   return `Outgoing payments and items still need separate approval. ${receive}`
 }
 
-/** Whether this action prompt should offer Auto-pay (plain BSV pay only). */
-export function isBsvPaymentAction(pending: {
+/** Whether this action prompt should offer Auto-pay: a plain coin payment (BSV, LTC, BCH), never an item or token. */
+export function isAutoPayableAction(pending: {
   kind?: string
   method: string
   title?: string
 }): boolean {
   if (pending.kind === 'connect') return false
+  if (pending.method === 'sendCoins') return true
   if (pending.method !== 'createAction' && pending.method !== 'signAction') return false
   if (
     pending.title === 'Send item' ||

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Item detail must paint verified badges from durable storage without waiting
 // on indexer or re-walking BRC-150 for tips already proven.
@@ -79,6 +79,11 @@ vi.mock('./oneSatImport', async (importOriginal) => {
 })
 
 describe('getCollectable detail fast path', () => {
+  // The first cold import transforms the whole wallet graph; pay it here, not inside a test's 5 s budget.
+  beforeAll(async () => {
+    await import('./collectables')
+  }, 120_000)
+
   beforeEach(() => {
     vi.resetModules()
     store.clear()

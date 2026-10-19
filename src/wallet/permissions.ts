@@ -49,7 +49,10 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
 import type { IssuanceAttestation } from './identityIssuance'
-import { formatLtc } from './wltc/litecoin'
+import { formatUsd } from './fx'
+import { coinBudgetSats, coinUsdValue } from './coins/budget'
+import { coinApprovalTitle, COIN_INFO, formatCoin, isCoinChain } from './coins/coinChains'
+import { hctAmountLabel } from './hct/assetLabel'
 
 const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
@@ -99,6 +102,8 @@ export type PendingAction = {
   details: string[]
   amountLabel?: string
   amountSats?: number
+  /** Second amount line for a payment not in BSV (its USD value); `amountSats` always renders as BSV. */
+  amountNote?: string
   /**
    * Held tip this action would sell. The prompt resolves the picture and name
    * from the wallet's own basket — an app may name an outpoint, it never gets
@@ -650,7 +655,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'issueHctAsset',
         'mintHctAsset',
         'transferHctAsset',
-        'withdrawLtc',
+        'sendCoins',
       ].includes(prompt.method)
     ) {
       return
@@ -870,6 +875,9 @@ export function summarizeAction(method: string, args: unknown): {
   details: string[]
   amountLabel?: string
   amountSats?: number
+  amountNote?: string
+  /** What this payment counts against the app's Auto-pay / spending budget, in sats; defaults to `amountSats`. */
+  budgetSats?: number
   itemOutpoint?: string
   tokenId?: string
   itemName?: string
@@ -1388,9 +1396,8 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'mintHctAsset') {
-    const amount = String(body.amount ?? '?')
     return {
-      title: `Mint ${amount}`,
+      title: `Mint ${hctAmountLabel(body.assetId, body.amount)}`,
       summary: 'Create new units of a token you issued. They come to you; a capped token never passes its cap.',
       tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
       previewKind: 'token',
@@ -1399,10 +1406,9 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'transferHctAsset') {
-    const amount = String(body.amount ?? '1')
     const recipient = typeof body.recipient === 'string' ? body.recipient : ''
     return {
-      title: `Send ${amount}`,
+      title: `Send ${hctAmountLabel(body.assetId, body.amount ?? '1')}`,
       summary: 'You sign the transfer; the recipient gets its proof in their inbox and checks it themselves.',
       tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
       details: [
@@ -1412,18 +1418,28 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'withdrawLtc') {
-    const raw = String(body.litoshi ?? '')
-    const ltc = /^\d+$/.test(raw) ? formatLtc(BigInt(raw)) : '?'
+  if (method === 'sendCoins' && isCoinChain(body.chain)) {
+    const chain = body.chain
+    const { label, ticker } = COIN_INFO[chain]
+    const raw = String(body.amount ?? '')
+    const units = /^\d+$/.test(raw) ? BigInt(raw) : null
     const address = typeof body.address === 'string' ? body.address : ''
+    const identityKey = typeof body.identityKey === 'string' ? body.identityKey.trim() : ''
+    const usd = units ? coinUsdValue(chain, units) : null
     return {
-      title: `Withdraw ${ltc} LTC`,
-      summary: 'Pay litecoin out of your wLTC reserve. The same amount of wLTC, plus the Litecoin fee, is burned first.',
-      previewKind: 'token',
+      title: coinApprovalTitle(chain),
+      summary:
+        typeof body.description === 'string' && body.description.trim()
+          ? body.description.trim()
+          : 'Payment from a connected app',
+      amountLabel: units ? `${formatCoin(chain, units)} ${ticker}` : undefined,
+      amountNote: usd != null ? formatUsd(usd) : undefined,
+      budgetSats: units ? coinBudgetSats(chain, units) ?? undefined : undefined,
       details: [
-        address ? `To: ${address}` : 'Unknown address',
-        'The Litecoin network fee is paid in wLTC',
-        'Your wallet broadcasts the payout only after the burn is signed; it retries until it lands',
+        identityKey ? `To identity: ${identityKey.slice(0, 16)}…` : address ? `To: ${address}` : 'Unknown address',
+        ...(identityKey ? [`Their wallet receives ${label} at its identity; it is told which key the coins are locked to`] : []),
+        `Paid on ${label} from this wallet; the ${label} network fee is added on top`,
+        'Counts toward this app\'s Auto-pay limit at its dollar value',
       ],
     }
   }
@@ -1522,8 +1538,9 @@ export function requestActionApproval(
   attestation?: IssuanceAttestation,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
+  const { title, summary, details, amountLabel, amountSats, amountNote, budgetSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
     summarizeAction(method, args)
+  const spendSats = budgetSats ?? amountSats
   const inputs = asRecord(args).inputs
   const issuance: PendingAction['issuance'] =
     attestation?.kind === 'signed'
@@ -1553,8 +1570,8 @@ export function requestActionApproval(
     if (access.canReceive) return Promise.resolve('allow')
   } else if (incomingFunds && acceptsIncomingFunds(key)) {
     return Promise.resolve('allow')
-  } else if (onAutomaticApproval && canAutoProcessPayment(key, method, amountSats)) {
-    const reservation = reserveAutoPayPayment(key, amountSats ?? 0)
+  } else if (onAutomaticApproval && canAutoProcessPayment(key, method, spendSats)) {
+    const reservation = reserveAutoPayPayment(key, spendSats ?? 0)
     if (reservation) {
       onAutomaticApproval(reservation)
       return Promise.resolve('allow')
@@ -1582,6 +1599,7 @@ export function requestActionApproval(
     details,
     amountLabel,
     amountSats,
+    ...(amountNote ? { amountNote } : {}),
     itemOutpoint,
     tokenId,
     itemName,

@@ -1430,6 +1430,12 @@ export async function pollInboundTipHints(args: {
     void import('./hct/wallet')
       .then(({ serveHctBox }) => serveHctBox())
       .catch((err) => console.warn('[hct] box serve failed', err instanceof Error ? err.message : String(err)))
+    void import('./coins/coinPaymentBox')
+      .then(({ serveCoinPaymentBox }) => serveCoinPaymentBox())
+      .catch((err) => console.warn('[coin-payment] box serve failed', err instanceof Error ? err.message : String(err)))
+    void import('./swap/settleRunner')
+      .then(({ serveSwapSettle }) => serveSwapSettle())
+      .catch((err) => console.warn('[swap-settle] serve failed', err instanceof Error ? err.message : String(err)))
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0

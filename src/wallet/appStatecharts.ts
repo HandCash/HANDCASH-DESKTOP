@@ -624,41 +624,117 @@ const HCT = `stateDiagram-v2
   end note
 `
 
-const WLTC = `stateDiagram-v2
+const COIN = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> reading : CREDIT (reserve UTXO not yet credited)
-  reading --> minting : SEEN (bytes hash to txid, output pays the reserve)
+  idle --> reading : RECEIVE (output paying this wallet's key on the coin's chain, or named by a coin-payment notice, not yet recorded)
+  reading --> received : SEEN (bytes hash to txid, output pays this wallet's script, or the key derived for the notice's sender and key id)
   reading --> refused : REFUSED tx-mismatch | malformed | coinbase | no-output | wrong-script
-  minting --> credited : MINTED (backed wLTC, backing output names the deposit; label wltc deposit outpoint)
-  minting --> awaiting : AWAITING (first deposit unproven, its deploy is the authority)
-  idle --> proving : PROVE (credited, unproven)
-  proving --> proven : PROVEN (block 6 deep on this wallet's own Litecoin header chain; wLTC can move)
-  proving --> pending : PENDING (unconfirmed, n of 6 counted on this chain, or Litecoin unreadable)
-  proving --> voided : VOIDED (shown abandoned: unknown to the explorers for 30 min; moves only if it reaches a block)
-  idle --> building : WITHDRAW (proven reserve outputs, recorded amounts)
-  building --> burning : LTC_SIGNED (BIP143 P2WPKH, kept unsent)
-  burning --> broadcasting : BURNED (amount + fee to the wLTC burn key)
-  broadcasting --> withdrawn : BROADCASTED
+  idle --> proving : PROVE (received coin, not yet buried)
+  proving --> proven : PROVEN (block D deep on this wallet's own header chain for the coin: LTC 6 · BCH 6 · BTC 3 · DOGE 20; spendable)
+  proving --> pending : PENDING (unconfirmed, n of D counted on this chain, or the chain unreadable)
+  proving --> voided : VOIDED (shown abandoned: unknown to the sources for 30 min; never spent)
+  idle --> building : SEND (online; account held here, re-checked after a gap; spendable coins: buried received + change of own broadcast payments; to an identity only if its signed record names coin:<chain>, else unsupported-recipient | recipient-unchecked)
+  building --> broadcasting : SIGNED (LTC, BTC: BIP143 P2WPKH · BCH: P2PKH, SIGHASH_ALL|FORKID · DOGE: P2PKH, legacy SIGHASH_ALL; recorded before broadcast)
+  broadcasting --> sent : BROADCASTED (kept alive until it confirms; to an identity: sealed notice to box coin-payment, retried, never gating it)
   broadcasting --> queued : BROADCAST_QUEUED (retried every pass)
   idle --> broadcasting : RESUME_BROADCAST
   reading --> failed : FAIL
-  minting --> failed : FAIL
-  proving --> failed : FAIL (retried next pass)
+  proving --> failed : FAIL
   building --> failed : FAIL
-  burning --> failed : FAIL (payout dropped, reserve untouched)
-  note right of proving
-    BRC-255 backed token: units a mint writes
-    move only with the deposit's burial proof.
-    Every receiver checks it; a double-spent
-    deposit leaves its wLTC unmovable.
-    Explorers say which block, never how deep.
+`
+
+const SWAP = `stateDiagram-v2
+  direction LR
+  [*] --> editing
+  editing --> quoting : QUOTE (from ≠ to; 0 < amount ≤ held)
+  quoting --> quoting : QUOTE (amount or coins changed)
+  quoting --> quoted : routes ranked (direct offers paying ≥ Exolix, best then oldest · Exolix, custodial · worse direct); default = first
+  quoting --> refused : bad-request | no-route (no verified offer covers it; Exolix below-min / above-max / unavailable) | failed
+  quoted --> quoted : PICK (another ranked route)
+  quoted --> reviewing : REVIEW (any ranked route; direct shows the 0.5% fee and lock times)
+  reviewing --> quoted : BACK
+  quoted --> stale : after 60 s
+  reviewing --> stale : after 60 s
+  reviewing --> swapping : CONFIRM (the only step that moves coins)
+  swapping --> done : Exolix: can pay · exchange opened to this wallet's own payout + refund addresses · matches the confirmed quote · recorded · deposit paid from own balance
+  swapping --> done : direct: can lock · take recorded and sent to the maker (swapSettleMachine locks after accept)
+  swapping --> failed : insufficient | unavailable | terms-changed | wrong-payout | bad-deposit | take refused | deposit failed
+  quoted --> quoting : QUOTE
+  stale --> quoting : QUOTE
+  refused --> quoting : QUOTE
+  refused --> offering : OFFER (no-route only; whole offer at the market rate, ≤ held)
+  offering --> refused : BACK
+  offering --> quoting : QUOTE
+  offering --> publishing : PUBLISH (signs with the swap order key; moves no coin)
+  publishing --> published : offer book stored it
+  publishing --> offering : refused | unreachable (named)
+  published --> editing : RESET
+  done --> editing : RESET
+  failed --> editing : RESET
+  note right of swapping
+    Exolix holds the coins between the
+    deposit and its payout. Direct offers
+    (signed with the wallet-only swap order
+    key) settle wallet to wallet, hash-locked
+    on each chain, never through Exolix.
   end note
-  note right of idle
-    Watcher, once a minute while visible:
-    PROVE while a deposit waits; CREDIT too
-    for 2 h after the address is handed out.
-    Idle otherwise: no network.
+`
+
+const SWAP_OFFERS = `stateDiagram-v2
+  direction LR
+  [*] --> loading
+  loading --> ready : offers listed · each verified here (shape, maker signature, not expired)
+  loading --> failed : offer book unavailable
+  ready --> loading : REFRESH
+  ready --> cancelling : CANCEL (own offer only; signs the withdrawal)
+  cancelling --> loading : withdrawn
+  cancelling --> ready : refused (named)
+  ready --> reviewing : REVIEW (someone else's offer, still listed)
+  reviewing --> ready : BACK
+  reviewing --> taking : CONFIRM (offer still listed)
+  reviewing --> ready : CONFIRM after expiry (named)
+  taking --> taken : take sent (balance checked first)
+  taking --> reviewing : refused (named)
+  taken --> loading : REFRESH
+  failed --> loading : REFRESH
+  note right of taking
+    The take moves no coin. The wallet
+    locks its side once the maker accepts
+    (swapSettleMachine).
+  end note
+`
+
+const SWAP_SETTLE = `stateDiagram-v2
+  direction LR
+  [*] --> negotiating
+  negotiating --> presigning : PRESIGN (BSV leg: ask the peer to co-sign its refunds)
+  presigning --> presigning : PRESIGN (ask again)
+  negotiating --> locking : FUND
+  presigning --> locking : FUND (refunds co-signed)
+  negotiating --> ended : DONE declined | expired
+  presigning --> ended : DONE declined | expired
+  locking --> locking : FAIL · FUND (retry; never a second lock)
+  locking --> locked : OK (funding recorded)
+  locked --> claiming : CLAIM (peer lock buried · secret known)
+  locked --> refunding : REFUND | REFUND_FEE (past the lock time)
+  claiming --> locked : OK | FAIL
+  refunding --> locked : OK | FAIL
+  locked --> settled : DONE swapped
+  locked --> refunded : DONE refunded
+  locked --> missed : DONE missed (taker refunded first)
+  settled --> [*]
+  refunded --> [*]
+  ended --> [*]
+  missed --> [*]
+  note right of locked
+    Hash-locked outputs on each chain:
+    the taker's secret claims both, each
+    payer refunds after its lock time
+    (maker 12 h, taker 36 h). BSV refunds
+    are co-signed before the lock goes out.
+    0.5% fee output on the fee leg, same
+    hash; paid only on success.
   end note
 `
 
@@ -1840,11 +1916,32 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: HCT,
   },
   {
-    id: 'wltc',
-    label: 'wLTC',
+    id: 'coin',
+    label: 'Coins (LTC, BCH, BTC, DOGE)',
     caption:
-      'wltcMachine — LTC deposits mint backed wLTC at first sight and move once buried (BRC-255 bk); withdrawals sign LTC, burn wLTC, then broadcast',
-    source: WLTC,
+      'coinMachine — native Litecoin, Bitcoin Cash, Bitcoin and Dogecoin on the wallet\'s own key per chain (BRC-213): received coins spendable once buried on its own header chain (LTC 6: scrypt + 2016-block retarget; BCH 6: SHA-256d + ASERT; BTC 3: SHA-256d + 2016-block retarget; DOGE 20: AuxPoW + DigiShield); payments signed, recorded, broadcast and kept alive until confirmed. A payment to an identity (BRC-213 §7) is refused unless the recipient\'s signed record names the coin, is locked to a fresh BRC-42 child of the recipient, and owes it a sealed notice in box coin-payment, retried, never gating the payment; a notice is read through the same reading → received | refused path against the key derived for its sender. Nothing is wrapped.',
+    source: COIN,
+  },
+  {
+    id: 'swap',
+    label: 'Swap',
+    caption:
+      'swapMachine — swap between coins this wallet holds, no addresses pasted: direct offers (maker-signed, verified here) ranked ahead of Exolix whenever they pay at least as much, priced halfway between the market rate and Exolix\'s; Exolix fills the rest, paying out to this wallet\'s own address and holding the coins while it swaps. Only CONFIRM moves coins. When no route takes the swap (under Exolix\'s minimum, say), OFFER reviews a whole offer at the market rate and PUBLISH signs it to the market engine\'s offer book; publishing moves no coin.',
+    source: SWAP,
+  },
+  {
+    id: 'swapOffers',
+    label: 'Swap offers',
+    caption:
+      'swapOffersMachine — browse the market engine\'s swap offer book (BRC-CLOUD hosts, never trusted: every offer is verified in the wallet). CANCEL withdraws this wallet\'s own offer with a signed withdrawal. REVIEW shows what taking someone else\'s offer locks, returns and costs; only CONFIRM sends the take, after a balance check. The take itself moves no coin.',
+    source: SWAP_OFFERS,
+  },
+  {
+    id: 'swapSettle',
+    label: 'Swap settlement',
+    caption:
+      'swapSettleMachine — one wallet-to-wallet swap (settleRunner). Each pass reads box swap-settle and the chain, asks nextSettleStep, and runs the step only if this chart takes its event; the phase is kept on the swap record. FUND leaves negotiating for good, so a leg is locked at most once; CLAIM and REFUND only after this wallet locked. Both legs are hash-locked to the taker\'s secret: both complete or each payer refunds. No custodian; HandCash\'s 0.5% fee output shares the hash and returns to the payer if unclaimed.',
+    source: SWAP_SETTLE,
   },
   {
     id: 'marketPurchase',

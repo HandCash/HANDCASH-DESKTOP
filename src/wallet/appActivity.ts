@@ -8,6 +8,7 @@ import {
 } from "./accountLocalKeys";
 import { durableGetItem, durableSetItem } from "./durableStorage";
 import { storageRegistry } from "../storage/registry";
+import { COIN_INFO, isCoinChain, type CoinChain } from "./coins/coinChains";
 import { getItemArtDataUrl } from "./localItemArt";
 import { isGhostTxSuppressed } from "./ghostTxSuppress";
 import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
@@ -61,6 +62,8 @@ export type ActivityItem = {
   dec?: number;
   /** BSV-21 icon inscription outpoint (`txid_vout`) when known. */
   icon?: string;
+  /** Set when the quantity is a native coin (BRC-213): LTC or BCH rows, or an earlier build's wLTC token (`ltc`). */
+  backedBy?: CoinChain;
 };
 
 /** Structured data required to retry the exact same spend without guessing. */
@@ -1018,6 +1021,7 @@ export function recordAppActivity(args: {
   failureReason?: string;
   pendingId?: string;
   sendGroupId?: string;
+  from?: string;
 }): void {
   upsertAppActivity(args);
 }
@@ -1940,6 +1944,9 @@ export function removeActivityForTxids(txids: string[]): number {
 
 /** Activity row hidden from the feed but still in durable storage. */
 export function isArchivedActivity(entry: ActivityEntry): boolean {
+  // A deposit's burial is the state of its deposit row, never a row of its own.
+  if (entry.method === "wltc-proven") return true;
+  if (isRetiredWltcTokenRow(entry)) return true;
   return typeof entry.archivedAt === "number" && entry.archivedAt > 0;
 }
 
@@ -1973,6 +1980,31 @@ export function archiveActivityById(id: string): boolean {
 }
 
 /** @deprecated name — archives the row instead of deleting it. */
+/**
+ * Rewrite rows an older build stored in a shape the feed no longer reads.
+ * `upgrade` returns the replacement or null to keep the row; id and time stay,
+ * so the row keeps its place. Returns how many rows changed.
+ */
+export function upgradeActivityRows(
+  upgrade: (entry: ActivityEntry) => Omit<ActivityEntry, "id" | "at"> | null
+): number {
+  const entries = readAll();
+  let changed = 0;
+  const next = entries.map((entry) => {
+    const replaced = upgrade(entry);
+    if (!replaced) return entry;
+    changed += 1;
+    return {
+      ...replaced,
+      id: entry.id,
+      at: entry.at,
+      ...(replaced.item ? { item: normalizeActivityItem(replaced.item) } : {}),
+    } as ActivityEntry;
+  });
+  if (changed > 0) writeAll(next);
+  return changed;
+}
+
 export function removeActivityById(id: string): boolean {
   return archiveActivityById(id);
 }
@@ -2372,6 +2404,7 @@ function normalizeActivityItem(
     ...(typeof raw.icon === "string" && raw.icon.trim()
       ? { icon: raw.icon.trim().toLowerCase().replace(".", "_") }
       : {}),
+    ...(isCoinChain(raw.backedBy) ? { backedBy: raw.backedBy } : {}),
   };
 }
 
@@ -2389,6 +2422,7 @@ export function isItemActivity(entry: ActivityEntry): boolean {
 /** True when the row is a BSV-21 fungible tip (Collect → Tokens). */
 export function isTokenActivity(entry: ActivityEntry): boolean {
   if (entry.item?.tokenId?.trim()) return true;
+  if (isCoinPaymentActivity(entry)) return true;
   return (
     entry.method === "receive-token" ||
     entry.method === "send-token" ||
@@ -2489,6 +2523,38 @@ export function activityTokenQuantity(
 ): string | null {
   if (!item?.amt?.trim()) return null;
   return formatActivityTokenAmt(item.amt, item.dec ?? 0);
+}
+
+/** The chain a native coin row moved coins on (`ltc-receive`, `doge-send`, …, and earlier builds' wLTC deposit rows); null for every other row. */
+export function coinActivityChain(entry: Pick<ActivityEntry, "method">): CoinChain | null {
+  if (entry.method === "wltc-credit" || entry.method === "wltc-withdraw") return "ltc";
+  const [chain, leg] = entry.method.split("-");
+  return isCoinChain(chain) && (leg === "receive" || leg === "send") ? chain : null;
+}
+
+/** The chain a native coin payment row (received or paid, never an earlier build's wLTC row) moved its coin on; null for any other row. */
+export function coinPaymentChain(entry: Pick<ActivityEntry, "method">): CoinChain | null {
+  return entry.method.startsWith("wltc-") ? null : coinActivityChain(entry);
+}
+
+/** A native coin received or paid: a quantity of the coin, moved on its own chain. */
+export function isCoinPaymentActivity(entry: ActivityEntry): boolean {
+  return coinPaymentChain(entry) !== null;
+}
+
+/**
+ * The network a row's coins moved on, when it is not BSV: coin rows are
+ * shown like token rows, but the coin itself only ever moves on its own
+ * chain. Null for BSV rows, where the BSV mark already says it.
+ */
+export function activityNetworkLabel(entry: ActivityEntry): string | null {
+  const chain = coinActivityChain(entry);
+  return chain ? `On ${COIN_INFO[chain].label}` : null;
+}
+
+/** An earlier build's wLTC token row (mint, burn, self-transfer on BSV). Litecoin is held natively now, so it stands for no value. */
+function isRetiredWltcTokenRow(entry: ActivityEntry): boolean {
+  return entry.item?.backedBy === "ltc" && coinActivityChain(entry) === null;
 }
 
 /** Right-column amount for token rows (signed quantity). */
@@ -2735,6 +2801,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
         : "Cancel listing failed";
     }
     if (entry.item?.name) return `${entry.item.name} not sent`;
+    if (entry.kind === "event") return `${entry.note?.trim() || "Request"} failed`;
     return "Send failed";
   }
   if (
@@ -2803,6 +2870,8 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     const name = entry.item?.name?.trim() || "Token";
     const qty = activityTokenQuantity(entry.item);
     const withQty = qty ? `${qty} ${name}` : name;
+    if (entry.method === "wltc-credit") return qty ? `Deposited ${qty} LTC` : "Litecoin deposit";
+    if (entry.method === "wltc-withdraw") return qty ? `Withdrew ${qty} LTC` : "Litecoin withdrawal";
     if (isMintTokenActivity(entry)) return `Minted ${withQty}`;
     if (isBurnActivity(entry)) return `Burned ${withQty}`;
     if (entry.method === "market-purchase-receive") return `Bought ${withQty}`;

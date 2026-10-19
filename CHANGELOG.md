@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.608] - 2026-10-18
+
+### Added
+
+- The wallet holds Litecoin, Bitcoin Cash, Bitcoin and Dogecoin natively, each with its own key on its own chain. A received coin can be spent only after it reaches the chain's confirmation depth on the wallet's own header chain: 6 for Litecoin and Bitcoin Cash, 3 for Bitcoin, 20 for Dogecoin. Send and Receive pick the network from one network picker, and the ticker can show any held coin.
+- Apps can reach these coins over BRC-100 with `getCoinAddress`, `listCoins` and `sendCoins`, and ask which kinds of value the wallet holds with `listAssetProfiles`. `sendCoins` pays an address, or an identity when the recipient's signed record names the chain. Every coin send asks for confirmation first.
+- Swap sits between Send and Receive and swaps coins the wallet holds without anyone entering an address. Routes are ranked by what you receive. The review shows what you lock, what you receive, the fee and the timing, and nothing moves until you confirm.
+- Direct swaps between wallets are trustless. Both sides lock to one secret with a timed refund, so either both get paid or both get their coins back after the lock time. Your wallet records each lock before it goes out and picks it up again after unlock.
+- When no route takes an amount (under the exchange minimum, say), you can publish it as an offer at the market rate. Swap › Offers lists offers, which the wallet checks again itself, takes them after a review and confirm, cancels your own and shows how your swaps are going. A wallet answers takes of its own published offers without asking; publishing moves no coin.
+- Direct swaps carry a 0.5% fee, paid only when the swap completes. It sits in a third locked output that HandCash can claim once the swap's secret is out, and it goes back to its payer if the swap is refunded. Exolix routes carry no HandCash fee. The Exolix route is labelled as one where Exolix holds the coins between deposit and payout.
+- `npm run coin:checkpoint -- <bch|btc|doge>` writes or checks a header checkpoint agreed by two servers.
+
+### Changed
+
+- Litecoin is held as Litecoin, no longer wrapped as wLTC on BSV. Old wLTC records stay in Activity as history.
+- Tokens are distinguished by issuer everywhere they are named.
+- `npm run wltc:probe` is now `npm run ltc:probe`.
+
 ## [1.3.607] - 2026-10-18
 
 ### Added

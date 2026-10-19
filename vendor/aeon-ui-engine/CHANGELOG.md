@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`Select.Positioner` `anchorRef`, `placement`, `matchAnchorWidth`.** The same options `Popover.Positioner` takes: a compact trigger pinned to the end of a row can open its listbox across the row it belongs to, so option labels and details are not squeezed to the trigger's width.
+
+### Fixed
+
+- **`anatomy()` carries its `scope` at runtime.** The type promised `.scope`, but the object had none, so `scopeAttrs(x.scope, …)` emitted `data-aeon-scope="undefined"`.
+
 ## [1.3.6] - 2026-07-31
 
 ### Changed

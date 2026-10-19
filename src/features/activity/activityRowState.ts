@@ -131,8 +131,31 @@ const ACTION_METHOD_WORDS: Readonly<Record<string, string>> = {
   issueHctAsset: 'asset issue',
   mintHctAsset: 'asset mint',
   transferHctAsset: 'asset transfer',
-  withdrawLtc: 'LTC withdrawal',
+  withdrawLtc: 'LTC payment',
+  sendCoins: 'coin payment',
+  createSignature: 'signature',
+  encrypt: 'encryption',
+  decrypt: 'decryption',
+  createHmac: 'HMAC',
+  revealCounterpartyKeyLinkage: 'key linkage',
+  revealSpecificKeyLinkage: 'key linkage',
+  acquireCertificate: 'certificate',
+  proveCertificate: 'certificate',
+  relinquishCertificate: 'certificate',
 }
+
+/** Requests that use keys and move no value: a failure is not a failed send. */
+const KEY_ONLY_METHODS = new Set([
+  'createSignature',
+  'encrypt',
+  'decrypt',
+  'createHmac',
+  'revealCounterpartyKeyLinkage',
+  'revealSpecificKeyLinkage',
+  'acquireCertificate',
+  'proveCertificate',
+  'relinquishCertificate',
+])
 
 /** What the row is called before a description or txid exists. */
 export function liveActionTitle(action: LiveAction): string {
@@ -148,7 +171,7 @@ export function liveActionEntry(action: LiveAction): ActivityEntry {
   return {
     id: `${LIVE_ROW_PREFIX}${action.id}`,
     origin: action.origin || WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
+    kind: KEY_ONLY_METHODS.has(action.method) ? 'event' : 'spent',
     sats: 0,
     at: action.startedAt,
     method: action.method,

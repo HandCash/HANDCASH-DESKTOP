@@ -18,7 +18,7 @@ import { getDisplayCurrency } from '../wallet/displayCurrency'
 import type { AutoPayChoice } from '../wallet/autoPay'
 import {
   AutoPayControls,
-  isBsvPaymentAction,
+  isAutoPayableAction,
   useAutoPayForm,
   useLoadAutoPayOnOrigin,
 } from './AutoPayControls'
@@ -73,7 +73,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
     pending?.amountSats != null && pending.amountSats > 0
       ? formatSecondaryFromSats(pending.amountSats, currency, usdPerBsv)
       : null
-  const showAutoPay = pending ? isBsvPaymentAction(pending) : false
+  const showAutoPay = pending ? isAutoPayableAction(pending) : false
   const showAcceptIncoming = pending?.title === 'Accept incoming funds'
   const committing = decision.matches('committing')
 
@@ -164,6 +164,8 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     </strong>
                     {amountSecondary && amountPrimary && amountPrimary !== '—' ? (
                       <em className="action-amount-bsv">{amountSecondary}</em>
+                    ) : !amountPrimary && pending.amountNote ? (
+                      <em className="action-amount-bsv">{pending.amountNote}</em>
                     ) : null}
                   </Prompt.Amount>
                 )}

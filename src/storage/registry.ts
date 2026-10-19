@@ -410,10 +410,82 @@ export const storageRegistry = Object.freeze({
     version: 1,
     retention: 'rebuildable',
   }),
-  /** wLTC bridge: credited Litecoin deposits, the wLTC asset id and withdrawals awaiting their LTC broadcast. */
+  /** Earlier builds' wLTC record; read once to carry its coins and payments over to `ltc`. */
   wltc: defineStorage({
     key: 'handcash.wltc.v1',
     owner: 'tokens',
+    scope: 'wallet',
+    version: 1,
+  }),
+  ltc: defineStorage({
+    key: 'handcash.ltc.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** IndexedDB: the wallet's Bitcoin Cash header chain from the shipped checkpoint (hashes only), for BRC-213 burial checks. Chain facts. */
+  bchHeaders: defineStorage({
+    key: 'handcash-bch-headers',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** Native Bitcoin Cash coins and payments of the active account (BRC-213). */
+  bch: defineStorage({
+    key: 'handcash.bch.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** IndexedDB: the wallet's Bitcoin header chain from the shipped checkpoint (hashes only), for BRC-213 burial checks. Chain facts. */
+  btcHeaders: defineStorage({
+    key: 'handcash-btc-headers',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** Native Bitcoin coins and payments of the active account (BRC-213). */
+  btc: defineStorage({
+    key: 'handcash.btc.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** IndexedDB: the wallet's Dogecoin header chain from the shipped checkpoint (hashes only), for BRC-213 burial checks. Chain facts. */
+  dogeHeaders: defineStorage({
+    key: 'handcash-doge-headers',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** Native Dogecoin coins and payments of the active account (BRC-213). */
+  doge: defineStorage({
+    key: 'handcash.doge.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** The protocols record this account last published, so it is signed and sent once per change. */
+  walletProtocols: defineStorage({
+    key: 'handcash.walletProtocols.v1',
+    owner: 'identity',
+    scope: 'wallet',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  swaps: defineStorage({
+    key: 'handcash.swaps.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** Wallet-to-wallet swaps in flight (terms, locks, claims, refunds) and the offers this account published. */
+  swapSettle: defineStorage({
+    key: 'handcash.swapSettle.v1',
+    owner: 'balance',
     scope: 'wallet',
     version: 1,
   }),
@@ -655,6 +727,30 @@ export const storageRegistry = Object.freeze({
   }),
   bsvMarket: defineStorage({
     key: 'handcash.brc100.bsvMarket',
+    owner: 'market-data',
+    scope: 'device',
+    version: 1,
+  }),
+  ltcMarket: defineStorage({
+    key: 'handcash.brc100.ltcMarket',
+    owner: 'market-data',
+    scope: 'device',
+    version: 1,
+  }),
+  bchMarket: defineStorage({
+    key: 'handcash.brc100.bchMarket',
+    owner: 'market-data',
+    scope: 'device',
+    version: 1,
+  }),
+  btcMarket: defineStorage({
+    key: 'handcash.brc100.btcMarket',
+    owner: 'market-data',
+    scope: 'device',
+    version: 1,
+  }),
+  dogeMarket: defineStorage({
+    key: 'handcash.brc100.dogeMarket',
     owner: 'market-data',
     scope: 'device',
     version: 1,

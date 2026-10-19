@@ -1,3 +1,6 @@
+import { COIN_INFO, coinChainOfApprovalTitle } from './coins/coinChains'
+import { plaintextHostAllowed } from './bridgeOrigin'
+
 export type AppPermissionScope = {
   id: string
   label: string
@@ -11,7 +14,7 @@ export type AppPermissionScope = {
 
 const WALLET_ACCESS_SCOPE: AppPermissionScope = {
   id: 'wallet-access',
-  label: 'Wallet access',
+  label: 'View only, no spending',
   description:
     'Use connected, non-spending wallet APIs. Spending, signatures, encryption, identity proofs, and protected inventory require separate approval.',
   allows: [
@@ -190,16 +193,20 @@ function claimsHandCashName(name: string): boolean {
 
 /**
  * Turn a host into a readable app name: example.com → Example. A name that
- * reads as HandCash on a host HandCash does not own, or one from an IDN host,
- * shows the bare host instead: the prompt title is what the user trusts.
+ * reads as HandCash on a host HandCash does not own, one from an IDN host, or
+ * a local host anyone on this device can claim shows the bare host instead:
+ * the prompt title is what the user trusts.
  */
 export function appDisplayName(origin: string | undefined): string {
   const host = normalizeAppHost(origin)
   if (host === 'unknown-app') return 'Unknown app'
-  if (host === 'localhost' || host.startsWith('127.0.0.1')) return 'Local app'
 
   const base = host.split(':')[0] ?? host
+  if (base === 'localhost' || base === '127.0.0.1') return 'Local app'
   if (HANDCASH_NAMED_HOSTS.has(base)) return 'HandCash'
+  // Any local process may claim a loopback or private host over plain http;
+  // a derived name ("market.localhost" → Market) would lend it an identity.
+  if (plaintextHostAllowed(base)) return base
 
   const name = derivedAppName(base, host)
   if (claimsHandCashName(name) || base.split('.').some((label) => label.startsWith('xn--'))) {
@@ -314,6 +321,10 @@ export function humanActionCopy(
   switch (method) {
     case 'createAction':
       return { eyebrow: 'Payment request', verb: 'wants to make a payment' }
+    case 'sendCoins': {
+      const chain = coinChainOfApprovalTitle(title)
+      return { eyebrow: 'Payment request', verb: chain ? `wants to make a ${COIN_INFO[chain].label} payment` : 'wants to make a payment' }
+    }
     case 'signAction':
       return { eyebrow: 'Confirm payment', verb: 'wants you to confirm a payment' }
     case 'internalizeAction':

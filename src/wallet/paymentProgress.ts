@@ -345,9 +345,9 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Sending…',
     detail: 'Signing the transfer and delivering its proof',
   },
-  withdrawLtc: {
-    label: 'Withdrawing…',
-    detail: 'Signing the LTC payout, burning wLTC, then broadcasting',
+  sendCoins: {
+    label: 'Sending…',
+    detail: 'Signing the payment on its own chain, then broadcasting',
   },
 }
 

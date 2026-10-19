@@ -4,11 +4,24 @@ import {
   noteFxRateLimited,
   refreshUsdPerBsv,
 } from '../wallet/fx'
+import { storageRegistry } from '../storage/registry'
+import type { CoinChain } from './coins/coinChains'
 
 const TOTAL_SUPPLY = 21_000_000
-const CACHE_KEY = 'handcash.brc100.bsvMarket'
 const CACHE_TTL_MS = 5 * 60_000
 const OFFICIAL_URL = 'https://bsvblockchain.org/'
+
+/** Chains the ticker can price: BSV, and every native coin the wallet holds (BRC-213). */
+export type MarketCoin = 'bsv' | CoinChain
+
+const COINS: Record<MarketCoin, { gecko: string; cacheKey: string; totalSupply: number }> = {
+  bsv: { gecko: 'bitcoin-cash-sv', cacheKey: storageRegistry.bsvMarket.key, totalSupply: TOTAL_SUPPLY },
+  ltc: { gecko: 'litecoin', cacheKey: storageRegistry.ltcMarket.key, totalSupply: 84_000_000 },
+  bch: { gecko: 'bitcoin-cash', cacheKey: storageRegistry.bchMarket.key, totalSupply: TOTAL_SUPPLY },
+  btc: { gecko: 'bitcoin', cacheKey: storageRegistry.btcMarket.key, totalSupply: TOTAL_SUPPLY },
+  // Dogecoin has no cap.
+  doge: { gecko: 'dogecoin', cacheKey: storageRegistry.dogeMarket.key, totalSupply: 0 },
+}
 
 export type BsvChartRange = '24h' | '7d' | '30d'
 
@@ -38,7 +51,7 @@ export type BsvMarketStats = {
 type Listener = () => void
 
 const listeners = new Set<Listener>()
-let memory: BsvMarketStats | null = null
+const memory: Partial<Record<MarketCoin, BsvMarketStats>> = {}
 
 const EMPTY_SPARKLINES: BsvSparklines = {
   '24h': [],
@@ -91,10 +104,11 @@ function normalizeSparklines(raw: unknown, legacy?: number[]): BsvSparklines {
   return base
 }
 
-function readCache(): BsvMarketStats | null {
-  if (memory && Date.now() - memory.fetchedAt < CACHE_TTL_MS) return memory
+function readCache(coin: MarketCoin): BsvMarketStats | null {
+  const held = memory[coin]
+  if (held && Date.now() - held.fetchedAt < CACHE_TTL_MS) return held
   try {
-    const raw = localStorage.getItem(CACHE_KEY)
+    const raw = localStorage.getItem(COINS[coin].cacheKey)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<BsvMarketStats> & {
       sparkline?: number[]
@@ -107,14 +121,14 @@ function readCache(): BsvMarketStats | null {
         change24hPct: typeof parsed.change24hPct === 'number' ? parsed.change24hPct : null,
         change7dPct: typeof parsed.change7dPct === 'number' ? parsed.change7dPct : null,
         change30dPct: typeof parsed.change30dPct === 'number' ? parsed.change30dPct : null,
-        totalSupply: typeof parsed.totalSupply === 'number' ? parsed.totalSupply : TOTAL_SUPPLY,
+        totalSupply: typeof parsed.totalSupply === 'number' ? parsed.totalSupply : COINS[coin].totalSupply,
         minedSupply:
-          typeof parsed.minedSupply === 'number' ? parsed.minedSupply : TOTAL_SUPPLY,
+          typeof parsed.minedSupply === 'number' ? parsed.minedSupply : COINS[coin].totalSupply,
         sparklines,
         sparkline: sparklines['24h'],
         fetchedAt: typeof parsed.fetchedAt === 'number' ? parsed.fetchedAt : 0,
       }
-      memory = stats
+      memory[coin] = stats
       return stats
     }
   } catch {
@@ -123,14 +137,14 @@ function readCache(): BsvMarketStats | null {
   return null
 }
 
-function writeCache(stats: BsvMarketStats): void {
-  memory = stats
-  localStorage.setItem(CACHE_KEY, JSON.stringify(stats))
+function writeCache(coin: MarketCoin, stats: BsvMarketStats): void {
+  memory[coin] = stats
+  localStorage.setItem(COINS[coin].cacheKey, JSON.stringify(stats))
   for (const cb of listeners) cb()
 }
 
-export function getCachedBsvMarket(): BsvMarketStats | null {
-  return readCache()
+export function getCachedBsvMarket(coin: MarketCoin = 'bsv'): BsvMarketStats | null {
+  return readCache(coin)
 }
 
 export function subscribeBsvMarket(cb: Listener): () => void {
@@ -183,7 +197,7 @@ async function fetchMinedSupply(): Promise<number | null> {
   }
 }
 
-async function fetchCoinGecko(): Promise<{
+async function fetchCoinGecko(id: string): Promise<{
   priceUsd: number
   change24hPct: number | null
   change7dPct: number | null
@@ -194,11 +208,11 @@ async function fetchCoinGecko(): Promise<{
   try {
     const [coinRes, chartRes] = await Promise.all([
       fetch(
-        'https://api.coingecko.com/api/v3/coins/bitcoin-cash-sv?localization=false&tickers=false&community_data=false&developer_data=false&price_change_percentage=24h,7d,30d',
+        `https://api.coingecko.com/api/v3/coins/${id}?localization=false&tickers=false&community_data=false&developer_data=false&price_change_percentage=24h,7d,30d`,
       ),
       // 30d hourly series — slice into 24h / 7d / 1M for matching sparklines
       fetch(
-        'https://api.coingecko.com/api/v3/coins/bitcoin-cash-sv/market_chart?vs_currency=usd&days=30',
+        `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=30`,
       ),
     ])
     if (coinRes.status === 429 || chartRes.status === 429) {
@@ -268,15 +282,17 @@ async function fetchCoinGecko(): Promise<{
   }
 }
 
-export async function refreshBsvMarket(force = false): Promise<BsvMarketStats | null> {
-  const cached = readCache()
+export async function refreshBsvMarket(force = false, coin: MarketCoin = 'bsv'): Promise<BsvMarketStats | null> {
+  const cached = readCache(coin)
   if (isFxRateLimited()) return cached
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached
 
+  // WhatsOnChain supply and the wallet's own BSV rate exist for BSV only.
+  const bsv = coin === 'bsv'
   const [gecko, minedWoc, priceFallback] = await Promise.all([
-    fetchCoinGecko(),
-    fetchMinedSupply(),
-    refreshUsdPerBsv(force),
+    fetchCoinGecko(COINS[coin].gecko),
+    bsv ? fetchMinedSupply() : null,
+    bsv ? refreshUsdPerBsv(force) : null,
   ])
 
   const priceUsd = gecko?.priceUsd ?? priceFallback ?? cached?.priceUsd
@@ -288,13 +304,13 @@ export async function refreshBsvMarket(force = false): Promise<BsvMarketStats | 
     change24hPct: gecko?.change24hPct ?? cached?.change24hPct ?? null,
     change7dPct: gecko?.change7dPct ?? cached?.change7dPct ?? null,
     change30dPct: gecko?.change30dPct ?? cached?.change30dPct ?? null,
-    totalSupply: TOTAL_SUPPLY,
-    minedSupply: gecko?.minedSupply ?? minedWoc ?? cached?.minedSupply ?? TOTAL_SUPPLY,
+    totalSupply: COINS[coin].totalSupply,
+    minedSupply: gecko?.minedSupply ?? minedWoc ?? cached?.minedSupply ?? COINS[coin].totalSupply,
     sparklines,
     sparkline: sparklines['24h'].length ? sparklines['24h'] : (cached?.sparkline ?? []),
     fetchedAt: Date.now(),
   }
-  writeCache(stats)
+  writeCache(coin, stats)
   return stats
 }
 

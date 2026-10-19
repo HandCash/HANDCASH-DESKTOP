@@ -1,5 +1,5 @@
 import { Transaction, Utils } from '@bsv/sdk'
-import { checkLtcBurial, type LtcBurialProof } from '../wltc/verify'
+import { checkLtcBurial, type LtcBurialProof } from '../ltc/verify'
 import type { HctBacking } from './payload'
 
 /**

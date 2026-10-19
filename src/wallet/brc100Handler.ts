@@ -62,6 +62,18 @@ import {
 } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
+import { COIN_INFO } from './coins/coinChains'
+import {
+  coinChainOf,
+  coinPaymentArgs,
+  coinWalletOf,
+  listCoinsFromReport,
+  sendCoinsChain,
+  sendCoinsResponseAsWithdrawLtc,
+  sendCoinsResult,
+  withdrawLtcAsSendCoins,
+  type CoinChain,
+} from './coinMethods'
 import {
   isBsv21IdentityMintArgs,
   resolveBsv21IconDataUrl,
@@ -141,7 +153,7 @@ import {
 } from './actionLifecycle'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
-import { reservedKeyRefusal } from './vaultAccounts'
+import { reservedKeyRefusal, type ReservedKeyRefusal } from './vaultAccounts'
 import { looksLikeHct } from './hct/script'
 import { isTokenFilingBasket } from './token/filing'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
@@ -464,6 +476,36 @@ async function dispatchAppActionFundedFromHeldChange(
   }
 }
 
+const RESERVED_KEY_REFUSALS: Record<ReservedKeyRefusal, string> = {
+  'account-protocol': 'Protocol "account" is reserved for the wallet (BRC-208)',
+  'asset-protocol': 'This protocol holds asset custody keys; assets move only through wallet methods',
+  'admin-protocol': 'Protocols starting with "admin" are reserved for the wallet (BRC-44)',
+  'permission-scheme': 'This wallet does not support that "p" permission scheme (BRC-98)',
+  'self-linkage': 'The wallet does not reveal linkage with itself (BRC-208)',
+}
+
+function reservedKeyRefusalDescription(refusal: ReservedKeyRefusal): string {
+  return RESERVED_KEY_REFUSALS[refusal]
+}
+
+/** Sats-equivalent an approved coin payment counts against the app's budget; null when no price can count it. */
+async function coinApprovedBudgetSats(chain: CoinChain, args: unknown): Promise<number | null> {
+  const raw = String((args as { amount?: unknown } | null)?.amount ?? '')
+  if (!/^\d+$/.test(raw) || BigInt(raw) <= 0n) return 0
+  const { coinBudgetSats } = await import('./coins/budget')
+  const units = BigInt(raw)
+  const counted = coinBudgetSats(chain, units)
+  if (counted != null) return counted
+  await refreshCoinPrices(chain)
+  return coinBudgetSats(chain, units)
+}
+
+/** Both prices a coin payment is valued with; cached results return at once. */
+async function refreshCoinPrices(chain: CoinChain): Promise<void> {
+  const [{ refreshBsvMarket }, { refreshUsdPerBsv }] = await Promise.all([import('./bsvMarket'), import('./fx')])
+  await Promise.all([refreshUsdPerBsv(), refreshBsvMarket(false, chain)].map(p => p.catch(() => null)))
+}
+
 export async function dispatchWalletMethod(
   wallet: WalletInterface,
   method: string,
@@ -478,17 +520,7 @@ export async function dispatchWalletMethod(
       'warn',
       `[brc100] refused ${method} from ${normalizeOrigin(originator) || 'unknown origin'}: ${refusal}`,
     )
-    throw new Error(
-      refusal === 'account-protocol'
-        ? 'Protocol "account" is reserved for the wallet (BRC-208)'
-        : refusal === 'asset-protocol'
-          ? 'This protocol holds asset custody keys; assets move only through wallet methods'
-          : refusal === 'admin-protocol'
-            ? 'Protocols starting with "admin" are reserved for the wallet (BRC-44)'
-            : refusal === 'permission-scheme'
-              ? 'This wallet does not support that "p" permission scheme (BRC-98)'
-              : 'The wallet does not reveal linkage with itself (BRC-208)',
-    )
+    throw new Error(reservedKeyRefusalDescription(refusal))
   }
 
   switch (method) {
@@ -669,16 +701,30 @@ export async function dispatchWalletMethod(
       return (await import('./hct/wallet')).transferHctAsset(
         (args ?? {}) as Parameters<typeof import('./hct/wallet').transferHctAsset>[0],
       )
-    case 'listHctAssets':
-      return (await import('./hct/wallet')).listHctAssets()
+    case 'listHctAssets': {
+      // A backed token never leaves its issuer and Litecoin is held natively, so a backed one is a retired wLTC record, not value.
+      const { assets } = await (await import('./hct/wallet')).listHctAssets()
+      return { assets: assets.filter((a) => !a.backedBy) }
+    }
     case 'getLtcDepositAddress':
-      return (await import('./wltc/bridge')).getLtcDepositAddress()
+      return (await import('./ltc/ltcWallet')).ltcAddressForApp()
     case 'listLtcDeposits':
-      return (await import('./wltc/bridge')).listLtcDeposits()
-    case 'withdrawLtc':
-      return (await import('./wltc/bridge')).withdrawLtc(
-        (args ?? {}) as Parameters<typeof import('./wltc/bridge').withdrawLtc>[0],
-      )
+      return (await import('./ltc/ltcWallet')).listLtcForApp()
+    case 'getCoinAddress': {
+      const chain = coinChainOf(args)
+      return { chain, ...(await coinWalletOf(chain)).addressForApp() }
+    }
+    case 'listCoins': {
+      const chain = coinChainOf(args)
+      const [coins, { depositCount }] = await Promise.all([coinWalletOf(chain), import('./coins/depositPhase')])
+      return listCoinsFromReport(chain, await coins.refresh(), (phase) => depositCount(chain, phase))
+    }
+    case 'listAssetProfiles':
+      return (await import('./assetProfiles')).listAssetProfiles()
+    case 'sendCoins': {
+      const chain = coinChainOf(args)
+      return sendCoinsResult(chain, await (await coinWalletOf(chain)).send(coinPaymentArgs(args), { origin: originator }))
+    }
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -788,7 +834,7 @@ export async function handleBrc100Request(
     }
   }
   try {
-    const result = await handleBrc100RequestInner(event, runtime)
+    const result = await handleCoinAliasOrInner(event, runtime, method, args)
     if (runtime && !runtimeIsCurrent(runtime)) {
       return {
         status: 409,
@@ -829,6 +875,18 @@ export async function handleBrc100Request(
   } finally {
     releaseInbound()
   }
+}
+
+/** `withdrawLtc` runs as the BRC-213 `sendCoins` payment it is, through every gate of it. */
+async function handleCoinAliasOrInner(
+  event: HttpRequestEvent,
+  runtime: WalletRuntime | null,
+  method: string,
+  args: unknown,
+): Promise<{ status: number; body: string }> {
+  if (method !== 'withdrawLtc') return handleBrc100RequestInner(event, runtime)
+  const response = await handleBrc100RequestInner({ ...event, path: '/sendCoins', body: JSON.stringify(withdrawLtcAsSendCoins(args)) }, runtime)
+  return sendCoinsResponseAsWithdrawLtc(response)
 }
 
 /**
@@ -1187,6 +1245,16 @@ async function handleBrc100RequestInner(
     }
   }
 
+  // A request the wallet will refuse is refused before it asks the user anything.
+  const reserved = reservedKeyRefusal(method, args, active.identityKey)
+  if (reserved) {
+    appendAppLog('warn', `[brc100] refused ${method} from ${originator || 'unknown origin'}: ${reserved}`)
+    return {
+      status: 400,
+      body: JSON.stringify({ status: 'error', code: 'RESERVED_KEY', description: reservedKeyRefusalDescription(reserved) }),
+    }
+  }
+
   let attestation: IssuanceAttestation | undefined
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
@@ -1251,6 +1319,42 @@ async function handleBrc100RequestInner(
         }
       }
     }
+    let coinChain: CoinChain | null = null
+    if (method === 'sendCoins') {
+      const chosen = sendCoinsChain(args)
+      if (!chosen.ok) return { status: chosen.status, body: chosen.body }
+      coinChain = chosen.chain
+      try {
+        assertOnlineForPayment()
+        // The prompt shows the payment's dollar value and Auto-pay counts it.
+        await refreshCoinPrices(coinChain)
+      } catch (err) {
+        const mapped = brcSpendErrorCode(err)
+        return {
+          status: mapped.status,
+          body: JSON.stringify({ status: 'error', code: mapped.code, description: mapped.description }),
+        }
+      }
+    }
+    if (method === 'transferHctAsset' || method === 'mintHctAsset' || coinChain) {
+      const [hct, { CoinRefusalError }] = await Promise.all([import('./hct/wallet'), import('./coins/coinWallet')])
+      try {
+        if (method === 'transferHctAsset') await hct.preflightHctTransfer((args ?? {}) as Parameters<typeof hct.preflightHctTransfer>[0])
+        else if (method === 'mintHctAsset') await hct.preflightHctMint((args ?? {}) as Parameters<typeof hct.preflightHctMint>[0])
+        else if (coinChain) await (await coinWalletOf(coinChain)).preflightRecipient(coinPaymentArgs(args))
+      } catch (err) {
+        if (!(err instanceof hct.HctRefusal) && !(err instanceof CoinRefusalError)) throw err
+        const prefix = err instanceof hct.HctRefusal ? 'HCT' : 'COIN'
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: `${prefix}_${err.reason.toUpperCase().replace(/-/g, '_')}`,
+            description: err.message,
+          }),
+        }
+      }
+    }
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()
@@ -1297,8 +1401,13 @@ async function handleBrc100RequestInner(
         }),
       }
     }
-    if (method === 'createAction' && !automaticReservation && getAutoPaySettings(originator)?.enabled) {
-      const approvedSats = extractSatsFromArgs(method, args)
+    if ((method === 'createAction' || coinChain) && !automaticReservation && getAutoPaySettings(originator)?.enabled) {
+      const approvedSats = coinChain ? await coinApprovedBudgetSats(coinChain, args) : extractSatsFromArgs(method, args)
+      if (approvedSats == null) return {
+        status: 503,
+        body: JSON.stringify({ status: 'error', code: 'SPENDING_BUDGET_UNAVAILABLE',
+          description: `This app's Auto-pay limit is counted in dollars and no ${coinChain ? COIN_INFO[coinChain].label : 'BSV'} price is available yet. Retry in a moment.` }),
+      }
       if (approvedSats > 0) {
         automaticReservation = reserveApprovedPayment(originator, approvedSats)
         if (!automaticReservation) return {
@@ -1517,9 +1626,8 @@ async function handleBrc100RequestInner(
         result = await dispatchWalletMethod(active.wallet, method, args, originator)
         setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
       } catch (err) {
-        const hct = await import('./hct/wallet')
-        const wltc = await import('./wltc/bridge')
-        const prefix = err instanceof hct.HctRefusal ? 'HCT' : err instanceof wltc.WltcRefusal ? 'WLTC' : null
+        const [hct, { CoinRefusalError }] = await Promise.all([import('./hct/wallet'), import('./coins/coinWallet')])
+        const prefix = err instanceof hct.HctRefusal ? 'HCT' : err instanceof CoinRefusalError ? 'COIN' : null
         if (!prefix) throw err
         return {
           status: 400,

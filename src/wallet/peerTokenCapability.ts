@@ -18,14 +18,17 @@ import { getActiveWallet } from './session'
  * 3. **Store locally** — friends list (durable per vault account) MAY keep a
  *    copy of `protocols` beside `messagebox`, so the next send does not need
  *    another round trip.
- * 4. **Gate** — Send Fungible asks {@link assessPeerBsv21Support}. An empty
+ * 4. **Signed record** — the identity's own signed receiving record
+ *    (`walletProtocols.ts`, BRC-213 §7.2) uses the same tags and wins over
+ *    the unsigned copies above when it verifies.
+ * 5. **Gate** — Send Fungible asks {@link assessPeerBsv21Support}. An empty
  *    To field is **idle** (no warning). Missing or empty protocols ⇒
  *    **unknown** ⇒ warn (still allow send). Explicit `bsv21` ⇒ supported.
  *    A typed/resolved address with no identity ⇒ no-identity warn.
  *
- * Until hosts publish `protocols`, almost every *chosen* peer is **unknown** —
- * that is intentional: warn by default; do not invent support. Do not warn
- * before the user has named a recipient.
+ * A peer with no record and no resolve tags is **unknown** — that is
+ * intentional: warn by default; do not invent support. Do not warn before
+ * the user has named a recipient.
  */
 
 

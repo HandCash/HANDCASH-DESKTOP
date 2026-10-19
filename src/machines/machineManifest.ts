@@ -8,7 +8,10 @@ import { offerMachine } from './offerMachine'
 import { countersignMachine } from './countersignMachine'
 import { hctMachine } from './hctMachine'
 import { hctHoldingsMachine } from './hctHoldingsMachine'
-import { wltcMachine } from './wltcMachine'
+import { coinMachine } from './coinMachine'
+import { swapMachine } from './swapMachine'
+import { swapOffersMachine } from './swapOffersMachine'
+import { swapSettleMachine } from './swapSettleMachine'
 import { marketPurchaseMachine } from './marketPurchaseMachine'
 import { marketSellerSettlementMachine } from './marketSellerSettlementMachine'
 import { appBrowserMachine } from './appBrowserMachine'
@@ -24,6 +27,7 @@ import { qrScannerMachine } from './qrScannerMachine'
 import { updateMachine } from './updateMachine'
 import { walletAccountMenuMachine } from './walletAccountMenuMachine'
 import { devKeysPanelMachine } from './devKeysPanelMachine'
+import { tickerMachine } from './tickerMachine'
 import { wipeMachine } from './wipeMachine'
 import { assetSendMachine } from './assetSendMachine'
 import { legacyImportMachine } from './legacyImportMachine'
@@ -58,7 +62,10 @@ export const machineManifest = Object.freeze({
   offer: offerMachine,
   countersign: countersignMachine,
   hct: hctMachine,
-  wltc: wltcMachine,
+  coin: coinMachine,
+  swap: swapMachine,
+  swapOffers: swapOffersMachine,
+  swapSettle: swapSettleMachine,
   marketPurchase: marketPurchaseMachine,
   marketSellerSettlement: marketSellerSettlementMachine,
   appBrowser: appBrowserMachine,
@@ -75,6 +82,7 @@ export const machineManifest = Object.freeze({
   update: updateMachine,
   walletAccountMenu: walletAccountMenuMachine,
   devKeysPanel: devKeysPanelMachine,
+  ticker: tickerMachine,
   wipe: wipeMachine,
   assetSend: assetSendMachine,
   legacyImport: legacyImportMachine,

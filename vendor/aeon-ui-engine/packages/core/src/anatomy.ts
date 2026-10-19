@@ -1,6 +1,6 @@
 /** Part keys for compound components — scope + named parts for styling and docs. */
 export function anatomy<const T extends readonly string[]>(scope: string, parts: T) {
-  return Object.fromEntries(parts.map((p) => [p, p])) as Record<T[number], T[number]> & {
+  return { ...Object.fromEntries(parts.map((p) => [p, p])), scope } as Record<T[number], T[number]> & {
     scope: typeof scope
   }
 }

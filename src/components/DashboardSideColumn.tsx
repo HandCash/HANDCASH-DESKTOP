@@ -28,6 +28,8 @@ import {
 
 type Props = {
   profile: WalletProfile
+  /** BSV the ticker reports as held; null while the balance is still being read. */
+  heldBsvSats: number | null
 }
 
 /**
@@ -35,7 +37,7 @@ type Props = {
  * Isolated so payment-progress ticks do not re-render WalletNav / collectables.
  * Compact / phone shells collapse this to WhatIsBsvPanel (layout-compact.css).
  */
-export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }: Props) {
+export const DashboardSideColumn = memo(function DashboardSideColumn({ profile, heldBsvSats }: Props) {
   const compact = useCompactShell()
   const sideRef = useRef<HTMLElement>(null)
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
@@ -121,7 +123,7 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
   if (compact) {
     // Compact layout (see layout-compact.css) expects this between hero and nav;
     // it is also the only toast viewport on phone shells.
-    return <WhatIsBsvPanel />
+    return <WhatIsBsvPanel heldBsvSats={heldBsvSats} />
   }
 
   return (
@@ -168,7 +170,7 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
         </section>
       ) : (
         <>
-          {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel />}
+          {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel heldBsvSats={heldBsvSats} />}
           <RenderProbe id="recent-activity">
             <RecentActivityPanel chain={profile.chain} />
           </RenderProbe>

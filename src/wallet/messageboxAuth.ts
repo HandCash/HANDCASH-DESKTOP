@@ -64,6 +64,21 @@ export function signIdentityText(
   }
 }
 
+/** True when `signature` is {@link signIdentityText}'s compact signature of `text` by `identityKey`. */
+export function verifyIdentityText(identityKey: string, text: string, signature: string): boolean {
+  try {
+    if (!/^[0-9a-f]{128}$/i.test(signature)) return false
+    const compact = Utils.toArray(signature, 'hex')
+    const sig = new Signature(
+      new BigNumber(Utils.toHex(compact.slice(0, 32)), 16),
+      new BigNumber(Utils.toHex(compact.slice(32, 64)), 16),
+    )
+    return PublicKey.fromString(identityKey).verify(Utils.toArray(text.trim(), 'utf8'), sig)
+  } catch {
+    return false
+  }
+}
+
 export function signMessageboxAuth(args: {
   rootKeyHex: string
   method: MessageboxMethod

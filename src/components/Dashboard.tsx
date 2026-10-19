@@ -4,11 +4,16 @@ import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
 import {
+  formatUsd,
   formatUsdFromSats,
   getCachedUsdPerBsv,
   refreshUsdPerBsv,
+  satsToUsd,
   subscribeUsdRate,
 } from '../wallet/fx'
+import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
+import { COIN_CHAINS, COIN_INFO } from '../wallet/coins/coinChains'
+import { coinUsd, holdingSplitLabel } from '../wallet/heldValue'
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -19,6 +24,7 @@ import type { WalletProfile } from '../machines/appMachine'
 import {
   SendIcon,
   ReceiveIcon,
+  SwapIcon,
 } from './icons'
 import { WalletAccountMenu } from './WalletAccountMenu'
 import {
@@ -42,6 +48,7 @@ import {
   getNavState,
   isMessagesNavChild,
   openReceiveFlow,
+  openSwapFlow,
   openSendFlow,
   subscribeEmbeddedAppBrowser,
   subscribeNav,
@@ -252,17 +259,33 @@ export function Dashboard({
     return () => window.clearInterval(id)
   }, [])
 
-  const usdLabel = formatUsdFromSats(balanceSats, usdPerBsv)
-  const bsvLabel = formatBsvSignificant(balanceSats, 5)
+  const heldCoins = useHeldCoins()
+  const coinPrices = useCoinPrices()
+  const bsvUsd = usdPerBsv == null ? null : satsToUsd(balanceSats, usdPerBsv)
+  const heldChains = COIN_CHAINS.filter((chain) => heldCoins[chain] > 0n)
+  const heldCoinUsd = heldChains.map((chain) => ({ ticker: COIN_INFO[chain].ticker, usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]) }))
+  // Holding other coins, the total is valued in every coin and the second line is the split.
+  const splitParts =
+    heldChains.length > 0 && bsvUsd != null && heldCoinUsd.every((c) => c.usd != null)
+      ? [{ ticker: 'BSV', usd: bsvUsd }, ...heldCoinUsd.map((c) => ({ ticker: c.ticker, usd: c.usd! }))]
+      : null
+  const split = splitParts ? { totalUsd: splitParts.reduce((sum, p) => sum + p.usd, 0), label: holdingSplitLabel(splitParts) } : null
+  const usdLabel =
+    split ? formatUsd(split.totalUsd)
+    : heldChains.length > 0 ? '—'
+    : formatUsdFromSats(balanceSats, usdPerBsv)
+  const bsvLabel =
+    split && usdPerBsv ? formatBsvSignificant(Math.round((split.totalUsd / usdPerBsv) * 1e8), 5)
+    : formatBsvSignificant(balanceSats, 5)
   const primaryBalanceLabel =
     currency === 'usd' ? usdLabel : bsvLabel
   const secondaryBalanceLabel =
-    currency === 'usd' ? bsvLabel : usdLabel
+    split?.label ?? (currency === 'usd' ? bsvLabel : usdLabel)
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
     minPx: 8,
-    watch: `${currency}|${usdLabel}|${bsvLabel}`,
+    watch: `${currency}|${usdLabel}|${bsvLabel}|${split?.label ?? ''}`,
   })
 
   useEffect(() => {
@@ -756,6 +779,16 @@ export function Dashboard({
                 className="btn btn-ghost btn-icon"
                 onClick={() => {
                   playWalletSound('soft')
+                  openSwapFlow()
+                }}
+              >
+                <SwapIcon size={22} />
+                <span className="wallet-action-label">Swap</span>
+              </button>
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
                   openReceiveFlow()
                 }}
               >
@@ -778,7 +811,7 @@ export function Dashboard({
       </div>
 
       <RenderProbe id="side">
-        <DashboardSideColumn profile={profile} />
+        <DashboardSideColumn profile={profile} heldBsvSats={balancePending ? null : balanceSats} />
       </RenderProbe>
     </section>
   )

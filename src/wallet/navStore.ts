@@ -34,9 +34,13 @@ export type NavChild =
   | { type: 'app-browser'; origin: string; url: string }
   | { type: 'permission'; origin: string; scopeId: string }
   | { type: 'dev-keys' }
-  | { type: 'send'; prefill?: string }
+  /** `opened` counts Send opens: each open is a fresh form, never the last one's network or draft. */
+  | { type: 'send'; prefill?: string; opened: number }
   | { type: 'scan' }
   | { type: 'receive' }
+  | { type: 'swap' }
+  | { type: 'swap-offers' }
+  | { type: 'ticker-coins' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend'; identityKey?: string; label?: string }
@@ -274,9 +278,13 @@ export function openPermissionDetails(origin: string, scopeId: string) {
   openNavChild('apps', { type: 'permission', origin, scopeId })
 }
 
+let sendOpens = 0
+
 export function openSendFlow(prefill?: string) {
+  sendOpens += 1
   openNavChild('activity', {
     type: 'send',
+    opened: sendOpens,
     ...(prefill?.trim() ? { prefill: prefill.trim() } : {}),
   })
 }
@@ -318,8 +326,23 @@ export function openScanFlow() {
   openNavChild('activity', { type: 'scan' })
 }
 
+/** Compact shells: the ticker's coin selector fills the main section. */
+export function openTickerCoins() {
+  openNavChild('activity', { type: 'ticker-coins' })
+}
+
 export function openReceiveFlow() {
   openNavChild('activity', { type: 'receive' })
+}
+
+/** Swap between coins this wallet holds. */
+export function openSwapFlow() {
+  openNavChild('activity', { type: 'swap' })
+}
+
+/** The swap offer book: standing offers, this wallet's first. */
+export function openSwapOffers() {
+  openNavChild('activity', { type: 'swap-offers' })
 }
 
 export function openPaymentDetails(entryId: string) {

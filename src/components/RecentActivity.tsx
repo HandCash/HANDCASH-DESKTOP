@@ -22,7 +22,6 @@ import {
   FilterIcon,
   FriendsIcon,
   ListingIcon,
-  LitecoinIcon,
   MintIcon,
   PurchaseIcon,
   ReceiveIcon,
@@ -43,6 +42,9 @@ import {
   activityEntryContinues,
   activityEntryTitle,
   activityTokenAmountDisplay,
+  activityNetworkLabel,
+  coinActivityChain,
+  coinPaymentChain,
   archiveOversizedBulkSendDebris,
   expireStaleInboundPending,
   expireStaleOutboundPending,
@@ -115,6 +117,10 @@ import {
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from "../wallet/fx";
+import { refreshBsvMarket } from "../wallet/bsvMarket";
+import { coinActivityUsdLabel } from "../wallet/heldValue";
+import { useCoinPrices } from "../features/heldCoins";
+import { COIN_CHAINS, type CoinChain } from "../wallet/coins/coinChains";
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -159,9 +165,10 @@ import { usePeerIdentity, type PeerIdentityView } from "../hooks/usePeerIdentity
 import type { AccountProfile } from "../wallet/publicIdentities";
 import { getWalletRuntime } from "../wallet/walletRuntime";
 import { appDisplayName } from "../wallet/appIdentity";
-import { useLtcDepositByMint } from "../features/ltcDeposits";
-import { describeLtcDeposit, ltcDepositWaiting } from "../wallet/wltc/depositPhase";
-import { LtcDepositBadge } from "./LtcDepositProgress";
+import { useCoinDepositByTxid } from "../features/coinDeposits";
+import { describeDeposit, depositWaiting as isDepositWaiting } from "../wallet/coins/depositPhase";
+import { CoinDepositBadge } from "./CoinDepositProgress";
+import { TickerCoinMark } from "./TickerCoinSelector";
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24;
@@ -407,7 +414,9 @@ export function HistoryIconCluster({
             decoding="async"
             fallback={
               <span className="history-item-thumb-icon">
-                {isTokenActivity(entry) ? (
+                {shown?.backedBy ? (
+                  <TickerCoinMark coin={shown.backedBy} size={18} />
+                ) : isTokenActivity(entry) ? (
                   <InventoryIcon size={18} />
                 ) : (
                   <CollectablesIcon size={18} />
@@ -417,7 +426,9 @@ export function HistoryIconCluster({
           />
         ) : item || listing || cancelling ? (
           <span className="history-item-thumb-icon">
-            {isTokenActivity(entry) ? (
+            {shown?.backedBy ? (
+              <TickerCoinMark coin={shown.backedBy} size={18} />
+            ) : isTokenActivity(entry) ? (
               <InventoryIcon size={18} />
             ) : (
               <CollectablesIcon size={18} />
@@ -464,11 +475,19 @@ export function HistoryIconCluster({
   );
 }
 
+/** The row's subtitle led by the network it was broadcast on, when the row needs one. */
+function withNetwork(network: string | null, detail: string | null): string | null {
+  return network && detail ? `${network} · ${detail}` : network ?? detail;
+}
+
+const NO_COIN_PRICES: Record<CoinChain, number | null> = { ltc: null, bch: null, btc: null, doge: null };
+
 function HistoryRow({
   entry,
   rowKey,
   currency,
   usdPerBsv,
+  coinPrices = NO_COIN_PRICES,
   showWhen,
   newest = false,
   verifying = false,
@@ -484,6 +503,8 @@ function HistoryRow({
   live?: LiveAction | null;
   currency: DisplayCurrency;
   usdPerBsv: number | null;
+  /** Prices native coin rows the way `usdPerBsv` prices BSV rows. */
+  coinPrices?: Record<CoinChain, number | null>;
   showWhen: boolean;
   newest?: boolean;
   verifying?: boolean;
@@ -517,10 +538,9 @@ function HistoryRow({
   const utxoHeal = isUtxoHealActivity(entry);
   const utxoHealDone = utxoHeal && !failed && entry.sats > 0;
   const showPending = pending && (spent || !inventoryProven || indexInstall);
-  const deposit = useLtcDepositByMint(
-    entry.method === "wltc-credit" ? entry.txid : undefined
-  );
-  const depositWaiting = deposit ? ltcDepositWaiting(deposit.phase) : false;
+  const receivedCoin = entry.method.endsWith("-receive") ? coinPaymentChain(entry) : null;
+  const deposit = useCoinDepositByTxid(receivedCoin, receivedCoin ? entry.txid : undefined);
+  const depositWaiting = deposit ? isDepositWaiting(deposit.phase) : false;
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined;
   const named = shown ? { ...entry, item: shown } : entry;
@@ -546,7 +566,8 @@ function HistoryRow({
     : event
     ? eventAmountLabel(entry)
     : token
-    ? activityTokenAmountDisplay(named)
+    ? (currency === "usd" ? coinActivityUsdLabel(named, coinPrices) : null) ??
+      activityTokenAmountDisplay(named)
     : item
     ? batchName || shown?.name || "Collectable"
     : approving
@@ -578,7 +599,9 @@ function HistoryRow({
     : spent
     ? `−${amountLabel}`
     : `+${amountLabel}`;
-  const subtitle =
+  const network = activityNetworkLabel(entry);
+  const subtitle = withNetwork(
+    network,
     failed && failureReason
       ? failureReason
       : noticeState === "stalled"
@@ -586,14 +609,15 @@ function HistoryRow({
       : noticeState === "retrying"
       ? "Notifying recipient…"
       : deposit
-      ? describeLtcDeposit(deposit.phase).status
+      ? describeDeposit(receivedCoin!, deposit.phase).status
       : event
       ? entry.origin !== WALLET_ACTIVITY_ORIGIN
         ? entry.origin
         : null
       : item && shown?.app
       ? shown.app
-      : null;
+      : null
+  );
 
   const entryKey = rowKey ?? activityEntryKey(entry);
   const rec = entry.txid ? getTxByTxid(entry.txid) : null;
@@ -664,7 +688,7 @@ function HistoryRow({
           </span>
           {deposit && depositWaiting ? (
             <span className="history-when" data-aeon-part="row-state">
-              <LtcDepositBadge phase={deposit.phase} />
+              <CoinDepositBadge chain={receivedCoin!} phase={deposit.phase} />
             </span>
           ) : showWhen ? (
             <span className="history-when" data-aeon-part="row-state">
@@ -759,7 +783,6 @@ function eventAmountLabel(entry: ActivityEntry): string {
     const withdrew = entry.note?.match(/Withdrew ([\d.]+) LTC/)?.[1];
     return withdrew ? `−${withdrew} LTC` : "Withdrawal";
   }
-  if (m === "wltc-proven") return "Can move";
   return "Action";
 }
 
@@ -771,7 +794,8 @@ function eventIcon(entry: ActivityEntry, size = 18) {
   }
   if (m === "utxo-heal") return <RefreshIcon size={size} />;
   if (m === "add-friend") return <FriendsIcon size={size} />;
-  if (m.startsWith("wltc-")) return <LitecoinIcon size={size} />;
+  const coin = coinActivityChain(entry);
+  if (coin) return <TickerCoinMark coin={coin} size={size} />;
   if (
     m.startsWith("connect") ||
     m === "disconnect" ||
@@ -1018,6 +1042,15 @@ export function ActivityFeed({
   const { entries, live, usdPerBsv, currency, origins } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
+  const coinPrices = useCoinPrices();
+  const shownCoins = currency === "usd"
+    ? COIN_CHAINS.filter((chain) => entries.some((e) => e.item?.backedBy === chain)).join(",")
+    : "";
+  useEffect(() => {
+    for (const chain of COIN_CHAINS) {
+      if (shownCoins.split(",").includes(chain)) void refreshBsvMarket(false, chain);
+    }
+  }, [shownCoins]);
   const [filters, setFilters] = useState<PaymentFilters>(
     DEFAULT_PAYMENT_FILTERS
   );
@@ -1281,6 +1314,7 @@ export function ActivityFeed({
             batch={record.batch}
             currency={currency}
             usdPerBsv={usdPerBsv}
+            coinPrices={coinPrices}
             showWhen={showWhen}
             newest={windowed.start === 0 && index === 0}
             verifying={

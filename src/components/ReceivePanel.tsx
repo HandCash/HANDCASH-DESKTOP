@@ -14,6 +14,11 @@ import {
 } from '../wallet/marketSwap'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
+import { CoinDepositProgress } from './CoinDepositProgress'
+import { useCoinDeposits } from '../features/coinDeposits'
+import { COIN_WALLETS } from '../features/coinWallets'
+import { depositWaiting } from '../wallet/coins/depositPhase'
+import { COIN_CHAINS, COIN_INFO, isCoinChain } from '../wallet/coins/coinChains'
 
 export type ReceiveMode = 'peerpay' | 'address'
 
@@ -41,6 +46,20 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [viaId, setViaId] = useState('bsv')
   const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
+  const [coinAddress, setCoinAddress] = useState<{ chain: string; address: string } | null>(null)
+  const coin = isCoinChain(viaId) ? viaId : null
+  const coinInfo = coin ? COIN_INFO[coin] : null
+  const waitingDeposits = useCoinDeposits(coin).filter((d) => depositWaiting(d.phase))
+
+  useEffect(() => {
+    if (!coin) return
+    // Asking for the address also tells the watcher to expect coins.
+    try {
+      setCoinAddress({ chain: coin, address: COIN_WALLETS[coin].getAddress() })
+    } catch (err) {
+      toastError(`${COIN_INFO[coin].label} address unavailable`, err instanceof Error ? err.message : String(err))
+    }
+  }, [coin])
 
   const peerpayUri = useMemo(() => {
     try {
@@ -64,22 +83,26 @@ export function ReceivePanel({ address, identityKey }: Props) {
     return () => ac.abort()
   }, [])
 
-  const value = mode === 'peerpay' && peerpayUri ? peerpayUri : address
-  const subtitle =
-    mode === 'peerpay'
+  const value = coin
+    ? (coinAddress?.chain === coin ? coinAddress.address : '')
+    : mode === 'peerpay' && peerpayUri ? peerpayUri : address
+  const subtitle = coinInfo
+    ? `${coinInfo.label} deposit address — send only ${coinInfo.ticker} here`
+    : mode === 'peerpay'
       ? 'PeerPay (BRC-125) — wallet key payment link'
       : 'Payment address — scan or copy to receive BSV'
 
-  const viaIsSwap = viaId !== 'bsv'
+  const viaIsSwap = viaId !== 'bsv' && !coin
   const viaLabel =
     viaId === 'bsv'
       ? 'BSV'
       : (swapCoins.find((c) => c.code === viaId)?.name ?? viaId)
-  const viaEta = viaIsSwap ? SWAP_ETA : NATIVE_BSV_ETA
+  const viaEta = coinInfo ? `${coinInfo.confirmations} ${coinInfo.label} confirmations` : viaIsSwap ? SWAP_ETA : NATIVE_BSV_ETA
 
   useEffect(() => {
     let cancelled = false
     setDataUrl(null)
+    if (!value) return
     void QRCode.toDataURL(value, {
       width: 260,
       margin: 2,
@@ -100,7 +123,8 @@ export function ReceivePanel({ address, identityKey }: Props) {
   }, [value])
 
   const copy = async () => {
-    await copyText(value, { label: mode === 'peerpay' ? 'PeerPay link' : 'address' })
+    if (!value) return
+    await copyText(value, { label: coinInfo ? `${coinInfo.label} address` : mode === 'peerpay' ? 'PeerPay link' : 'address' })
   }
 
   const openAddMoney = (fromCoin?: string) => {
@@ -111,17 +135,18 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const onViaChange = (next: string) => {
     playWalletSound('soft')
     setViaId(next)
-    if (next !== 'bsv') openAddMoney(next)
+    if (next !== 'bsv' && !isCoinChain(next)) openAddMoney(next)
   }
 
   return (
-    <div className="nav-child-panel receive-panel" data-aeon-scope="receive">
+    <div className="nav-child-panel receive-panel" data-aeon-scope="receive" data-chain={coin ?? 'bsv'}>
       <div className="receive-layout receive-layout-premium">
         <header className="receive-panel-intro">
-          <h3 className="receive-panel-title">Receive BSV</h3>
+          <h3 className="receive-panel-title">{coinInfo ? `Receive ${coinInfo.ticker}` : 'Receive BSV'}</h3>
           <p className="receive-panel-lede">
-            Always settle to Bitcoin SV on this device. Swap from other assets when you need to
-            top up.
+            {coinInfo
+              ? `${coinInfo.label} sent here stays ${coinInfo.label}, held by this wallet's own key. It can be spent after ${coinInfo.confirmations} ${coinInfo.label} confirmations, counted by this wallet.`
+              : 'Always settle to Bitcoin SV on this device. Swap from other assets when you need to top up.'}
           </p>
         </header>
 
@@ -135,7 +160,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
             {dataUrl ? (
               <DeferredImage
                 src={dataUrl}
-                alt={mode === 'peerpay' ? 'PeerPay QR code' : 'Receive address QR code'}
+                alt={coinInfo ? `${coinInfo.label} deposit address QR code` : mode === 'peerpay' ? 'PeerPay QR code' : 'Receive address QR code'}
                 width={260}
                 height={260}
                 skeletonWidth={260}
@@ -149,7 +174,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
           </button>
           <p className="receive-qr-hint">Tap QR to copy</p>
 
-          {peerpayUri ? (
+          {peerpayUri && !coin ? (
             <div className="actions receive-mode-actions">
               <button
                 type="button"
@@ -185,6 +210,11 @@ export function ReceivePanel({ address, identityKey }: Props) {
               onChange={(e) => onViaChange(e.target.value)}
             >
               <option value="bsv">BSV — {NATIVE_BSV_ETA}</option>
+              {COIN_CHAINS.map((chain) => (
+                <option key={chain} value={chain}>
+                  {COIN_INFO[chain].ticker} — {COIN_INFO[chain].confirmations} {COIN_INFO[chain].label} confirmations
+                </option>
+              ))}
               {swapCoins.map((coin) => (
                 <option key={coin.code} value={coin.code}>
                   Swap from {coin.code} — {coin.eta}
@@ -211,13 +241,24 @@ export function ReceivePanel({ address, identityKey }: Props) {
           >
             {value}
           </button>
+          {coin && waitingDeposits.length > 0 ? (
+            <ul data-aeon-part="deposit-list" aria-label={`${COIN_INFO[coin].label} deposits confirming`}>
+              {waitingDeposits.map((d) => (
+                <li key={`${d.txid}:${d.vout}`}>
+                  <CoinDepositProgress chain={coin} view={d} />
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <div className="actions receive-actions">
-            <button type="button" className="btn btn-primary" onClick={() => void copy()}>
-              {mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
+            <button type="button" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
+              {coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={() => openAddMoney()}>
-              Add money
-            </button>
+            {coin ? null : (
+              <button type="button" className="btn btn-ghost" onClick={() => openAddMoney()}>
+                Add money
+              </button>
+            )}
           </div>
         </div>
       </div>

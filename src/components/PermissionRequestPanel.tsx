@@ -19,7 +19,7 @@ import type { AutoPayChoice } from '../wallet/autoPay'
 import {
   AutoPayControls,
   connectPermissionNote,
-  isBsvPaymentAction,
+  isAutoPayableAction,
   useAutoPayForm,
 } from './AutoPayControls'
 import { ConnectScopesList } from './ConnectScopesList'
@@ -70,7 +70,7 @@ export function PermissionRequestPanel({
   }, [pending, autoPay.loadFromOrigin])
 
   const name = appDisplayName(pending.origin)
-  const showAutoPay = pending.kind === 'connect' || isBsvPaymentAction(pending)
+  const showAutoPay = pending.kind === 'connect' || isAutoPayableAction(pending)
   const showAcceptIncoming =
     pending.kind === 'action' && pending.title === 'Accept incoming funds'
   const monthlyCap =
@@ -253,6 +253,8 @@ export function PermissionRequestPanel({
           </strong>
           {amountSecondary && amountPrimary && amountPrimary !== '—' ? (
             <em className="action-amount-bsv">{amountSecondary}</em>
+          ) : !amountPrimary && pending.kind === 'action' && pending.amountNote ? (
+            <em className="action-amount-bsv">{pending.amountNote}</em>
           ) : null}
         </div>
       )}

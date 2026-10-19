@@ -14,8 +14,10 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
+  type RefObject,
 } from 'react'
 import { FloatingPositioner } from '../floating/FloatingPositioner.js'
+import type { AnchorPlacement } from '../hooks/use-anchor-position.js'
 import { useAeonMachine } from '../hooks/use-aeon-machine.js'
 import { useOutsideClick } from '../hooks/use-outside-click.js'
 import { mergeProps } from '../utils/merge-props.js'
@@ -257,11 +259,16 @@ const Trigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonEle
 export interface SelectPositionerProps extends HTMLAttributes<HTMLDivElement> {
   /** Mount listbox in document.body (default true). */
   portalled?: boolean
+  placement?: AnchorPlacement
+  /** Align to this region rather than the trigger. See `FloatingPositioner`. */
+  anchorRef?: RefObject<HTMLElement | null>
+  /** Size the listbox to the anchor (default true). */
+  matchAnchorWidth?: boolean
   children?: ReactNode
 }
 
 const Positioner = forwardRef<HTMLDivElement, SelectPositionerProps>(function SelectPositioner(
-  { portalled = true, children, className, ...rest },
+  { portalled = true, placement, anchorRef, matchAnchorWidth = true, children, className, ...rest },
   ref,
 ) {
   const { open, triggerRef, positionerRef } = useSelectCtx()
@@ -275,8 +282,10 @@ const Positioner = forwardRef<HTMLDivElement, SelectPositionerProps>(function Se
         part={selectAnatomy.positioner}
         triggerRef={triggerRef}
         positionerRef={positionerRef}
+        anchorRef={anchorRef}
         portalled={portalled}
-        matchAnchorWidth
+        placement={placement}
+        matchAnchorWidth={matchAnchorWidth}
         className={className}
         {...rest}
       >

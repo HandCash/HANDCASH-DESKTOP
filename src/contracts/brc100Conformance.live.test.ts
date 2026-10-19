@@ -17,11 +17,13 @@ import {
  * wallets with permissions; approve them, or narrow with BRC100_LEVELS=0.
  *
  *   npm run test:brc100:live
- *   BRC100_WALLET_URL=http://127.0.0.1:3321 BRC100_ORIGINATOR=conformance.example \
+ *   BRC100_WALLET_URL=http://127.0.0.1:3321 BRC100_ORIGINATOR=conformance.localhost \
  *   BRC100_LEVELS=0,1,2 BRC100_P_SCHEMES= npm run test:brc100:live
  */
 const url = process.env.BRC100_WALLET_URL ?? 'http://127.0.0.1:3321'
-const originator = process.env.BRC100_ORIGINATOR ?? 'conformance.example'
+// The SDK sends a bare-hostname originator as http://<host>, and HandCash lets
+// plaintext claim only loopback or private hosts: a local run names itself so.
+const originator = process.env.BRC100_ORIGINATOR ?? 'conformance.localhost'
 const levels = (process.env.BRC100_LEVELS ?? '0,1,2')
   .split(',')
   .map((s) => Number(s.trim()))
@@ -34,7 +36,11 @@ describe(`BRC-100 conformance: ${url} as ${originator}`, () => {
   const results: ConformanceResult[] = []
 
   beforeAll(async () => {
-    const wallet = new WalletClient(new HTTPWalletJSON(originator, url), originator)
+    // The live config installs a headless DOM, so the SDK believes it runs in a
+    // browser and leaves the caller unnamed; declare it as a native client does.
+    const declared: typeof fetch = (input, init) =>
+      fetch(input, { ...init, headers: { ...(init?.headers as Record<string, string>), Originator: originator } })
+    const wallet = new WalletClient(new HTTPWalletJSON(originator, url, declared), originator)
     ctx = await conformanceContext(wallet, { originator, securityLevels: levels, supportedPermissionSchemes })
   })
 

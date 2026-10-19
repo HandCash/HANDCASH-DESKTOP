@@ -535,7 +535,11 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
     startBrc250DeviceService(),
   )
-  void import('./wltc/bridge').then(({ startWltcWatcher }) => startWltcWatcher())
+  void import('./coinMethods').then(({ COIN_CHAINS, coinWalletOf }) => {
+    for (const chain of COIN_CHAINS) void coinWalletOf(chain).then((coin) => coin.startWatcher())
+  })
+  // Senders refuse coins to an identity whose wallet has not said it receives them.
+  void import('./walletProtocols').then(({ publishWalletProtocols }) => publishWalletProtocols(wallet))
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle
   // (`accountLocalStores`), in the same tick as every other account store.
   return wallet

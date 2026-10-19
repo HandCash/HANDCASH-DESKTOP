@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Write `src/wallet/wltc/checkpoint.ts`: the Litecoin block every install's
+ * Write `src/wallet/ltc/checkpoint.ts`: the Litecoin block every install's
  * header chain starts from, with the window-end times its next retarget reads.
  * It must sit below every backed deposit (see that file), so it is written only
  * for an explicit height. A new checkpoint makes installs drop their chain.
@@ -16,7 +16,7 @@ const API = 'https://litecoinspace.org/api'
 const INTERVAL = 2016
 /** A first sync past this many blocks (about a month) is due a bulk header source. */
 const LONG_SYNC = 17_280
-const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'wallet', 'wltc', 'checkpoint.ts')
+const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'wallet', 'ltc', 'checkpoint.ts')
 
 async function get(path) {
   const res = await fetch(`${API}${path}`)

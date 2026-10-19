@@ -13,3 +13,9 @@ Imported from HandCash public surfaces for this official HandCash Desktop UI:
 | `*.svg` marks/wordmark | Vector recreations of the HandCash mark for theming |
 
 Brand marks are HandCash property and used here as part of the official HandCash Desktop app.
+
+## Chain marks
+
+The Litecoin, Bitcoin Cash, Bitcoin and Dogecoin glyphs in `src/components/icons.tsx`
+come from [`cryptocurrency-icons`](https://github.com/spothq/cryptocurrency-icons) 0.18.1
+(CC0 1.0). Disc colours are the chains' own brand colours, set in `handcash.css`.

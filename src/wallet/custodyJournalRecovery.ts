@@ -13,9 +13,10 @@ import {
   appendCustody,
   custodyOutpoint,
   custodyRecipeFor,
+  isBsvRecipe,
   unspentCustodyOutputs,
   type CustodyEntry,
-  type SpendRecipe,
+  type BsvRecipe,
 } from './custodyJournal'
 import { forgetDerivedChange, listDerivedChangeEcho } from './derivedChangeEcho'
 import { withVisibleOnChainBeef } from './legacyBeef'
@@ -99,7 +100,7 @@ async function heldOutpoints(active: ActiveWallet): Promise<Set<string> | null> 
   return held
 }
 
-function outputSpec(vout: number, r: SpendRecipe, self: string) {
+function outputSpec(vout: number, r: BsvRecipe, self: string) {
   if (r.p === 'wallet payment') {
     return {
       outputIndex: vout,
@@ -126,7 +127,7 @@ function outputSpec(vout: number, r: SpendRecipe, self: string) {
 export async function reimportCustodyOutputs(
   active: ActiveWallet,
   txid: string,
-  outs: Array<{ vout: number; sats: number; r: SpendRecipe }>,
+  outs: Array<{ vout: number; sats: number; r: BsvRecipe }>,
 ): Promise<{ imported: number; failed: number }> {
   if (outs.length === 0) return { imported: 0, failed: 0 }
   let atomic: number[]
@@ -163,8 +164,8 @@ export async function reimportCustodyOutputs(
   return { imported: outs.length, failed: 0 }
 }
 
-function groupByTxid(outpoints: Array<{ op: string; sats: number; r: SpendRecipe }>) {
-  const groups = new Map<string, Array<{ vout: number; sats: number; r: SpendRecipe }>>()
+function groupByTxid(outpoints: Array<{ op: string; sats: number; r: BsvRecipe }>) {
+  const groups = new Map<string, Array<{ vout: number; sats: number; r: BsvRecipe }>>()
   for (const { op, sats, r } of outpoints) {
     const [txid, vout] = op.split('.')
     const list = groups.get(txid) ?? []
@@ -187,7 +188,7 @@ export async function reimportJournaledOutpoints(
   seedCustodyFromEcho(active, owner)
   const held = await heldOutpoints(active)
   if (!held || !isCurrentWallet(active)) return { imported: 0, skipped: outpoints.length, failed: 0 }
-  const known: Array<{ op: string; sats: number; r: SpendRecipe }> = []
+  const known: Array<{ op: string; sats: number; r: BsvRecipe }> = []
   let skipped = 0
   const seen = new Set<string>()
   for (const raw of outpoints) {
@@ -195,7 +196,7 @@ export async function reimportJournaledOutpoints(
     if (seen.has(op) || held.has(op)) continue
     seen.add(op)
     const recipe = custodyRecipeFor(owner, op)
-    if (recipe) known.push({ op, ...recipe })
+    if (recipe && isBsvRecipe(recipe.r)) known.push({ op, sats: recipe.sats, r: recipe.r })
     else skipped += 1
   }
   if (skipped > 0) {

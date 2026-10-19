@@ -461,6 +461,11 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-text strong {
   text-overflow: ellipsis;
 }
 
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn > svg {
+  width: 32px;
+  height: 32px;
+}
+
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-change {
   font-size: 0.68rem;
 }
@@ -525,6 +530,17 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty {
   width: 100%;
   height: 28px;
   margin: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart .bsv-change {
+  flex-shrink: 0;
+  pointer-events: auto;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
@@ -1121,4 +1137,14 @@ html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
 
 html:is(.platform-mobile, .layout-compact) .identity-scroll {
   padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Three hero actions (Send · Receive · Swap) share a phone-width row. */
+html:is(.platform-mobile, .layout-compact) .wallet-actions:has(> .btn:nth-child(3)) {
+  gap: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions:has(> .btn:nth-child(3)) .btn-icon {
+  gap: 6px;
+  padding-inline: 8px;
 }

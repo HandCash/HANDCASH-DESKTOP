@@ -34,6 +34,7 @@ import {
   openFungibleDetails,
   openMessagesInbox,
   openNavChild,
+  openSwapFlow,
   popSettingTo,
   setNavSection,
   subscribeEmbeddedAppBrowserTabs,
@@ -66,6 +67,8 @@ import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
 import { ReceivePanel } from './ReceivePanel'
+import { SwapOffersPanel } from './SwapOffersPanel'
+import { SwapPanel } from './SwapPanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { WalletHealthPanel } from './settings/WalletHealthPanel'
@@ -80,6 +83,9 @@ import { GoogleRecoveryPanel } from './GoogleRecoveryPanel'
 import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { DevKeysPanel } from './DevKeysPanel'
+import { TickerCoinSelector } from './TickerCoinSelector'
+import { useTickerCoin } from '../features/tickerCoin'
+import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
@@ -176,6 +182,7 @@ export const WalletNav = memo(function WalletNav({
   onFail,
 }: Props) {
   const compact = useCompactShell()
+  const tickerCoin = useTickerCoin()
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const navRef = useRef(nav)
   const [browserState, setBrowserState] = useState<{
@@ -422,7 +429,10 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'send') return [root, { label: 'Send' }]
     if (stageChild.type === 'scan') return [root, { label: 'Scan' }]
     if (stageChild.type === 'receive') return [root, { label: 'Receive' }]
+    if (stageChild.type === 'swap') return [root, { label: 'Swap' }]
+    if (stageChild.type === 'swap-offers') return [root, { label: 'Swap', onClick: openSwapFlow }, { label: 'Offers' }]
     if (stageChild.type === 'dev-keys') return [root, { label: 'Developer keys' }]
+    if (stageChild.type === 'ticker-coins') return [root, { label: 'Ticker' }]
     if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
     if (stageChild.type === 'setting') {
       const stack = getSettingBackStack()
@@ -631,6 +641,7 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'send' && (
                 <SendPanel
+                  key={stageChild.opened}
                   chain={profile.chain}
                   identityKey={profile.identityKey}
                   initialRecipient={stageChild.prefill}
@@ -641,9 +652,24 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'scan' && <ScanPanel placement="nav" />}
               {stageChild.type === 'dev-keys' && <DevKeysPanel />}
+              {stageChild.type === 'ticker-coins' && (
+                <div className="nav-child-panel">
+                  <TickerCoinSelector
+                    selected={tickerCoin}
+                    onPick={(coin) => {
+                      setTickerCoin(coin)
+                      clearNavChild()
+                    }}
+                  />
+                </div>
+              )}
               {stageChild.type === 'receive' && (
                 <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
               )}
+              {stageChild.type === 'swap' && (
+                <SwapPanel address={profile.address} identityKey={profile.identityKey} chain={profile.chain} onFail={onFail} />
+              )}
+              {stageChild.type === 'swap-offers' && <SwapOffersPanel identityKey={profile.identityKey} />}
               {stageChild.type === 'payment' && (
                 <PaymentDetailsPanel entryId={stageChild.entryId} chain={profile.chain} />
               )}

@@ -1522,7 +1522,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   }
 
   .wallet-actions .btn-icon {
-    padding-inline: 14px;
+    gap: 6px;
+    padding-inline: 10px;
   }
 
   .wallet-action-label {
@@ -2122,6 +2123,127 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 .bsv-change:focus-visible {
   outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
   outline-offset: 2px;
+}
+
+/* One selection shape for the coin trigger and the coin menu it opens. */
+[data-aeon-scope='what-is-bsv'] {
+  --hc-ticker-select-radius: 10px;
+}
+
+/* Logo and name sit under one hitbox: the trigger for the ticker's coin selector. */
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row {
+  position: relative;
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger'] {
+  position: absolute;
+  inset: -6px -10px -6px -6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--hc-ticker-select-radius);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger']:hover {
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-text) 55%, transparent);
+  outline-offset: 0;
+}
+
+[data-aeon-scope='what-is-bsv'] .bsv-logo-btn,
+[data-aeon-scope='what-is-bsv'] .bsv-asset-text {
+  pointer-events: none;
+}
+
+/* The change and its range belong to the chart they describe, not the coin selector. */
+[data-aeon-scope='what-is-bsv'] .bsv-stage-chart {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-name'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='caret'] {
+  font-size: 0.7rem;
+  color: var(--hc-muted);
+  opacity: 0.6;
+  transition: opacity 120ms ease;
+}
+
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row:has([data-aeon-part='coin-trigger']:hover) [data-aeon-part='caret'],
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row:has([data-aeon-part='coin-trigger']:focus-visible) [data-aeon-part='caret'] {
+  opacity: 1;
+}
+
+[data-aeon-scope='what-is-bsv'] [data-aeon-part='held'] {
+  font-size: 0.78rem;
+  color: var(--hc-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-aeon-scope='ticker-coins'] {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='list'] {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'] {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--hc-ticker-select-radius, 10px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin']:hover,
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'][data-aeon-state='selected'] {
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'] img {
+  border-radius: 8px;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='copy'] {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='description'] {
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Fixed slot: chart ↔ about swap without changing panel height */
@@ -9183,6 +9305,146 @@ html[data-aeon-mode='light'] .shortcut-key {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
+/* Network: a dropdown of chains by logo, name and ticker. The list is portalled, so it is keyed by `data-network-picker`. */
+[data-aeon-scope='network-picker'] {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+[data-aeon-scope='network-picker'] [data-aeon-part='label'] {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+[data-network-picker][data-aeon-part='trigger'] {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-panel, var(--hc-surface));
+  color: var(--hc-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-network-picker][data-aeon-part='trigger']:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+[data-network-picker][data-aeon-part='trigger']:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-text) 55%, transparent);
+  outline-offset: 1px;
+}
+
+[data-network-picker][data-aeon-part='trigger'] [data-aeon-part='value'] {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+[data-network-picker][data-aeon-part='trigger'] [data-aeon-part='icon'] {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--hc-muted);
+  border-bottom: 2px solid var(--hc-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 120ms ease;
+}
+
+[data-network-picker][data-aeon-part='trigger'][data-aeon-state='open'] [data-aeon-part='icon'] {
+  transform: translateY(2px) rotate(-135deg);
+}
+
+[data-network-picker][data-aeon-part='content'] {
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-panel, var(--hc-surface));
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--hc-text) 16%, transparent);
+}
+
+[data-network-picker] [data-aeon-part='item'] {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: calc(var(--hc-radius) - 2px);
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+[data-network-picker] [data-aeon-part='item']:hover,
+[data-network-picker] [data-aeon-part='item'][data-aeon-state='highlighted'] {
+  background: color-mix(in srgb, var(--hc-muted) 12%, transparent);
+}
+
+[data-network-picker] [data-aeon-part='item'][data-aeon-state='selected'] {
+  background: color-mix(in srgb, var(--hc-muted) 18%, transparent);
+  font-weight: 600;
+}
+
+[data-network-picker] svg,
+[data-network-picker] img {
+  flex-shrink: 0;
+}
+
+[data-network-picker] [data-network-part='name'] {
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-network-picker] [data-network-part='sym'] {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--hc-muted);
+}
+
+[data-network-picker] [data-network-part='detail'] {
+  margin-left: auto;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-muted);
+}
+
+[data-network-picker] [data-network-part='detail'] + [data-network-part='sym'] {
+  margin-left: 0;
+}
+
+[data-network-picker] [data-aeon-part='item']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .send-dest-field,
 .receive-via-field {
   display: grid;
@@ -11315,7 +11577,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   overflow: hidden;
 }
 
-/* Chain marks are drawn by the wallet from a backed token's deploy, never from issuer art. */
+/* The Litecoin mark is drawn by the wallet, never from issuer art. */
 [data-chain-mark='ltc'] .chain-mark-disc {
   fill: #345d9d;
 }
@@ -11324,59 +11586,89 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   fill: #fff;
 }
 
-.fungible-avatar:has(> [data-aeon-part='chain-mark']) {
-  position: relative;
+[data-chain-mark='bch'] .chain-mark-disc {
+  fill: #0ac18e;
 }
 
-.fungible-avatar > [data-aeon-part='chain-face'] {
-  display: grid;
-  place-items: center;
-  width: 100%;
-  height: 100%;
+[data-chain-mark='bch'] .chain-mark-glyph {
+  fill: #fff;
 }
 
-.fungible-avatar > [data-aeon-part='chain-mark'] {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  display: grid;
-  line-height: 0;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px var(--hc-surface, #fff);
+[data-chain-mark='btc'] .chain-mark-disc {
+  fill: #f7931a;
 }
 
-/* LTC deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
-[data-aeon-scope='ltc-deposit'] [data-aeon-part='pips'] {
+[data-chain-mark='btc'] .chain-mark-glyph {
+  fill: #fff;
+}
+
+[data-chain-mark='doge'] .chain-mark-disc {
+  fill: #c2a633;
+}
+
+[data-chain-mark='doge'] .chain-mark-glyph {
+  fill: #fff;
+}
+
+/* Each native coin's colour, for views that tint by chain. */
+[data-chain='ltc'] {
+  --coin-color: #345d9d;
+}
+
+[data-chain='bch'] {
+  --coin-color: #0ac18e;
+}
+
+[data-chain='btc'] {
+  --coin-color: #f7931a;
+}
+
+[data-chain='doge'] {
+  --coin-color: #c2a633;
+}
+
+/* Coin deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
+[data-aeon-scope='coin-deposit'] [data-aeon-part='pips'] {
   display: inline-flex;
   align-items: center;
   gap: 3px;
 }
 
-[data-aeon-scope='ltc-deposit'] [data-aeon-part='pip'] {
+[data-aeon-scope='coin-deposit'] [data-aeon-part='pip'] {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1px solid color-mix(in srgb, #345d9d 70%, var(--hc-muted));
+  border: 1px solid color-mix(in srgb, var(--coin-color, #345d9d) 70%, var(--hc-muted));
   background: transparent;
 }
 
-[data-aeon-scope='ltc-deposit'] [data-aeon-part='pip'][data-aeon-state='counted'] {
-  background: #345d9d;
-  border-color: #345d9d;
+[data-aeon-scope='coin-deposit'] [data-aeon-part='pip'][data-aeon-state='counted'] {
+  background: var(--coin-color, #345d9d);
+  border-color: var(--coin-color, #345d9d);
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-state='unchecked'] [data-aeon-part='pip'],
-[data-aeon-scope='ltc-deposit'][data-aeon-state='missing'] [data-aeon-part='pip'] {
+/* Twenty Dogecoin marks fit where six Litecoin ones do. */
+[data-aeon-scope='coin-deposit'] [data-aeon-part='pips'][data-many] {
+  gap: 1px;
+}
+
+[data-aeon-scope='coin-deposit'] [data-aeon-part='pips'][data-many] [data-aeon-part='pip'] {
+  width: 4px;
+  height: 4px;
+}
+
+[data-aeon-scope='coin-deposit'][data-aeon-state='unchecked'] [data-aeon-part='pip'],
+[data-aeon-scope='coin-deposit'][data-aeon-state='missing'] [data-aeon-part='pip'] {
   opacity: 0.45;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-state='abandoned'] [data-aeon-part='pip'] {
+[data-aeon-scope='coin-deposit'][data-aeon-state='abandoned'] [data-aeon-part='pip'] {
   border-style: dashed;
   border-color: var(--hc-danger, #c0392b);
   background: transparent;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='badge'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='badge'] {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -11385,41 +11677,46 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   color: var(--hc-muted);
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] {
   display: grid;
   gap: 4px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: color-mix(in srgb, #345d9d 7%, transparent);
+  background: color-mix(in srgb, var(--coin-color, #345d9d) 7%, transparent);
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='headline'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='headline'] {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='pip'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='pips']:not([data-many]) [data-aeon-part='pip'] {
   width: 9px;
   height: 9px;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] p {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='pips'][data-many] [data-aeon-part='pip'] {
+  width: 6px;
+  height: 6px;
+}
+
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] p {
   margin: 0;
   font-size: 0.78rem;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='status'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='status'] {
   font-weight: 600;
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='source'],
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='source'],
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
   color: var(--hc-muted);
 }
 
-[data-aeon-scope='ltc-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
+[data-aeon-scope='coin-deposit'][data-aeon-part='progress'] [data-aeon-part='estimate'] {
   font-style: italic;
 }
 
@@ -16535,5 +16832,560 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
   [data-aeon-scope='dev-keys'] [data-aeon-part='key-actions'] .btn {
     flex: 1 1 auto;
+  }
+}
+
+/*
+ * Swap and swap offers: one centred column in the child stage. The stage body scrolls,
+ * so the panel must not clip its focus rings or the flip button; the panel is the
+ * container its cqi type sizes against.
+ */
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']).nav-child-panel {
+  overflow: visible;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) {
+  container: swap / inline-size;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  width: 100%;
+  max-width: 520px;
+  margin-inline: auto;
+  padding: 6px 10px 14px;
+  box-sizing: border-box;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='lede'] {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  text-align: center;
+  text-wrap: balance;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='leg-label'] {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+/* Swap: two legs around a direction flip, the price, one primary action, then an explicit review. */
+[data-aeon-scope='swap'] [data-aeon-part='pair'] {
+  position: relative;
+  display: grid;
+  gap: 6px;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='leg'] {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--hc-border);
+  border-radius: calc(var(--hc-radius) + 4px);
+  background: var(--hc-panel, var(--hc-surface));
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='leg-head'] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='leg-row'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+[data-aeon-scope='swap'] [data-network-picker][data-aeon-part='trigger'] {
+  width: auto;
+  padding: 8px 12px;
+  border-radius: 999px;
+}
+
+[data-aeon-scope='swap'] [data-network-picker][data-aeon-part='trigger'] [data-network-part='name'] {
+  display: none;
+}
+
+[data-aeon-scope='swap'] [data-network-picker][data-aeon-part='trigger'] [data-network-part='sym'] {
+  margin-left: 0;
+  color: var(--hc-text);
+  font-size: 0.85rem;
+}
+
+[data-aeon-scope='swap'] :is([data-aeon-part='amount'], [data-aeon-part='receive']) {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--hc-text);
+  font-family: var(--hc-display);
+  font-size: clamp(1.25rem, 6cqi, 1.7rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='amount']:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--hc-accent);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='receive'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='receive'][data-aeon-state='empty'] {
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='swap'] :is([data-aeon-part='fiat'], [data-aeon-part='rate'], [data-aeon-part='held']) {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='held'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='held'][data-aeon-state='over'] {
+  color: var(--hc-danger);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='rate'] {
+  text-align: center;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='flip'] {
+  appearance: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--hc-border);
+  border-radius: 999px;
+  background: var(--hc-panel, var(--hc-surface));
+  color: var(--hc-text);
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition: border-color 120ms ease;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='flip']:hover:not(:disabled),
+[data-aeon-scope='swap'] [data-aeon-part='flip']:focus-visible {
+  border-color: var(--hc-accent);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='flip'] svg {
+  transform: rotate(90deg);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='flip']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+[data-aeon-scope='swap'] :is([data-aeon-part='routes'], [data-aeon-part='history'] ul) {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='routes'] [data-route][data-aeon-state='selected'] {
+  border-color: var(--hc-accent);
+  box-shadow: inset 0 0 0 1px var(--hc-accent);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='actions'] {
+  display: grid;
+  gap: 4px;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='browse'] {
+  justify-self: center;
+  padding: 4px 8px;
+  border: 0;
+  background: none;
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='browse']:hover {
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='swap'] [data-aeon-part='history'] {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hc-border);
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] {
+  display: grid;
+  gap: 10px;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 0;
+  padding: 12px;
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-muted) 8%, transparent);
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] dt {
+  color: var(--hc-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--hc-text);
+  overflow-wrap: anywhere;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) > [data-aeon-scope='button'][data-aeon-variant='solid'],
+[data-aeon-scope='swap'] [data-aeon-part='actions'] > [data-aeon-scope='button'][data-aeon-variant='solid'] {
+  width: 100%;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='button'][data-aeon-part='group'] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='button']:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  animation: none;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'] {
+  --banner-tone: var(--hc-muted);
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--banner-tone) 40%, transparent);
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--banner-tone) 10%, transparent);
+  color: var(--hc-text);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'][data-aeon-state~='success'] {
+  --banner-tone: var(--hc-accent);
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'][data-aeon-state~='warning'] {
+  --banner-tone: #f5a524;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'][data-aeon-state~='danger'] {
+  --banner-tone: #f04848;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'] [data-aeon-part='copy'] {
+  display: grid;
+  gap: 2px;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'] [data-aeon-part='title'] {
+  margin: 0;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 700;
+  letter-spacing: normal;
+  color: inherit;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'] [data-aeon-part='actions'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'label trailing' 'description trailing';
+  align-items: center;
+  gap: 2px 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-panel, var(--hc-surface));
+  color: var(--hc-text);
+  font: inherit;
+  text-align: start;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root'] [data-aeon-part='label'] {
+  grid-area: label;
+  min-width: 0;
+  font-size: 0.85rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root'] [data-aeon-part='description'] {
+  grid-area: description;
+  min-width: 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root'] [data-aeon-part='trailing'] {
+  grid-area: trailing;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Swap offers: the offer book, this wallet's first. */
+[data-aeon-scope='swap-offers'] [data-aeon-part='empty'] {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+[data-aeon-scope='swap-offers'] :is([data-aeon-part='offers'], [data-aeon-part='swaps']) {
+  display: grid;
+  gap: 6px;
+}
+
+[data-aeon-scope='swap-offers'] [data-aeon-part='offers'][aria-busy='true'] {
+  opacity: 0.7;
+}
+
+[data-aeon-scope='swap-offers'] :is([data-aeon-part='offers'], [data-aeon-part='swaps']) ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@container swap (max-width: 380px) {
+  [data-aeon-scope='swap'] [data-aeon-part='leg'] {
+    padding: 10px;
+  }
+
+  :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='review'] dd + dt {
+    margin-top: 8px;
+  }
+
+  :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='button'][data-aeon-part='group'] > * {
+    flex: 1 1 0;
+  }
+}
+
+/* Swap visuals: coin logos for pairs, the review summary, route badges and status pills. */
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='leading']) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'leading label trailing' 'leading description trailing';
+}
+
+:is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='listRow'][data-aeon-part='root'] > [data-aeon-part='leading'] {
+  grid-area: leading;
+  display: grid;
+  place-items: center;
+}
+
+[data-aeon-scope='swap-pair'] {
+  --pair: var(--swap-pair-size, 26px);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+[data-aeon-scope='swap-pair'] [data-aeon-part='coin'] {
+  display: grid;
+  place-items: center;
+  width: var(--pair);
+  height: var(--pair);
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--hc-panel, var(--hc-surface));
+  box-shadow: 0 0 0 2px var(--hc-panel, var(--hc-surface));
+}
+
+[data-aeon-scope='swap-pair'] [data-aeon-part='coin'] + [data-aeon-part='coin'] {
+  margin-left: calc(var(--pair) * -0.38);
+}
+
+[data-aeon-scope='swap-pair'] [data-aeon-part='coin'] :is(img, svg) {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+[data-aeon-scope='swap-summary'] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='leg'] {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 14px 10px 12px;
+  border: 1px solid var(--hc-border);
+  border-radius: calc(var(--hc-radius) + 4px);
+  background: var(--hc-panel, var(--hc-surface));
+  text-align: center;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='leg'] > :first-child {
+  margin-bottom: 6px;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='caption'] {
+  color: var(--hc-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='amount'] {
+  max-width: 100%;
+  color: var(--hc-text);
+  font-family: var(--hc-display);
+  font-size: clamp(0.95rem, 4.4cqi, 1.15rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='ticker'] {
+  color: var(--hc-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+[data-aeon-scope='swap-summary'] [data-aeon-part='arrow'],
+[data-aeon-scope='swap-route-badge'] {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-accent) 14%, transparent);
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='swap-route-badge'] {
+  width: 32px;
+  height: 32px;
+}
+
+[data-aeon-scope='swap-route-badge'][data-route='exolix'] {
+  background: color-mix(in srgb, #f5a524 14%, transparent);
+  color: #f5a524;
+}
+
+[data-aeon-scope='swap-status'] {
+  --tone: #5aa9ff;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: var(--tone);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='swap-status']::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+[data-aeon-scope='swap-status'][data-tone='moving']::before {
+  animation: swap-status-pulse 1.4s ease-in-out infinite;
+}
+
+[data-aeon-scope='swap-status'][data-tone='done'] {
+  --tone: var(--hc-accent);
+}
+
+[data-aeon-scope='swap-status'][data-tone='returned'] {
+  --tone: #f5a524;
+}
+
+[data-aeon-scope='swap-status'][data-tone='stopped'] {
+  --tone: #f04848;
+}
+
+@keyframes swap-status-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='swap-status'][data-tone='moving']::before {
+    animation: none;
+  }
+}
+
+@container swap (max-width: 300px) {
+  [data-aeon-scope='swap-summary'] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  [data-aeon-scope='swap-summary'] [data-aeon-part='arrow'] {
+    justify-self: center;
+    transform: rotate(90deg);
   }
 }

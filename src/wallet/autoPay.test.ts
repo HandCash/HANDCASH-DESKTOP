@@ -85,6 +85,15 @@ describe('autoPay', () => {
     expect(canAutoProcessPayment('game.example', 'createAction', 2_000_000)).toBe(true)
   })
 
+  it('auto-pays an LTC payment from the same budget, and nothing that is not a coin payment', async () => {
+    const { setAutoPaySettings, canAutoProcessPayment } = await import('./autoPay')
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })
+    expect(canAutoProcessPayment('game.example', 'sendCoins', 2_000_000)).toBe(true)
+    expect(canAutoProcessPayment('game.example', 'sendCoins', 20_000_001)).toBe(false)
+    expect(canAutoProcessPayment('game.example', 'sendCoins', undefined)).toBe(false)
+    expect(canAutoProcessPayment('game.example', 'transferHctAsset', 2_000_000)).toBe(false)
+  })
+
   it('falls back to cached maxSats when FX is missing', async () => {
     const { setAutoPaySettings, canAutoProcessPayment } = await import('./autoPay')
     setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })

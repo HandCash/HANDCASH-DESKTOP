@@ -1,11 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useMachine } from '@xstate/react'
 import { Accordion } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
+import { tickerMachine } from '../machines/tickerMachine'
+import { useTickerCoin } from '../features/tickerCoin'
+import { useHeldCoins } from '../features/heldCoins'
+import { coinUsd } from '../wallet/heldValue'
+import { COIN_INFO, formatCoin, type CoinChain } from '../wallet/coins/coinChains'
+import { formatBsvSignificant } from '../wallet/session'
+import { formatUsd, formatUsdFromSats } from '../wallet/fx'
+import { TICKER_COINS } from '../wallet/tickerCoin'
+import { TickerCoinMark, TickerCoinSelector } from './TickerCoinSelector'
 import { bsvLogoClassic, bsvLogoDefault } from '../assets/brand/bsvLogos'
 import { Skeleton, SkeletonLine } from './Skeleton'
 import {
   BSV_CHART_RANGE_LABEL,
-  OFFICIAL_URL,
   changePctForRange,
   formatPct,
   formatPriceUsd,
@@ -16,6 +25,7 @@ import {
   subscribeBsvMarket,
   type BsvChartRange,
   type BsvMarketStats,
+  type MarketCoin,
 } from '../wallet/bsvMarket'
 import {
   getBsvLogoClassic,
@@ -73,8 +83,23 @@ function latestToast(items: ToastItem[]): ToastItem | null {
   return items[items.length - 1] ?? null
 }
 
-export function WhatIsBsvPanel() {
-  const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket())
+/** What the wallet holds of `coin` in words, valued at the ticker's own quote; null when it holds none. */
+function heldLabel(coin: MarketCoin, heldBsvSats: number | null, heldCoins: Record<CoinChain, bigint>, priceUsd: number | null): string | null {
+  if (coin !== 'bsv') {
+    const units = heldCoins[coin]
+    if (units === 0n) return null
+    const usd = coinUsd(coin, units, priceUsd)
+    return `You hold ${formatCoin(coin, units)} ${COIN_INFO[coin].ticker}${usd == null ? '' : ` · ${formatUsd(usd)}`}`
+  }
+  if (!heldBsvSats) return null
+  return `You hold ${formatBsvSignificant(heldBsvSats, 5)}${priceUsd == null ? '' : ` · ${formatUsdFromSats(heldBsvSats, priceUsd)}`}`
+}
+
+export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) {
+  const coin = useTickerCoin()
+  const heldCoins = useHeldCoins()
+  const [ticker, sendTicker] = useMachine(tickerMachine)
+  const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket(coin))
   const [chartRange, setChartRange] = useState<BsvChartRange>('24h')
   const [openSections, setOpenSections] = useState<string[]>([])
   const [classicLogo, setClassicLogo] = useState(() => getBsvLogoClassic())
@@ -82,14 +107,15 @@ export function WhatIsBsvPanel() {
   const [toast, setToast] = useState<ToastItem | null>(() => latestToast(getToasts()))
 
   useEffect(() => {
-    const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket()))
-    void refreshBsvMarket(true)
-    const id = window.setInterval(() => void refreshBsvMarket(), 5 * 60_000)
+    setStats(getCachedBsvMarket(coin))
+    const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket(coin)))
+    void refreshBsvMarket(true, coin)
+    const id = window.setInterval(() => void refreshBsvMarket(false, coin), 5 * 60_000)
     return () => {
       unsub()
       window.clearInterval(id)
     }
-  }, [])
+  }, [coin])
 
   useEffect(() => subscribeBsvLogoClassic(setClassicLogo), [])
 
@@ -123,113 +149,131 @@ export function WhatIsBsvPanel() {
   const rangeLabel = BSV_CHART_RANGE_LABEL[chartRange]
   const tone: ToastTone | null = toast?.tone ?? null
   const showingToast = Boolean(toast)
+  const choosing = ticker.matches('choosing')
+  const shown = TICKER_COINS[coin]
+  const held = heldLabel(coin, heldBsvSats, heldCoins, stats?.priceUsd ?? null)
 
   return (
     <aside
       className="panel what-is-bsv"
       data-aeon-scope="what-is-bsv"
-      data-aeon-state={showingToast && tone ? `toast-${tone}` : 'market'}
+      data-aeon-state={showingToast && tone ? `toast-${tone}` : stateToAttr(ticker.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && choosing) sendTicker({ type: 'CLOSE' })
+      }}
     >
-      <div className="bsv-market-body" aria-hidden={showingToast}>
-        <div className="bsv-asset-row">
-          <button
-            type="button"
-            className="bsv-logo-btn"
-            onClick={registerBsvLogoTap}
-            aria-label={classicLogo ? 'Bitcoin SV classic logo' : 'Bitcoin SV logo'}
-            title="Bitcoin SV"
-            tabIndex={showingToast ? -1 : undefined}
-          >
-            {!logoFrameReady ? (
-              <Skeleton className="bsv-logo-skeleton" width={44} height={44} radius={12} />
-            ) : (
-              <span className="bsv-logo-stack" aria-hidden>
-                <img
-                  className={`bsv-logo${classicLogo ? '' : ' is-shown'}`}
-                  src={bsvLogoDefault}
-                  alt=""
-                  width={44}
-                  height={44}
-                  draggable={false}
-                />
-                {logosReady.classic ? (
+      {choosing ? (
+        <TickerCoinSelector selected={coin} onPick={(next) => sendTicker({ type: 'PICK', coin: next })} />
+      ) : (
+        <div className="bsv-market-body" aria-hidden={showingToast}>
+          <div className="bsv-asset-row">
+            <button
+              type="button"
+              data-aeon-part="coin-trigger"
+              onClick={() => sendTicker({ type: 'CHOOSE' })}
+              aria-haspopup="listbox"
+              aria-label={`${shown.name}. Choose the coin shown here`}
+              title="Choose the coin shown here"
+              tabIndex={showingToast ? -1 : undefined}
+            />
+            <span className="bsv-logo-btn" aria-hidden>
+              {coin === 'ltc' ? (
+                <TickerCoinMark coin="ltc" size={44} />
+              ) : !logoFrameReady ? (
+                <Skeleton className="bsv-logo-skeleton" width={44} height={44} radius={12} />
+              ) : (
+                <span className="bsv-logo-stack">
                   <img
-                    className={`bsv-logo${classicLogo ? ' is-shown' : ''}`}
-                    src={bsvLogoClassic}
+                    className={`bsv-logo${classicLogo ? '' : ' is-shown'}`}
+                    src={bsvLogoDefault}
                     alt=""
                     width={44}
                     height={44}
                     draggable={false}
                   />
-                ) : null}
+                  {logosReady.classic ? (
+                    <img
+                      className={`bsv-logo${classicLogo ? ' is-shown' : ''}`}
+                      src={bsvLogoClassic}
+                      alt=""
+                      width={44}
+                      height={44}
+                      draggable={false}
+                    />
+                  ) : null}
+                </span>
+              )}
+            </span>
+            <div className="bsv-asset-text">
+              <span data-aeon-part="coin-name">
+                <strong>{shown.name}</strong>
+                <span data-aeon-part="caret" aria-hidden>▾</span>
               </span>
-            )}
-          </button>
-          <div className="bsv-asset-text">
-            <strong>Bitcoin SV (BSV)</strong>
-            {marketReady ? (
-              <button
-                type="button"
-                className={`bsv-change ${up ? 'is-up' : 'is-down'}`}
-                onClick={() => setChartRange((r) => nextBsvChartRange(r))}
-                aria-label={`Price change ${rangeLabel}. Click to cycle 24h, 7D, 1M`}
-                title="Click to cycle 24h → 7D → 1M"
-                tabIndex={showingToast ? -1 : undefined}
+              {held ? <span data-aeon-part="held">{held}</span> : null}
+            </div>
+          </div>
+
+          {marketReady ? (
+            <strong className="bsv-price" onClick={coin === 'bsv' ? registerBsvLogoTap : undefined}>
+              {formatPriceUsd(stats?.priceUsd ?? null)}
+            </strong>
+          ) : (
+            <Skeleton className="bsv-price-skeleton" width="40%" height={28} radius={8} />
+          )}
+
+          <div
+            className="bsv-stage"
+            data-aeon-part="stage"
+            data-aeon-state={stateToAttr(aboutOpen ? 'about' : 'chart')}
+          >
+            <div className="bsv-stage-panel bsv-stage-chart" aria-hidden={aboutOpen}>
+              {marketReady ? (
+                <>
+                  <button
+                    type="button"
+                    className={`bsv-change ${up ? 'is-up' : 'is-down'}`}
+                    onClick={() => setChartRange((r) => nextBsvChartRange(r))}
+                    aria-label={`Price change ${rangeLabel}. Click to cycle 24h, 7D, 1M`}
+                    title="Click to cycle 24h → 7D → 1M"
+                    tabIndex={showingToast || aboutOpen ? -1 : undefined}
+                  >
+                    {formatPct(changePct)} · {rangeLabel}
+                  </button>
+                  <Sparkline values={sparkValues} up={up} />
+                </>
+              ) : (
+                <>
+                  <SkeletonLine width="22%" height={11} />
+                  <div className="bsv-spark bsv-spark-empty" aria-hidden />
+                </>
+              )}
+            </div>
+            <div className="bsv-stage-panel bsv-stage-about" aria-hidden={!aboutOpen}>
+              <p className="what-is-bsv-lede">{shown.about}</p>
+              <a className="bsv-official" href={shown.url} target="_blank" rel="noreferrer">
+                Official resources
+              </a>
+            </div>
+          </div>
+
+          <Accordion.Root
+            className="bsv-about"
+            defaultValue={[]}
+            collapsible
+            onValueChange={setOpenSections}
+          >
+            <Accordion.Item value="about" className={`bsv-about-item${aboutOpen ? ' is-open' : ''}`}>
+              <Accordion.ItemTrigger
+                value="about"
+                className={`bsv-about-trigger${aboutOpen ? ' is-open' : ''}`}
               >
-                {formatPct(changePct)} · {rangeLabel}
-              </button>
-            ) : (
-              <SkeletonLine width="45%" height={11} />
-            )}
-          </div>
+                {shown.aboutTitle}
+                <Accordion.ItemIndicator className="bsv-about-indicator">▾</Accordion.ItemIndicator>
+              </Accordion.ItemTrigger>
+            </Accordion.Item>
+          </Accordion.Root>
         </div>
-
-        {marketReady ? (
-          <strong className="bsv-price">{formatPriceUsd(stats?.priceUsd ?? null)}</strong>
-        ) : (
-          <Skeleton className="bsv-price-skeleton" width="40%" height={28} radius={8} />
-        )}
-
-        <div
-          className="bsv-stage"
-          data-aeon-part="stage"
-          data-aeon-state={stateToAttr(aboutOpen ? 'about' : 'chart')}
-        >
-          <div className="bsv-stage-panel bsv-stage-chart" aria-hidden={aboutOpen}>
-            {marketReady ? (
-              <Sparkline values={sparkValues} up={up} />
-            ) : (
-              <div className="bsv-spark bsv-spark-empty" aria-hidden />
-            )}
-          </div>
-          <div className="bsv-stage-panel bsv-stage-about" aria-hidden={!aboutOpen}>
-            <p className="what-is-bsv-lede">
-              Bitcoin (BSV) is an electronic cash system that enables direct, online payments from one
-              party to another. It functions exactly like physical cash but for the web.
-            </p>
-            <a className="bsv-official" href={OFFICIAL_URL} target="_blank" rel="noreferrer">
-              Official resources
-            </a>
-          </div>
-        </div>
-
-        <Accordion.Root
-          className="bsv-about"
-          defaultValue={[]}
-          collapsible
-          onValueChange={setOpenSections}
-        >
-          <Accordion.Item value="about" className={`bsv-about-item${aboutOpen ? ' is-open' : ''}`}>
-            <Accordion.ItemTrigger
-              value="about"
-              className={`bsv-about-trigger${aboutOpen ? ' is-open' : ''}`}
-            >
-              What is BSV?
-              <Accordion.ItemIndicator className="bsv-about-indicator">▾</Accordion.ItemIndicator>
-            </Accordion.ItemTrigger>
-          </Accordion.Item>
-        </Accordion.Root>
-      </div>
+      )}
 
       {toast ? (
         <button

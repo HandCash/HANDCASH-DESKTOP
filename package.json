@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.3.607",
+  "version": "1.3.608",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -49,7 +49,8 @@
     "icons:tray": "node scripts/build-tray-icons.mjs",
     "icons:tray:check": "node scripts/build-tray-icons.mjs --check",
     "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs",
-    "wltc:probe": "node scripts/wltc-probe.mjs"
+    "ltc:probe": "node scripts/ltc-probe.mjs",
+    "coin:checkpoint": "node scripts/coin-checkpoint.mjs"
   },
   "dependencies": {
     "@1sat/templates": "^0.0.2",

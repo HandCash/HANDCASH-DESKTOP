@@ -230,7 +230,9 @@ export function canAutoProcessPayment(
 
   // A signAction must authorize its exact prepared action. Merely enabling
   // Auto-pay is not authority to sign an arbitrary reference/spend payload.
-  if (method !== 'createAction') return false
+  // A native coin payment (BRC-213: LTC, BCH) is a plain coin payment like
+  // createAction, counted at its BSV-equivalent dollar value.
+  if (method !== 'createAction' && method !== 'sendCoins') return false
 
   const sats = typeof amountSats === 'number' ? Math.max(0, amountSats) : 0
   if (sats <= 0) return false

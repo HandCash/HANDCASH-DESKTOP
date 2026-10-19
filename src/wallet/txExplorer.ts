@@ -1,3 +1,4 @@
+import type { CoinChain } from './coins/coinChains'
 import type { Chain } from './vault'
 
 /** True for on-chain txids we can open in an explorer (not local stubs). */
@@ -10,6 +11,18 @@ export function isExplorerTxid(txid: string | undefined | null): txid is string 
 export function txExplorerUrl(txid: string, chain: Chain = 'main'): string {
   const host = chain === 'main' ? 'https://whatsonchain.com' : 'https://test.whatsonchain.com'
   return `${host}/tx/${txid}`
+}
+
+const COIN_TX_EXPLORERS: Record<CoinChain, string> = {
+  ltc: 'https://litecoinspace.org/tx/',
+  bch: 'https://blockchair.com/bitcoin-cash/transaction/',
+  btc: 'https://mempool.space/tx/',
+  doge: 'https://blockchair.com/dogecoin/transaction/',
+}
+
+/** A native coin's transaction, opened on an explorer of its chain for the reader; it decides nothing. */
+export function coinTxExplorerUrl(chain: CoinChain, txid: string): string {
+  return `${COIN_TX_EXPLORERS[chain]}${txid}`
 }
 
 export function extractTxid(result: unknown): string | undefined {

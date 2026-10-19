@@ -33,6 +33,26 @@ export type SpendRecipe =
   /** BRC-29 derivation; `sender` omitted means this wallet's own identity. */
   | { p: 'wallet payment'; prefix: string; suffix: string; sender?: string }
   | { p: 'basket insertion'; basket: string; ci?: string; tags?: string[] }
+  /**
+   * A coin on another chain paid to this identity (BRC-213 §7): the key is the
+   * BRC-42 child `sender` derived under `keyId`. `op` is the coin's outpoint
+   * on `chain` and `sats` its base units. Never a BSV output: BSV recovery
+   * skips it and the coin engine replays it.
+   */
+  | { p: 'coin payment'; chain: string; sender: string; keyId: string }
+  /**
+   * A swap's hash-locked output on `chain` (BSV or another): the agreed terms
+   * (`terms`, JSON) and this wallet's `role` rebuild its script and keys from
+   * the seed. `side` is which output: this wallet's own lock (refundable), its
+   * fee output, or the counterparty's lock (claimable with the secret).
+   * `refund` is a BSV lock's pre-signed refund: its output script and value,
+   * the BRC-29 self-payment it lands in, and the counterparty's
+   * co-signature. Never replayed by `internalizeAction`: the swap runner
+   * settles it.
+   */
+  | { p: 'swap lock'; chain: string; swapId: string; role: 'taker' | 'maker'; side: 'own' | 'fee' | 'peer'; terms: string; refund?: SwapLockRefund }
+
+export type SwapLockRefund = { to: string; value: string; prefix: string; suffix: string; cosig: string }
 
 export type CustodyEntry =
   | { k: 'out'; op: string; sats: number; r: SpendRecipe }
@@ -81,6 +101,36 @@ function cleanRecipe(raw: unknown, self?: string): SpendRecipe | null {
       suffix,
       ...(sender && sender !== self?.toLowerCase() ? { sender } : {}),
     }
+  }
+  if (r.p === 'coin payment') {
+    const chain = typeof r.chain === 'string' ? r.chain.trim().toLowerCase() : ''
+    const sender = typeof r.sender === 'string' ? r.sender.trim().toLowerCase() : ''
+    const keyId = typeof r.keyId === 'string' ? r.keyId.trim().toLowerCase() : ''
+    if (!/^[a-z]{2,8}$/.test(chain) || !/^0[23][0-9a-f]{64}$/.test(sender) || !/^[0-9a-f]{32}$/.test(keyId)) return null
+    return { p: 'coin payment', chain, sender, keyId }
+  }
+  if (r.p === 'swap lock') {
+    const chain = typeof r.chain === 'string' ? r.chain.trim().toLowerCase() : ''
+    const swapId = typeof r.swapId === 'string' ? r.swapId.trim().toLowerCase() : ''
+    const terms = typeof r.terms === 'string' ? r.terms : ''
+    if (!/^[a-z]{2,8}$/.test(chain) || !/^[0-9a-f]{32}$/.test(swapId) || (r.role !== 'taker' && r.role !== 'maker')) return null
+    if ((r.side !== 'own' && r.side !== 'fee' && r.side !== 'peer') || !terms || terms.length > 8000) return null
+    const f = (r.refund && typeof r.refund === 'object' ? r.refund : null) as Record<string, unknown> | null
+    const refund =
+      f &&
+      typeof f.to === 'string' &&
+      /^(?:[0-9a-f]{2}){1,64}$/.test(f.to) &&
+      typeof f.value === 'string' &&
+      /^[1-9]\d{0,17}$/.test(f.value) &&
+      typeof f.prefix === 'string' &&
+      f.prefix &&
+      typeof f.suffix === 'string' &&
+      f.suffix &&
+      typeof f.cosig === 'string' &&
+      /^[0-9a-f]{18,146}$/.test(f.cosig)
+        ? { to: f.to, value: f.value, prefix: f.prefix, suffix: f.suffix, cosig: f.cosig }
+        : undefined
+    return { p: 'swap lock', chain, swapId, role: r.role, side: r.side, terms, ...(refund ? { refund } : {}) }
   }
   if (r.p === 'basket insertion') {
     const basket = typeof r.basket === 'string' ? r.basket.trim() : ''
@@ -217,14 +267,46 @@ function isLive(state: JournalState, op: string, r: SpendRecipe): boolean {
   return !(r.p === 'basket insertion' && state.released.has(op))
 }
 
-/** Outpoints with a recipe, no on-chain spend recorded, and not relinquished. */
+/** A recipe `internalizeAction` replays on BSV. */
+export type BsvRecipe = Exclude<SpendRecipe, { p: 'coin payment' } | { p: 'swap lock' }>
+type CoinRecipe = Extract<SpendRecipe, { p: 'coin payment' }>
+export type SwapLockRecipe = Extract<SpendRecipe, { p: 'swap lock' }>
+
+export const isBsvRecipe = (r: SpendRecipe): r is BsvRecipe => r.p !== 'coin payment' && r.p !== 'swap lock'
+
+/** BSV outpoints with a recipe, no on-chain spend recorded, and not relinquished. */
 export function unspentCustodyOutputs(
   owner: BoundAccountKeyScope,
-): Array<{ op: string; sats: number; r: SpendRecipe }> {
+): Array<{ op: string; sats: number; r: BsvRecipe }> {
   const state = load(owner)
-  const out: Array<{ op: string; sats: number; r: SpendRecipe }> = []
+  const out: Array<{ op: string; sats: number; r: BsvRecipe }> = []
   for (const [op, recipe] of state.recipes) {
-    if (isLive(state, op, recipe.r)) out.push({ op, ...recipe })
+    const r = recipe.r
+    if (isBsvRecipe(r) && isLive(state, op, r)) out.push({ op, sats: recipe.sats, r })
+  }
+  return out
+}
+
+/** Swap locks with no spend recorded, on any chain. */
+export function unspentSwapCustody(owner: BoundAccountKeyScope): Array<{ op: string; units: number; r: SwapLockRecipe }> {
+  const state = load(owner)
+  const out: Array<{ op: string; units: number; r: SwapLockRecipe }> = []
+  for (const [op, recipe] of state.recipes) {
+    if (recipe.r.p === 'swap lock' && isLive(state, op, recipe.r)) out.push({ op, units: recipe.sats, r: recipe.r })
+  }
+  return out
+}
+
+/** Coins on `chain` paid to this identity, with no spend recorded (BRC-213 §7). */
+export function unspentCoinCustody(
+  owner: BoundAccountKeyScope,
+  chain: string,
+): Array<{ op: string; units: number; r: CoinRecipe }> {
+  const state = load(owner)
+  const out: Array<{ op: string; units: number; r: CoinRecipe }> = []
+  for (const [op, recipe] of state.recipes) {
+    const r = recipe.r
+    if (r.p === 'coin payment' && r.chain === chain && isLive(state, op, r)) out.push({ op, units: recipe.sats, r })
   }
   return out
 }
@@ -248,7 +330,7 @@ export function custodyJournalSummary(owner: BoundAccountKeyScope): {
   const state = load(owner)
   let unspentSats = 0
   for (const [op, recipe] of state.recipes) {
-    if (isLive(state, op, recipe.r)) unspentSats += recipe.sats
+    if (isBsvRecipe(recipe.r) && isLive(state, op, recipe.r)) unspentSats += recipe.sats
   }
   return {
     entries: state.entries.length,

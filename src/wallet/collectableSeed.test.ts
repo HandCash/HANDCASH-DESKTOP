@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The grid is rebuilt from the basket read alone, so a tip the wallet minted to
 // itself has to be carried until the read admits it. These cover that carry.
@@ -70,6 +70,11 @@ function walletListing(outpoints: string[], identityKey = '02'.repeat(33)) {
 }
 
 describe('locally seeded collectables', () => {
+  // The first cold import transforms the whole wallet graph; pay it here, not inside a test's 5 s budget.
+  beforeAll(async () => {
+    await import('./collectables')
+  }, 120_000)
+
   beforeEach(() => {
     durable.clear()
     active.wallet = walletListing([])

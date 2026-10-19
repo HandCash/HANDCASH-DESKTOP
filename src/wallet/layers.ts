@@ -142,6 +142,10 @@ import { getActiveWallet } from './session'
  *   after every recompose `custodyJournalRecovery.ts` re-internalizes each
  *   journaled output the chain says is unspent and `localState` has no row for.
  *   `derivedChangeEcho.ts` is the legacy capped copy; it feeds the journal.
+ *   A third recipe, `coin payment` (chain/sender/keyId), is a coin on another
+ *   chain paid to this identity (BRC-213 §7): BSV recovery never sees it; the
+ *   coin engine journals it before the notice is acknowledged and replays it
+ *   into its record when a restore lost it.
  * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
  *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
@@ -322,6 +326,16 @@ import { getActiveWallet } from './session'
  *   send/sweep fallback. A 1Sat burn ends tips (and BRC-150 origin when
  *   applicable). Only the resulting self BRC-29 wallet-payment internalize may
  *   move recovered physical sats into managed change / `balanceView`.
+ * - **Coins of other chains (LTC, BCH, BTC, DOGE)** → native, not wrapped (`coins/coinWallet.ts`
+ *   engine + `ltc/` / `bch/` / `btc/` / `doge/` bindings, chart `coinMachine`). Each lives on a BRC-42
+ *   key of the vault root, under an account-local durable record — not Toolbox
+ *   IndexedDB, not BRC-39. The chain is the backup: every install reads the address
+ *   once, so a restore finds its coins again. Coins count once SPV-proven to their
+ *   chain's depth against local headers (`coin:checkpoint` / `ltc:checkpoint`). Specs
+ *   are held back from BSVA: `docs/bsva/brcs/coins/`.
+ * - **Swaps** (wallet action between Send and Receive) → `swap/` + `swapMachine`. Routes rank direct signed offers
+ *   ahead of Exolix (labelled custodial); only an explicit confirm pays, from and to
+ *   the wallet's own addresses through the normal send of each chain.
  */
 
 import { fetchBalanceSats} from "./session";

@@ -39,6 +39,13 @@ describe('appDisplayName', () => {
     expect(appDisplayName('https://login.handcash.io.evil.example')).toBe('Evil')
   })
 
+  it('shows local hosts bare: any process on this device can claim them', () => {
+    expect(appDisplayName('http://conformance.localhost')).toBe('conformance.localhost')
+    expect(appDisplayName('http://market.local:3000')).toBe('market.local')
+    expect(appDisplayName('http://192.168.1.20:5173')).toBe('192.168.1.20')
+    expect(appDisplayName('http://localhost:5173')).toBe('Local app')
+  })
+
   it('shows IDN hosts as their punycode', () => {
     expect(appDisplayName('https://xn--hndcash-2fg.io')).toBe('xn--hndcash-2fg.io')
   })

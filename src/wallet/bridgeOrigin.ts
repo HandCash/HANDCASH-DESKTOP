@@ -29,7 +29,7 @@ const EXTENSION_SCHEMES = new Set(['chrome-extension:', 'moz-extension:', 'safar
 
 const IPV4_LITERAL = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/
 
-function plaintextHostAllowed(hostname: string): boolean {
+export function plaintextHostAllowed(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '')
   if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true
   if (host.endsWith('.local')) return true

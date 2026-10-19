@@ -42,6 +42,7 @@ export type TransactionFlow =
   | 'identity_publish'
   | 'countersign'
   | 'hct'
+  | 'swap'
   | 'payment'
 
 export type TransactionStage =

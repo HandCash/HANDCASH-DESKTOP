@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
+import { NetworkPicker } from './NetworkPicker'
+import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
+import { COIN_WALLETS } from '../features/coinWallets'
+import { coinUsd as coinUnitsUsd } from '../wallet/heldValue'
+import { COIN_INFO, formatCoin, isCoinChain } from '../wallet/coins/coinChains'
+import { parseFungibleAmount } from '../wallet/token/types'
+import type { MarketCoin } from '../wallet/bsvMarket'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { sendMachine } from '../machines/sendMachine'
@@ -8,6 +15,7 @@ import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
   formatTypedAmount,
+  formatUsd,
   getCachedUsdPerBsv,
   satsToUsd,
   subscribeUsdRate,
@@ -149,6 +157,7 @@ export function SendPanel({
   /** Local balance read before Review — a phase of `editing`, owned by the chart. */
   const reviewBusy = sendSnap.matches({ editing: 'checking' })
   const [scanningTo, setScanningTo] = useState(false)
+  const [network, setNetwork] = useState<MarketCoin>('bsv')
   const [destAssetId, setDestAssetId] = useState('bsv')
   const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
   /** Local draft — syncing every keystroke through XState re-rendered the whole panel. */
@@ -157,15 +166,26 @@ export function SendPanel({
   const appliedPrefill = useRef(false)
   const handleResolveRef = useRef(createPinnedHandleResolveDebouncer())
 
+  /** A native coin network: the same flow pays that coin from this wallet's own key on its chain. */
+  const coin = isCoinChain(network) ? network : null
+  const coinInfo = coin ? COIN_INFO[coin] : null
+  const coinWallet = coin ? COIN_WALLETS[coin] : null
+  const heldCoins = useHeldCoins()
+  const coinPrices = useCoinPrices()
+  const heldUnits = coin ? heldCoins[coin] : 0n
+  const usdPerCoin = coin ? coinPrices[coin] : null
+  const ticker = coinInfo?.ticker ?? 'BSV'
   const destIsNative = destAssetId === 'bsv'
-  const destAsset = destIsNative
+  const destAsset = coin && coinInfo && coinWallet
+    ? { id: coin, label: coinInfo.label, eta: coinWallet.binding.paymentEta }
+    : destIsNative
     ? { id: 'bsv', label: 'BSV', eta: NATIVE_BSV_ETA }
     : {
         id: destAssetId,
         label: swapCoins.find((c) => c.code === destAssetId)?.code ?? destAssetId,
         eta: SWAP_ETA,
       }
-  const destReady = destIsNative
+  const destReady = coin !== null || destIsNative
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
@@ -202,10 +222,20 @@ export function SendPanel({
     [recipientQuery, friends],
   )
 
-  const amountSats = amountToSats(amountDraft, currency, usdPerBsv)
-  const amountLabel = formatTypedAmount(amountDraft, currency)
+  const coinUsd = coin ? usdPerCoin : usdPerBsv
+  /** The amount in the network's smallest unit: satoshis on BSV, the coin's own smallest unit elsewhere. */
+  const amountUnits = (draft: string) =>
+    coinInfo && currency === 'bsv'
+      ? Number(parseFungibleAmount(draft.trim(), coinInfo.decimals) ?? 0)
+      : amountToSats(draft, currency, coinUsd)
+  const amountSats = amountUnits(amountDraft)
+  const coinAmountUsd = coin ? coinUnitsUsd(coin, BigInt(amountSats), usdPerCoin) : null
+  const amountLabel = coin ? `${formatCoin(coin, BigInt(amountSats))} ${ticker}` : formatTypedAmount(amountDraft, currency)
   const amountSecondary =
-    amountSats > 0 ? formatSecondaryFromSats(amountSats, currency, usdPerBsv) : null
+    amountSats <= 0 ? null
+    : coin ? (coinAmountUsd == null ? null : formatUsd(coinAmountUsd))
+    : formatSecondaryFromSats(amountSats, currency, usdPerBsv)
+  const overHeld = coin !== null && BigInt(amountSats) > heldUnits
 
   const canReview =
     destReady &&
@@ -213,7 +243,8 @@ export function SendPanel({
     !reviewBusy &&
     sendSnap.context.to.trim().length > 0 &&
     amountSats > 0 &&
-    (currency === 'bsv' || usdPerBsv != null)
+    !overHeld &&
+    (currency === 'bsv' || coinUsd != null)
 
   const syncAmountToMachine = (value: string) => {
     if (value !== sendSnap.context.amount) {
@@ -226,6 +257,18 @@ export function SendPanel({
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
     send({ type: 'CHECK' })
+    if (coinWallet) {
+      try {
+        // A payment to an identity is refused here, before review, unless its wallet's signed record says it receives the coin.
+        await coinWallet.preflightRecipient(coinRecipientArgs(String(amountSats)))
+        send({ type: 'REVIEW' })
+      } catch (err) {
+        send({ type: 'REFUSE' })
+        playWalletSound('error')
+        onFail(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
     try {
       const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
       if (!Number.isFinite(satoshis) || satoshis <= 0) {
@@ -258,6 +301,10 @@ export function SendPanel({
 
   const recipientLabel =
     sendSnap.context.friendLabel || shortenAddress(sendSnap.context.to)
+  const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
+  /** A coin goes to the payee's identity when one is named (BRC-213 §7), otherwise to the address typed. */
+  const coinRecipientArgs = (litoshi: string) =>
+    payeeKey ? { identityKey: normalizeIdentityKey(payeeKey), litoshi } : { address: sendSnap.context.to.trim(), litoshi }
   const resolvedName = resolvedRecipientName(
     sendSnap.context.friendLabel,
     sendSnap.context.to,
@@ -266,10 +313,10 @@ export function SendPanel({
 
   const setSendCurrency = (next: DisplayCurrency) => {
     if (next === currency) return
-    const sats = amountToSats(amountDraft, currency, usdPerBsv)
+    const sats = amountUnits(amountDraft)
     playWalletSound('soft')
     if (sats > 0) {
-      const converted = amountInputFromSats(sats, next, usdPerBsv)
+      const converted = amountInputFromSats(sats, next, coinUsd)
       if (converted) {
         setAmountDraft(converted)
         syncAmountToMachine(converted)
@@ -294,7 +341,7 @@ export function SendPanel({
     handleResolveRef.current.cancel()
     setRecipientQuery(value)
     setShowFriendMatches(true)
-    if (tryParseBrc29SettlementUri(value)) {
+    if (!coin && tryParseBrc29SettlementUri(value)) {
       void (async () => {
         try {
           const result = await claimBrc29SettlementUri(value)
@@ -324,7 +371,7 @@ export function SendPanel({
         friendLabel: null,
         payeeIdentityKey: peer.identityKey,
       }
-      if (peer.sats != null) {
+      if (!coin && peer.sats != null) {
         if (currency === 'usd' && usdPerBsv != null && usdPerBsv > 0) {
           const usd = satsToUsd(peer.sats, usdPerBsv)
           patch.amount = String(Number(usd.toFixed(4)))
@@ -378,6 +425,34 @@ export function SendPanel({
   const confirmSend = () => {
     if (!destReady) return
     syncAmountToMachine(amountDraft)
+    if (coinWallet && coinInfo) {
+      const args = coinRecipientArgs(String(amountSats))
+      const label = recipientLabel
+      const toLabel = sendSnap.context.friendLabel ?? undefined
+      const sent = amountLabel
+      send({ type: 'CONFIRM' })
+      onClose()
+      void (async () => {
+        try {
+          const paid = await coinWallet.send(args, { toLabel })
+          playPaymentSuccessSound()
+          toastSuccess(
+            paid.status === 'sent' ? 'Sent' : 'Signed',
+            paid.status === 'sent'
+              ? `${sent} on the way to ${label}.`
+              : `${sent} to ${label} is signed; ${coinInfo.label} did not take it yet, so the wallet keeps broadcasting it.`,
+          )
+        } catch (err) {
+          onFail(err instanceof Error ? err.message : String(err))
+        }
+        try {
+          onSent(await refreshSpendableBalance())
+        } catch {
+          // ignore — the outcome is already reported
+        }
+      })()
+      return
+    }
     const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
     if (!Number.isFinite(satoshis) || satoshis <= 0) {
       send({
@@ -391,7 +466,6 @@ export function SendPanel({
     }
 
     const to = sendSnap.context.to.trim()
-    const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
     const friendLabel = sendSnap.context.friendLabel
     const label = recipientLabel
 
@@ -500,10 +574,26 @@ export function SendPanel({
         </p>
       ) : null}
       {sendSnap.matches('editing') && (
+        <NetworkPicker
+          value={network}
+          onChange={(next) => {
+            playWalletSound('soft')
+            // A recipient means one network; never carry it to the other.
+            handleResolveRef.current.cancel()
+            setRecipientQuery('')
+            setShowFriendMatches(false)
+            setAmountDraft('')
+            send({ type: 'EDIT', to: '', amount: '', friendLabel: null, payeeIdentityKey: null })
+            setDestAssetId('bsv')
+            setNetwork(next)
+          }}
+        />
+      )}
+      {sendSnap.matches('editing') && (
         <div className="send-stage send-stage-edit">
           <div className="send-layout">
             <header className="send-panel-intro">
-              <h3 className="send-panel-title">Send BSV</h3>
+              <h3 className="send-panel-title">{`Send ${ticker}`}</h3>
             </header>
 
             <div className="send-amount-hero" data-currency={currency}>
@@ -520,7 +610,8 @@ export function SendPanel({
                   onBlur={() => syncAmountToMachine(amountDraft)}
                   placeholder="0"
                   autoFocus
-                  aria-label={currency === 'usd' ? 'Amount in USD' : 'Amount in BSV'}
+                  aria-label={currency === 'usd' ? 'Amount in USD' : `Amount in ${ticker}`}
+                  aria-invalid={overHeld || undefined}
                 />
               </div>
               <div className="send-currency-toggle" role="group" aria-label="Amount currency">
@@ -540,21 +631,33 @@ export function SendPanel({
                   aria-pressed={currency === 'bsv'}
                   onClick={() => setSendCurrency('bsv')}
                 >
-                  BSV
+                  {ticker}
                 </button>
               </div>
               <div className="send-amount-note" aria-live="polite">
-                {currency === 'usd' && usdPerBsv == null ? (
+                {currency === 'usd' && coinUsd == null ? (
                   <span className="send-amount-warning">
-                    USD rate unavailable — switch to BSV or refresh
+                    USD rate unavailable — switch to {ticker} or refresh
                   </span>
+                ) : overHeld ? (
+                  <span className="send-amount-warning">More than this wallet can send on {coinInfo?.label}</span>
                 ) : amountSecondary ? (
                   <span className="send-amount-secondary">≈ {amountSecondary}</span>
                 ) : null}
               </div>
               <p className="send-available">
-                Available {formatPrimaryFromSats(balanceSats, currency, usdPerBsv)} ·{' '}
-                {formatSecondaryFromSats(balanceSats, currency, usdPerBsv)}
+                {coin && coinInfo ? (
+                  <>
+                    Available {formatCoin(coin, heldUnits)} {ticker}
+                    {usdPerCoin != null ? ` · ${formatUsd(coinUnitsUsd(coin, heldUnits, usdPerCoin) ?? 0)}` : ''}
+                    {` · less the ${coinInfo.label} fee`}
+                  </>
+                ) : (
+                  <>
+                    Available {formatPrimaryFromSats(balanceSats, currency, usdPerBsv)} ·{' '}
+                    {formatSecondaryFromSats(balanceSats, currency, usdPerBsv)}
+                  </>
+                )}
                 {reviewBusy ? ' · refreshing…' : ''}
               </p>
             </div>
@@ -585,7 +688,7 @@ export function SendPanel({
                       onBlur={() => {
                         window.setTimeout(() => setShowFriendMatches(false), 120)
                       }}
-                      placeholder="Friend, $handle, peerpay:, address, or wallet key"
+                      placeholder={coinInfo ? `Friend, $handle, wallet key, or ${coinInfo.label} address (${coinInfo.addressHint})` : 'Friend, $handle, peerpay:, address, or wallet key'}
                       autoComplete="off"
                       spellCheck={false}
                     />
@@ -636,6 +739,12 @@ export function SendPanel({
                 ) : null}
               </div>
 
+              {coinWallet ? (
+                <p className="send-eta-row">
+                  <span className="send-eta-label">Arrival</span>
+                  <strong className="send-eta-value">{coinWallet.binding.paymentEta}</strong>
+                </p>
+              ) : (
               <div className="field send-dest-field">
                 <label htmlFor="send-dest">Destination</label>
                 <select
@@ -669,6 +778,7 @@ export function SendPanel({
                   </p>
                 ) : null}
               </div>
+              )}
 
             </div>
           </div>
@@ -695,8 +805,14 @@ export function SendPanel({
               <p className="send-confirm-to">
                 to <strong>{recipientLabel}</strong>
               </p>
-              {sendSnap.context.friendLabel ? (
+              {sendSnap.context.friendLabel || coin ? (
                 <p className="mono send-confirm-address">{sendSnap.context.to}</p>
+              ) : null}
+              {coinInfo ? (
+                <p className="send-confirm-note">
+                  Paid on {coinInfo.label} from this wallet's own coins, plus the {coinInfo.label} network fee. This cannot be undone.
+                  {payeeKey ? ` Their wallet receives ${coinInfo.label} at its identity, and is told which key the coins are locked to.` : ''}
+                </p>
               ) : null}
             </div>
           </div>

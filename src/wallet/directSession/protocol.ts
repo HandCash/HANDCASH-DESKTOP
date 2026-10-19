@@ -7,7 +7,8 @@
  * it is bound to the identity key. Custody stays on the chain.
  */
 
-import { BigNumber, Hash, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
+import { Hash, PrivateKey, Signature, Utils } from '@bsv/sdk'
+import { verifyIdentityText } from '../messageboxAuth'
 
 export const SESSION_BOX = 'session-upgrade'
 export const SESSION_OFFER_TTL_MS = 120_000
@@ -69,19 +70,6 @@ function compactHex(sig: Signature): string {
   return Utils.toHex([...sig.r.toArray('be', 32), ...sig.s.toArray('be', 32)])
 }
 
-function verifyCompact(identityKey: string, preimage: string, signature: string): boolean {
-  try {
-    if (!/^[0-9a-f]{128}$/.test(signature)) return false
-    const compact = Utils.toArray(signature, 'hex')
-    const sig = new Signature(
-      new BigNumber(Utils.toHex(compact.slice(0, 32)), 16),
-      new BigNumber(Utils.toHex(compact.slice(32, 64)), 16),
-    )
-    return PublicKey.fromString(identityKey).verify(Utils.toArray(preimage, 'utf8'), sig)
-  } catch {
-    return false
-  }
-}
 
 function nonce(): string {
   return Utils.toHex(Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16))))
@@ -163,7 +151,7 @@ export function signSessionSignal(args: {
 
 function signatureOk(signal: SessionSignal): boolean {
   const { signature, ...draft } = signal
-  return verifyCompact(signal.from, signalPreimage(draft), signature)
+  return verifyIdentityText(signal.from, signalPreimage(draft), signature)
 }
 
 function timely(signal: SessionSignal, now: number): boolean {

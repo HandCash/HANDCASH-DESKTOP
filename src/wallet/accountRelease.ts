@@ -12,9 +12,9 @@
  * This module is the wire format and the holder's decision. Transport lives
  * in `messageTransport.ts`, orchestration in `accountMove.ts`.
  */
-import { BigNumber, PrivateKey, PublicKey, Random, Signature, Utils } from '@bsv/sdk'
+import { PrivateKey, Random, Utils } from '@bsv/sdk'
 import type { AccountHolding } from './accountHolding'
-import { signIdentityText } from './messageboxAuth'
+import { signIdentityText, verifyIdentityText } from './messageboxAuth'
 
 /** BRC-33 box on the account's own identity key. */
 export const HOLDING_BOX = 'account-holding'
@@ -104,19 +104,6 @@ export function signReleaseAccept(
   return { v: 1, type: 'release-accept', ...unsigned, signature }
 }
 
-function verifyCompact(identityKey: string, text: string, signatureHex: string): boolean {
-  try {
-    const compact = Utils.toArray(signatureHex, 'hex')
-    if (compact.length !== 64) return false
-    const sig = new Signature(
-      new BigNumber(Utils.toHex(compact.slice(0, 32)), 16),
-      new BigNumber(Utils.toHex(compact.slice(32, 64)), 16),
-    )
-    return PublicKey.fromString(identityKey).verify(Utils.toArray(text, 'utf8'), sig)
-  } catch {
-    return false
-  }
-}
 
 function validDeviceId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 128
@@ -144,11 +131,11 @@ export function parseHoldingMessage(body: string, identityKey: string): HoldingM
   if (m.type === 'release-request') {
     if (!Number.isSafeInteger(m.seq) || (m.seq as number) < 0) return null
     const request = m as unknown as ReleaseRequest
-    return verifyCompact(owner, releaseRequestPreimage(request), request.signature) ? request : null
+    return verifyIdentityText(owner, releaseRequestPreimage(request), request.signature) ? request : null
   }
   if (m.type === 'release-accept') {
     const accept = m as unknown as ReleaseAccept
-    return verifyCompact(owner, releaseAcceptPreimage(accept), accept.signature) ? accept : null
+    return verifyIdentityText(owner, releaseAcceptPreimage(accept), accept.signature) ? accept : null
   }
   return null
 }

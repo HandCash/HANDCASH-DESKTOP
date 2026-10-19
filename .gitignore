@@ -18,3 +18,4 @@ out/
 .live-wallets.json
 .live-idb.json
 
+tsconfig.tsbuildinfo

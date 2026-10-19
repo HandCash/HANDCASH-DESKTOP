@@ -16,8 +16,8 @@
  * ignores a record older than the one it last acted on, so a host can withhold
  * a change but cannot forge or roll one back.
  */
-import { BigNumber, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
-import { signIdentityText } from './messageboxAuth'
+import { PrivateKey } from '@bsv/sdk'
+import { signIdentityText, verifyIdentityText } from './messageboxAuth'
 
 export type AccountHolding =
   /** This install may open and spend the account. `seq` 0: never published. */
@@ -91,19 +91,6 @@ export function signHolderRecord(
   return { v: 1, ...unsigned, signature }
 }
 
-function verifyCompact(identityKey: string, text: string, signatureHex: string): boolean {
-  try {
-    const compact = Utils.toArray(signatureHex, 'hex')
-    if (compact.length !== 64) return false
-    const sig = new Signature(
-      new BigNumber(Utils.toHex(compact.slice(0, 32)), 16),
-      new BigNumber(Utils.toHex(compact.slice(32, 64)), 16),
-    )
-    return PublicKey.fromString(identityKey).verify(Utils.toArray(text, 'utf8'), sig)
-  } catch {
-    return false
-  }
-}
 
 /** A record for `identityKey` signed by it, or null. */
 export function parseHolderRecord(raw: unknown, identityKey: string): HolderRecord | null {
@@ -117,7 +104,7 @@ export function parseHolderRecord(raw: unknown, identityKey: string): HolderReco
   if (!Number.isSafeInteger(r.at) || (r.at as number) < 0) return null
   if (typeof r.signature !== 'string') return null
   const record = r as HolderRecord
-  return verifyCompact(owner, holderRecordPreimage(record), record.signature) ? record : null
+  return verifyIdentityText(owner, holderRecordPreimage(record), record.signature) ? record : null
 }
 
 /** This install's holding once a record at least as new as it is known. */

@@ -1,11 +1,13 @@
 import { Beef, PrivateKey, Transaction, Utils } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import { hctMachine } from '../../machines/hctMachine'
-import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
+import { recordAppActivity, WALLET_ACTIVITY_ORIGIN, type ActivityItem } from '../appActivity'
 import { atomicBeefForSubject, getBeefForTxidCached, getLocalBeefForTxid, rememberBeefTree } from '../beefCache'
 import { scheduleHistoryBackupPush } from '../deviceSync'
 import { stampBrc164Id } from '../itemAccess'
 import type { ActiveWallet } from '../session'
+import { hctAmountLabel, rememberHctAsset } from './assetLabel'
+import { formatFungibleAmount } from '../token/types'
 import { runExclusiveSpend } from '../spendGuard'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { getWalletRuntime } from '../walletRuntime'
@@ -122,6 +124,7 @@ export type HctError =
   | 'over-cap'
   | 'invalid-build'
   | 'awaiting-backing'
+  | 'custodial'
 
 export class HctRefusal extends Error {
   constructor(
@@ -274,6 +277,7 @@ async function deployOf(active: ActiveWallet, assetId: string, at?: { txid: stri
   if (!record) await putHctDeployRecord({ assetId, txid: where.txid, vout: where.vout })
   await markHctValidated([where.txid], assetId)
   deployCache.set(assetId, read.deploy)
+  rememberHctAsset(assetId, read.deploy.fields)
   return read.deploy
 }
 
@@ -474,8 +478,7 @@ async function keepBacked(backed: ReadonlyArray<{ txid: string; proof: HctBackin
 
 /**
  * Record the burial proof of a backed deploy or mint this wallet wrote, once
- * it checks against the deposit that transaction names. Wallet-internal: the
- * wLTC bridge calls it when a deposit is deep enough.
+ * it checks against the deposit that transaction names. Wallet-internal.
  */
 export async function proveHctBacking(assetId: string, txid: string, proof: HctBackingProof): Promise<void> {
   const active = requireActive()
@@ -598,6 +601,23 @@ type PlannedOutput = {
 }
 
 type SignedHct = { txid: string; atomic: number[]; tx: Transaction }
+
+/**
+ * An HCT asset as an activity row's subject: a token with its units and
+ * decimals, or an item by name. Litecoin backing is claimed only for a token
+ * this wallet issued; another issuer's backed token is a claim on them, not LTC.
+ */
+function hctActivityItem(active: ActiveWallet, assetId: string, fields: HctDeploy['fields'], amount: bigint): ActivityItem {
+  if (fields.kind === 'item') return { name: fields.name ?? 'Item', origin: assetId }
+  return {
+    name: fields.sym ?? fields.name ?? 'Token',
+    origin: assetId,
+    tokenId: assetId,
+    amt: amount.toString(),
+    dec: fields.dec ?? 0,
+    ...(fields.bk?.chain === 'ltc' && fields.iss.some((k) => k.toLowerCase() === selfOf(active)) ? { backedBy: 'ltc' as const } : {}),
+  }
+}
 
 /** A fresh holder key for `recipient` and the remittance that names it. */
 function freshHolder(active: ActiveWallet, recipient: string, prefix: string): { holder: string; remittance: HctRemittance } {
@@ -958,7 +978,7 @@ export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions =
       // The next deploy's issuer coin rides this one; the issuer key is public by design (§3).
       outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'HCT issuer coin', basket: ISSUER_BASKET, tags: ['hct-issuer'] })
       chart.send({ type: 'BUILT' })
-      const label = fields.kind === 'item' ? fields.name! : `${supply} ${fields.sym}`
+      const label = fields.kind === 'item' ? fields.name! : `${formatFungibleAmount(String(supply ?? 0), fields.dec ?? 0)} ${fields.sym}`
       let deploy: HctDeploy | null = null
       const signed = await signHctAction(active, {
         description: `Issue ${label} (HCT)`,
@@ -982,10 +1002,11 @@ export async function issueHctAsset(args: IssueHctArgs, opts: HctWalletOptions =
       chart.send({ type: 'SIGNED', txid: signed.txid })
       await putHctDeployRecord({ assetId: issued.assetId, txid: signed.txid, vout: 0 })
       deployCache.set(issued.assetId, issued)
+      rememberHctAsset(issued.assetId, issued.fields)
       await commitSigned(signed, [issued.assetId, ...(collection ? [collection.row.assetId] : [])], true)
       chart.send({ type: 'BROADCASTED' })
       chart.send({ type: 'DELIVERED' })
-      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-issue', note: `Issued ${label} (HCT ${fields.kind})`, txid: signed.txid })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 0, method: issued.fields.kind === 'item' ? 'mint-collectable' : 'mint-token', note: `Issued ${label}`, txid: signed.txid, item: hctActivityItem(active, issued.assetId, issued.fields, BigInt(supply ?? 0)) })
       scheduleHistoryBackupPush('hct')
       log('issue', startedAt)
       return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket }
@@ -1031,6 +1052,37 @@ export type MintHctResult = { assetId: string; txid: string; amount: string; iss
  * The new units and the authority come back to this wallet; a capped
  * token's authority states the new total, and the cap is never passed.
  */
+/** Every refusal a mint can give from local state alone; it reads and writes nothing else. */
+async function mintChecks(active: ActiveWallet, args: { assetId?: unknown; amount?: unknown }, opts: HctWalletOptions) {
+  const assetId = String(args.assetId ?? '').trim().toLowerCase()
+  if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
+  const amountRaw = String(args.amount ?? '').trim()
+  if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
+    refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+  }
+  const amount = BigInt(amountRaw)
+  const deploy = await deployOf(active, assetId)
+  if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+  if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open HCT assets only.')
+  const policy = hctSupplyPolicy(deploy.fields)
+  if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
+  const authority = (await heldRows(active, HCT_TOKEN_BASKET, assetId)).find((r) => r.authority)
+  if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
+  if (deploy.fields.bk) {
+    if (!opts.backing) refuse('bad-asset-args', 'A backed token mints only against a deposit.')
+    const backs = await getHctDepositIssuance(backingDepositKey(deploy.fields.bk, opts.backing.deposit))
+    if (backs) refuse('bad-asset-args', `That deposit already backs ${backs}.`)
+  } else if (opts.backing) {
+    refuse('bad-asset-args', 'Only a backed token mints against a deposit.')
+  }
+  return { assetId, amount, deploy, policy, authority }
+}
+
+/** Refuse a mint the wallet would refuse anyway, before anyone is asked to approve it. */
+export async function preflightHctMint(args: { assetId?: unknown; amount?: unknown }): Promise<void> {
+  await mintChecks(requireActive(), args, {})
+}
+
 export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }, opts: HctWalletOptions = {}): Promise<MintHctResult> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
@@ -1038,31 +1090,14 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
     const chart = createActor(hctMachine).start()
     chart.send({ type: 'MINT' })
     try {
-      const assetId = String(args.assetId ?? '').trim().toLowerCase()
-      if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
-      const amountRaw = String(args.amount ?? '').trim()
-      if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
-        refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
-      }
-      const amount = BigInt(amountRaw)
-      const deploy = await deployOf(active, assetId)
-      if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open HCT assets only.')
-      const policy = hctSupplyPolicy(deploy.fields)
-      if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
-      let authority = (await heldRows(active, HCT_TOKEN_BASKET, assetId)).find((r) => r.authority)
-      if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
+      const { assetId, amount, deploy, policy, authority: held } = await mintChecks(active, args, opts)
+      let authority = held
       if (deploy.fields.bk) {
-        if (!opts.backing) refuse('bad-asset-args', 'A backed token mints only against a deposit.')
-        const backs = await getHctDepositIssuance(backingDepositKey(deploy.fields.bk, opts.backing.deposit))
-        if (backs) refuse('bad-asset-args', `That deposit already backs ${backs}.`)
         if (authority.amount > 0n) {
           // Spending the deploy moves its units; they wait for the first deposit's proof.
           if (authority.locked) refuse('awaiting-backing', 'The first deposit has no burial proof yet; this mint waits for it.')
           authority = await splitBackedDeploy(active, authority, deploy)
         }
-      } else if (opts.backing) {
-        refuse('bad-asset-args', 'Only a backed token mints against a deposit.')
       }
       let issued: HctIssued | undefined
       if (policy.kind === 'capped') {
@@ -1089,7 +1124,7 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
         ...(opts.backing ? [{ lockingScript: hctBackingScript(opts.backing.deposit, assetId), satoshis: 0, outputDescription: 'HCT backing deposit' }] : []),
       ]
       chart.send({ type: 'BUILT' })
-      const label = `${amount} ${deploy.fields.sym ?? 'units'}`
+      const label = hctAmountLabel(assetId, amount)
       const signed = await signHctAction(active, {
         description: `Mint ${label} (HCT)`,
         labels: [LABEL, 'hct-mint', ...(opts.labels ?? [])],
@@ -1108,7 +1143,7 @@ export async function mintHctAsset(args: { assetId?: unknown; amount?: unknown }
       await commitSigned(signed, [assetId], true)
       chart.send({ type: 'BROADCASTED' })
       chart.send({ type: 'DELIVERED' })
-      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-mint', note: `Minted ${label} (HCT)`, txid: signed.txid })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 0, method: 'mint-token', note: `Minted ${label}`, txid: signed.txid, item: hctActivityItem(active, assetId, deploy.fields, amount) })
       scheduleHistoryBackupPush('hct')
       log('mint', startedAt)
       return {
@@ -1148,30 +1183,47 @@ function pickRows(rows: HctRow[], amount: bigint): HctRow[] | null {
  * `[2, "hct holder"]` key it derives from the remittance in the package,
  * which goes to its box (and the durable outbox until it lands).
  */
-export async function transferHctAsset(args: { assetId?: unknown; recipient?: unknown; amount?: unknown }): Promise<TransferHctResult> {
+type TransferArgs = { assetId?: unknown; recipient?: unknown; amount?: unknown }
+
+/** Every refusal a transfer can give, and the outputs it would spend; it writes nothing. */
+async function transferChecks(active: ActiveWallet, args: TransferArgs) {
+  const assetId = String(args.assetId ?? '').trim().toLowerCase()
+  if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
+  const recipient = String(args.recipient ?? '').trim().toLowerCase()
+  if (!KEY_RE.test(recipient)) refuse('bad-asset-args', 'recipient is an identity key.')
+  const deploy = await deployOf(active, assetId)
+  if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+  if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets move through transferCountersignedAsset.')
+  // Anyone but the issuer holding a backed token would hold a claim only the
+  // issuer's reserve key can pay: custody. It only ever returns to its issuer.
+  if (deploy.fields.bk && !deploy.fields.iss.some((k) => k.toLowerCase() === recipient)) {
+    refuse('custodial', 'A backed token only goes back to its issuer: anyone else would depend on the issuer to redeem it.')
+  }
+  const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
+  if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
+    refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+  }
+  const amount = BigInt(amountRaw)
+  if (deploy.fields.kind === 'item' && amount !== 1n) refuse('bad-asset-args', 'An item moves whole: amount is 1.')
+  const basket = hctFilingOf(deploy.fields.kind)
+  const chosen = pickRows(await heldRows(active, basket, assetId), amount)
+  if (!chosen) refuse('insufficient', `This wallet can move less than ${amount} of that asset in at most ${MAX_INPUTS} outputs.`)
+  return { assetId, recipient, deploy, amount, basket, chosen }
+}
+
+/** Refuse a transfer the wallet would refuse anyway, before anyone is asked to approve it. */
+export async function preflightHctTransfer(args: TransferArgs): Promise<void> {
+  await transferChecks(requireActive(), args)
+}
+
+export async function transferHctAsset(args: TransferArgs): Promise<TransferHctResult> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
     const active = requireActive()
     const chart = createActor(hctMachine).start()
     chart.send({ type: 'TRANSFER' })
     try {
-      const assetId = String(args.assetId ?? '').trim().toLowerCase()
-      if (!isHctAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex HCT asset id.')
-      const recipient = String(args.recipient ?? '').trim().toLowerCase()
-      if (!KEY_RE.test(recipient)) refuse('bad-asset-args', 'recipient is an identity key.')
-      const deploy = await deployOf(active, assetId)
-      if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets move through transferCountersignedAsset.')
-      const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
-      if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > HCT_MAX_AMOUNT) {
-        refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
-      }
-      const amount = BigInt(amountRaw)
-      if (deploy.fields.kind === 'item' && amount !== 1n) refuse('bad-asset-args', 'An item moves whole: amount is 1.')
-      const basket = hctFilingOf(deploy.fields.kind)
-      const rows = await heldRows(active, basket, assetId)
-      const chosen = pickRows(rows, amount)
-      if (!chosen) refuse('insufficient', `This wallet holds less than ${amount} of that asset in at most ${MAX_INPUTS} outputs.`)
+      const { assetId, recipient, deploy, amount, basket, chosen } = await transferChecks(active, args)
       const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
       const self = selfOf(active)
       const root = rootOf(active)
@@ -1203,7 +1255,7 @@ export async function transferHctAsset(args: { assetId?: unknown; recipient?: un
         outputs.push(...carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix, row.issued))
       }
       chart.send({ type: 'BUILT' })
-      const label = deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`
+      const label = deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : hctAmountLabel(assetId, amount)
       const signed = await signHctAction(active, {
         description: `Send ${label} (HCT)`,
         labels: [LABEL, 'hct-transfer'],
@@ -1236,7 +1288,7 @@ export async function transferHctAsset(args: { assetId?: unknown; recipient?: un
         delivered = await deliverEntry(active, entry)
       }
       chart.send({ type: delivered ? 'DELIVERED' : 'QUEUED' })
-      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-transfer', note: `Sent ${label} (HCT)`, txid: signed.txid })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'spent', sats: 0, method: deploy.fields.kind === 'item' ? 'send-collectable' : 'send-token', note: `Sent ${label}`, txid: signed.txid, item: hctActivityItem(active, assetId, deploy.fields, amount) })
       scheduleHistoryBackupPush('hct')
       log('transfer', startedAt)
       return { assetId, txid: signed.txid, amount: amount.toString(), recipient, delivered }
@@ -1254,8 +1306,8 @@ export type BurnHctResult = { assetId: string; txid: string; amount: string }
 /**
  * Lock units of a token this wallet holds to `holder`, a key nobody can sign
  * for, so they can never move again (conservation forbids destroying units).
- * Wallet-internal: the wLTC bridge burns what it redeems. `memo` rides an
- * OP_RETURN output so the burn names what it paid for.
+ * Wallet-internal. `memo` rides an OP_RETURN output so the burn names what
+ * it paid for.
  */
 export async function burnHctUnits(
   args: { assetId: string; amount: bigint; holder: string; memo: string },
@@ -1302,7 +1354,7 @@ export async function burnHctUnits(
         })
       }
       chart.send({ type: 'BUILT' })
-      const label = `${args.amount} ${deploy.fields.sym ?? 'units'}`
+      const label = hctAmountLabel(assetId, args.amount)
       const signed = await signHctAction(active, {
         description: `Burn ${label} (HCT)`,
         labels: [LABEL, 'hct-burn', ...(opts.labels ?? [])],
@@ -1319,7 +1371,7 @@ export async function burnHctUnits(
       await commitSigned(signed, [assetId], true)
       chart.send({ type: 'BROADCASTED' })
       chart.send({ type: 'DELIVERED' })
-      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'event', sats: 0, method: 'hct-burn', note: `Burned ${label} (HCT)`, txid: signed.txid })
+      recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'spent', sats: 0, method: 'burn-token', note: `Burned ${label}`, txid: signed.txid, item: hctActivityItem(active, assetId, deploy.fields, args.amount) })
       scheduleHistoryBackupPush('hct')
       log('burn', startedAt)
       return { assetId, txid: signed.txid, amount: args.amount.toString() }
@@ -1544,11 +1596,13 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
   const amount = mine.reduce((sum, m) => sum + (m.read.form === 'held' ? m.read.amount : 0n), 0n)
   recordAppActivity({
     origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'event',
+    kind: 'earned',
     sats: 0,
-    method: 'hct-receive',
-    note: `Received ${deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : `${amount} ${deploy.fields.sym ?? 'units'}`} (HCT)`,
+    method: deploy.fields.kind === 'item' ? 'receive-collectable' : 'receive-token',
+    note: `Received ${deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : hctAmountLabel(wire.asset, amount)}`,
     txid,
+    item: hctActivityItem(active, wire.asset, deploy.fields, amount),
+    from,
   })
   scheduleHistoryBackupPush('hct')
   log('receive', startedAt)
