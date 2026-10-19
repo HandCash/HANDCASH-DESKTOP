@@ -88,3 +88,10 @@ the claim of the sibling swap output and signs the fee claim. A refunded swap
 output means no swap, and the fee output returns to its payer after the lock
 time. The claimer refuses to run unless `SWAP_FEE_KEY` is the key for
 `HANDCASH_SWAP_FEE_PUB`.
+
+The claim watchtower runs beside it (`src/swapTower.js`, same cron). A maker
+waiting for the secret presigns its claim of the taker's lock with the secret
+zeroed (`claimTower.ts`), writes the template into the custody journal, and
+posts the ticket to `POST /v1/swap-tower` at its own message box host and at
+BRC-CLOUD. When the taker's claim shows the secret, the tower fills it in and
+broadcasts the maker's claim. It holds no key; the claim pays only the maker.

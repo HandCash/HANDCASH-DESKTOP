@@ -745,6 +745,16 @@ const SWAP_SETTLE = `stateDiagram-v2
     fee output on the fee leg, same hash;
     paid only on success.
   end note
+  note right of claiming
+    Maker, waiting in locked for the secret:
+    its claim is presigned (secret left out,
+    template in the custody journal) and
+    handed to claim watchtowers: its own
+    box host, then BRC-CLOUD. A tower fills
+    in the secret from the taker's claim and
+    broadcasts; no key, pays only the maker.
+    CLAIM commits that same transaction.
+  end note
 `
 
 const COUNTERSIGN = `stateDiagram-v2

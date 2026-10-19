@@ -113,6 +113,21 @@ describe('custody journal', () => {
     expect(j.unspentSwapCustody(alice).map((s) => s.op)).toEqual([`${txA}.1`, `${txA}.2`])
   })
 
+  it("keeps a peer lock's presigned claim, with its self-payment only when whole", async () => {
+    const j = await load()
+    const swapId = 'cd'.repeat(16)
+    const peer = { p: 'swap lock', chain: 'bsv', swapId, role: 'maker', side: 'peer', terms: '{"v":2}' }
+    const claim = { hex: 'ab'.repeat(200), at: 120, prefix: 'p', suffix: 's' }
+    j.appendCustody(alice, [
+      { k: 'out', op: `${txA}.0`, sats: 1000, r: { ...peer, claim } },
+      { k: 'out', op: `${txA}.1`, sats: 1000, r: { ...peer, claim: { ...claim, suffix: '' } } },
+      { k: 'out', op: `${txA}.2`, sats: 1000, r: { ...peer, claim: { ...claim, at: 190 } } },
+      { k: 'out', op: `${txA}.3`, sats: 1000, r: { ...peer, side: 'own', claim } },
+    ])
+    const swaps = j.unspentSwapCustody(alice)
+    expect(swaps.map((s) => s.r.claim)).toEqual([claim, { hex: claim.hex, at: 120 }, undefined, undefined])
+  })
+
   it('keeps each vault account in its own journal', async () => {
     const j = await load()
     j.appendCustody(alice, [{ k: 'out', op: `${txA}.0`, sats: 1, r: pay('p') }])

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.613] - 2026-10-19
+
+### Added
+
+- Claim watchtower for direct swaps. A maker that is offline after the taker claims could lose both sides once the taker refunds. Now, while it waits for the taker, the maker's wallet signs its claim in advance with the secret left out and hands it to a watchtower at its own message box host and at BRC-CLOUD, never the counterparty's. When the taker's claim reveals the secret, the tower fills it in and broadcasts. The tower holds no key, and the claim can pay only the maker. The wallet commits the same transaction whenever it runs. The presigned claim is written to the custody journal before any tower sees it, so a restored wallet can take in a claim a tower made.
+
+### Fixed
+
+- Rebuilding lost swaps from the custody journal kept only the first lock of each swap. A swap's own lock, fee output and the counterparty's lock now come back together.
+
 ## [1.3.612] - 2026-10-19
 
 ### Fixed

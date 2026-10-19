@@ -38,7 +38,10 @@ vi.mock('../coinMethods', () => ({
   coinWalletOf: async () => ({ balance: async () => 10n ** 12n, store: { read: () => ({ payments: {} }) } }),
 }))
 
-const { ownTakenOf, takeSwapOffer } = await import('./settleRunner')
+const custody: { op: string; units: number; r: Record<string, unknown> }[] = []
+vi.mock('../custodyJournal', () => ({ unspentSwapCustody: () => custody }))
+
+const { ownTakenOf, replaySwapCustody, takeSwapOffer } = await import('./settleRunner')
 
 function offer(minGet: bigint, maxGet: bigint): SignedSwapOffer {
   const now = Date.now()
@@ -92,5 +95,46 @@ describe('taking an offer this wallet already took', () => {
     heldTake(o, 10_000_000n, '04'.repeat(16), 'expired')
     heldTake(o, 10_000_000n, '05'.repeat(16))
     expect(ownTakenOf().get(o.nonce)).toBe(10_000_000n)
+  })
+})
+
+describe('rebuilding a lost swap from the custody journal', () => {
+  beforeEach(() => {
+    state.swaps = {}
+    custody.length = 0
+  })
+
+  it('joins every lock of one swap and restores the presigned claim with its self-payment', async () => {
+    const swapId = '06'.repeat(16)
+    const r = proposeTerms(offer(10_000_000n, 10_000_000n), 10_000_000n, { identityKey: taker, root: takerRoot }, { now: Date.now(), swapId })
+    if (!r.ok) throw new Error(r.reason)
+    const terms = JSON.stringify({ ...r.terms, makerPub: maker })
+    const base = { p: 'swap lock', swapId, role: 'maker', terms }
+    const claim = { hex: 'ab'.repeat(200), at: 120, prefix: 'p', suffix: 's' }
+    custody.push(
+      { op: `${'aa'.repeat(32)}.0`, units: 3_000_000, r: { ...base, chain: 'ltc', side: 'own' } },
+      { op: `${'aa'.repeat(32)}.1`, units: 30_000, r: { ...base, chain: 'ltc', side: 'fee' } },
+      { op: `${'bb'.repeat(32)}.0`, units: 10_000_000, r: { ...base, chain: 'bsv', side: 'peer', claim } },
+    )
+    const active = { identityKey: maker, rootKeyHex: makerRoot.toHex(), accountIndex: 0, chain: 'main' } as unknown as Parameters<typeof replaySwapCustody>[0]
+    await replaySwapCustody(active)
+    const rec = state.swaps[swapId]!
+    expect(rec.own.funding).toEqual({ txid: 'aa'.repeat(32), main: 0, fee: 1 })
+    expect(rec.peer.funding).toEqual({ txid: 'bb'.repeat(32), main: 0 })
+    expect(rec.peer.claimTemplate).toEqual({
+      chain: 'bsv',
+      hex: claim.hex,
+      secretAt: 120,
+      remittance: { derivationPrefix: 'p', derivationSuffix: 's', senderIdentityKey: maker },
+    })
+  })
+
+  it('leaves a swap this install still holds alone', async () => {
+    const swapId = '07'.repeat(16)
+    heldTake(offer(10_000_000n, 10_000_000n), 10_000_000n, swapId)
+    const before = structuredClone(state.swaps[swapId])
+    custody.push({ op: `${'cc'.repeat(32)}.0`, units: 1, r: { p: 'swap lock', swapId, role: 'taker', side: 'own', chain: 'bsv', terms: JSON.stringify(before!.terms) } })
+    await replaySwapCustody({ identityKey: taker, rootKeyHex: takerRoot.toHex(), accountIndex: 1, chain: 'main' } as unknown as Parameters<typeof replaySwapCustody>[0])
+    expect(state.swaps[swapId]).toEqual(before)
   })
 })

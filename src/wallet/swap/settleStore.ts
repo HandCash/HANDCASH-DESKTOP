@@ -1,7 +1,7 @@
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
 import { durableGetItem, durableSetItem } from '../durableStorage'
-import type { SelfRemittance } from './legChains'
+import type { SelfRemittance, StoredClaimTemplate } from './legChains'
 import type { SignedSwapOffer } from './offer'
 import type { SwapSettlePhase } from '../../machines/swapSettleMachine'
 import type { SettleOutcome, SettleWait, SwapRole, SwapTerms } from './settle'
@@ -40,6 +40,10 @@ export type PeerLeg = {
   claim?: { txid: string; hex: string }
   claimed?: true
   refunded?: true
+  /** Maker: its claim of this lock, signed with the secret left out; a watchtower fills it in while this wallet is away. */
+  claimTemplate?: StoredClaimTemplate
+  /** The watchtowers asked to hold the ticket. `held`: origins that took it; `done`: every tower answered for good. */
+  tower?: { triedAt: number; held: string[]; done?: true; skipped?: string }
 }
 
 export type SettleRecord = {

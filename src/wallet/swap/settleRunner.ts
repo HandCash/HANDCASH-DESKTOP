@@ -17,7 +17,9 @@ import {
   legChainOf,
   prepareBsvLock,
   type LegSpend,
+  type StoredClaimTemplate,
 } from './legChains'
+import type { ClaimTicket } from './claimTower'
 import {
   agreedTerms,
   checkTake,
@@ -45,7 +47,18 @@ import {
   type SwapTerms,
 } from './settle'
 import type { FeeLockReport } from './feeClaim'
-import { ackSettleBox, bsvLockProvenUnsent, journalSwapLock, journalSwapLockSpent, readSettleBox, reportFeeLock, requireActiveWallet, sendSettle } from './settlePorts'
+import {
+  ackSettleBox,
+  bsvLockProvenUnsent,
+  claimTowerOrigins,
+  journalSwapLock,
+  journalSwapLockSpent,
+  readSettleBox,
+  registerClaimTicket,
+  reportFeeLock,
+  requireActiveWallet,
+  sendSettle,
+} from './settlePorts'
 import { activeSwaps, markOfferCancelled, putSwap, readSettleState, rememberPublishedOffer, updateSwap, writeSettleState, type SettleRecord } from './settleStore'
 import type { SwapOfferDraft } from './offerBook'
 import type { SignedSwapOffer } from './offer'
@@ -71,6 +84,8 @@ const TICK_MS = 30_000
 const PRESIGN_RETRY_MS = 2 * 60_000
 /** A `funded` notice is sent again this often until the counterparty's lock appears (it may have missed one). */
 const FUNDED_RETRY_MS = 10 * 60_000
+/** A claim watchtower that did not answer is asked again after this. */
+const TOWER_RETRY_MS = 10 * 60_000
 
 let boxPolledAt = 0
 let tickedAt = 0
@@ -637,6 +652,74 @@ async function announceFunded(active: ActiveWallet, r: SettleRecord, beef?: stri
   updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, fundedSentAt: Date.now() } }))
 }
 
+/** The counterparty's lock as the custody journal keeps it, with the presigned claim when there is one. */
+function journalPeerLock(active: ActiveWallet, r: SettleRecord, template?: StoredClaimTemplate): void {
+  const agreed = agreedOf(r)!
+  const leg = swapLegs(agreed)[peerLegId(r)]
+  const funding = r.peer.funding!
+  const claim = template
+    ? { hex: template.hex, at: template.secretAt, ...(template.remittance ? { prefix: template.remittance.derivationPrefix, suffix: template.remittance.derivationSuffix } : {}) }
+    : undefined
+  journalSwapLock(active, `${funding.txid}.${funding.main}`, legOutputs(agreed, peerLegId(r)).main.amount, {
+    chain: leg.chain,
+    swapId: r.terms.swapId,
+    role: r.role,
+    side: 'peer',
+    terms: recipeTerms(r),
+    ...(claim ? { claim } : {}),
+  })
+}
+
+/**
+ * Maker, waiting for the secret: sign the claim of the taker's lock now and
+ * hand it to the claim watchtowers (this wallet's own box host, then
+ * BRC-CLOUD), so a taker's claim seen while this wallet is away still gets
+ * the maker's claim out before the taker may refund. The template is in the
+ * custody journal before any tower sees it.
+ */
+async function armClaimTower(active: ActiveWallet, r: SettleRecord): Promise<void> {
+  if (r.role !== 'maker' || r.secret || r.outcome || !r.own.funding || !r.peer.funding || !r.peer.buried || r.peer.refused || r.peer.claimed) return
+  if (r.peer.tower?.done || (r.peer.tower && Date.now() - r.peer.tower.triedAt < TOWER_RETRY_MS)) return
+  const agreed = agreedOf(r)!
+  const legs = swapLegs(agreed)
+  const peerOuts = legOutputs(agreed, peerLegId(r))
+  const ownOuts = legOutputs(agreed, ownLegId(r))
+  const held = r.peer.tower?.held ?? []
+  updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, tower: { triedAt: Date.now(), held } } }))
+  let template = r.peer.claimTemplate
+  if (!template) {
+    const funding = r.peer.funding
+    const chain = await legChainOf(legs[peerLegId(r)].chain)
+    try {
+      template = await chain.presignClaim({ coin: { txid: funding.txid, vout: funding.main, amount: peerOuts.main.amount, script: peerOuts.main.script }, key: keyOf(active, r) })
+    } catch (err) {
+      const skipped = err instanceof Error ? err.message : String(err)
+      updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, tower: { triedAt: Date.now(), held, done: true, skipped } } }))
+      warn(r.terms.swapId, `no claim watchtower: ${skipped}`)
+      return
+    }
+    journalPeerLock(active, r, template)
+    const made = template
+    updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, claimTemplate: made } }))
+  }
+  const ticket: ClaimTicket = {
+    v: 1,
+    watch: { chain: legs[ownLegId(r)].chain, txid: r.own.funding.txid, vout: r.own.funding.main, script: toHex(ownOuts.main.script) },
+    hash: r.terms.hash,
+    claim: { chain: template.chain, hex: template.hex, secretAt: template.secretAt, script: toHex(peerOuts.main.script) },
+    until: legs[peerLegId(r)].locktime,
+  }
+  const origins = (await claimTowerOrigins()).filter((o) => !held.includes(o))
+  const answers = await Promise.all(origins.map(async (o) => [o, await registerClaimTicket(o, ticket)] as const))
+  const nowHeld = [...held, ...answers.filter(([, a]) => a === 'held').map(([o]) => o)]
+  const done = answers.every(([, a]) => a !== 'retry')
+  updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, tower: { triedAt: Date.now(), held: nowHeld, ...(done ? { done: true as const } : {}) } } }))
+  if (nowHeld.length > held.length) log(r.terms.swapId, `claim watchtower armed at ${nowHeld.map((o) => new URL(o).host).join(', ')}`)
+}
+
+/** How the claim is built: the template a watchtower also holds (same transaction, whoever broadcasts first), or signed now. */
+type ClaimBuild = { kind: 'presigned'; template: StoredClaimTemplate } | { kind: 'fresh' }
+
 async function claim(active: ActiveWallet, r: SettleRecord): Promise<void> {
   const agreed = agreedOf(r)!
   const legId = peerLegId(r)
@@ -647,14 +730,18 @@ async function claim(active: ActiveWallet, r: SettleRecord): Promise<void> {
   if (secretHash(secret) !== r.terms.hash) throw new Error('the secret does not open this swap')
   const chain = await legChainOf(leg.chain)
   const outpoint = `${funding.txid}.${funding.main}`
-  journalSwapLock(active, outpoint, outs.main.amount, { chain: leg.chain, swapId: r.terms.swapId, role: r.role, side: 'peer', terms: recipeTerms(r) })
-  const spend = await chain.spendLock({
-    coins: [{ txid: funding.txid, vout: funding.main, amount: outs.main.amount, script: outs.main.script }],
-    key: keyOf(active, r),
-    path: { kind: 'claim', preimage: secret },
-    ...(funding.beef ? { sourceBeef: funding.beef } : {}),
-    label: 'claim',
-  })
+  const build: ClaimBuild = r.role === 'maker' && r.peer.claimTemplate ? { kind: 'presigned', template: r.peer.claimTemplate } : { kind: 'fresh' }
+  journalPeerLock(active, r, build.kind === 'presigned' ? build.template : undefined)
+  const spend =
+    build.kind === 'presigned'
+      ? await chain.spendTemplate({ template: build.template, secret, hash: r.terms.hash, ...(funding.beef ? { sourceBeef: funding.beef } : {}), label: 'claim' })
+      : await chain.spendLock({
+          coins: [{ txid: funding.txid, vout: funding.main, amount: outs.main.amount, script: outs.main.script }],
+          key: keyOf(active, r),
+          path: { kind: 'claim', preimage: secret },
+          ...(funding.beef ? { sourceBeef: funding.beef } : {}),
+          label: 'claim',
+        })
   updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, claim: { txid: spend.txid, hex: spend.hex } } }))
   await spend.commit()
   journalSwapLockSpent(active, outpoint)
@@ -752,6 +839,11 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
       updateSwap(r.terms.swapId, (x) => ({ ...x, waiting: { for: step.for, ...(step.until ? { until: step.until } : {}) }, lastError: undefined }))
       if (step.for === 'peer-funding' && r.own.funding && (!r.own.fundedSentAt || Date.now() - r.own.fundedSentAt > FUNDED_RETRY_MS)) {
         await announceFunded(active, r, r.own.prepared?.beef)
+      }
+      if (step.for === 'secret') {
+        await armClaimTower(active, r).catch((err: unknown) => {
+          warn(r.terms.swapId, `claim watchtower deferred — ${err instanceof Error ? err.message : String(err)}`)
+        })
       }
       return step
     }
@@ -869,9 +961,10 @@ export async function replaySwapCustody(active: ActiveWallet): Promise<number> {
   const { unspentSwapCustody } = await import('../custodyJournal')
   const owner = { identityKey: active.identityKey, accountIndex: active.accountIndex ?? 0, chain: active.chain }
   const state = readSettleState()
+  const kept = new Set(Object.keys(state.swaps))
   let rebuilt = 0
   for (const { op, r } of unspentSwapCustody(owner)) {
-    if (state.swaps[r.swapId]) continue
+    if (kept.has(r.swapId)) continue
     let terms: AgreedTerms
     try {
       terms = JSON.parse(r.terms) as AgreedTerms
@@ -899,6 +992,15 @@ export async function replaySwapCustody(active: ActiveWallet): Promise<number> {
     if (r.side === 'own') record.own.funding = { ...(record.own.funding ?? { txid, main: Number(vout) }), txid, main: Number(vout) }
     if (r.side === 'fee' && record.own.funding) record.own.funding.fee = Number(vout)
     if (r.side === 'peer') record.peer.funding = { txid, main: Number(vout) }
+    if (r.side === 'peer' && r.claim) {
+      const peerChain = swapLegs(terms)[r.role === 'taker' ? 'maker' : 'taker'].chain
+      record.peer.claimTemplate = {
+        chain: peerChain,
+        hex: r.claim.hex,
+        secretAt: r.claim.at,
+        ...(r.claim.prefix && r.claim.suffix ? { remittance: { derivationPrefix: r.claim.prefix, derivationSuffix: r.claim.suffix, senderIdentityKey: active.identityKey.toLowerCase() } } : {}),
+      }
+    }
     if (r.refund && (r.side === 'own' || r.side === 'fee')) {
       const refunds = record.own.refunds ?? []
       refunds[r.side === 'own' ? 0 : 1] = {

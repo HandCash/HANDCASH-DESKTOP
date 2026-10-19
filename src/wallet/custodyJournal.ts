@@ -47,12 +47,15 @@ export type SpendRecipe =
    * fee output, or the counterparty's lock (claimable with the secret).
    * `refund` is a BSV lock's pre-signed refund: its output script and value,
    * the BRC-29 self-payment it lands in, and the counterparty's
-   * co-signature. Never replayed by `internalizeAction`: the swap runner
-   * settles it.
+   * co-signature. `claim` is the maker's presigned claim of the counterparty's
+   * lock, secret left out (a watchtower may broadcast it), with the BRC-29
+   * self-payment a BSV claim lands in. Never replayed by `internalizeAction`:
+   * the swap runner settles it.
    */
-  | { p: 'swap lock'; chain: string; swapId: string; role: 'taker' | 'maker'; side: 'own' | 'fee' | 'peer'; terms: string; refund?: SwapLockRefund }
+  | { p: 'swap lock'; chain: string; swapId: string; role: 'taker' | 'maker'; side: 'own' | 'fee' | 'peer'; terms: string; refund?: SwapLockRefund; claim?: SwapLockClaim }
 
 export type SwapLockRefund = { to: string; value: string; prefix: string; suffix: string; cosig: string }
+export type SwapLockClaim = { hex: string; at: number; prefix?: string; suffix?: string }
 
 export type CustodyEntry =
   | { k: 'out'; op: string; sats: number; r: SpendRecipe }
@@ -130,7 +133,13 @@ function cleanRecipe(raw: unknown, self?: string): SpendRecipe | null {
       /^[0-9a-f]{18,146}$/.test(f.cosig)
         ? { to: f.to, value: f.value, prefix: f.prefix, suffix: f.suffix, cosig: f.cosig }
         : undefined
-    return { p: 'swap lock', chain, swapId, role: r.role, side: r.side, terms, ...(refund ? { refund } : {}) }
+    const c = (r.side === 'peer' && r.claim && typeof r.claim === 'object' ? r.claim : null) as Record<string, unknown> | null
+    const remitted = !!c && typeof c.prefix === 'string' && !!c.prefix && typeof c.suffix === 'string' && !!c.suffix
+    const claim =
+      c && typeof c.hex === 'string' && /^(?:[0-9a-f]{2}){60,2000}$/.test(c.hex) && Number.isSafeInteger(c.at) && (c.at as number) >= 0 && (c.at as number) + 32 <= c.hex.length / 2
+        ? { hex: c.hex, at: c.at as number, ...(remitted ? { prefix: c.prefix as string, suffix: c.suffix as string } : {}) }
+        : undefined
+    return { p: 'swap lock', chain, swapId, role: r.role, side: r.side, terms, ...(refund ? { refund } : {}), ...(claim ? { claim } : {}) }
   }
   if (r.p === 'basket insertion') {
     const basket = typeof r.basket === 'string' ? r.basket.trim() : ''

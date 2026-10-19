@@ -2859,12 +2859,15 @@ function swapFacts(events) {
       passes += 1
       slowestPassMs = Math.max(slowestPassMs, Number(m[1]))
     } else if ((m = SETTLE_LINE_RE.exec(t))) {
-      if (!direct.has(m[1])) direct.set(m[1], { id: m[1], lines: 0, warnings: 0, trail: [], done: null, last: null, lastAt: 0 })
+      if (!direct.has(m[1])) direct.set(m[1], { id: m[1], lines: 0, warnings: 0, trail: [], done: null, tower: null, last: null, lastAt: 0 })
       const r = direct.get(m[1])
       r.lines += 1
       if (e.level === 'warn') r.warnings += 1
       const done = /^done: (\w+)/.exec(m[2])
       if (done) r.done = done[1]
+      // Maker only (1.3.613+): its presigned claim reached a watchtower, or could not be made.
+      const tower = /^claim watchtower armed at (.+)$/.exec(m[2]) ?? /^no claim watchtower: (.+)$/.exec(m[2])
+      if (tower) r.tower = m[2].startsWith('no ') ? `none: ${tower[1]}` : `armed: ${tower[1]}`
       if (r.trail[r.trail.length - 1] !== m[2]) r.trail.push(m[2])
       if (r.trail.length > 6) r.trail.shift()
       r.last = m[2]

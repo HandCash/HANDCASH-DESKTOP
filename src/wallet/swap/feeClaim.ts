@@ -4,11 +4,12 @@ import { bchOutputScript } from '../bch/bitcoincash'
 import { btcOutputScript } from '../btc/bitcoin'
 import { BTC_ELECTRUM_SERVERS, electrumBtcChain } from '../btc/chain'
 import { electrumSocket, failoverElectrumChain } from '../coins/electrumChain'
-import { dogeOutputScript, parseDogeTx } from '../doge/dogecoin'
+import { dogeOutputScript } from '../doge/dogecoin'
 import { DOGE_ELECTRUM_SERVERS, electrumDogeChain } from '../doge/chain'
 import { esploraLtcChain, LITECOINSPACE_API, type LtcChain } from '../ltc/chain'
-import { concat, fromHex, hash160, ltcOutputScript, ltcTxid, p2wpkhScript, parseLtcTx, type Bytes, type LtcTx } from '../ltc/litecoin'
+import { concat, fromHex, hash160, ltcOutputScript, ltcTxid, p2wpkhScript, type Bytes } from '../ltc/litecoin'
 import type { SwapAsset } from './assets'
+import { checkedTx } from './claimTower'
 import { DIRECT_CLAIM_COST, HANDCASH_SWAP_FEE_PUB } from './fee'
 
 export { HANDCASH_SWAP_FEE_PUB }
@@ -124,15 +125,6 @@ export type FeeLockVerdict =
   | { kind: 'spent'; txid: string; claimed: boolean }
   /** The swap output went back to its payer: the swap did not happen, and the fee output follows it. */
   | { kind: 'refunded'; txid: string }
-
-const parseTx = (chain: SwapAsset, raw: Bytes): LtcTx => (chain === 'doge' ? parseDogeTx(raw) : parseLtcTx(raw))
-
-/** A transaction from its hex, refused unless it hashes to `txid` (when given). */
-function checkedTx(chain: SwapAsset, hex: string, txid?: string): LtcTx {
-  const tx = parseTx(chain, fromHex(hex))
-  if (txid && ltcTxid(tx) !== txid) throw new Error('the transaction does not hash to its txid')
-  return tx
-}
 
 const sameBytes = (a: Bytes, b: Bytes) => a.length === b.length && a.every((x, i) => x === b[i])
 

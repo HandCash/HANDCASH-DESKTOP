@@ -2,6 +2,7 @@ import { Beef, P2PKH, PrivateKey, Transaction, Utils } from '@bsv/sdk'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
 import type { LockSighting } from '../coins/coinWallet'
 import type { SwapAsset } from './assets'
+import { fillClaim, presignClaim, type ClaimTemplate } from './claimTower'
 import { BSV_FEE_PER_BYTE, htlcSpendTx, htlcSignature, htlcSignatureValid, readSecret, signHtlcSpend, type HtlcCoin } from './htlc'
 import type { LegScript } from './settle'
 
@@ -51,7 +52,14 @@ export interface SwapLegChain {
     sourceBeef?: string
     label: string
   }): Promise<LockSpend>
+  /** Sign the claim of `coin` into this wallet now, its secret left out: what a claim watchtower fills in. */
+  presignClaim(args: { coin: HtlcCoin; key: PrivateKey }): Promise<StoredClaimTemplate>
+  /** The presigned claim with `secret` in place, ready to commit; committing again after a tower broadcast it is safe. */
+  spendTemplate(args: { template: StoredClaimTemplate; secret: Bytes; hash: string; sourceBeef?: string; label: string }): Promise<LockSpend>
 }
+
+/** A presigned claim as the swap record keeps it. BSV: the self-payment its output is. */
+export type StoredClaimTemplate = ClaimTemplate & { remittance?: SelfRemittance }
 
 // ── Coins of other chains ───────────────────────────────────────────────────
 
@@ -82,6 +90,20 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
         },
       }
     },
+    async presignClaim({ coin, key }) {
+      return presignClaim(chain, { coin, to: wallet.receiveScript().script, key, feeRate: towerClaimFeeRate(await wallet.feeRate()) })
+    },
+    async spendTemplate({ template, secret, hash, label }) {
+      const filled = fillClaim(template, secret, hash)
+      return {
+        ...filled,
+        async commit() {
+          wallet.receiveScript()
+          const sent = await wallet.broadcastRaw(filled.hex, filled.txid)
+          console.info(`[swap-settle] ${chain} ${label} ${filled.txid.slice(0, 12)} ${sent} (presigned)`)
+        },
+      }
+    },
   }
 }
 
@@ -93,6 +115,11 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
  */
 export function htlcSpendFeeRate(estimate: number): number {
   return Math.max(4, Math.ceil(2 * (Number.isFinite(estimate) ? estimate : 1)))
+}
+
+/** A presigned claim may go out a day or more after it is signed, against the same deadline: three times the estimate, never under 8/vB. */
+export function towerClaimFeeRate(estimate: number): number {
+  return Math.max(8, Math.ceil(3 * (Number.isFinite(estimate) ? estimate : 1)))
 }
 
 // ── BSV ─────────────────────────────────────────────────────────────────────
@@ -209,15 +236,10 @@ export const bsvLegChain: SwapLegChain = {
   },
   async spendLock({ coins, key, path, fixed, sourceBeef, label }) {
     const lockTxid = coins[0]!.txid
-    const provenSource = async () => {
-      const { requireActiveWallet } = await import('./settlePorts')
-      const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
-      return b64(await getAtomicBeefBinaryForTxid(requireActiveWallet(), lockTxid))
-    }
     // A claimed lock is buried, so its own proof is the claim's ancestry. The
     // payer's BEEF may be the lean lock alone, which no miner takes as a parent.
-    if (path.kind === 'claim') sourceBeef = (await provenSource().catch(() => undefined)) ?? sourceBeef
-    if (!sourceBeef) sourceBeef = await provenSource()
+    if (path.kind === 'claim') sourceBeef = (await provenBsvSource(lockTxid).catch(() => undefined)) ?? sourceBeef
+    if (!sourceBeef) sourceBeef = await provenBsvSource(lockTxid)
     const out = fixed ?? (await bsvSelfOutput())
     const signed = signHtlcSpend('bsv', {
       coins,
@@ -226,34 +248,54 @@ export const bsvLegChain: SwapLegChain = {
       path,
       ...(fixed ? { value: fixed.value } : { feeRate: BSV_FEE_PER_BYTE }),
     })
-    const source = bsvLockTx(sourceBeef, lockTxid)
-    const tx = Transaction.fromHex(signed.hex)
-    for (const input of tx.inputs) {
-      if (input.sourceTXID !== source.id('hex')) throw new Error('a BSV lock spend spends one lock transaction')
-      input.sourceTransaction = source
-    }
-    if (tx.id('hex') !== signed.txid) throw new Error('the BSV lock spend changed when parsed')
-    const atomic = tx.toAtomicBEEF(true)
-    return {
-      txid: signed.txid,
-      hex: signed.hex,
-      value: signed.tx.outputs[0]!.value,
-      async commit() {
-        const { requireActiveWallet, journalBsvSelfPayment } = await import('./settlePorts')
-        const active = requireActiveWallet()
-        journalBsvSelfPayment(active, `${signed.txid}.0`, signed.tx.outputs[0]!.value, out.remittance)
-        const { registerSignedSend, propagateSignedSend } = await import('../signedSendLifecycle')
-        await propagateSignedSend(await registerSignedSend({ txid: signed.txid, atomicBeef: atomic, flow: 'swap' }))
-        await active.wallet.internalizeAction({
-          tx: atomic,
-          outputs: [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: out.remittance }],
-          description: `Swap ${label}`.slice(0, 50),
-          labels: ['swap'],
-        })
-        console.info(`[swap-settle] bsv ${label} ${signed.txid.slice(0, 12)} sent`)
-      },
-    }
+    return bsvLockSpend({ txid: signed.txid, hex: signed.hex, value: signed.tx.outputs[0]!.value }, sourceBeef, out.remittance, label)
   },
+  async presignClaim({ coin, key }) {
+    const out = await bsvSelfOutput()
+    return { ...presignClaim('bsv', { coin, to: out.to, key, feeRate: BSV_FEE_PER_BYTE }), remittance: out.remittance }
+  },
+  async spendTemplate({ template, secret, hash, sourceBeef, label }) {
+    if (!template.remittance) throw new Error('a presigned BSV claim keeps the self-payment it pays')
+    const filled = fillClaim(template, secret, hash)
+    const lockTxid = Transaction.fromHex(filled.hex).inputs[0]!.sourceTXID!
+    const source = (await provenBsvSource(lockTxid).catch(() => undefined)) ?? sourceBeef ?? (await provenBsvSource(lockTxid))
+    return bsvLockSpend(filled, source, template.remittance, `${label} (presigned)`)
+  },
+}
+
+async function provenBsvSource(lockTxid: string): Promise<string> {
+  const { requireActiveWallet } = await import('./settlePorts')
+  const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
+  return b64(await getAtomicBeefBinaryForTxid(requireActiveWallet(), lockTxid))
+}
+
+/** A signed BSV spend of one lock transaction: committing journals the self-payment, propagates it, and internalizes it. */
+function bsvLockSpend(signed: { txid: string; hex: string; value: bigint }, sourceBeef: string, remittance: SelfRemittance, label: string): LockSpend {
+  const tx = Transaction.fromHex(signed.hex)
+  const source = bsvLockTx(sourceBeef, tx.inputs[0]!.sourceTXID!)
+  for (const input of tx.inputs) {
+    if (input.sourceTXID !== source.id('hex')) throw new Error('a BSV lock spend spends one lock transaction')
+    input.sourceTransaction = source
+  }
+  if (tx.id('hex') !== signed.txid) throw new Error('the BSV lock spend changed when parsed')
+  const atomic = tx.toAtomicBEEF(true)
+  return {
+    ...signed,
+    async commit() {
+      const { requireActiveWallet, journalBsvSelfPayment } = await import('./settlePorts')
+      const active = requireActiveWallet()
+      journalBsvSelfPayment(active, `${signed.txid}.0`, signed.value, remittance)
+      const { registerSignedSend, propagateSignedSend } = await import('../signedSendLifecycle')
+      await propagateSignedSend(await registerSignedSend({ txid: signed.txid, atomicBeef: atomic, flow: 'swap' }))
+      await active.wallet.internalizeAction({
+        tx: atomic,
+        outputs: [{ outputIndex: 0, protocol: 'wallet payment', paymentRemittance: remittance }],
+        description: `Swap ${label}`.slice(0, 50),
+        labels: ['swap'],
+      })
+      console.info(`[swap-settle] bsv ${label} ${signed.txid.slice(0, 12)} sent`)
+    },
+  }
 }
 
 /** Lock BSV outputs without broadcasting: written down before it is broadcast (and, in v1, while the refunds are co-signed). */

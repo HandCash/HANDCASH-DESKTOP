@@ -2,6 +2,7 @@ import { appendCustody, type SwapLockRecipe } from '../custodyJournal'
 import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import type { SelfRemittance } from './legChains'
+import { CLAIM_TOWER_PATH, type ClaimTicket } from './claimTower'
 import type { FeeLockReport } from './feeClaim'
 import { parseSettleMessage, SWAP_SETTLE_BOX, type SettleMessage } from './settle'
 
@@ -85,6 +86,34 @@ export async function ackSettleBox(active: ActiveWallet, ids: string[]): Promise
  * True once the claimer took it or refused it for good; false to try again.
  * Never gates the swap: an unreported fee output returns to its payer.
  */
+/** Claim watchtowers: this wallet's own message box host, then BRC-CLOUD. Never the counterparty's host. */
+export async function claimTowerOrigins(): Promise<string[]> {
+  const { defaultMessageboxBase, publicMessageboxBase } = await import('../messageTransport')
+  const { PUBLIC_BRC_CLOUD_ORIGIN } = await import('../walletConfig')
+  return [...new Set([new URL(publicMessageboxBase(defaultMessageboxBase())).origin, new URL(PUBLIC_BRC_CLOUD_ORIGIN).origin])]
+}
+
+/** Hand a claim ticket to the tower at `origin`. `unsupported`: the host runs none; `retry`: no answer for good yet. */
+export async function registerClaimTicket(origin: string, ticket: ClaimTicket): Promise<'held' | 'refused' | 'unsupported' | 'retry'> {
+  try {
+    const res = await fetch(`${origin}${CLAIM_TOWER_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(ticket),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (res.ok) return 'held'
+    if (res.status === 404 || res.status === 405) return 'unsupported'
+    if (res.status === 400) {
+      console.warn(`[swap-settle] claim tower ${origin} refused the ticket: ${(await res.text().catch(() => '')).slice(0, 200)}`)
+      return 'refused'
+    }
+    return 'retry'
+  } catch {
+    return 'retry'
+  }
+}
+
 export async function reportFeeLock(report: FeeLockReport): Promise<boolean> {
   const { PUBLIC_BRC_CLOUD_ORIGIN } = await import('../walletConfig')
   const res = await fetch(`${PUBLIC_BRC_CLOUD_ORIGIN}/v1/swap-fees`, {
