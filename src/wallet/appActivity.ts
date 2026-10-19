@@ -146,6 +146,8 @@ export type ActivitySwap = {
   status: string;
   /** What this wallet receives, in units of `to` (8 decimals). */
   receive: string;
+  /** The lock the swap waits on to be buried, counted toward the depth its reader needs. */
+  confirming?: { chain: CoinChain | "bsv"; counted: number; needed: number };
 };
 
 function normalizeIdentityKeyField(value: unknown): string | undefined {

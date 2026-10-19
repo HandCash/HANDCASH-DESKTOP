@@ -135,6 +135,14 @@ describe('swaps in Activity', () => {
     expect(other!.subject.txid).toBe(tx(7))
   })
 
+  it('carries the lock a swap waits on, and its count, to the Activity row', () => {
+    const waiting = directSwapView(direct('a', { waiting: { for: 'peer-funding' }, own: { funding: { txid: tx(1), main: 0 }, confirmations: { have: 2, need: 6 } } }))
+    const [record] = composeActivityRecords(foldSwapActivity([], [waiting]))
+    expect(record!.subject.swap).toMatchObject({ tone: 'moving', confirming: { chain: 'ltc', counted: 2, needed: 6 } })
+    const buried = directSwapView(direct('b', { waiting: { for: 'peer-funding' }, own: { funding: { txid: tx(1), main: 0 }, buried: true } }))
+    expect(composeActivityRecords(foldSwapActivity([], [buried]))[0]!.subject.swap!.confirming).toBeUndefined()
+  })
+
   it('names a swap by its verb, the way Activity names every action', () => {
     expect(swapActivityTitle({ tone: 'moving', from: 'bsv', to: 'ltc' })).toBe('Swapping BSV for LTC')
     expect(swapActivityTitle({ tone: 'done', from: 'bsv', to: 'ltc' })).toBe('Swapped BSV for LTC')

@@ -2,6 +2,7 @@ import type { ActivitySwap } from '../../wallet/appActivity'
 import { openSwapDetails } from '../../wallet/navStore'
 import { playWalletSound } from '../../wallet/soundService'
 import { SWAP_ROUTE_LABEL } from '../../wallet/swap/swapView'
+import { ConfirmationBadge } from '../CoinDepositProgress'
 import { LoadingSpinner } from '../LoadingSpinner'
 import { SwapPairMark } from '../SwapVisuals'
 
@@ -66,7 +67,17 @@ export function SwapActivityRow({
           <span className={ended ? 'history-amount history-amount-item' : 'history-amount'} title={amount}>
             {ended ?? `+${amount}`}
           </span>
-          {when ? (
+          {moving && swap.confirming ? (
+            <span className="history-when" data-aeon-part="row-state">
+              <ConfirmationBadge
+                chain={swap.confirming.chain}
+                state={swap.confirming.counted > 0 ? 'confirming' : 'unconfirmed'}
+                counted={swap.confirming.counted}
+                needed={swap.confirming.needed}
+                label={swap.status}
+              />
+            </span>
+          ) : when ? (
             <span className="history-when" data-aeon-part="row-state">
               {moving ? 'Swapping…' : when}
             </span>

@@ -55,14 +55,18 @@ describe('settle view', () => {
     expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, confirmations: { have: 1, need: 3 } } })).status).toBe(
       'Your lock has 1 of 3 LTC confirmations; the maker locks once it confirms',
     )
-    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, buried: true } })).status).toBe('Waiting for the maker to lock')
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock } })).confirming).toEqual({ chain: 'ltc', counted: 0, needed: 6 })
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, confirmations: { have: 1, need: 3 } } })).confirming).toEqual({ chain: 'ltc', counted: 1, needed: 3 })
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, buried: true } }))).toEqual({ state: 'peer-funding', status: 'Waiting for the maker to lock' })
     // The maker, seeing the taker's lock still unmined.
     expect(describeSwap(record('a', { role: 'maker', waiting: { for: 'peer-burial' } })).status).toBe(
       "The taker's lock is waiting for a LTC block (about every 2½ minutes); you lock once it confirms",
     )
-    expect(describeSwap(record('a', { role: 'maker', waiting: { for: 'secret' }, own: { funding: lock } })).status).toBe(
-      'Your lock is waiting for a BSV block (about every 10 minutes); the taker claims once it confirms',
-    )
+    expect(describeSwap(record('a', { role: 'maker', waiting: { for: 'secret' }, own: { funding: lock } }))).toEqual({
+      state: 'secret',
+      status: 'Your lock is waiting for a BSV block (about every 10 minutes); the taker claims once it confirms',
+      confirming: { chain: 'bsv', counted: 0, needed: 1 },
+    })
   })
 
   it('names a refused counterparty lock', () => {

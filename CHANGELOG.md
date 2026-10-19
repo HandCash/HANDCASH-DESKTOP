@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.618] - 2026-10-19
+
+### Changed
+
+- A swap waiting on a lock to reach its block shows confirmation progress in Activity, the same marks and count a received coin shows: one mark per confirmation the lock needs (one for a BSV lock, the chain's depth for a coin lock), filled as this wallet counts them. The row's full wording rides the marks' title. The marks are shared with the coin deposit badge (`ConfirmationBadge`), so both read alike.
+- Block times in swap wording come from each coin's chain settings instead of a separate table.
+
 ## [1.3.617] - 2026-10-19
 
 ### Fixed

@@ -2,7 +2,7 @@ import { SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from './assets'
 import type { SwapRecord } from './exolixSwap'
 import { takerTotals } from './settle'
 import type { SettleRecord, SettleState } from './settleStore'
-import { describeSwap } from './settleView'
+import { describeSwap, type LockConfirming } from './settleView'
 
 /**
  * One swap as every surface shows it, whichever way it runs: wallet to wallet
@@ -37,6 +37,8 @@ export type SwapView = {
   title: string
   /** Where it stands, in words. */
   status: string
+  /** A direct swap waiting on a lock to be buried: which, and how deep it is. */
+  confirming?: LockConfirming
   legs: SwapLeg[]
   createdAt: number
   updatedAt: number
@@ -157,6 +159,7 @@ export function directSwapView(record: SettleRecord): SwapView {
     tone: swapTone(row.state),
     title: title(from, pay, to, receive),
     status: row.status,
+    ...(row.confirming ? { confirming: row.confirming } : {}),
     legs: legsOf([
       ['lock', from, record.outcome === 'unsent' ? undefined : (record.own.funding?.txid ?? record.own.prepared?.txid)],
       ['peer-lock', to, record.peer.funding?.txid],
