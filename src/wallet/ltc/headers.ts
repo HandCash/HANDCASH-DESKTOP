@@ -153,6 +153,8 @@ export type LtcBurialAnchor =
 export type LtcAnchor = {
   /** Is block `blockHash` at `height` at least `depth` deep on the chain with the most work? */
   check(height: number, blockHash: string, depth: number): Promise<LtcBurialAnchor>
+  /** The timestamp (unix seconds) of the tip of the chain with the most work, synced first; undefined when unknown. */
+  tipTime?(): Promise<number | undefined>
 }
 
 export type LtcHeaderStore = {
@@ -431,6 +433,15 @@ export function createHeaderChain(opts: {
     sync,
     async tipHeight() {
       return (await load()).tip.height
+    },
+    async tipTime() {
+      const m = await load()
+      try {
+        await sync()
+      } catch {
+        return undefined
+      }
+      return m.tip.time
     },
     async check(height, blockHash, depth) {
       const m = await load()

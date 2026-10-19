@@ -52,6 +52,14 @@ describe('Litecoin header chain', () => {
     expect(await chain.tipHeight()).toBe(LAST)
   })
 
+  it("reads the chain's clock off its synced, proof-of-work-checked tip", async () => {
+    expect(await chainOf(sourceOf()).tipTime()).toBe(parsed[parsed.length - 1]!.time)
+    expect(await chainOf(sourceOf({ tip: fixture.height + 3 })).tipTime()).toBe(parsed[3]!.time)
+    // A tip the chain cannot take tells no time.
+    const forged = chainOf(sourceOf({ edit: (h, raw) => (h === fixture.height ? withByte(raw, 76, raw[76]! ^ 1) : raw) }))
+    expect(await forged.tipTime()).toBeUndefined()
+  })
+
   it('reports a block the chain holds but not deep enough yet', async () => {
     const chain = chainOf(sourceOf({ tip: fixture.height + 3 }))
     expect(await chain.check(fixture.height, fixture.blockHash, 6)).toEqual({ kind: 'shallow', confirmations: 4 })

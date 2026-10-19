@@ -49,6 +49,12 @@ export interface SwapLegChain {
    * its payer sends.
    */
   findLock(main: LegScript, fee: LegScript | null): Promise<{ txid: string; main: number; fee?: number } | null>
+  /**
+   * The timestamp (unix seconds) of the chain's latest block, read from the
+   * header source its proofs are checked against; undefined when unknown. A
+   * second clock beside the device's for deadlines the chain enforces.
+   */
+  chainTime(): Promise<number | undefined>
   /** Sign a claim or refund of `coins` into this wallet. `value` fixes the output (a pre-signed BSV refund). */
   spendLock(args: {
     coins: HtlcCoin[]
@@ -77,6 +83,7 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
   return {
     chain,
     proveLock: (outpoint, lock) => wallet.proveLock(outpoint, lock.scriptPubKey, lock.amount),
+    chainTime: () => wallet.chainTime().catch(() => undefined),
     async findLock(main, fee) {
       if (!main.address) return null
       const found = await wallet.findLock(main.address, main.scriptPubKey, main.amount, fee ? [{ scriptPubKey: fee.scriptPubKey, litoshi: fee.amount }] : [])
@@ -208,6 +215,15 @@ async function bsvBlockTime(height: number): Promise<number | undefined> {
 export const bsvLegChain: SwapLegChain = {
   chain: 'bsv',
   findLock: async () => null,
+  async chainTime() {
+    try {
+      const { requireActiveWallet } = await import('./settlePorts')
+      const height = await (requireActiveWallet().services as { getHeight?: () => Promise<number> }).getHeight?.()
+      return height && height > 0 ? await bsvBlockTime(height) : undefined
+    } catch {
+      return undefined
+    }
+  },
   async proveLock(outpoint, lock, beef) {
     if (!beef) return { kind: 'unchecked', detail: 'no BEEF for the lock' }
     let tx: Transaction

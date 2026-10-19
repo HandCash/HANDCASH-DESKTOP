@@ -2,7 +2,7 @@ import { createActor } from 'xstate'
 import { swapSettleMachine, type SwapSettleEvent, type SwapSettlePhase } from '../../machines/swapSettleMachine'
 import { SWAP_ASSET_INFO, unitsToDecimal } from './assets'
 import { followedSwapRecords, refreshSwapRecords } from './exolixSwap'
-import { nextSettleStep, offerRemaining, proposeTerms, takeFits, takerTotals, type SettleStep } from './settle'
+import { nextSettleStep, offerRemaining, proposeTerms, takeFits, takerTotals, type SettleStep, type SettleWait } from './settle'
 import { requireActiveWallet, sendSettle } from './settlePorts'
 import { forgetFactsSeen, findPeerLock, gather, recordFacts, reportFee } from './settleFacts'
 import { serveBox } from './settleIntake'
@@ -49,8 +49,17 @@ const waitLogged = new Map<string, string>()
 function recheckAfter(step: SettleStep): number {
   if (step.kind !== 'wait') return 0
   const until = step.until ? Math.max(0, step.until - Date.now()) : Infinity
-  const every = { accept: 30_000, presign: 30_000, 'peer-funding': 60_000, 'peer-burial': 60_000, secret: 2 * 60_000, locktime: 10 * 60_000 }[step.for]
-  return Math.min(every, until)
+  return Math.min(RECHECK_EVERY[step.for], until)
+}
+
+const RECHECK_EVERY: Record<SettleWait, number> = {
+  accept: 30_000,
+  presign: 30_000,
+  'peer-funding': 60_000,
+  'peer-burial': 60_000,
+  'chain-time': 60_000,
+  secret: 2 * 60_000,
+  locktime: 10 * 60_000,
 }
 
 /** The swap's chart, restored to the phase its record holds; a step runs only if the chart takes its event. */

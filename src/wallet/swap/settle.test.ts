@@ -246,6 +246,8 @@ describe('next step', () => {
     own: leg(),
     peer: leg(),
     ownOnBsv: true,
+    // The chain's clock agrees with the device's unless a case says otherwise.
+    peerChainTime: Math.floor((o.now ?? now) / 1000),
     ...o,
   })
   const at = (unixS: number) => unixS * 1000
@@ -268,6 +270,19 @@ describe('next step', () => {
     expect(nextSettleStep(t, facts({ own, peer: leg({ funded: true, buried: true }), now: late }))).toEqual({ kind: 'wait', for: 'locktime', until: at(t.t1) })
     expect(nextSettleStep(t, facts({ own, now: at(t.t1) }))).toEqual({ kind: 'refund' })
     expect(nextSettleStep(t, facts({ own: { ...own, refunded: true }, now: at(t.t1) }))).toEqual({ kind: 'done', outcome: 'refunded' })
+  })
+
+  it("taker: claims only while the chain's clock, as well as the device's, is before the deadline", () => {
+    const own = leg({ funded: true, presigned: true })
+    const peer = leg({ funded: true, buried: true })
+    const claimBy = t.t2 - w1.takerClaimBeforeT2
+    // A device clock running slow: the chain's latest block is already past the deadline.
+    expect(nextSettleStep(t, facts({ own, peer, peerChainTime: claimBy }))).toEqual({ kind: 'wait', for: 'locktime', until: at(t.t1) })
+    expect(nextSettleStep(t, facts({ own, peer, peerChainTime: claimBy - 1 }))).toEqual({ kind: 'claim' })
+    // A chain view running behind cannot stretch the deadline past the device's clock either.
+    expect(nextSettleStep(t, facts({ own, peer, now: at(claimBy), peerChainTime: claimBy - 3600 }))).toEqual({ kind: 'wait', for: 'locktime', until: at(t.t1) })
+    // No chain clock to read: wait for one rather than claim on the device's word alone.
+    expect(nextSettleStep(t, facts({ own, peer, peerChainTime: undefined }))).toEqual({ kind: 'wait', for: 'chain-time', until: at(claimBy) })
   })
 
   it('a claimed swap is done, unless HandCash left its fee unclaimed past the lock', () => {

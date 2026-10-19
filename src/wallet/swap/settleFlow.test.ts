@@ -39,6 +39,8 @@ const mempool = new Set<string>()
 const mineAll = () => mempool.clear()
 /** How far each chain's median block time trails the clock: lock times are judged against it. */
 let medianLagS = 0
+/** How far each chain's latest block time runs ahead of the clock (a device clock running slow reads as the chain ahead). */
+let chainAheadS = 0
 const chains = new Map<SwapAsset, Chain>()
 const chainOf = (c: SwapAsset): Chain => {
   if (!chains.has(c)) chains.set(c, { txs: new Map(), spentBy: new Map(), minedAt: new Map(), online: true })
@@ -124,6 +126,7 @@ function coinWallet(who: Identity, c: SwapAsset) {
       if (out.value !== amount) return { kind: 'refused' as const, reason: 'under-backed', detail: 'short' }
       return { kind: 'buried' as const, blockTime: chainOf(c).minedAt.get(o.txid)! }
     },
+    chainTime: async () => Math.floor(Date.now() / 1000) + chainAheadS,
     async findLock(_address: string, scriptPubKey: Uint8Array, amount: bigint, with_: { scriptPubKey: Uint8Array; litoshi: bigint }[] = []) {
       if (!chainOf(c).online) throw new Error('chain unreachable')
       const pays = (tx: LtcTx, s: Uint8Array, v: bigint) => {
@@ -248,6 +251,7 @@ beforeEach(() => {
   blocksHeld = false
   mempool.clear()
   medianLagS = 0
+  chainAheadS = 0
   balances.clear()
   payments.clear()
   durable.clear()
@@ -403,6 +407,32 @@ describe('a direct swap between two wallets', () => {
     expect(recordOf(maker, swapId).own.funding).toBeDefined()
     await settleBoth()
     expect(recordOf(taker, swapId).outcome).toBe('swapped')
+  })
+
+  it("a taker whose clock runs slow does not claim once the chain's clock is past the deadline; both sides refund", async () => {
+    const offer = publish('ltc', 'doge')
+    const swapId = await take(offer, PAY)
+    await settle(maker) // accepts, sees the taker lock, locks LTC
+    const lock = recordOf(maker, swapId).own.funding!
+    expect(lock).toBeDefined()
+
+    // The taker's device says an hour is left to claim; the chain's latest block is three hours past the deadline.
+    chainAheadS = 4 * H / 1000
+    at(T0 + 44 * H)
+    await settle(taker)
+    expect(recordOf(taker, swapId).peer.claimed).toBeUndefined()
+    expect(spender('ltc', lock.txid, lock.main)).toBeNull()
+    expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/not claiming: the ltc chain's latest block .* is past the claim deadline/))
+
+    chainAheadS = 0
+    at(T0 + 49 * H)
+    await settle(maker)
+    expect(recordOf(maker, swapId).own.refunded).toBe(true)
+    at(T0 + 72 * H + 60_000)
+    await settle(taker)
+    expect(recordOf(taker, swapId).outcome).toBe('refunded')
+    expect(heldBy('doge', receiveScriptOf(taker, 'doge'))).toBeGreaterThan(0n)
+    expect(heldBy('ltc', receiveScriptOf(taker, 'ltc'))).toBe(0n)
   })
 
   it('taker never claims: the maker refunds at its lock time and the taker refunds at its own', async () => {

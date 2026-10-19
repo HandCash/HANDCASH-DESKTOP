@@ -1250,6 +1250,8 @@ export function createCoinWallet(binding: CoinBinding) {
     proveLock,
     spenderOf,
     findLock,
+    /** The time of the tip of this wallet's own header chain for the coin (unix seconds); undefined when unknown. */
+    chainTime: (): Promise<number | undefined> => proofRules.anchor().tipTime?.() ?? Promise.resolve(undefined),
     broadcastRaw,
     receiveScript,
     feeRate: () => src().feeRate(),

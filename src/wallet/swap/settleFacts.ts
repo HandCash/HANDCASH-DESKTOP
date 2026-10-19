@@ -1,7 +1,7 @@
 import type { LockSighting } from '../coins/coinWallet'
 import { fromHex, toHex } from '../ltc/litecoin'
 import { legChainOf, type LegSpend } from './legChains'
-import { legOutputs, swapLegs, takerLockTooLate, type SettleFacts } from './settle'
+import { legOutputs, swapLegs, swapWindows, takerLockTooLate, type SettleFacts } from './settle'
 import type { FeeLockReport } from './feeClaim'
 import { bsvLockProvenUnsent, reportFeeLock } from './settlePorts'
 import { agreedOf, log, ownLegId, peerLegId, warn } from './settleShared'
@@ -97,6 +97,17 @@ export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gat
     }
     if (outs.fee && r.peer.funding.fee === undefined) peerSighting = { kind: 'refused', reason: 'no-fee', detail: 'the lock carries no fee output' }
   }
+  // Only a claim races a deadline the chain enforces; read its clock just then.
+  const claimNext = r.role === 'taker' && !!r.peer.funding && !r.peer.refused && !r.peer.claimed && !r.outcome && (!!r.peer.buried || peerSighting?.kind === 'buried')
+  const peerChainTime = claimNext ? await (await legChainOf(peer.chain)).chainTime().catch(() => undefined) : undefined
+  if (peerChainTime !== undefined) {
+    const claimBy = r.terms.t2 - swapWindows(r.terms.v).takerClaimBeforeT2
+    const key = `${r.terms.swapId}:clock`
+    if (peerChainTime >= claimBy && nowS < claimBy && !sightingLogged.has(key)) {
+      sightingLogged.set(key, 'late')
+      warn(r.terms.swapId, `not claiming: the ${peer.chain} chain's latest block (${new Date(peerChainTime * 1000).toISOString()}) is past the claim deadline though this device's clock is not`)
+    }
+  }
   const unsent = own.chain === 'bsv' && !!r.own.funding && !r.own.refunded && (await bsvLockProvenUnsent(active, r.own.funding.txid, r.own.prepared?.beef))
   const secretKnown = r.role === 'taker' || !!r.secret || ownSpend?.kind === 'claimed'
   const facts: SettleFacts = {
@@ -106,6 +117,7 @@ export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gat
     declined: !!r.declined,
     secretKnown,
     ownOnBsv: own.chain === 'bsv',
+    ...(peerChainTime !== undefined ? { peerChainTime } : {}),
     own: {
       funded: !!r.own.funding,
       buried: !!r.own.buried || ownSighting?.kind === 'buried',

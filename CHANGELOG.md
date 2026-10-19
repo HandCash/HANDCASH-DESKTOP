@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.621] - 2026-10-19
+
+### Fixed
+
+- A swap taker judged its claim deadline (three hours before the maker may refund) by its device clock alone. A clock running hours slow could send a claim after that deadline, which the maker's refund could then race. The taker now also reads the time of the latest block on the chain it claims on, from the header chain its proofs are checked against (proof-of-work checked on coin chains), and claims only while both clocks are before the deadline. With no chain time to read it waits ("Reading the LTC chain's clock before claiming") rather than claim on the device's word. When the two disagree it says so once in the log (`[swap-settle] … not claiming: …`). The read happens only when a claim is next. The BRC-256 draft states the rule.
+
 ## [1.3.620] - 2026-10-19
 
 ### Fixed

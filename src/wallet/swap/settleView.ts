@@ -89,6 +89,8 @@ export function describeSwap(r: SettleRecord): SwapStanding {
       const c = lockConfirming(peerChain, r.peer.confirmations)
       return row('peer-burial', `${peer[0]!.toUpperCase()}${peer.slice(1)}'s lock ${confirmingText(c)}; you ${r.role === 'maker' ? 'lock' : 'claim'} once it confirms`, c)
     }
+    case 'chain-time':
+      return row('chain-time', `Reading the ${SWAP_ASSET_INFO[peerChain].ticker} chain's clock before claiming`)
     case 'secret':
       if (ownUnburied) {
         const c = lockConfirming(ownChain, r.own.confirmations)

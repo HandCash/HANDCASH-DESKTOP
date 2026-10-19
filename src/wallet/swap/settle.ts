@@ -440,6 +440,13 @@ export type SettleFacts = {
   peer: LegFacts
   /** Own leg is on BSV, so its refund needs the counterparty's co-signature before it is funded. */
   ownOnBsv: boolean
+  /**
+   * Taker, about to claim: the time of the latest block on the chain it
+   * claims on (unix seconds), read when the claim is next. A claim needs both
+   * this and the device clock before the deadline, so neither clock alone,
+   * set wrong, sends a claim the maker's refund can race.
+   */
+  peerChainTime?: number
 }
 
 /**
@@ -450,7 +457,7 @@ export type SettleFacts = {
  */
 export type SettleOutcome = 'swapped' | 'refunded' | 'declined' | 'expired' | 'missed' | 'unsent'
 
-export type SettleWait = 'accept' | 'presign' | 'peer-funding' | 'peer-burial' | 'secret' | 'locktime'
+export type SettleWait = 'accept' | 'presign' | 'peer-funding' | 'peer-burial' | 'chain-time' | 'secret' | 'locktime'
 
 export type SettleStep =
   | { kind: 'wait'; for: SettleWait; until?: number }
@@ -494,11 +501,12 @@ export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
       return { kind: 'fund' }
     }
     const claimBy = terms.t2 - w.takerClaimBeforeT2
-    if (nowS >= claimBy) return refundOrWait()
+    if (nowS >= claimBy || (f.peerChainTime ?? 0) >= claimBy) return refundOrWait()
     // Declined after this wallet locked: the maker will not fund, so the lock only waits out T1.
     if (!f.peer.funded && f.declined) return refundOrWait()
     if (!f.peer.funded) return { kind: 'wait', for: 'peer-funding', until: (terms.t2 - w.makerFundBeforeT2) * 1000 }
     if (!f.peer.buried) return { kind: 'wait', for: 'peer-burial', until: claimBy * 1000 }
+    if (f.peerChainTime === undefined) return { kind: 'wait', for: 'chain-time', until: claimBy * 1000 }
     return { kind: 'claim' }
   }
 

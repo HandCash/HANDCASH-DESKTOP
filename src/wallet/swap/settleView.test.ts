@@ -69,6 +69,10 @@ describe('settle view', () => {
     })
   })
 
+  it("says when a claim waits on reading the chain's clock", () => {
+    expect(describeSwap(record('a', { waiting: { for: 'chain-time' } }))).toEqual({ state: 'chain-time', status: "Reading the BSV chain's clock before claiming" })
+  })
+
   it('names a refused counterparty lock', () => {
     expect(describeSwap(record('a', { peer: { refused: 'amount' } })).state).toBe('refused')
   })
