@@ -1,10 +1,17 @@
 # Changelog
 
+## [1.3.617] - 2026-10-19
+
+### Fixed
+
+- A direct swap waiting on a lock that had not reached a block yet said the wrong thing. The taker read "Waiting for the maker to lock; it may be offline", while the maker was in fact waiting for the taker's own lock to be mined: neither side commits coins against an unconfirmed lock. The swap now says whose lock is waiting for a block and how often that chain makes one ("Your lock is waiting for a BSV block (about every 10 minutes); the maker locks once it confirms"), then counts confirmations toward the depth the other side needs. The maker's side reads the same way ("The taker's lock is waiting for a DOGE block …; you lock once it confirms"), as does a maker whose own lock is not yet mined while it waits for the taker to claim.
+- The wallet checks its own lock's burial once per pass only while the swap waits on the other side, and stops once it is buried (`[swap-settle] … own lock buried`). The step taken never depends on it.
+
 ## [1.3.616] - 2026-10-19
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- The wallet-to-wallet swap runner (`settleRunner.ts`, 1,105 lines) is split by what each part does: box intake (`settleIntake.ts`), reading the record and both chains (`settleFacts.ts`), the steps that lock, claim and refund (`settleSteps.ts`), rebuilding swaps from the custody journal (`settleReplay.ts`) and shared helpers (`settleShared.ts`). The runner keeps the one-step-per-pass loop and the public API. No behaviour change; the end-to-end two-wallet swap tests pass unchanged.
 
 ## [1.3.615] - 2026-10-19
 

@@ -33,6 +33,10 @@ let current: Identity = maker
 // ── Chains ──────────────────────────────────────────────────────────────────
 
 type Chain = { txs: Map<string, LtcTx>; spentBy: Map<string, string>; minedAt: Map<string, number>; online: boolean }
+/** While set, broadcasts wait in the mempool until `mineAll`. */
+let blocksHeld = false
+const mempool = new Set<string>()
+const mineAll = () => mempool.clear()
 const chains = new Map<SwapAsset, Chain>()
 const chainOf = (c: SwapAsset): Chain => {
   if (!chains.has(c)) chains.set(c, { txs: new Map(), spentBy: new Map(), minedAt: new Map(), online: true })
@@ -51,6 +55,7 @@ function broadcast(c: SwapAsset, tx: LtcTx): 'sent' | 'known' {
   for (const i of tx.inputs) ch.spentBy.set(`${i.txid}:${i.vout}`, txid)
   ch.txs.set(txid, tx)
   ch.minedAt.set(txid, nowS)
+  if (blocksHeld) mempool.add(txid)
   return 'sent'
 }
 const spender = (c: SwapAsset, txid: string, vout: number): LtcTx | null => {
@@ -111,7 +116,7 @@ function coinWallet(who: Identity, c: SwapAsset) {
     },
     async proveLock(o: { txid: string; vout: number }, scriptPubKey: Uint8Array, amount: bigint) {
       const tx = chainOf(c).txs.get(o.txid)
-      if (!tx) return { kind: 'unconfirmed' as const }
+      if (!tx || mempool.has(o.txid)) return { kind: 'unconfirmed' as const }
       const out = tx.outputs[o.vout]
       if (!out || toHex(out.script) !== toHex(scriptPubKey)) return { kind: 'refused' as const, reason: 'wrong-script', detail: 'not the lock' }
       if (out.value !== amount) return { kind: 'refused' as const, reason: 'under-backed', detail: 'short' }
@@ -238,6 +243,8 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   at(T0)
   chains.clear()
+  blocksHeld = false
+  mempool.clear()
   balances.clear()
   payments.clear()
   durable.clear()
@@ -320,6 +327,26 @@ describe('a direct swap between two wallets', () => {
     await settle(maker)
     expect(recordOf(maker, swapId).peer.claimed).toBe(true)
     expect(recordOf(maker, swapId).peer.claim?.txid).toBe(verdict.txid)
+  })
+
+  it('a lock still waiting for its block is what the swap says it waits on, on both sides', async () => {
+    const { describeSwap } = await import('./settleView')
+    const offer = publish('ltc', 'doge')
+    blocksHeld = true
+    const swapId = await take(offer, PAY)
+    await settle(maker)
+    await settle(taker)
+    expect(recordOf(maker, swapId).own.funding).toBeUndefined()
+    expect(describeSwap(recordOf(maker, swapId)).status).toBe("The taker's lock is waiting for a DOGE block (about every minute); you lock once it confirms")
+    expect(describeSwap(recordOf(taker, swapId)).status).toBe('Your lock is waiting for a DOGE block (about every minute); the maker locks once it confirms')
+
+    blocksHeld = false
+    mineAll()
+    await settle(taker)
+    expect(recordOf(taker, swapId).own.buried).toBe(true)
+    expect(describeSwap(recordOf(taker, swapId)).status).toMatch(/^Waiting for the maker to lock; it may be offline, and has until /)
+    await settleBoth()
+    expect(recordOf(taker, swapId).outcome).toBe('swapped')
   })
 
   it('maker never locks: the taker takes its lock back at its lock time, not before', async () => {

@@ -24,6 +24,9 @@ export type OwnLeg = {
   funding?: { txid: string; main: number; fee?: number }
   fundingStartedAt?: number
   fundedSentAt?: number
+  /** The lock is in a block deep enough for the counterparty to act on; until then `confirmations` counts toward it. */
+  buried?: true
+  confirmations?: { have: number; need: number }
   refund?: { txid: string; hex: string }
   refunded?: true
   feeRefund?: { txid: string; hex: string }

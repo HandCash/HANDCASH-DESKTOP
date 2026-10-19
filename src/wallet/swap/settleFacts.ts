@@ -18,7 +18,22 @@ export function forgetLockSearches(): void {
   lockSearchedAt.clear()
 }
 
-type Gathered = { facts: SettleFacts; ownSpend: LegSpend | null; feeSpend: LegSpend | null; peerSpend: LegSpend | null; peerSighting: LockSighting | null }
+type Gathered = {
+  facts: SettleFacts
+  ownSpend: LegSpend | null
+  feeSpend: LegSpend | null
+  peerSpend: LegSpend | null
+  peerSighting: LockSighting | null
+  ownSighting: LockSighting | null
+}
+
+/**
+ * Whether this wallet's own lock is worth proving this pass: it stands and
+ * the swap waits on the counterparty, who acts only once that lock is
+ * buried. One read per pass until it is; the step does not depend on it.
+ */
+const ownBurialUnknown = (r: SettleRecord) =>
+  !!r.own.funding && !r.own.buried && !r.outcome && !r.own.refunded && (r.waiting?.for === 'peer-funding' || r.waiting?.for === 'secret')
 
 export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gathered> {
   const agreed = agreedOf(r)
@@ -30,10 +45,14 @@ export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gat
   let feeSpend: LegSpend | null = null
   let peerSpend: LegSpend | null = null
   let peerSighting: LockSighting | null = null
+  let ownSighting: LockSighting | null = null
   const nowS = Math.floor(Date.now() / 1000)
   if (agreed && r.own.funding) {
     const outs = legOutputs(agreed, ownLegId(r))
     const chain = await legChainOf(own.chain)
+    if (ownBurialUnknown(r)) {
+      ownSighting = await chain.proveLock({ txid: r.own.funding.txid, vout: r.own.funding.main }, outs.main, r.own.prepared?.beef).catch(() => null)
+    }
     // Only the maker learns anything from its own lock being spent: the secret, when the taker claims it.
     const mayRefund = nowS >= own.locktime
     if (!r.own.refunded && (r.role === 'maker' ? !r.secret || mayRefund : mayRefund)) {
@@ -70,7 +89,7 @@ export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gat
     ownOnBsv: own.chain === 'bsv',
     own: {
       funded: !!r.own.funding,
-      buried: false,
+      buried: !!r.own.buried || ownSighting?.kind === 'buried',
       claimed: false,
       refunded: !!r.own.refunded || ownSpend?.kind === 'refunded',
       presigned: !!r.own.refunds?.length && r.own.refunds.every((x) => x.cosig),
@@ -85,7 +104,7 @@ export async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gat
       refunded: !!r.peer.refunded || peerSpend?.kind === 'refunded',
     },
   }
-  return { facts, ownSpend, feeSpend, peerSpend, peerSighting }
+  return { facts, ownSpend, feeSpend, peerSpend, peerSighting, ownSighting }
 }
 
 /**
@@ -121,6 +140,13 @@ export function recordFacts(r: SettleRecord, g: Gathered): SettleRecord {
         delete rec.peer.confirmations
       }
       if (s?.kind === 'confirming') rec.peer.confirmations = { have: s.confirmations, need: s.needed }
+      const o = g.ownSighting
+      if (o?.kind === 'buried') {
+        if (!rec.own.buried) log(r.terms.swapId, 'own lock buried')
+        rec.own.buried = true
+        delete rec.own.confirmations
+      }
+      if (o?.kind === 'confirming') rec.own.confirmations = { have: o.confirmations, need: o.needed }
       if (g.ownSpend?.kind === 'claimed' && !rec.secret) rec.secret = toHex(g.ownSpend.secret)
       if (g.ownSpend?.kind === 'refunded') rec.own.refunded = true
       if (g.peerSpend?.kind === 'refunded') rec.peer.refunded = true

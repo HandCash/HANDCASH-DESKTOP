@@ -36,11 +36,33 @@ function record(swapId: string, over: Partial<SettleRecord> = {}): SettleRecord 
 describe('settle view', () => {
   it('says what the swap waits on, its phase, then its outcome', () => {
     expect(describeSwap(record('a', { waiting: { for: 'accept' } }))).toMatchObject({ state: 'accept', status: 'Waiting for the maker to accept' })
-    expect(describeSwap(record('a', { waiting: { for: 'peer-burial' }, peer: { confirmations: { have: 2, need: 6 } } })).status).toBe("Waiting for the maker's lock to confirm (2/6)")
+    expect(describeSwap(record('a', { waiting: { for: 'peer-burial' }, peer: { confirmations: { have: 2, need: 6 } } })).status).toBe(
+      "The maker's lock has 2 of 6 BSV confirmations; you claim once it confirms",
+    )
     expect(describeSwap(record('a', { phase: 'locking', waiting: { for: 'accept' } })).state).toBe('locking')
     expect(describeSwap(record('a', { outcome: 'swapped', phase: 'settled', lastError: 'old' }))).toMatchObject({ state: 'swapped', status: 'Swapped' })
     expect(describeSwap(record('a', { role: 'maker', outcome: 'missed' })).state).toBe('missed')
     expect(describeSwap(record('a', { waiting: { for: 'secret' }, lastError: 'offline' })).status).toBe('Waiting for the maker to claim · last try: offline')
+  })
+
+  it('says when the swap waits on a block, and whose lock is in it', () => {
+    const lock = { txid: 'aa'.repeat(32), main: 0 }
+    // The taker locked LTC; the maker locks only once that lock is buried.
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock } }))).toMatchObject({
+      state: 'peer-funding',
+      status: 'Your lock is waiting for a LTC block (about every 2½ minutes); the maker locks once it confirms',
+    })
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, confirmations: { have: 1, need: 3 } } })).status).toBe(
+      'Your lock has 1 of 3 LTC confirmations; the maker locks once it confirms',
+    )
+    expect(describeSwap(record('a', { waiting: { for: 'peer-funding' }, own: { funding: lock, buried: true } })).status).toBe('Waiting for the maker to lock')
+    // The maker, seeing the taker's lock still unmined.
+    expect(describeSwap(record('a', { role: 'maker', waiting: { for: 'peer-burial' } })).status).toBe(
+      "The taker's lock is waiting for a LTC block (about every 2½ minutes); you lock once it confirms",
+    )
+    expect(describeSwap(record('a', { role: 'maker', waiting: { for: 'secret' }, own: { funding: lock } })).status).toBe(
+      'Your lock is waiting for a BSV block (about every 10 minutes); the taker claims once it confirms',
+    )
   })
 
   it('names a refused counterparty lock', () => {
