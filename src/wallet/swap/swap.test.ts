@@ -429,7 +429,7 @@ describe('swapMachine', () => {
     const failOnce = vi.fn(async () => {
       throw new Error('offer book refused the offer: rate-limited')
     })
-    const draft = { give: 'bsv' as const, get: 'ltc' as const, pay: 1_000n, want: 300n, price: { give: '333333333', get: '100000000' } }
+    const draft = { give: 'bsv' as const, get: 'ltc' as const, pay: 1_000n, want: 300n, minWant: 300n, partWant: 30n, price: { give: '333333333', get: '100000000' } }
     const actor = createActor(swapMachine.provide({ actors: { quote: belowMin, publish: fromPromise(publish) } })).start()
     actor.send({ type: 'QUOTE', request: req })
     await waitFor(actor, (s) => s.matches('refused'))
@@ -439,9 +439,15 @@ describe('swapMachine', () => {
     expect(actor.getSnapshot().value).toBe('refused')
     actor.send({ type: 'OFFER', draft })
     expect(publish).not.toHaveBeenCalled()
+    actor.send({ type: 'PARTS', allow: true })
+    expect(actor.getSnapshot().context.draft?.minWant).toBe(30n)
+    actor.send({ type: 'PARTS', allow: false })
+    expect(actor.getSnapshot().context.draft?.minWant).toBe(300n)
+    actor.send({ type: 'PARTS', allow: true })
     actor.send({ type: 'PUBLISH' })
     const done = await waitFor(actor, (s) => s.matches('published'))
     expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish.mock.calls[0]![0]).toMatchObject({ input: { minWant: 30n, want: 300n } })
     expect(done.context.published).toEqual({ nonce: 'n1' })
 
     const failing = createActor(swapMachine.provide({ actors: { quote: belowMin, publish: fromPromise(failOnce) } })).start()
@@ -458,7 +464,7 @@ describe('swapMachine', () => {
     const actor = createActor(machine).start()
     actor.send({ type: 'QUOTE', request: { ...req, to: 'ltc' } })
     await waitFor(actor, (s) => s.matches('refused'))
-    actor.send({ type: 'OFFER', draft: { give: 'ltc', get: 'ltc', pay: 1n, want: 1n, price: { give: '1', get: '1' } } })
+    actor.send({ type: 'OFFER', draft: { give: 'ltc', get: 'ltc', pay: 1n, want: 1n, minWant: 1n, partWant: 1n, price: { give: '1', get: '1' } } })
     expect(actor.getSnapshot().value).toBe('refused')
   })
 })
@@ -470,7 +476,7 @@ describe('swapOffersMachine', () => {
   it('loads verified offers and cancels only its own', async () => {
     const cancel = vi.fn(async () => undefined)
     let book = [mine, theirs]
-    const load = fromPromise(async () => book)
+    const load = fromPromise(async () => ({ offers: book, filled: new Map<string, bigint>() }))
     const actor = createActor(
       swapOffersMachine.provide({ actors: { load, cancel: fromPromise(async ({ input }: { input: string }) => { await cancel(input); book = book.filter((o) => o.nonce !== input) }) } }),
       { input: { self: maker.toPublicKey().toString() } },
@@ -488,7 +494,7 @@ describe('swapOffersMachine', () => {
   it('takes only someone else\'s offer, and only on CONFIRM after review', async () => {
     const take = vi.fn(async () => undefined)
     const actor = createActor(
-      swapOffersMachine.provide({ actors: { load: fromPromise(async () => [mine, theirs]), take: fromPromise(async ({ input }) => take(input)) } }),
+      swapOffersMachine.provide({ actors: { load: fromPromise(async () => ({ offers: [mine, theirs], filled: new Map<string, bigint>() })), take: fromPromise(async ({ input }) => take(input)) } }),
       { input: { self: maker.toPublicKey().toString() } },
     ).start()
     await waitFor(actor, (s) => s.matches('ready'))
@@ -502,14 +508,37 @@ describe('swapOffersMachine', () => {
     expect(take).not.toHaveBeenCalled()
     actor.send({ type: 'CONFIRM' })
     await waitFor(actor, (s) => s.matches('taken'))
-    expect(take).toHaveBeenCalledExactlyOnceWith(theirs)
+    expect(take).toHaveBeenCalledExactlyOnceWith({ offer: theirs, pay: BigInt(theirs.maxGet) })
+  })
+
+  it('takes a part of a part-fillable offer, never more than the book says is left', async () => {
+    const parts = signSwapOffer({ ...offer({}, taker), minGet: '20000000', maxGet: '100000000' }, taker)
+    const take = vi.fn(async () => undefined)
+    const actor = createActor(
+      swapOffersMachine.provide({
+        actors: { load: fromPromise(async () => ({ offers: [parts], filled: new Map([[parts.nonce, 30_000_000n]]) })), take: fromPromise(async ({ input }) => take(input)) },
+      }),
+      { input: { self: maker.toPublicKey().toString() } },
+    ).start()
+    await waitFor(actor, (s) => s.matches('ready'))
+    actor.send({ type: 'REVIEW', nonce: parts.nonce })
+    expect(actor.getSnapshot().context.pay).toBe(70_000_000n)
+    for (const pay of [80_000_000n, 10_000_000n, null]) {
+      actor.send({ type: 'AMOUNT', pay })
+      actor.send({ type: 'CONFIRM' })
+      expect(actor.getSnapshot().value).toBe('reviewing')
+    }
+    actor.send({ type: 'AMOUNT', pay: 25_000_000n })
+    actor.send({ type: 'CONFIRM' })
+    await waitFor(actor, (s) => s.matches('taken'))
+    expect(take).toHaveBeenCalledExactlyOnceWith({ offer: parts, pay: 25_000_000n })
   })
 
   it('returns to review with the reason when the take is refused', async () => {
     const actor = createActor(
       swapOffersMachine.provide({
         actors: {
-          load: fromPromise(async () => [theirs]),
+          load: fromPromise(async () => ({ offers: [theirs], filled: new Map<string, bigint>() })),
           take: fromPromise(async () => {
             throw new Error('Not enough LTC to lock for this swap.')
           }),
@@ -528,7 +557,7 @@ describe('swapOffersMachine', () => {
     let up = false
     const load = fromPromise(async () => {
       if (!up) throw new Error('offer book unavailable: HTTP 503')
-      return []
+      return { offers: [], filled: new Map<string, bigint>() }
     })
     const actor = createActor(swapOffersMachine.provide({ actors: { load } }), { input: { self: null } }).start()
     const failed = await waitFor(actor, (s) => s.matches('failed'))

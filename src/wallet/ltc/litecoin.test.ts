@@ -122,7 +122,7 @@ const BURIED = anchorOf({ kind: 'buried' })
 describe('checkLtcBurial', () => {
   it('accepts a real deposit its anchor holds six deep, asking about the proof block', async () => {
     const anchor = anchorOf({ kind: 'buried' })
-    expect(await checkLtcBurial(proofOf(), outpoint, reserve, value, anchor)).toEqual({ ok: true, litoshi: value })
+    expect(await checkLtcBurial(proofOf(), outpoint, reserve, value, anchor)).toMatchObject({ ok: true, litoshi: value, blockTime: expect.any(Number) })
     expect(anchor.asked).toEqual([[fixture.height, fixture.blockHash, LTC_BURIAL_DEPTH]])
   })
 
@@ -167,7 +167,7 @@ describe('checkLtcBurial', () => {
       now: () => parsed[parsed.length - 1]!.time * 1000,
       store: memoryLtcHeaderStore(),
     })
-    expect(await checkLtcBurial(proofOf(), outpoint, reserve, value, chain)).toEqual({ ok: true, litoshi: value })
+    expect(await checkLtcBurial(proofOf(), outpoint, reserve, value, chain)).toMatchObject({ ok: true, litoshi: value, blockTime: expect.any(Number) })
   })
 })
 
@@ -200,7 +200,7 @@ describe('explorer reads', () => {
     expect(located).toEqual({ kind: 'in-block', proof: proofOf() })
     expect(tipHeight).not.toHaveBeenCalled()
     if (located.kind !== 'in-block') return
-    expect(await checkLtcBurial(located.proof, outpoint, reserve, value, BURIED)).toEqual({ ok: true, litoshi: value })
+    expect(await checkLtcBurial(located.proof, outpoint, reserve, value, BURIED)).toMatchObject({ ok: true, litoshi: value, blockTime: expect.any(Number) })
     expect(await checkLtcBurial(located.proof, outpoint, reserve, value, anchorOf({ kind: 'shallow', confirmations: 4 }))).toMatchObject({
       ok: false,
       reason: 'shallow',

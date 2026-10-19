@@ -7,10 +7,11 @@ import { isSwapAsset, type SwapAsset } from './assets'
  * the signature, the bounds and the expiry itself before it is shown.
  *
  * The maker gives `give` and wants `get`. A taker pays any amount of `get`
- * between `minGet` and `maxGet` and receives `give` at `price`: `price.give`
- * units for every `price.get` units, rounded down for the taker. The swap
- * itself is atomic and wallet to wallet; an offer only says what the maker
- * will do.
+ * between `minGet` and what is left of `maxGet` and receives `give` at
+ * `price`: `price.give` units for every `price.get` units, rounded down for
+ * the taker. `maxGet` is the whole offer: several takers may each fill a
+ * part of it. The swap itself is atomic and wallet to wallet; an offer only
+ * says what the maker will do.
  *
  * Signed with a BRC-42 child of the identity key under the wallet-only
  * protocol `swap order` (key id = the offer's nonce, counterparty anyone), so
@@ -100,6 +101,7 @@ export function signSwapOffer(offer: SwapOffer, root: PrivateKey): SignedSwapOff
 }
 
 const CANCEL_DOMAIN = 'handcash swap offer cancel v1\n'
+const FILLED_DOMAIN = 'handcash swap offer filled v1\n'
 
 /** The bytes a maker signs to withdraw its offer `nonce`. */
 export function swapOfferCancelDigest(nonce: string): number[] {
@@ -110,6 +112,17 @@ export function swapOfferCancelDigest(nonce: string): number[] {
 export function signSwapOfferCancel(nonce: string, root: PrivateKey): string {
   const key = new KeyDeriver(root).derivePrivateKey(SWAP_OFFER_PROTOCOL, nonce, 'anyone')
   return Utils.toHex(ECDSA.sign(new BigNumber(swapOfferCancelDigest(nonce)), key, true).toDER() as number[])
+}
+
+/** The bytes a maker signs to report `filled` units of its offer `nonce` taken on. */
+export function swapOfferFilledDigest(nonce: string, filled: bigint): number[] {
+  return Hash.sha256(Utils.toArray(FILLED_DOMAIN + nonce + '\n' + filled.toString(), 'utf8'))
+}
+
+/** Report how much of offer `nonce` is taken on, so the book stops showing it: signed by the key that signed the offer. */
+export function signSwapOfferFilled(nonce: string, filled: bigint, root: PrivateKey): string {
+  const key = new KeyDeriver(root).derivePrivateKey(SWAP_OFFER_PROTOCOL, nonce, 'anyone')
+  return Utils.toHex(ECDSA.sign(new BigNumber(swapOfferFilledDigest(nonce, filled)), key, true).toDER() as number[])
 }
 
 /** Check an offer as a taker's wallet must before showing it: shape, maker signature, and that it stands now. */
@@ -129,8 +142,18 @@ export function verifySwapOffer(value: unknown, now: number): { ok: true; offer:
   }
 }
 
-/** What a taker paying `pay` of `offer.get` receives of `offer.give`; null outside the offer's bounds. */
-export function fillOffer(offer: SwapOffer, pay: bigint): bigint | null {
-  if (pay < BigInt(offer.minGet) || pay > BigInt(offer.maxGet)) return null
+/** What a taker paying `pay` of `offer.get` receives of `offer.give`; null outside the offer's bounds with `filled` of it already taken. */
+export function fillOffer(offer: SwapOffer, pay: bigint, filled = 0n): bigint | null {
+  if (pay < BigInt(offer.minGet) || pay > BigInt(offer.maxGet) - filled) return null
   return (pay * BigInt(offer.price.give)) / BigInt(offer.price.get)
 }
+
+/** The least and most a taker can pay into `offer` with `filled` of it taken; null once no take fits. */
+export function offerRoom(offer: SwapOffer, filled = 0n): { min: bigint; max: bigint } | null {
+  const max = BigInt(offer.maxGet) - filled
+  const min = BigInt(offer.minGet)
+  return max >= min ? { min, max } : null
+}
+
+/** Whether `offer` can be filled in parts. */
+export const fillsInParts = (offer: SwapOffer): boolean => BigInt(offer.minGet) < BigInt(offer.maxGet)

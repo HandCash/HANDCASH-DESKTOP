@@ -23,6 +23,9 @@ export function recentSwaps(state: SettleState, now: number): SettleRecord[] {
     .sort((a, b) => Number(!!a.outcome) - Number(!!b.outcome) || b.createdAt - a.createdAt)
 }
 
+const clock = (ms: number | undefined) => (ms ? new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'its deadline')
+const until = (ms: number | undefined) => (ms ? `, ${clock(ms)}` : '')
+
 const amount = (asset: SettleRecord['terms']['offer']['give'], units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
 
 /** One swap as this wallet sees it, in words. */
@@ -55,6 +58,7 @@ export function describeSwap(r: SettleRecord): SwapRow {
     case 'missed':
       return row('missed', 'The taker refunded before this wallet claimed')
   }
+  if (r.declined && r.own.funding) return row('declined', `Declined by ${peer} (${r.declined}); your lock comes back at its lock time${until(r.waiting?.until)}`)
   if (r.peer.refused) return row('refused', `${peer[0]!.toUpperCase()}${peer.slice(1)}'s lock does not match the terms; yours refunds at its lock time`)
   switch (r.phase) {
     case 'locking':
@@ -70,7 +74,7 @@ export function describeSwap(r: SettleRecord): SwapRow {
     case 'presign':
       return row('presign', 'Exchanging refund signatures')
     case 'peer-funding':
-      return row('peer-funding', `Waiting for ${peer} to lock`)
+      return row('peer-funding', `Waiting for ${peer} to lock${r.terms.v === 2 && r.role === 'taker' ? `; it may be offline, and has until ${clock(r.waiting.until)}` : ''}`)
     case 'peer-burial': {
       const c = r.peer.confirmations
       return row('peer-burial', `Waiting for ${peer}'s lock to confirm${c ? ` (${c.have}/${c.need})` : ''}`)

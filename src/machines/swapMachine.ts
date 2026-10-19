@@ -31,6 +31,7 @@ type Event =
   | { type: 'CONFIRM' }
   | { type: 'RESET' }
   | { type: 'OFFER'; draft: SwapOfferDraft }
+  | { type: 'PARTS'; allow: boolean }
   | { type: 'PUBLISH' }
 
 const routeOf = (context: Context): SwapRoute | null => context.quote?.routes[context.picked] ?? null
@@ -48,8 +49,10 @@ const routeOf = (context: Context): SwapRoute | null => context.quote?.routes[co
  * maker accepts (`swapSettleMachine`), and nobody holds the coins.
  *
  * When no route can take the swap (under Exolix's minimum, say), OFFER opens
- * a standing offer at the market rate for review; only PUBLISH there signs it
- * and posts it to the offer book. Publishing moves no coin.
+ * a standing offer at the market rate for review; PARTS lets takers each
+ * fill a part of it (down to the draft's smallest part) or only all of it;
+ * only PUBLISH there signs it and posts it to the offer book. Publishing
+ * moves no coin.
  */
 export const swapMachine = setup({
   types: { context: {} as Context, events: {} as Event },
@@ -74,6 +77,7 @@ export const swapMachine = setup({
       event.type === 'PICK' && Number.isInteger(event.index) && event.index >= 0 && event.index < (context.quote?.routes.length ?? 0),
     executable: ({ context }) => routeOf(context) !== null,
     offerable: ({ context, event }) => event.type === 'OFFER' && context.refusal?.kind === 'no-route',
+    splittable: ({ context }) => !!context.draft && context.draft.partWant < context.draft.want,
   },
   delays: { quoteTtl: SWAP_QUOTE_TTL_MS },
 }).createMachine({
@@ -146,6 +150,10 @@ export const swapMachine = setup({
     },
     offering: {
       on: {
+        PARTS: {
+          guard: 'splittable',
+          actions: assign(({ context, event }) => ({ draft: { ...context.draft!, minWant: event.allow ? context.draft!.partWant : context.draft!.want } })),
+        },
         PUBLISH: 'publishing',
         BACK: { target: 'refused', actions: assign({ draft: null, failure: null }) },
         QUOTE: { target: 'quoting', actions: ['request', assign({ draft: null })] },

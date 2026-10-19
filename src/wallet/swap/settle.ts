@@ -2,7 +2,7 @@ import { Hash, KeyDeriver, PrivateKey, Utils } from '@bsv/sdk'
 import { fromHex, toHex, type Bytes } from '../ltc/litecoin'
 import type { SwapAsset } from './assets'
 import { htlcOutput, htlcScript, type HtlcTerms } from './htlc'
-import { fillOffer, verifySwapOffer, type SignedSwapOffer } from './offer'
+import { fillOffer, offerRoom, verifySwapOffer, type SignedSwapOffer } from './offer'
 import { DIRECT_CLAIM_COST, HANDCASH_SWAP_FEE_PUB, swapFee, takerTotals, type SwapFee, type SwapLegId } from './fee'
 
 export { DIRECT_CLAIM_COST, HANDCASH_SWAP_FEE_PUB, SWAP_FEE_BPS, feeLegOf, swapFee, takerTotals, type SwapFee, type SwapLegId } from './fee'
@@ -19,6 +19,16 @@ export { DIRECT_CLAIM_COST, HANDCASH_SWAP_FEE_PUB, SWAP_FEE_BPS, feeLegOf, swapF
  * claims the taker's lock. Whoever's lock is not claimed in time takes it
  * back. Nobody holds anyone's coins at any point.
  *
+ * Neither wallet has to be online while the other acts (terms v2). The
+ * taker derives the maker's swap key itself (BRC-42, counterparty = the
+ * maker), so it sends the take and locks at once; the maker judges the take
+ * whenever it next comes online, against the moment it was made and the
+ * block the taker's lock landed in, not against its own clock. A maker
+ * online about once a day settles every take; one that never answers costs
+ * the taker only time, at T1. An offer may be filled in parts: the maker
+ * funds takes in the order they were made until the offer is used up and
+ * declines the rest.
+ *
  * HandCash's cut is a third output on the leg that pays it (the BSV leg when
  * there is one, else the maker's), opened by the same secret: it is claimable
  * only once the swap has happened, and returns to its payer if the swap does
@@ -26,24 +36,38 @@ export { DIRECT_CLAIM_COST, HANDCASH_SWAP_FEE_PUB, SWAP_FEE_BPS, feeLegOf, swapF
  */
 
 export const SWAP_SETTLE_BOX = 'swap-settle'
-/** Per-swap claim / refund / co-sign key: BRC-42, key id = swap id, counterparty self. */
+/** Per-swap claim / refund key: BRC-42, key id = swap id; counterparty self, but the maker's in v2 is counterparty = the taker. */
 export const SWAP_SETTLE_PROTOCOL: [2, string] = [2, 'swap settle']
 /** The swap secret is sha256 of this BRC-42 child, so a wallet restored mid-swap still has it. */
 export const SWAP_SECRET_PROTOCOL: [2, string] = [2, 'swap secret']
 
 
-/** How long the maker's lock (T2) and the taker's (T1) stand after the take. */
-export const MAKER_LOCK_S = 12 * 3600
-export const TAKER_LOCK_S = 36 * 3600
+export type SwapTermsVersion = 1 | 2
+
+/**
+ * How long the maker's lock (T2) and the taker's (T1) stand after the take,
+ * the latest the maker funds (T2 less `makerFundBeforeT2`, so the taker has
+ * time to see it buried and claim) and the latest the taker claims (T2 less
+ * `takerClaimBeforeT2`, so the claim lands before the maker may refund).
+ * v2 leaves the maker about a day to come online and fund, the taker most of
+ * a day after that to claim, and the maker a day after the claim to claim.
+ */
+const WINDOWS = {
+  1: { makerLock: 12 * 3600, takerLock: 36 * 3600, makerFundBeforeT2: 8 * 3600, takerClaimBeforeT2: 3 * 3600 },
+  2: { makerLock: 48 * 3600, takerLock: 72 * 3600, makerFundBeforeT2: 20 * 3600, takerClaimBeforeT2: 3 * 3600 },
+} as const
+export const swapWindows = (v: SwapTermsVersion) => WINDOWS[v]
+export const MAKER_LOCK_S = WINDOWS[2].makerLock
+export const TAKER_LOCK_S = WINDOWS[2].takerLock
+/** The latest after the take that the maker may still fund. */
+export const MAKER_FUND_WITHIN_S = WINDOWS[2].makerLock - WINDOWS[2].makerFundBeforeT2
 /** The taker funds within this of the take, or the swap is dropped with nothing moved. */
 export const TAKER_FUND_WITHIN_S = 3600
-/** The maker funds no later than T2 less this, so the taker has time to see it buried and claim. */
-export const MAKER_FUND_BEFORE_T2_S = 8 * 3600
-/** The taker never claims with less than this left before T2: the claim must land before the maker may refund. */
-export const TAKER_CLAIM_BEFORE_T2_S = 3 * 3600
-/** A take older than this, or from further in the future, is refused. */
+/** Block times may run this far ahead of the clock (consensus allows two hours). */
+const BLOCK_TIME_LEEWAY_S = 2 * 3600
+/** A take stamped further in the future than this is refused; v1 also refuses one older than it. */
 const TAKE_SKEW_MS = 5 * 60_000
-/** A take the maker never answers is dropped after this. */
+/** A v1 take the maker never answers is dropped after this. */
 export const ACCEPT_WAIT_MS = 10 * 60_000
 
 const HEX32 = /^[0-9a-f]{32}$/
@@ -56,7 +80,7 @@ export type SwapRole = 'taker' | 'maker'
 
 /** What both wallets agree to before anything is locked. */
 export type SwapTerms = {
-  v: 1
+  v: SwapTermsVersion
   /** 16 random bytes, hex: names the swap and its keys. */
   swapId: string
   offer: SignedSwapOffer
@@ -69,6 +93,8 @@ export type SwapTerms = {
   /** sha256 of the secret. */
   hash: string
   takerPub: string
+  /** v2: the maker's per-swap key, which the taker derives (BRC-42, counterparty = the maker). v1: from the maker's accept. */
+  makerPub?: string
   takenAt: number
   /** Unix seconds. */
   t1: number
@@ -102,6 +128,46 @@ export function previewTake(offer: SignedSwapOffer, pay: bigint): TakePreview | 
   return { ...totals, feeLeg: fee?.leg ?? null, makerLockS: MAKER_LOCK_S, takerLockS: TAKER_LOCK_S }
 }
 
+// ── Partial fills ─────────────────────────────────────────────────────────
+
+/** Swaps that ended this way gave the offer back its room: nothing of the maker's was ever locked for them. */
+const RELEASES_ROOM: ReadonlySet<SettleOutcome> = new Set(['declined', 'expired'])
+
+/** Units of `offer.get` still open: `maxGet` less every take of it the maker has taken on and not released. */
+export function offerRemaining(offer: SignedSwapOffer, takes: ReadonlyArray<{ terms: SwapTerms; outcome?: SettleOutcome }>): bigint {
+  const used = takes.filter((t) => t.terms.offer.nonce === offer.nonce && !(t.outcome && RELEASES_ROOM.has(t.outcome))).reduce((sum, t) => sum + BigInt(t.terms.pay), 0n)
+  const left = BigInt(offer.maxGet) - used
+  return left > 0n ? left : 0n
+}
+
+/** Whether a take for `pay` still fits what is left of its offer. */
+export const takeFits = (offer: SignedSwapOffer, remaining: bigint, pay: bigint): boolean => pay >= BigInt(offer.minGet) && pay <= remaining
+
+export { offerRoom }
+
+/** The maker's own record of an offer it published, as far as judging a take needs it. */
+export type OwnOffer = { offer: SignedSwapOffer; state: 'open' | 'taken' | 'cancelled'; cancelledAt?: number }
+
+/**
+ * Whether the maker takes on a checked take of `own`: a v1 take only while
+ * the offer is open; a v2 take if the offer was not withdrawn before the take
+ * was made, and either way only if what is left of the offer still fits it.
+ * `usedUp`: no further take fits once this one is taken on.
+ */
+export function judgeTakeRoom(
+  own: OwnOffer | undefined,
+  takes: ReadonlyArray<{ terms: SwapTerms; outcome?: SettleOutcome }>,
+  terms: SwapTerms,
+): { ok: true; left: bigint; usedUp: boolean } | { ok: false; reason: string } {
+  if (!own) return { ok: false, reason: 'offer-unknown' }
+  if (terms.v === 1 && own.state !== 'open') return { ok: false, reason: `offer-${own.state}` }
+  if (terms.v === 2 && own.cancelledAt !== undefined && own.cancelledAt <= terms.takenAt) return { ok: false, reason: 'offer-cancelled' }
+  const remaining = offerRemaining(own.offer, takes)
+  if (!takeFits(own.offer, remaining, BigInt(terms.pay))) return { ok: false, reason: 'offer-filled' }
+  const left = remaining - BigInt(terms.pay)
+  return { ok: true, left, usedUp: terms.v === 1 || left < BigInt(own.offer.minGet) }
+}
+
 // ── Legs ──────────────────────────────────────────────────────────────────
 
 export function swapLegs(terms: SwapTerms): { taker: SwapLeg; maker: SwapLeg } {
@@ -120,7 +186,8 @@ export function legOutputs(terms: AgreedTerms, legId: SwapLegId, feePub = HANDCA
   const leg = swapLegs(terms)[legId]
   const payerPub = fromHex(leg.payer === 'taker' ? terms.takerPub : terms.makerPub)
   const payeePub = fromHex(leg.payer === 'taker' ? terms.makerPub : terms.takerPub)
-  const base = { hash: fromHex(terms.hash), refundPub: payerPub, locktime: leg.locktime, ...(leg.chain === 'bsv' ? { cosignPub: payeePub } : {}) }
+  // v1 BSV refunds were pre-signed by the payee; a v2 BSV lock checks its own refund's nLockTime.
+  const base = { hash: fromHex(terms.hash), refundPub: payerPub, locktime: leg.locktime, ...(leg.chain === 'bsv' && terms.v === 1 ? { cosignPub: payeePub } : {}) }
   const build = (t: HtlcTerms, amount: bigint): LegScript => {
     const script = htlcScript(leg.chain, t)
     return { script, ...htlcOutput(leg.chain, script), amount }
@@ -136,6 +203,22 @@ export function legOutputs(terms: AgreedTerms, legId: SwapLegId, feePub = HANDCA
 export const swapSettleKey = (root: PrivateKey, swapId: string): PrivateKey => new KeyDeriver(root).derivePrivateKey(SWAP_SETTLE_PROTOCOL, swapId, 'self')
 export const swapSettlePub = (root: PrivateKey, swapId: string): string => swapSettleKey(root, swapId).toPublicKey().toString()
 
+/** This wallet's claim / refund key in a swap: the taker's is counterparty self; a v2 maker's is counterparty = the taker. */
+export function settleKeyOf(root: PrivateKey, terms: SwapTerms, role: SwapRole): PrivateKey {
+  if (role === 'maker' && terms.v === 2) return new KeyDeriver(root).derivePrivateKey(SWAP_SETTLE_PROTOCOL, terms.swapId, terms.taker)
+  return swapSettleKey(root, terms.swapId)
+}
+
+/** The v2 maker's per-swap public key, as the taker derives it without asking. */
+export const makerSettlePubFor = (takerRoot: PrivateKey, swapId: string, maker: string): string =>
+  new KeyDeriver(takerRoot).derivePublicKey(SWAP_SETTLE_PROTOCOL, swapId, maker).toString()
+
+/** The terms with the maker's key, once known: always for v2, after the accept for v1. */
+export const agreedTerms = (terms: SwapTerms, acceptedMakerPub?: string): AgreedTerms | null => {
+  const makerPub = terms.v === 2 ? terms.makerPub : acceptedMakerPub
+  return makerPub ? { ...terms, makerPub } : null
+}
+
 export function swapSecret(root: PrivateKey, swapId: string): Bytes {
   const child = new KeyDeriver(root).derivePrivateKey(SWAP_SECRET_PROTOCOL, swapId, 'self')
   return Uint8Array.from(Hash.sha256(child.toArray('be', 32)))
@@ -147,6 +230,7 @@ export const secretHash = (secret: Bytes): string => Utils.toHex(Hash.sha256(Arr
 
 export type TakeRefusal =
   | 'malformed'
+  | 'wrong-key'
   | 'offer'
   | 'own-offer'
   | 'out-of-bounds'
@@ -170,8 +254,9 @@ export function proposeTerms(
   if (receive === null) return { ok: false, reason: 'out-of-bounds' }
   const fee = swapFee(offer, pay, receive)
   const swapId = opts.swapId ?? toHex(crypto.getRandomValues(new Uint8Array(16)))
+  const w = WINDOWS[2]
   const terms: SwapTerms = {
-    v: 1,
+    v: 2,
     swapId,
     offer,
     taker: taker.identityKey,
@@ -180,9 +265,10 @@ export function proposeTerms(
     fee,
     hash: secretHash(swapSecret(taker.root, swapId)),
     takerPub: swapSettlePub(taker.root, swapId),
+    makerPub: makerSettlePubFor(taker.root, swapId, offer.maker),
     takenAt: opts.now,
-    t1: SECONDS(opts.now) + TAKER_LOCK_S,
-    t2: SECONDS(opts.now) + MAKER_LOCK_S,
+    t1: SECONDS(opts.now) + w.takerLock,
+    t2: SECONDS(opts.now) + w.makerLock,
   }
   if (takerTotals(terms).receives <= DIRECT_CLAIM_COST[offer.give]) return { ok: false, reason: 'nothing-left' }
   return { ok: true, terms }
@@ -190,7 +276,7 @@ export function proposeTerms(
 
 function wellFormedTerms(t: Partial<SwapTerms>): t is SwapTerms {
   return (
-    t.v === 1 &&
+    (t.v === 1 || (t.v === 2 && typeof t.makerPub === 'string' && PUB.test(t.makerPub))) &&
     typeof t.swapId === 'string' &&
     HEX32.test(t.swapId) &&
     typeof t.offer === 'object' &&
@@ -212,13 +298,24 @@ function wellFormedTerms(t: Partial<SwapTerms>): t is SwapTerms {
 
 /**
  * Check a take as the maker's wallet must before it locks anything: its own
- * offer, still standing, filled at the signed price, the fee as the rule
- * says, and lock times measured from a take made just now.
+ * offer, filled at the signed price, the fee as the rule says, and lock
+ * times measured from the take. A v1 take must be made just now and the
+ * offer stand now. A v2 take is judged as of when it was made, so a maker
+ * that was away still honours it: the offer stood then, the take is not from
+ * the future, there is still time to fund, and it names the key this maker
+ * derives for it. That the offer was not withdrawn before the take, and has
+ * room left, is the caller's.
  */
-export function checkTake(value: unknown, maker: string, now: number): { ok: true; terms: SwapTerms } | { ok: false; reason: TakeRefusal } {
+export function checkTake(
+  value: unknown,
+  maker: string,
+  now: number,
+  makerRoot?: PrivateKey,
+): { ok: true; terms: SwapTerms } | { ok: false; reason: TakeRefusal } {
   const t = (value && typeof value === 'object' ? value : {}) as Partial<SwapTerms>
   if (!wellFormedTerms(t)) return { ok: false, reason: 'malformed' }
-  const checked = verifySwapOffer(t.offer, now)
+  const w = WINDOWS[t.v]
+  const checked = verifySwapOffer(t.offer, t.v === 2 ? t.takenAt : now)
   if (!checked.ok) return { ok: false, reason: 'offer' }
   if (t.offer.maker !== maker) return { ok: false, reason: 'offer' }
   if (t.taker === maker) return { ok: false, reason: 'own-offer' }
@@ -228,10 +325,24 @@ export function checkTake(value: unknown, maker: string, now: number): { ok: tru
   if (receive.toString() !== t.receive) return { ok: false, reason: 'wrong-receive' }
   const fee = swapFee(t.offer, pay, receive)
   if (JSON.stringify(fee) !== JSON.stringify(t.fee)) return { ok: false, reason: 'wrong-fee' }
-  if (Math.abs(now - t.takenAt) > TAKE_SKEW_MS) return { ok: false, reason: 'stale' }
-  if (t.t1 !== SECONDS(t.takenAt) + TAKER_LOCK_S || t.t2 !== SECONDS(t.takenAt) + MAKER_LOCK_S) return { ok: false, reason: 'wrong-times' }
+  if (t.v === 1 ? Math.abs(now - t.takenAt) > TAKE_SKEW_MS : t.takenAt > now + TAKE_SKEW_MS) return { ok: false, reason: 'stale' }
+  if (t.t1 !== SECONDS(t.takenAt) + w.takerLock || t.t2 !== SECONDS(t.takenAt) + w.makerLock) return { ok: false, reason: 'wrong-times' }
+  if (t.v === 2 && SECONDS(now) >= t.t2 - w.makerFundBeforeT2) return { ok: false, reason: 'stale' }
+  if (t.v === 2 && makerRoot && settleKeyOf(makerRoot, t, 'maker').toPublicKey().toString() !== t.makerPub) return { ok: false, reason: 'wrong-key' }
   if (takerTotals(t).receives <= DIRECT_CLAIM_COST[t.offer.give]) return { ok: false, reason: 'nothing-left' }
   return { ok: true, terms: t }
+}
+
+/**
+ * Whether the taker's lock landed too late to be the lock of a take made at
+ * `takenAt`: a v2 taker locks within the hour, so a lock in a block from
+ * well after that means the take was backdated (to reach a price the maker
+ * had since withdrawn). The maker never funds against it; the taker's lock
+ * returns to it at T1.
+ */
+export function takerLockTooLate(terms: SwapTerms, blockTime: number | undefined): boolean {
+  if (terms.v !== 2 || blockTime === undefined) return false
+  return blockTime > SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S + BLOCK_TIME_LEEWAY_S
 }
 
 // ── Messages (box `swap-settle`, sealed to the counterparty) ──────────────
@@ -351,6 +462,7 @@ export type SettleStep =
 export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
   const now = f.now
   const nowS = SECONDS(now)
+  const w = WINDOWS[terms.v]
   const ownLock = f.role === 'taker' ? terms.t1 : terms.t2
   const refundOrWait = (): SettleStep => (f.own.refunded ? { kind: 'done', outcome: 'refunded' } : nowS >= ownLock ? { kind: 'refund' } : { kind: 'wait', for: 'locktime', until: ownLock * 1000 })
 
@@ -360,27 +472,31 @@ export function nextSettleStep(terms: SwapTerms, f: SettleFacts): SettleStep {
   }
   if (f.declined && !f.own.funded) return { kind: 'done', outcome: 'declined' }
 
+  const presigns = terms.v === 1 && f.ownOnBsv
   if (f.role === 'taker') {
-    if (!f.accepted) return now - terms.takenAt > ACCEPT_WAIT_MS ? { kind: 'done', outcome: 'expired' } : { kind: 'wait', for: 'accept' }
+    // v1 waits for the maker's accept, which carries its key; v2 already holds the key and locks at once.
+    if (terms.v === 1 && !f.accepted) return now - terms.takenAt > ACCEPT_WAIT_MS ? { kind: 'done', outcome: 'expired' } : { kind: 'wait', for: 'accept' }
     if (!f.own.funded) {
       if (nowS > SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S) return { kind: 'done', outcome: 'expired' }
-      if (f.ownOnBsv && !f.own.presigned) return { kind: 'request-presign' }
+      if (presigns && !f.own.presigned) return { kind: 'request-presign' }
       return { kind: 'fund' }
     }
-    const claimBy = terms.t2 - TAKER_CLAIM_BEFORE_T2_S
+    const claimBy = terms.t2 - w.takerClaimBeforeT2
     if (nowS >= claimBy) return refundOrWait()
-    if (!f.peer.funded) return { kind: 'wait', for: 'peer-funding', until: (terms.t2 - MAKER_FUND_BEFORE_T2_S) * 1000 }
+    // Declined after this wallet locked: the maker will not fund, so the lock only waits out T1.
+    if (!f.peer.funded && f.declined) return refundOrWait()
+    if (!f.peer.funded) return { kind: 'wait', for: 'peer-funding', until: (terms.t2 - w.makerFundBeforeT2) * 1000 }
     if (!f.peer.buried) return { kind: 'wait', for: 'peer-burial', until: claimBy * 1000 }
     return { kind: 'claim' }
   }
 
   // Maker.
   if (!f.own.funded) {
-    const fundBy = terms.t2 - MAKER_FUND_BEFORE_T2_S
+    const fundBy = terms.t2 - w.makerFundBeforeT2
     if (nowS >= fundBy) return { kind: 'done', outcome: 'expired' }
     if (!f.peer.funded) return nowS > SECONDS(terms.takenAt) + TAKER_FUND_WITHIN_S ? { kind: 'done', outcome: 'expired' } : { kind: 'wait', for: 'peer-funding' }
     if (!f.peer.buried) return { kind: 'wait', for: 'peer-burial', until: fundBy * 1000 }
-    if (f.ownOnBsv && !f.own.presigned) return { kind: 'request-presign' }
+    if (presigns && !f.own.presigned) return { kind: 'request-presign' }
     return { kind: 'fund' }
   }
   // The secret is public only once the taker claimed this wallet's lock: claim theirs until they take it back.

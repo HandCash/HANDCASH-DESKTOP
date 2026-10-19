@@ -7,7 +7,10 @@ import type { SettleOutcome } from '../wallet/swap/settle'
  * here; it runs the step only when this chart takes the event. So a lock is
  * made at most once (FUND leaves `negotiating` / `presigning` for good), and
  * nothing is claimed or refunded before this wallet has locked. The state is
- * kept on the swap's record and restored each pass.
+ * kept on the swap's record and restored each pass. `presigning` is only
+ * entered by swaps on terms v1, whose BSV refunds the counterparty co-signs;
+ * a v2 swap goes straight from `negotiating` to `locking`, the taker at once
+ * and the maker once the taker's lock is buried, whenever it next runs.
  *
  * `settled`: both sides claimed. `refunded`: each payer took its lock back.
  * `ended`: declined or expired before this wallet locked anything. `missed`:

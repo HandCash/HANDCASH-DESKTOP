@@ -183,7 +183,8 @@ export type SendCoinArgs = { address?: unknown; identityKey?: unknown; litoshi?:
 type Destination = { address: string; script: Uint8Array; to?: { identityKey: string; keyId: string } }
 /** Where a swap lock stands on this wallet's own chain. `unchecked`: could not be read now; try again. */
 export type LockSighting =
-  | { kind: 'buried' }
+  /** `blockTime`: the timestamp of the block the lock landed in, when the proof carried its header. */
+  | { kind: 'buried'; blockTime?: number }
   | { kind: 'confirming'; confirmations: number; needed: number }
   | { kind: 'unconfirmed' }
   | { kind: 'gone' }
@@ -895,7 +896,7 @@ export function createCoinWallet(binding: CoinBinding) {
     const check = await checkLtcBurial(located.proof, outpoint, scriptPubKey, litoshi, undefined, proofRules)
     if (check.ok) {
       if (check.litoshi !== litoshi) return { kind: 'refused', reason: 'under-backed', detail: `the lock holds ${check.litoshi}, not ${litoshi}` }
-      return { kind: 'buried' }
+      return { kind: 'buried', blockTime: check.blockTime }
     }
     if (check.reason === 'shallow') return { kind: 'confirming', confirmations: check.confirmations ?? 0, needed: proofRules.depth }
     if (check.missing) return { kind: 'unchecked', detail: check.detail }

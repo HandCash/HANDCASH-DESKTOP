@@ -328,26 +328,29 @@ export function bip143Sighash(tx: LtcTx, vin: number, pubkey: Bytes, amount: big
  * (`SIGHASH_ALL | SIGHASH_FORKID`), committing to the spent `amount`.
  */
 export function bip143ScriptSighash(tx: LtcTx, vin: number, script: Bytes, amount: bigint, hashType: number): Bytes {
+  return sha256d(bip143Preimage(tx, vin, script, amount, hashType))
+}
+
+/** The bytes a BIP143 signature hash is the double SHA-256 of. */
+export function bip143Preimage(tx: LtcTx, vin: number, script: Bytes, amount: bigint, hashType: number): Bytes {
   const input = tx.inputs[vin]
   if (!input) fail('no such input')
   const hashPrevouts = sha256d(concat(...tx.inputs.map((i) => concat(reversed(fromHex(i.txid)), u32le(i.vout)))))
   const hashSequence = sha256d(concat(...tx.inputs.map((i) => u32le(i.sequence))))
   const hashOutputs = sha256d(concat(...tx.outputs.map((o) => concat(u64le(o.value), varBytes(o.script)))))
   const scriptCode = varBytes(script)
-  return sha256d(
-    concat(
-      u32le(tx.version),
-      hashPrevouts,
-      hashSequence,
-      reversed(fromHex(input!.txid)),
-      u32le(input!.vout),
-      scriptCode,
-      u64le(amount),
-      u32le(input!.sequence),
-      hashOutputs,
-      u32le(tx.locktime),
-      u32le(hashType),
-    ),
+  return concat(
+    u32le(tx.version),
+    hashPrevouts,
+    hashSequence,
+    reversed(fromHex(input!.txid)),
+    u32le(input!.vout),
+    scriptCode,
+    u64le(amount),
+    u32le(input!.sequence),
+    hashOutputs,
+    u32le(tx.locktime),
+    u32le(hashType),
   )
 }
 

@@ -1,26 +1,25 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { fromPromise } from 'xstate'
 import { stateToAttr } from '@aeon-ui/core'
-import { Button, ListRow, StatusBanner } from '@aeon-ui/react'
-import { swapOffersMachine } from '../machines/swapOffersMachine'
+import { Button, Field, ListRow, StatusBanner } from '@aeon-ui/react'
+import { amountFits, roomOf, swapOffersMachine } from '../machines/swapOffersMachine'
 import { getCachedBsvMarket, refreshBsvMarket } from '../wallet/bsvMarket'
 import { openSwapFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { SWAP_ASSET_INFO, SWAP_ASSETS, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
-import { fillOffer, type SignedSwapOffer } from '../wallet/swap/offer'
-import { browseSwapOffers } from '../wallet/swap/offerBook'
-import { previewTake } from '../wallet/swap/settle'
+import { decimalToUnits, SWAP_ASSET_INFO, SWAP_ASSETS, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
+import { fillOffer, fillsInParts, type SignedSwapOffer } from '../wallet/swap/offer'
+import { browseSwapOfferBook } from '../wallet/swap/offerBook'
+import { MAKER_FUND_WITHIN_S, previewTake } from '../wallet/swap/settle'
 import { cancelOwnSwapOffer, takeSwapOffer } from '../wallet/swap/settleRunner'
 import { useDirectSwaps } from '../features/swap'
 import { SwapPairMark, SwapStatusPill, SwapSummary } from './SwapVisuals'
 
 const fmt = (asset: SwapAsset, units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
 
-/** What a taker pays and receives for the whole offer, before the fee. */
-function terms(offer: SignedSwapOffer): { pay: bigint; receive: bigint } {
-  const pay = BigInt(offer.maxGet)
-  return { pay, receive: fillOffer(offer, pay) ?? 0n }
+/** What a taker pays and receives for all that is left of the offer (`max`), before the fee. */
+function terms(offer: SignedSwapOffer, max = BigInt(offer.maxGet)): { pay: bigint; receive: bigint } {
+  return { pay: max, receive: (max * BigInt(offer.price.give)) / BigInt(offer.price.get) }
 }
 
 /** The offer against the market rate, from the taker's side: "4% better than market". */
@@ -40,23 +39,25 @@ function timeLeft(expiresAt: number, now: number): string {
 }
 
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} hours`
+const days = (seconds: number) => `${Math.round(seconds / 86_400)} days`
 
 /**
  * The swap offer book: standing offers anyone published from Swap when no
  * route could take their swap. Each is verified here; this wallet's own come
- * first and can be withdrawn. Taking one is reviewed and confirmed here; the
- * wallet then locks its side once the maker accepts, and this wallet's swaps
- * show their progress at the top.
+ * first and can be withdrawn. Taking one, all of what is left or a part of
+ * an offer that allows it, is reviewed and confirmed here; the wallet then
+ * locks its side at once, the maker locks when it next comes online, and
+ * this wallet's swaps show their progress at the top.
  */
 export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
   const machine = useMemo(
     () =>
       swapOffersMachine.provide({
         actors: {
-          load: fromPromise(() => browseSwapOffers()),
+          load: fromPromise(() => browseSwapOfferBook()),
           cancel: fromPromise(({ input }) => cancelOwnSwapOffer(input)),
           take: fromPromise(async ({ input }) => {
-            await takeSwapOffer(input, BigInt(input.maxGet))
+            await takeSwapOffer(input.offer, input.pay)
           }),
         },
       }),
@@ -118,8 +119,12 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
       {reviewing && chosen ? (
         <TakeReview
           offer={chosen}
+          room={roomOf(snap.context, chosen)}
+          pay={snap.context.pay}
+          fits={amountFits(snap.context)}
           taking={snap.matches('taking')}
           taken={snap.matches('taken')}
+          onAmount={(pay) => send({ type: 'AMOUNT', pay })}
           onBack={() => send({ type: 'BACK' })}
           onConfirm={() => {
             playWalletSound('soft')
@@ -135,6 +140,7 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
               <ul>
                 {mine.map((offer) => {
                   const { pay, receive } = terms(offer)
+                  const left = roomOf(snap.context, offer)
                   const busy = cancelling === offer.nonce
                   return (
                     <li key={offer.nonce}>
@@ -145,7 +151,9 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
                         <ListRow.Label>
                           You give {fmt(offer.give, receive)} for {fmt(offer.get, pay)}
                         </ListRow.Label>
-                        <ListRow.Description>{timeLeft(offer.expiresAt, now)}</ListRow.Description>
+                        <ListRow.Description>
+                          {[fillsInParts(offer) ? (left && left.max < pay ? `${fmt(offer.get, left.max)} left` : 'In parts') : null, timeLeft(offer.expiresAt, now)].filter(Boolean).join(' · ')}
+                        </ListRow.Description>
                         <ListRow.Trailing>
                           <Button.Root
                             className="btn btn-ghost"
@@ -178,9 +186,11 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
             ) : (
               <ul>
                 {others.map((offer) => {
-                  const { pay, receive } = terms(offer)
+                  const left = roomOf(snap.context, offer)
+                  const { pay, receive } = terms(offer, left?.max ?? 0n)
                   const market = versusMarket(offer)
-                  const takeable = previewTake(offer, pay) !== null
+                  const parts = fillsInParts(offer)
+                  const takeable = !!left && (previewTake(offer, left.min) !== null || previewTake(offer, left.max) !== null)
                   return (
                     <li key={offer.nonce}>
                       <ListRow.Root data-aeon-state={stateToAttr(takeable ? 'open' : 'too-small')}>
@@ -188,10 +198,11 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
                           <SwapPairMark from={offer.get} to={offer.give} />
                         </ListRow.Leading>
                         <ListRow.Label>
-                          Get {fmt(offer.give, receive)} for {fmt(offer.get, pay)}
+                          Get {parts ? 'up to ' : ''}
+                          {fmt(offer.give, receive)} for {fmt(offer.get, pay)}
                         </ListRow.Label>
                         <ListRow.Description>
-                          {[market, timeLeft(offer.expiresAt, now), `${offer.maker.slice(0, 10)}…`].filter(Boolean).join(' · ')}
+                          {[parts && left ? `from ${fmt(offer.get, left.min)}` : null, market, timeLeft(offer.expiresAt, now), `${offer.maker.slice(0, 10)}…`].filter(Boolean).join(' · ')}
                         </ListRow.Description>
                         <ListRow.Trailing>
                           <Button.Root
@@ -234,35 +245,69 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
 
 function TakeReview({
   offer,
+  room,
+  pay,
+  fits,
   taking,
   taken,
+  onAmount,
   onBack,
   onConfirm,
   onDone,
 }: {
   offer: SignedSwapOffer
+  room: { min: bigint; max: bigint } | null
+  pay: bigint | null
+  fits: boolean
   taking: boolean
   taken: boolean
+  onAmount: (pay: bigint | null) => void
   onBack: () => void
   onConfirm: () => void
   onDone: () => void
 }) {
-  const preview = previewTake(offer, BigInt(offer.maxGet))
-  if (!preview) return null
-  const feeAsset = preview.feeLeg === 'taker' ? offer.get : offer.give
+  const amountId = useId()
+  const [amount, setAmount] = useState(() => (pay !== null ? unitsToDecimal(offer.get, pay) : ''))
+  const preview = pay !== null && fits ? previewTake(offer, pay) : null
+  const shown = preview ?? (room ? previewTake(offer, room.max) : null)
+  if (!shown || !room) return null
+  const feeAsset = shown.feeLeg === 'taker' ? offer.get : offer.give
+  const parts = fillsInParts(offer) && room.min < room.max
   return (
     <section data-aeon-part="review" aria-label="Take swap offer">
-      <SwapSummary pay={{ asset: offer.get, units: preview.pays, caption: 'You lock' }} receive={{ asset: offer.give, units: preview.receives, caption: 'You receive' }} />
+      {parts ? (
+        <Field.Root data-aeon-part="take-amount" data-aeon-state={fits ? 'fits' : 'out-of-range'}>
+          <Field.Label htmlFor={amountId}>{SWAP_ASSET_INFO[offer.get].ticker} to put in</Field.Label>
+          <Field.Control
+            id={amountId}
+            inputMode="decimal"
+            value={amount}
+            disabled={taking || taken}
+            onChange={(e) => {
+              const text = e.target.value.replace(',', '.')
+              setAmount(text)
+              onAmount(decimalToUnits(offer.get, text))
+            }}
+          />
+          <Field.Hint>
+            This offer can be filled in parts: from {fmt(offer.get, room.min)} up to {fmt(offer.get, room.max)}.
+          </Field.Hint>
+        </Field.Root>
+      ) : null}
+      <SwapSummary
+        pay={{ asset: offer.get, units: shown.pays, caption: 'You lock' }}
+        receive={{ asset: offer.give, units: preview ? shown.receives : fillOffer(offer, room.max) ?? 0n, caption: 'You receive' }}
+      />
       <dl>
         <dt>Fee</dt>
         <dd>
-          {preview.fee > 0n
-            ? `${fmt(feeAsset, preview.fee)} (0.5%), ${preview.feeLeg === 'taker' ? 'included in what you lock' : 'taken from what you receive'}; charged only if the swap completes`
+          {shown.fee > 0n
+            ? `${fmt(feeAsset, shown.fee)} (0.5%), ${shown.feeLeg === 'taker' ? 'included in what you lock' : 'taken from what you receive'}; charged only if the swap completes`
             : 'None on a swap this small'}
         </dd>
         <dt>Timing</dt>
         <dd>
-          The maker locks for {hours(preview.makerLockS)}, you for {hours(preview.takerLockS)}. Each side waits for the other's lock to confirm on its chain; network fees are paid on top.
+          You lock now. The maker need not be online: it has up to {hours(MAKER_FUND_WITHIN_S)} to lock its side, and this wallet claims once that lock confirms. Its lock stands for {hours(shown.makerLockS)}, yours for {days(shown.takerLockS)}; network fees are paid on top.
         </dd>
       </dl>
       {taken ? (
@@ -270,7 +315,7 @@ function TakeReview({
           <StatusBanner.Copy>
             <StatusBanner.Title>Take sent</StatusBanner.Title>
             <StatusBanner.Body>
-              This wallet locks your {SWAP_ASSET_INFO[offer.get].ticker} when the maker accepts and claims your {SWAP_ASSET_INFO[offer.give].ticker} on its own. Keep it open until the swap shows Swapped.
+              This wallet locks your {SWAP_ASSET_INFO[offer.get].ticker} now and claims your {SWAP_ASSET_INFO[offer.give].ticker} once the maker locks its side, which can take up to {hours(MAKER_FUND_WITHIN_S)}. Open the wallet at least once a day until the swap shows Swapped.
             </StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
@@ -279,7 +324,7 @@ function TakeReview({
           <StatusBanner.Copy>
             <StatusBanner.Title>Both sides complete, or both are refunded</StatusBanner.Title>
             <StatusBanner.Body>
-              Coins are locked on their own chains, never held by anyone. If the maker does not lock, or the swap stalls, your coins come back to this wallet after your lock time.
+              Coins are locked on their own chains, never held by anyone. If the maker declines (someone filled the offer first) or never locks, your coins come back to this wallet after {days(shown.takerLockS)}.
             </StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
@@ -294,7 +339,7 @@ function TakeReview({
             <Button.Root className="btn btn-ghost" variant="ghost" disabled={taking} onClick={onBack}>
               <Button.Label>Back</Button.Label>
             </Button.Root>
-            <Button.Root className="btn btn-primary" variant="solid" size="lg" status={taking ? 'pending' : 'idle'} disabled={taking} onClick={onConfirm}>
+            <Button.Root className="btn btn-primary" variant="solid" size="lg" status={taking ? 'pending' : 'idle'} disabled={taking || !fits} onClick={onConfirm}>
               <Button.Label>{taking ? 'Sending…' : 'Confirm swap'}</Button.Label>
             </Button.Root>
           </>

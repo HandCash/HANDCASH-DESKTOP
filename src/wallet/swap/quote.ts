@@ -15,8 +15,8 @@ export type SwapQuoteRefusal =
 export type SwapQuote = SwapRouting & { request: SwapRequest; exolix: ExolixQuote | null; exolixRefusal: ExolixRefusal | null; quotedAt: number }
 
 export type SwapQuoteDeps = {
-  /** Signed offers someone hosts for makers giving `give` for `get`; each is verified here, never trusted. */
-  listOffers(pair: { give: SwapAsset; get: SwapAsset }): Promise<unknown[]>
+  /** Signed offers someone hosts for makers giving `give` for `get`, each verified here, never trusted, and what the book says is filled of each. */
+  listOffers(pair: { give: SwapAsset; get: SwapAsset }): Promise<unknown[] | { offers: unknown[]; filled: ReadonlyMap<string, bigint> }>
   fetchExolix?: typeof fetchExolixQuote
   now?: () => number
   /** This wallet's identity key: its own offers are never routed to itself. */
@@ -24,9 +24,9 @@ export type SwapQuoteDeps = {
 }
 
 /** Signed direct offers for a pair, from the market engine's offer book; routing verifies each again. */
-export async function listSwapOffers(pair: { give: SwapAsset; get: SwapAsset }): Promise<unknown[]> {
-  const { browseSwapOffers } = await import('./offerBook')
-  return browseSwapOffers(pair)
+export async function listSwapOffers(pair: { give: SwapAsset; get: SwapAsset }): Promise<{ offers: unknown[]; filled: ReadonlyMap<string, bigint> }> {
+  const { browseSwapOfferBook } = await import('./offerBook')
+  return browseSwapOfferBook(pair)
 }
 
 /** How long a quote is good for before it must be asked again (Exolix holds a fixed rate about this long). */
@@ -36,15 +36,16 @@ export async function quoteSwap(req: SwapRequest, deps: SwapQuoteDeps): Promise<
   if (req.from === req.to) return { ok: false, refusal: { kind: 'bad-request', detail: 'pick two different coins' } }
   if (req.pay <= 0n) return { ok: false, refusal: { kind: 'bad-request', detail: 'enter an amount' } }
   const now = deps.now ?? Date.now
-  const [offers, exolix] = await Promise.all([
+  const [listed, exolix] = await Promise.all([
     deps.listOffers({ give: req.to, get: req.from }).catch((err: unknown) => {
       console.warn(`[swap] offers unavailable — ${err instanceof Error ? err.message : String(err)}`)
       return [] as unknown[]
     }),
     (deps.fetchExolix ?? fetchExolixQuote)(req, { now }),
   ])
+  const { offers, filled } = Array.isArray(listed) ? { offers: listed, filled: undefined } : listed
   const quotedAt = now()
-  const routing = routeSwap(req, offers, exolix.ok ? exolix.quote : null, { now: quotedAt, ...(deps.self ? { self: deps.self } : {}) })
+  const routing = routeSwap(req, offers, exolix.ok ? exolix.quote : null, { now: quotedAt, ...(deps.self ? { self: deps.self } : {}), ...(filled ? { filled } : {}) })
   const exolixRefusal = exolix.ok ? null : exolix.refusal
   if (routing.skipped.length) console.info(`[swap] skipped ${routing.skipped.length} offers (${[...new Set(routing.skipped.map((s) => s.reason))].join(', ')})`)
   if (!routing.chosen) return { ok: false, refusal: { kind: 'no-route', exolix: exolixRefusal } }

@@ -2,15 +2,18 @@ import { BigNumber, ECDSA, Hash, PrivateKey, PublicKey, Signature, Utils } from 
 import { encodeCashAddr } from '../bch/bitcoincash'
 import { BTC_HRP } from '../btc/bitcoin'
 import {
+  bip143Preimage,
   bip143ScriptSighash,
   concat,
   encodeSegwitAddress,
+  fromHex,
   hash160,
   LTC_HRP,
   ltcTxid,
   sameBytes,
   serializeLtcTx,
   serializeLtcTxNoWitness,
+  sha256d,
   toHex,
   type Bytes,
   type LtcTx,
@@ -24,10 +27,13 @@ import type { SwapAsset } from './assets'
  * An HTLC pays whoever shows the preimage of `hash` and signs with `claimPub`;
  * after `locktime` it returns to its payer. On Litecoin, Bitcoin, Bitcoin
  * Cash and Dogecoin the return is enforced by OP_CHECKLOCKTIMEVERIFY, and the
- * payer alone signs it. BSV has no time lock opcode, so the return path needs
- * the payer and a co-signer (the counterparty, who pre-signs the refund with
- * nLockTime = `locktime` before the output is funded): the counterparty can
- * never take it back early, and the payer cannot either.
+ * payer alone signs it. BSV has no time lock opcode. A BSV lock's return path
+ * instead reads the spending transaction's own signature preimage, checks
+ * that its nLockTime is at least `locktime` and its sequence is not final,
+ * and proves the preimage genuine with a signature the script builds itself
+ * (private key 1, nonce 1), so nobody has to pre-sign anything. Locks made
+ * before 1.3.609 name a co-signer instead (`cosignPub`), who pre-signed the
+ * refund with nLockTime = `locktime` before the output was funded.
  *
  * The preimage must be exactly 32 bytes on every chain, so a secret that
  * opens one leg of a swap always opens the other.
@@ -40,7 +46,7 @@ export type HtlcTerms = {
   refundPub: Bytes
   /** Unix seconds; the payer may take the output back at and after it. */
   locktime: number
-  /** BSV only: signs the refund with the payer. */
+  /** BSV locks before 1.3.609 only: signs the refund with the payer. */
   cosignPub?: Bytes
 }
 
@@ -49,10 +55,26 @@ export type HtlcKind = 'p2wsh' | 'p2sh' | 'bare'
 const OP = {
   0: 0x00,
   1: 0x51,
+  4: 0x54,
+  8: 0x58,
+  VERIFY: 0x69,
+  NIP: 0x77,
+  SWAP: 0x7c,
+  CAT: 0x7e,
+  SPLIT: 0x7f,
+  NUM2BIN: 0x80,
+  BIN2NUM: 0x81,
+  NOT: 0x91,
+  ADD: 0x93,
+  SUB: 0x94,
+  MOD: 0x97,
+  GREATERTHANOREQUAL: 0xa2,
+  HASH256: 0xaa,
   IF: 0x63,
   ELSE: 0x67,
   ENDIF: 0x68,
   DROP: 0x75,
+  DUP: 0x76,
   SIZE: 0x82,
   EQUAL: 0x87,
   EQUALVERIFY: 0x88,
@@ -82,20 +104,75 @@ export const sha256 = (b: Bytes): Bytes => Uint8Array.from(Hash.sha256(Array.fro
 function push(data: Bytes): Bytes {
   if (data.length <= 75) return concat(Uint8Array.of(data.length), data)
   if (data.length <= 255) return concat(Uint8Array.of(0x4c, data.length), data)
+  if (data.length <= 0xffff) return concat(Uint8Array.of(0x4d, data.length & 0xff, data.length >> 8), data)
   return fail('push too long')
 }
 
-/** A script number, minimally encoded. */
-function scriptNum(n: number): Bytes {
-  if (!Number.isSafeInteger(n) || n <= 0) return fail('bad script number')
+/** A positive script number, minimally encoded. */
+function scriptNum(n: number | bigint): Bytes {
+  let v = BigInt(n)
+  if (v <= 0n || (typeof n === 'number' && !Number.isSafeInteger(n))) return fail('bad script number')
   const out: number[] = []
-  let v = n
-  while (v > 0) {
-    out.push(v & 0xff)
-    v = Math.floor(v / 256)
+  while (v > 0n) {
+    out.push(Number(v & 0xffn))
+    v >>= 8n
   }
   if (out[out.length - 1]! & 0x80) out.push(0)
   return Uint8Array.from(out)
+}
+
+const SECP_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n
+const SECP_GX = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798n
+const G_PUB = fromHex('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798')
+/** DER of a signature with r = Gx, up to its 32-byte s: SEQUENCE(68) INTEGER(32) r INTEGER(32). */
+const PREIMAGE_SIG_PREFIX = fromHex('3044022079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f817980220')
+
+/** Reverse the 32 bytes on top of the stack. */
+const REVERSE_32 = concat(...Array.from({ length: 31 }, () => Uint8Array.of(OP[1], OP.SPLIT)), ...Array.from({ length: 31 }, () => Uint8Array.of(OP.SWAP, OP.CAT)))
+
+/**
+ * BSV refund path: [sig, preimage] → checks the preimage's nLockTime ≥
+ * `locktime` and sequence ≠ 0xffffffff, proves the preimage is this
+ * transaction's own (a signature by key 1 with nonce 1, whose s the script
+ * computes as hash256(preimage) + Gx mod n), then checks `sig` by `refundPub`.
+ */
+function bsvRefundPath(t: HtlcTerms): Bytes {
+  return concat(
+    Uint8Array.of(OP.DUP, OP.SIZE, OP[8], OP.SUB, OP.SPLIT, OP[4], OP.SPLIT, OP.DROP),
+    push(Uint8Array.of(0)),
+    Uint8Array.of(OP.CAT, OP.BIN2NUM),
+    push(scriptNum(t.locktime)),
+    Uint8Array.of(OP.GREATERTHANOREQUAL, OP.VERIFY, OP.SIZE),
+    push(Uint8Array.of(32)),
+    Uint8Array.of(OP.SUB, OP.SPLIT, OP.DROP, OP.SIZE, OP[4], OP.SUB, OP.SPLIT, OP.NIP),
+    push(fromHex('ffffffff')),
+    Uint8Array.of(OP.EQUAL, OP.NOT, OP.VERIFY, OP.HASH256),
+    REVERSE_32,
+    push(Uint8Array.of(0)),
+    Uint8Array.of(OP.CAT, OP.BIN2NUM),
+    push(scriptNum(SECP_GX)),
+    Uint8Array.of(OP.ADD),
+    push(scriptNum(SECP_N)),
+    Uint8Array.of(OP.MOD),
+    push(Uint8Array.of(32)),
+    Uint8Array.of(OP.NUM2BIN),
+    REVERSE_32,
+    push(PREIMAGE_SIG_PREFIX),
+    Uint8Array.of(OP.SWAP, OP.CAT),
+    push(Uint8Array.of(SIGHASH_ALL_FORKID)),
+    Uint8Array.of(OP.CAT),
+    push(G_PUB),
+    Uint8Array.of(OP.CHECKSIGVERIFY),
+    push(t.refundPub),
+    Uint8Array.of(OP.CHECKSIG),
+  )
+}
+
+/** Whether the script's own preimage signature over `preimage` is a strict-DER, low-S signature. */
+function preimageSigEncodes(preimage: Bytes): boolean {
+  const z = BigInt('0x' + toHex(sha256d(preimage)))
+  const sv = (z + SECP_GX) % SECP_N
+  return sv > 0n && sv <= SECP_N / 2n && sv >= 1n << 248n
 }
 
 function checkTerms(chain: SwapAsset, t: HtlcTerms): void {
@@ -104,7 +181,6 @@ function checkTerms(chain: SwapAsset, t: HtlcTerms): void {
     if (k.length !== 33 || (k[0] !== 2 && k[0] !== 3)) fail('keys are compressed')
   }
   if (!Number.isSafeInteger(t.locktime) || t.locktime < LOCKTIME_THRESHOLD || t.locktime > 0xffffffff) fail('locktime is a unix time')
-  if (chain === 'bsv' && !t.cosignPub) fail('a BSV HTLC names its refund co-signer')
   if (chain !== 'bsv' && t.cosignPub) fail('only a BSV HTLC has a refund co-signer')
 }
 
@@ -113,16 +189,8 @@ export function htlcScript(chain: SwapAsset, t: HtlcTerms): Bytes {
   checkTerms(chain, t)
   const secretCheck = concat(Uint8Array.of(OP.SIZE), push(Uint8Array.of(SECRET_BYTES)), Uint8Array.of(OP.EQUALVERIFY, OP.SHA256), push(t.hash), Uint8Array.of(OP.EQUALVERIFY))
   if (chain === 'bsv') {
-    return concat(
-      Uint8Array.of(OP.IF),
-      secretCheck,
-      push(t.claimPub),
-      Uint8Array.of(OP.CHECKSIG, OP.ELSE),
-      push(t.refundPub),
-      Uint8Array.of(OP.CHECKSIGVERIFY),
-      push(t.cosignPub!),
-      Uint8Array.of(OP.CHECKSIG, OP.ENDIF),
-    )
+    const refund = t.cosignPub ? concat(push(t.refundPub), Uint8Array.of(OP.CHECKSIGVERIFY), push(t.cosignPub), Uint8Array.of(OP.CHECKSIG)) : bsvRefundPath(t)
+    return concat(Uint8Array.of(OP.IF), secretCheck, push(t.claimPub), Uint8Array.of(OP.CHECKSIG, OP.ELSE), refund, Uint8Array.of(OP.ENDIF))
   }
   return concat(
     Uint8Array.of(OP.IF),
@@ -180,7 +248,7 @@ export function htlcSignatureValid(chain: SwapAsset, tx: LtcTx, vin: number, scr
   }
 }
 
-export type HtlcPath = { kind: 'claim'; preimage: Bytes; sig: Bytes } | { kind: 'refund'; sig: Bytes; cosig?: Bytes }
+export type HtlcPath = { kind: 'claim'; preimage: Bytes; sig: Bytes } | { kind: 'refund'; sig: Bytes; cosig?: Bytes; sighashPreimage?: Bytes }
 
 /** The unlocking data of an HTLC spend, as a scriptSig (P2SH, bare) or witness (P2WSH). */
 export function htlcUnlock(chain: SwapAsset, script: Bytes, path: HtlcPath): { scriptSig: Bytes; witness: Bytes[] } {
@@ -193,8 +261,9 @@ export function htlcUnlock(chain: SwapAsset, script: Bytes, path: HtlcPath): { s
   let body: Bytes
   if (path.kind === 'claim') body = concat(push(path.sig), push(path.preimage), Uint8Array.of(OP[1]))
   else if (chain === 'bsv') {
-    if (!path.cosig) return fail('a BSV refund carries the co-signature')
-    body = concat(push(path.cosig), push(path.sig), Uint8Array.of(OP[0]))
+    if (path.cosig) body = concat(push(path.cosig), push(path.sig), Uint8Array.of(OP[0]))
+    else if (path.sighashPreimage) body = concat(push(path.sig), push(path.sighashPreimage), Uint8Array.of(OP[0]))
+    else return fail('a BSV refund carries its co-signature or its preimage')
   } else body = concat(push(path.sig), Uint8Array.of(OP[0]))
   return { scriptSig: kind === 'p2sh' ? concat(body, push(script)) : body, witness: [] }
 }
@@ -251,11 +320,28 @@ export function signHtlcSpend(
   const { coins, to, key, path } = args
   const total = coins.reduce((s, c) => s + c.amount, 0n)
   const locktime = path.kind === 'refund' ? path.locktime : 0
+  // A BSV refund with no co-signatures carries its own preimage, which the script turns into a signature: walk
+  // nLockTime up from the lock time until every input's comes out strict-DER and low-S (about half of them do).
+  const selfProving = chain === 'bsv' && path.kind === 'refund' && !path.cosigs
+  const nLockTimeFor = (value: bigint): number => {
+    if (!selfProving) return locktime
+    for (let lt = locktime; lt < locktime + 4096 && lt <= 0xffffffff; lt++) {
+      const tx = htlcSpendTx(chain, coins, to, value, 'refund', lt)
+      if (coins.every((c, vin) => preimageSigEncodes(bip143Preimage(tx, vin, c.script, c.amount, SIGHASH_ALL_FORKID)))) return lt
+    }
+    return fail('no lock time gives an encodable preimage signature')
+  }
   const complete = (value: bigint): LtcTx => {
-    const tx = htlcSpendTx(chain, coins, to, value, path.kind, locktime)
+    const tx = htlcSpendTx(chain, coins, to, value, path.kind, nLockTimeFor(value))
     coins.forEach((c, vin) => {
       const sig = htlcSignature(chain, tx, vin, c.script, c.amount, key)
-      const unlock = htlcUnlock(chain, c.script, path.kind === 'claim' ? { kind: 'claim', preimage: path.preimage, sig } : { kind: 'refund', sig, ...(path.cosigs ? { cosig: path.cosigs[vin]! } : {}) })
+      const unlock = htlcUnlock(
+        chain,
+        c.script,
+        path.kind === 'claim'
+          ? { kind: 'claim', preimage: path.preimage, sig }
+          : { kind: 'refund', sig, ...(path.cosigs ? { cosig: path.cosigs[vin]! } : selfProving ? { sighashPreimage: bip143Preimage(tx, vin, c.script, c.amount, SIGHASH_ALL_FORKID) } : {}) },
+      )
       tx.inputs[vin]!.script = unlock.scriptSig
       tx.inputs[vin]!.witness = unlock.witness
     })

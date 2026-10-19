@@ -74,7 +74,7 @@ export type LtcBurialProof = { tx: string; path: string[]; pos: number; height: 
  * `confirmations` comes with `shallow`: the count on this wallet's own chain.
  */
 export type BurialCheck =
-  | { ok: true; litoshi: bigint }
+  | { ok: true; litoshi: bigint; blockTime: number }
   | { ok: false; reason: DepositRefusal; detail: string; missing: boolean; confirmations?: number }
 
 type DepositOutput = { ok: true; litoshi: bigint } | { ok: false; reason: DepositRefusal; detail: string }
@@ -136,7 +136,7 @@ export async function checkLtcBurial(
   const anchored = await (anchor ?? rules.anchor()).check(proof.height, header.hash, rules.depth)
   switch (anchored.kind) {
     case 'buried':
-      return { ok: true, litoshi: output.litoshi }
+      return { ok: true, litoshi: output.litoshi, blockTime: header.time }
     case 'shallow':
       return {
         ...refused('shallow', `the deposit has ${anchored.confirmations} of ${rules.depth} confirmations on this wallet's ${rules.label} chain`, true),

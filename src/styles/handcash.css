@@ -17389,3 +17389,20 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
     transform: rotate(90deg);
   }
 }
+
+[data-aeon-scope='swap'] [data-aeon-part='parts'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  font-size: 0.875rem;
+}
+
+[data-aeon-scope='swap-offers'] [data-aeon-part='take-amount'] {
+  margin-bottom: 0.75rem;
+}
+
+[data-aeon-scope='swap-offers'] [data-aeon-part='take-amount'][data-aeon-state='out-of-range'] [data-aeon-part='hint'] {
+  color: var(--aeon-color-danger, #d64545);
+}

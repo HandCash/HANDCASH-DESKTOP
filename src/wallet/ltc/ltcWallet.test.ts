@@ -56,7 +56,7 @@ vi.mock('./verify', async (load) => ({
   ...(await load<typeof import('./verify')>()),
   readLtcDeposit: async (_chain: unknown, o: { txid: string; vout: number }) => sightings.get(`${o.txid}:${o.vout}`)!,
   locateLtcDeposit: async (_chain: unknown, txid: string) => locations.get(txid) ?? { kind: 'unconfirmed' },
-  checkLtcBurial: async (_proof: unknown, o: { txid: string }) => depths.get(o.txid) ?? { ok: true, litoshi: 0n },
+  checkLtcBurial: async (_proof: unknown, o: { txid: string }) => depths.get(o.txid) ?? { ok: true, litoshi: 0n, blockTime: 0 },
 }))
 
 const txidOfHex = (hex: string) => ltcTxid(parseLtcTx(fromHex(hex)))

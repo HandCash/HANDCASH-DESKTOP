@@ -658,12 +658,13 @@ const SWAP = `stateDiagram-v2
   reviewing --> stale : after 60 s
   reviewing --> swapping : CONFIRM (the only step that moves coins)
   swapping --> done : Exolix: can pay · exchange opened to this wallet's own payout + refund addresses · matches the confirmed quote · recorded · deposit paid from own balance
-  swapping --> done : direct: can lock · take recorded and sent to the maker (swapSettleMachine locks after accept)
+  swapping --> done : direct: can lock · take recorded and sent to the maker (swapSettleMachine locks at once; the maker need not be online)
   swapping --> failed : insufficient | unavailable | terms-changed | wrong-payout | bad-deposit | take refused | deposit failed
   quoted --> quoting : QUOTE
   stale --> quoting : QUOTE
   refused --> quoting : QUOTE
-  refused --> offering : OFFER (no-route only; whole offer at the market rate, ≤ held)
+  refused --> offering : OFFER (no-route only; offer at the market rate, ≤ held)
+  offering --> offering : PARTS (allow → smallest take = part floor; off → whole; only when splittable)
   offering --> refused : BACK
   offering --> quoting : QUOTE
   offering --> publishing : PUBLISH (signs with the swap order key; moves no coin)
@@ -684,23 +685,26 @@ const SWAP = `stateDiagram-v2
 const SWAP_OFFERS = `stateDiagram-v2
   direction LR
   [*] --> loading
-  loading --> ready : offers listed · each verified here (shape, maker signature, not expired)
+  loading --> ready : offers listed with signed fills · each verified here (shape, maker signature, not expired, room left)
   loading --> failed : offer book unavailable
   ready --> loading : REFRESH
   ready --> cancelling : CANCEL (own offer only; signs the withdrawal)
   cancelling --> loading : withdrawn
   cancelling --> ready : refused (named)
-  ready --> reviewing : REVIEW (someone else's offer, still listed)
+  ready --> reviewing : REVIEW (someone else's offer, still listed; amount = all that is left)
+  reviewing --> reviewing : AMOUNT (offers filled in parts; minGet ≤ amount ≤ left)
   reviewing --> ready : BACK
-  reviewing --> taking : CONFIRM (offer still listed)
+  reviewing --> taking : CONFIRM (offer still listed · amount fits)
+  reviewing --> reviewing : CONFIRM (amount out of range; stays)
   reviewing --> ready : CONFIRM after expiry (named)
   taking --> taken : take sent (balance checked first)
   taking --> reviewing : refused (named)
   taken --> loading : REFRESH
   failed --> loading : REFRESH
   note right of taking
-    The take moves no coin. The wallet
-    locks its side once the maker accepts
+    The take moves no coin itself. The
+    wallet locks its side at once; the maker
+    locks when next online, within 28 h
     (swapSettleMachine).
   end note
 `
@@ -708,7 +712,7 @@ const SWAP_OFFERS = `stateDiagram-v2
 const SWAP_SETTLE = `stateDiagram-v2
   direction LR
   [*] --> negotiating
-  negotiating --> presigning : PRESIGN (BSV leg: ask the peer to co-sign its refunds)
+  negotiating --> presigning : PRESIGN (v1 BSV leg only: ask the peer to co-sign its refunds)
   presigning --> presigning : PRESIGN (ask again)
   negotiating --> locking : FUND
   presigning --> locking : FUND (refunds co-signed)
@@ -731,10 +735,14 @@ const SWAP_SETTLE = `stateDiagram-v2
     Hash-locked outputs on each chain:
     the taker's secret claims both, each
     payer refunds after its lock time
-    (maker 12 h, taker 36 h). BSV refunds
-    are co-signed before the lock goes out.
-    0.5% fee output on the fee leg, same
-    hash; paid only on success.
+    (v2: maker 48 h, taker 72 h after the
+    take). v2 BSV refunds prove their own
+    nLockTime (push-tx), no co-signer and
+    no accept wait; v1 swaps still presign.
+    A take is judged by its signed time; a
+    lock buried too late is refused. 0.5%
+    fee output on the fee leg, same hash;
+    paid only on success.
   end note
 `
 
@@ -1926,14 +1934,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'swap',
     label: 'Swap',
     caption:
-      'swapMachine — swap between coins this wallet holds, no addresses pasted: direct offers (maker-signed, verified here) ranked ahead of Exolix whenever they pay at least as much, priced halfway between the market rate and Exolix\'s; Exolix fills the rest, paying out to this wallet\'s own address and holding the coins while it swaps. Only CONFIRM moves coins. When no route takes the swap (under Exolix\'s minimum, say), OFFER reviews a whole offer at the market rate and PUBLISH signs it to the market engine\'s offer book; publishing moves no coin.',
+      'swapMachine — swap between coins this wallet holds, no addresses pasted: direct offers (maker-signed, verified here) ranked ahead of Exolix whenever they pay at least as much, priced halfway between the market rate and Exolix\'s; Exolix fills the rest, paying out to this wallet\'s own address and holding the coins while it swaps. Only CONFIRM moves coins. When no route takes the swap (under Exolix\'s minimum, say), OFFER reviews an offer at the market rate, PARTS lets takers fill part of it (down to a floor that keeps each claim worth its fee), and PUBLISH signs it to the market engine\'s offer book; publishing moves no coin.',
     source: SWAP,
   },
   {
     id: 'swapOffers',
     label: 'Swap offers',
     caption:
-      'swapOffersMachine — browse the market engine\'s swap offer book (BRC-CLOUD hosts, never trusted: every offer is verified in the wallet). CANCEL withdraws this wallet\'s own offer with a signed withdrawal. REVIEW shows what taking someone else\'s offer locks, returns and costs; only CONFIRM sends the take, after a balance check. The take itself moves no coin.',
+      'swapOffersMachine — browse the market engine\'s swap offer book (BRC-CLOUD hosts, never trusted: every offer is verified in the wallet). CANCEL withdraws this wallet\'s own offer with a signed withdrawal. REVIEW shows what taking someone else\'s offer locks, returns and costs, for all that is left of it (the maker\'s signed fills); AMOUNT takes a part of an offer that allows it. Only CONFIRM sends the take, after a balance check; the wallet then locks at once, and the maker need not be online.',
     source: SWAP_OFFERS,
   },
   {

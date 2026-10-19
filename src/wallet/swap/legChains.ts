@@ -123,10 +123,23 @@ export function bsvCosignValid(coin: HtlcCoin, to: Bytes, value: bigint, locktim
   return htlcSignatureValid('bsv', bsvRefundTx(coin, to, value, locktime), 0, coin.script, coin.amount, cosignPub, fromHex(cosig))
 }
 
-/** A refund pays its lock less this fee, fixed when it is pre-signed. */
+/** A v1 refund pays its lock less this fee, fixed when it is pre-signed. */
 export function bsvRefundValue(amount: bigint): bigint {
   // One input (two signatures, script branch) and one P2PKH output: well under 400 bytes.
   return amount - BigInt(Math.ceil(400 * BSV_FEE_PER_BYTE))
+}
+
+/** The timestamp of BSV block `height`, from the same header source the lock's merkle path was checked against. */
+async function bsvBlockTime(height: number): Promise<number | undefined> {
+  try {
+    const { requireActiveWallet } = await import('./settlePorts')
+    const services = requireActiveWallet().services as { getHeaderForHeight?: (height: number) => Promise<number[]> }
+    const header = await services.getHeaderForHeight?.(height)
+    if (!header || header.length !== 80) return undefined
+    return (header[68]! | (header[69]! << 8) | (header[70]! << 16)) + header[71]! * 0x1000000
+  } catch {
+    return undefined
+  }
 }
 
 export const bsvLegChain: SwapLegChain = {
@@ -144,7 +157,10 @@ export const bsvLegChain: SwapLegChain = {
     if (BigInt(out.satoshis ?? 0) !== lock.amount) return { kind: 'refused', reason: 'under-backed', detail: `the lock holds ${out.satoshis}, not ${lock.amount}` }
     const { verifyBumpFinality } = await import('../spvFinality')
     const final = await verifyBumpFinality(outpoint.txid)
-    if (final.ok) return { kind: 'buried' }
+    if (final.ok) {
+      const blockTime = await bsvBlockTime(final.height)
+      return blockTime === undefined ? { kind: 'buried' } : { kind: 'buried', blockTime }
+    }
     if (final.reason === 'invalid') return { kind: 'refused', reason: 'merkle', detail: 'the merkle path does not verify' }
     return { kind: 'unconfirmed' }
   },
@@ -215,7 +231,7 @@ export const bsvLegChain: SwapLegChain = {
   },
 }
 
-/** Lock BSV outputs without broadcasting: the payer collects refund co-signatures first. */
+/** Lock BSV outputs without broadcasting: written down before it is broadcast (and, in v1, while the refunds are co-signed). */
 export async function prepareBsvLock(outputs: readonly LegScript[], swapId: string): Promise<{ txid: string; beef: string }> {
   const { requireActiveWallet } = await import('./settlePorts')
   const active = requireActiveWallet()
@@ -235,7 +251,7 @@ export async function prepareBsvLock(outputs: readonly LegScript[], swapId: stri
   return { txid, beef: b64(atomic) }
 }
 
-/** Broadcast a prepared BSV lock once its refunds are co-signed. */
+/** Broadcast a prepared BSV lock (in v1, once its refunds are co-signed). */
 export async function commitBsvLock(txid: string, beef: string): Promise<void> {
   const { registerSignedSend, propagateSignedSend } = await import('../signedSendLifecycle')
   await propagateSignedSend(await registerSignedSend({ txid, atomicBeef: unb64(beef), flow: 'swap' }))

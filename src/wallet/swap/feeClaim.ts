@@ -28,7 +28,8 @@ import { BSV_FEE_PER_BYTE, htlcOutput, htlcScript, readSecret, signHtlcSpend, ty
  */
 
 export type FeeLockReport = {
-  v: 1
+  /** 1: a BSV lock's refund names the payee as co-signer. 2: it checks its own nLockTime, no co-signer. */
+  v: 1 | 2
   chain: SwapAsset
   /** The fee leg's lock transaction. */
   txid: string
@@ -42,7 +43,7 @@ export type FeeLockReport = {
   hash: string
   /** Who locked the leg: the fee output's refund key. */
   payerPub: string
-  /** Who the swap output pays; on BSV also the refund co-signer. */
+  /** Who the swap output pays; on BSV v1 also the refund co-signer. */
   payeePub: string
   /** Unix seconds: the fee output returns to its payer from here. */
   locktime: number
@@ -52,7 +53,7 @@ const CHAINS: readonly SwapAsset[] = ['bsv', 'ltc', 'bch', 'btc', 'doge']
 const HEX64 = /^[0-9a-f]{64}$/
 const PUB = /^0[23][0-9a-f]{64}$/
 const UNITS = /^[1-9]\d{0,17}$/
-/** Lock times far beyond a swap's 36 hours are not a swap's. */
+/** Lock times far beyond a swap's 72 hours are not a swap's. */
 const MAX_LOCK_AHEAD_S = 7 * 24 * 3600
 /** No fee output smaller than this many of its own claim transactions (`fee.ts`). */
 const FEE_FLOOR_CLAIMS = 10n
@@ -62,7 +63,7 @@ export function parseFeeLockReport(raw: unknown, nowS = Math.floor(Date.now() / 
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const chain = r.chain as SwapAsset
-  if (r.v !== 1 || !CHAINS.includes(chain)) return null
+  if ((r.v !== 1 && r.v !== 2) || !CHAINS.includes(chain)) return null
   if (typeof r.txid !== 'string' || !HEX64.test(r.txid) || typeof r.hash !== 'string' || !HEX64.test(r.hash)) return null
   if (!Number.isSafeInteger(r.vout) || !Number.isSafeInteger(r.mainVout) || (r.vout as number) < 0 || (r.mainVout as number) < 0 || r.vout === r.mainVout) return null
   if ((r.vout as number) > 1000 || (r.mainVout as number) > 1000) return null
@@ -70,7 +71,7 @@ export function parseFeeLockReport(raw: unknown, nowS = Math.floor(Date.now() / 
   if (typeof r.payerPub !== 'string' || !PUB.test(r.payerPub) || typeof r.payeePub !== 'string' || !PUB.test(r.payeePub) || r.payerPub === r.payeePub) return null
   if (!Number.isSafeInteger(r.locktime) || (r.locktime as number) < 500_000_000 || (r.locktime as number) > nowS + MAX_LOCK_AHEAD_S) return null
   return {
-    v: 1,
+    v: r.v,
     chain,
     txid: r.txid,
     vout: r.vout as number,
@@ -93,7 +94,7 @@ export function feeLockScripts(r: FeeLockReport, feePub = HANDCASH_SWAP_FEE_PUB)
     hash: fromHex(r.hash),
     refundPub: fromHex(r.payerPub),
     locktime: r.locktime,
-    ...(r.chain === 'bsv' ? { cosignPub: fromHex(r.payeePub) } : {}),
+    ...(r.chain === 'bsv' && r.v === 1 ? { cosignPub: fromHex(r.payeePub) } : {}),
   }
   const build = (claimPub: string): FeeLockOutput => {
     const script = htlcScript(r.chain, { ...base, claimPub: fromHex(claimPub) })

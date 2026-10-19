@@ -66,7 +66,13 @@ export type SettleRecord = {
   updatedAt: number
 }
 
-export type PublishedOffer = { offer: SignedSwapOffer; state: 'open' | 'taken' | 'cancelled'; swapId?: string }
+/**
+ * One of the account's own offers. `taken`: no take fits what is left (or a
+ * whole offer was taken). `cancelledAt`: withdrawn then; a v2 take made
+ * before it is still honoured. `filledReported`: what the book was last told
+ * is taken on.
+ */
+export type PublishedOffer = { offer: SignedSwapOffer; state: 'open' | 'taken' | 'cancelled'; swapId?: string; cancelledAt?: number; filledReported?: string }
 
 export type SettleState = { swaps: Record<string, SettleRecord>; offers: Record<string, PublishedOffer> }
 
@@ -121,6 +127,7 @@ export function markOfferCancelled(nonce: string): void {
   const held = state.offers[nonce]
   if (!held) return
   held.state = 'cancelled'
+  held.cancelledAt ??= Date.now()
   writeSettleState(state)
 }
 

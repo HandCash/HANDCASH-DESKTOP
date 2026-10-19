@@ -17,15 +17,19 @@ import {
   type LegSpend,
 } from './legChains'
 import {
+  agreedTerms,
   checkTake,
+  judgeTakeRoom,
   legOutputs,
   nextSettleStep,
   proposeTerms,
   secretHash,
+  settleKeyOf,
   swapLegs,
   swapSecret,
   swapSettleKey,
   swapSettlePub,
+  takerLockTooLate,
   takerTotals,
   type AgreedTerms,
   type LegScript,
@@ -52,7 +56,9 @@ import type { ActiveWallet } from '../session'
  *
  * The maker side answers takes of this account's own published offers
  * without asking: the offer is the maker's standing, signed instruction, and
- * nothing is locked until the taker's lock is buried.
+ * nothing is locked until the taker's lock is buried. Takes that came in
+ * while this wallet was away are judged as of when they were made and taken
+ * on in that order until the offer is used up; the rest are declined.
  */
 
 const BOX_POLL_MS = 20_000
@@ -83,7 +89,8 @@ const warn = (swapId: string, text: string) => console.warn(`[swap-settle] ${swa
 const rootOf = (active: ActiveWallet) => PrivateKey.fromHex(active.rootKeyHex)
 const ownLegId = (r: SettleRecord): SwapLegId => r.role
 const peerLegId = (r: SettleRecord): SwapLegId => (r.role === 'taker' ? 'maker' : 'taker')
-const agreedOf = (r: SettleRecord): AgreedTerms | null => (r.makerPub ? { ...r.terms, makerPub: r.makerPub } : null)
+const agreedOf = (r: SettleRecord): AgreedTerms | null => agreedTerms(r.terms, r.makerPub)
+const keyOf = (active: ActiveWallet, r: SettleRecord) => settleKeyOf(rootOf(active), r.terms, r.role)
 const recipeTerms = (r: SettleRecord) => JSON.stringify(agreedOf(r))
 
 /** The swap's chart, restored to the phase its record holds; a step runs only if the chart takes its event. */
@@ -123,7 +130,12 @@ const eventOf = (step: Exclude<SettleStep, { kind: 'wait' }>): SwapSettleEvent =
 
 // ── Taking an offer ───────────────────────────────────────────────────────
 
-/** Propose the terms of taking `offer` for `pay`, record them and send the take. Nothing is locked until the maker accepts. */
+/**
+ * Propose the terms of taking `offer` for `pay`, record them and send the
+ * take, then lock at once: the maker need not be online, and judges the take
+ * when it next is. If it declines (the offer was used up first), the lock
+ * returns at T1.
+ */
 export async function takeSwapOffer(offer: SignedSwapOffer, pay: bigint): Promise<SettleRecord> {
   const active = requireActiveWallet()
   const proposed = proposeTerms(offer, pay, { identityKey: active.identityKey.toLowerCase(), root: rootOf(active) }, { now: Date.now() })
@@ -131,7 +143,7 @@ export async function takeSwapOffer(offer: SignedSwapOffer, pay: bigint): Promis
   const terms = proposed.terms
   if (await canLock('taker', terms)) throw new Error(`Not enough ${SWAP_ASSET_INFO[offer.get].ticker} to lock for this swap.`)
   const now = Date.now()
-  const record: SettleRecord = { v: 1, role: 'taker', counterparty: offer.maker, terms, own: {}, peer: {}, waiting: { for: 'accept' }, createdAt: now, updatedAt: now }
+  const record: SettleRecord = { v: 1, role: 'taker', counterparty: offer.maker, terms, own: {}, peer: {}, waiting: { for: 'peer-funding' }, createdAt: now, updatedAt: now }
   putSwap(record)
   try {
     await sendSettle(active, offer.maker, { t: 'take', terms })
@@ -188,10 +200,15 @@ async function canLock(role: SwapRole, terms: SwapTerms): Promise<string | null>
   }
 }
 
-/** A take of one of this account's offers: accepted exactly once while the offer stands, and the listing withdrawn. */
+/**
+ * A take of one of this account's offers, taken on exactly once if it fits:
+ * v1 while the offer stands now; v2 if the offer stood when the take was
+ * made and still has room for it. The listing is withdrawn once no take
+ * fits what is left, and otherwise told how much is gone.
+ */
 async function intakeTake(active: ActiveWallet, sender: string, raw: SwapTerms): Promise<void> {
   const self = active.identityKey.toLowerCase()
-  const checked = checkTake(raw, self, Date.now())
+  const checked = checkTake(raw, self, Date.now(), rootOf(active))
   const swapId = typeof raw?.swapId === 'string' ? raw.swapId : ''
   const decline = (reason: string) => (swapId ? sendSettle(active, sender, { t: 'decline', swapId, reason }).catch(() => {}) : Promise.resolve())
   if (!checked.ok) {
@@ -203,9 +220,10 @@ async function intakeTake(active: ActiveWallet, sender: string, raw: SwapTerms):
   const state = readSettleState()
   if (state.swaps[terms.swapId]) return
   const published = state.offers[terms.offer.nonce]
-  if (!published || published.state !== 'open') {
-    warn(terms.swapId, `take refused (offer ${published?.state ?? 'unknown'})`)
-    return decline(published ? `offer-${published.state}` : 'offer-unknown')
+  const room = judgeTakeRoom(published, Object.values(state.swaps), terms)
+  if (!room.ok) {
+    warn(terms.swapId, `take refused (${room.reason})`)
+    return decline(room.reason)
   }
   const short = await canLock('maker', terms)
   if (short) {
@@ -213,12 +231,13 @@ async function intakeTake(active: ActiveWallet, sender: string, raw: SwapTerms):
     return decline(short)
   }
   const now = Date.now()
+  const makerPub = terms.v === 2 ? terms.makerPub! : swapSettlePub(rootOf(active), terms.swapId)
   const record: SettleRecord = {
     v: 1,
     role: 'maker',
     counterparty: sender,
     terms,
-    makerPub: swapSettlePub(rootOf(active), terms.swapId),
+    makerPub,
     accepted: true,
     own: {},
     peer: {},
@@ -227,19 +246,35 @@ async function intakeTake(active: ActiveWallet, sender: string, raw: SwapTerms):
     updatedAt: now,
   }
   state.swaps[terms.swapId] = record
-  state.offers[terms.offer.nonce] = { ...published, state: 'taken', swapId: terms.swapId }
+  const { left, usedUp } = room
+  if (usedUp && published!.state === 'open') state.offers[terms.offer.nonce] = { ...published!, state: 'taken', swapId: terms.swapId }
   writeSettleState(state)
-  await sendSettle(active, sender, { t: 'accept', swapId: terms.swapId, makerPub: record.makerPub! })
-  log(terms.swapId, 'take accepted')
-  void import('./offerBook')
-    .then(({ cancelSwapOffer }) => cancelSwapOffer(terms.offer.nonce, { rootKeyHex: active.rootKeyHex }))
-    .catch((err: unknown) => warn(terms.swapId, `listing withdraw deferred — ${err instanceof Error ? err.message : String(err)}`))
+  await sendSettle(active, sender, { t: 'accept', swapId: terms.swapId, makerPub })
+  log(terms.swapId, `take accepted${left > 0n && !usedUp ? ` (${left} of the offer left)` : ''}`)
+  void updateListing(active, published!.offer, usedUp, BigInt(published!.offer.maxGet) - left).catch((err: unknown) =>
+    warn(terms.swapId, `listing update deferred — ${err instanceof Error ? err.message : String(err)}`),
+  )
+}
+
+/** Withdraw a used-up offer from the book, or tell it how much of a part-filled one is gone. */
+async function updateListing(active: ActiveWallet, offer: SignedSwapOffer, usedUp: boolean, filled: bigint): Promise<void> {
+  const { cancelSwapOffer, reportSwapOfferFilled } = await import('./offerBook')
+  if (usedUp) return cancelSwapOffer(offer.nonce, { rootKeyHex: active.rootKeyHex })
+  const reported = readSettleState().offers[offer.nonce]?.filledReported
+  if (reported && BigInt(reported) >= filled) return
+  await reportSwapOfferFilled(offer.nonce, filled, { rootKeyHex: active.rootKeyHex })
+  const state = readSettleState()
+  const held = state.offers[offer.nonce]
+  if (held) {
+    held.filledReported = filled.toString()
+    writeSettleState(state)
+  }
 }
 
 /** The counterparty co-signs this wallet's refunds of a BSV lock it is about to broadcast. */
 async function intakePresign(active: ActiveWallet, r: SettleRecord, m: Extract<SettleMessage, { t: 'presign' }>): Promise<void> {
   const agreed = agreedOf(r)
-  if (!agreed || m.leg !== peerLegId(r)) return
+  if (!agreed || agreed.v !== 1 || m.leg !== peerLegId(r)) return
   const leg = swapLegs(agreed)[m.leg]
   if (leg.chain !== 'bsv') return
   const outs = legOutputs(agreed, m.leg)
@@ -284,13 +319,17 @@ async function intakeMessage(active: ActiveWallet, sender: string, m: SettleMess
   if (!r || r.counterparty !== sender) return
   switch (m.t) {
     case 'accept':
-      if (r.role !== 'taker' || r.makerPub || r.declined) return
-      updateSwap(m.swapId, (rec) => ({ ...rec, accepted: true, makerPub: m.makerPub }))
+      if (r.role !== 'taker' || r.accepted || r.declined) return
+      // v2 already holds the maker's key; an accept naming another is ignored.
+      if (r.terms.v === 2 && m.makerPub !== r.terms.makerPub) return
+      updateSwap(m.swapId, (rec) => ({ ...rec, accepted: true, ...(rec.terms.v === 1 ? { makerPub: m.makerPub } : {}) }))
       log(m.swapId, 'maker accepted')
       return
     case 'decline':
     case 'abort':
       if (r.own.funding || r.own.prepared) {
+        // A v2 taker locks before the maker has judged the take; a decline then means its lock only waits out T1.
+        if (r.terms.v === 2 && r.role === 'taker' && !r.declined) updateSwap(m.swapId, (rec) => ({ ...rec, declined: m.reason || m.t }))
         warn(m.swapId, `${m.t} after this wallet locked (${m.reason}); settling by the chain`)
         return
       }
@@ -318,7 +357,15 @@ async function serveBox(active: ActiveWallet): Promise<void> {
   const inbound = await readSettleBox(active)
   if (!inbound) return
   const acks: string[] = []
-  for (const { messageId, sender, message } of inbound) {
+  // Takes first, in the order they were made (they share what is left of an offer), so every later message finds its swap.
+  const takenAt = (m: (typeof inbound)[number]['message']) => (m?.t === 'take' && Number.isSafeInteger(m.terms?.takenAt) ? m.terms.takenAt : null)
+  const ordered = [...inbound].sort((a, b) => {
+    const ta = takenAt(a.message)
+    const tb = takenAt(b.message)
+    if (ta === null || tb === null) return ta === null ? (tb === null ? 0 : 1) : -1
+    return ta - tb
+  })
+  for (const { messageId, sender, message } of ordered) {
     try {
       if (message) {
         await intakeMessage(active, sender, message)
@@ -364,6 +411,9 @@ async function gather(r: SettleRecord): Promise<Gathered> {
     const chain = await legChainOf(peer.chain)
     const outpoint = { txid: r.peer.funding.txid, vout: r.peer.funding.main }
     if (!r.peer.buried) peerSighting = await chain.proveLock(outpoint, outs.main, r.peer.funding.beef)
+    if (peerSighting?.kind === 'buried' && r.role === 'maker' && !r.own.funding && takerLockTooLate(r.terms, peerSighting.blockTime)) {
+      peerSighting = { kind: 'refused', reason: 'late', detail: `the lock landed at ${peerSighting.blockTime}, long after the take` }
+    }
     // A maker holding the secret races the taker's refund: see whether it came first.
     if (r.role === 'maker' && r.secret && !r.peer.claimed && nowS >= peer.locktime) peerSpend = await chain.spendOf(outpoint, outs.main, hash)
     if (outs.fee && r.peer.funding.fee !== undefined && !r.peer.buried) {
@@ -433,7 +483,7 @@ function feeLockReportOf(r: SettleRecord): FeeLockReport | null {
   if (!funding || funding.fee === undefined) return null
   const leg = swapLegs(agreed)[legId]
   const [payerPub, payeePub] = leg.payer === 'taker' ? [agreed.takerPub, agreed.makerPub] : [agreed.makerPub, agreed.takerPub]
-  return { v: 1, chain: leg.chain, txid: funding.txid, vout: funding.fee, mainVout: funding.main, amount: leg.fee.toString(), hash: r.terms.hash, payerPub, payeePub, locktime: leg.locktime }
+  return { v: agreed.v, chain: leg.chain, txid: funding.txid, vout: funding.fee, mainVout: funding.main, amount: leg.fee.toString(), hash: r.terms.hash, payerPub, payeePub, locktime: leg.locktime }
 }
 
 async function reportFee(r: SettleRecord): Promise<void> {
@@ -491,7 +541,14 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
   let funding: { txid: string; main: number; fee?: number }
   let beef: string | undefined
   if (leg.chain === 'bsv') {
-    const prepared = r.own.prepared!
+    let prepared = r.own.prepared
+    if (!prepared) {
+      // v1 prepares while the refunds are co-signed; v2 prepares here and writes it down before it broadcasts.
+      if (agreed.v === 1) throw new Error('a v1 BSV lock is broadcast only once its refunds are co-signed')
+      prepared = await prepareBsvLock([outs.main, ...(outs.fee ? [outs.fee] : [])], r.terms.swapId)
+      const made = prepared
+      updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, prepared: made } }))
+    }
     funding = { txid: prepared.txid, main: 0, ...(outs.fee ? { fee: 1 } : {}) }
     journalOwnLocks(active, r, funding, outs)
     updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, funding, fundingStartedAt: Date.now() } }))
@@ -548,7 +605,7 @@ async function claim(active: ActiveWallet, r: SettleRecord): Promise<void> {
   journalSwapLock(active, outpoint, outs.main.amount, { chain: leg.chain, swapId: r.terms.swapId, role: r.role, side: 'peer', terms: recipeTerms(r) })
   const spend = await chain.spendLock({
     coins: [{ txid: funding.txid, vout: funding.main, amount: outs.main.amount, script: outs.main.script }],
-    key: swapSettleKey(rootOf(active), r.terms.swapId),
+    key: keyOf(active, r),
     path: { kind: 'claim', preimage: secret },
     ...(funding.beef ? { sourceBeef: funding.beef } : {}),
     label: 'claim',
@@ -573,14 +630,15 @@ async function refund(active: ActiveWallet, r: SettleRecord, which: 'all' | 'fee
   const outs = legOutputs(agreed, legId)
   const funding = r.own.funding!
   const chain = await legChainOf(leg.chain)
-  const key = swapSettleKey(rootOf(active), r.terms.swapId)
+  const key = keyOf(active, r)
   const parts: Array<{ lock: LegScript; vout: number; idx: number }> = []
   if (which === 'all' && !r.own.refunded) parts.push({ lock: outs.main, vout: funding.main, idx: 0 })
   if (outs.fee && funding.fee !== undefined && !r.own.feeSettled) parts.push({ lock: outs.fee, vout: funding.fee, idx: 1 })
   if (parts.length === 0) return
   const coinOf = (p: (typeof parts)[number]): HtlcCoin => ({ txid: funding.txid, vout: p.vout, amount: p.lock.amount, script: p.lock.script })
+  // v1 BSV refunds are the pre-signed transactions, one per output; every other refund is built now, one for all.
   const spends =
-    leg.chain === 'bsv'
+    leg.chain === 'bsv' && agreed.v === 1
       ? await Promise.all(
           parts.map((p) => {
             const refund = r.own.refunds![p.idx]!
@@ -594,7 +652,15 @@ async function refund(active: ActiveWallet, r: SettleRecord, which: 'all' | 'fee
             })
           }),
         )
-      : [await chain.spendLock({ coins: parts.map(coinOf), key, path: { kind: 'refund', locktime: leg.locktime }, label: which === 'fee' ? 'fee refund' : 'refund' })]
+      : [
+          await chain.spendLock({
+            coins: parts.map(coinOf),
+            key,
+            path: { kind: 'refund', locktime: leg.locktime },
+            ...(r.own.prepared ? { sourceBeef: r.own.prepared.beef } : {}),
+            label: which === 'fee' ? 'fee refund' : 'refund',
+          }),
+        ]
   updateSwap(r.terms.swapId, (x) => {
     if (which === 'all') x.own.refund = { txid: spends[0]!.txid, hex: spends[0]!.hex }
     else x.own.feeRefund = { txid: spends[0]!.txid, hex: spends[0]!.hex }
@@ -759,7 +825,9 @@ export async function replaySwapCustody(active: ActiveWallet): Promise<number> {
     if (terms.swapId !== r.swapId) continue
     const [txid, vout] = op.split('.') as [string, string]
     const counterparty = r.role === 'taker' ? terms.offer.maker : terms.taker
-    const { makerPub, ...base } = terms
+    // v1 kept the maker's key beside the terms; v2 terms carry it.
+    const { makerPub, ...v1Base } = terms
+    const base: SwapTerms = terms.v === 2 ? terms : v1Base
     const record: SettleRecord = state.swaps[r.swapId] ?? {
       v: 1,
       role: r.role,

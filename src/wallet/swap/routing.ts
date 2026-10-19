@@ -63,7 +63,7 @@ export function routeSwap(
   req: SwapRequest,
   offers: readonly unknown[],
   exolix: ExolixQuote | null,
-  opts: { now: number; self?: string; claimCost?: Record<SwapAsset, bigint> },
+  opts: { now: number; self?: string; claimCost?: Record<SwapAsset, bigint>; filled?: ReadonlyMap<string, bigint> },
 ): SwapRouting {
   const claimCost = opts.claimCost ?? DIRECT_CLAIM_COST
   const skipped: SkippedOffer[] = []
@@ -90,8 +90,10 @@ export function routeSwap(
       skipped.push({ nonce, reason: 'own-offer' })
       continue
     }
-    const lock = lockWithin(offer, req.pay, (pay) => fillOffer(offer, pay))
-    const gross = fillOffer(offer, lock)
+    // What the book says is already taken of a part-fillable offer: advice that keeps a taker off a part that is gone.
+    const filled = opts.filled?.get(offer.nonce) ?? 0n
+    const lock = lockWithin(offer, req.pay, (pay) => fillOffer(offer, pay, filled))
+    const gross = fillOffer(offer, lock, filled)
     const totals = gross === null ? null : takerTotals({ pay: lock.toString(), receive: gross.toString(), fee: swapFee(offer, lock, gross) })
     if (!totals || totals.receives <= claimCost[req.to]) {
       skipped.push({ nonce, reason: 'out-of-bounds' })

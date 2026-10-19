@@ -3,6 +3,7 @@ import { useMachine } from '@xstate/react'
 import { fromPromise } from 'xstate'
 import { stateToAttr } from '@aeon-ui/core'
 import { Button, ListRow, StatusBanner } from '@aeon-ui/react'
+import { Switch } from '@aeon-ui/ui'
 import { swapMachine } from '../machines/swapMachine'
 import { useDirectSwaps, useSwapRecords, useHeldCoins } from '../features/swap'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
@@ -15,7 +16,7 @@ import { decimalToUnits, SWAP_ASSET_INFO, SWAP_ASSETS, unitsToDecimal, type Swap
 import { EXOLIX_FINAL, refreshSwapRecords, type SwapRecord } from '../wallet/swap/exolixSwap'
 import { draftOfferAtMarket, type SwapOfferDraft } from '../wallet/swap/offerBook'
 import { feeLegOf } from '../wallet/swap/fee'
-import { MAKER_LOCK_S, TAKER_LOCK_S } from '../wallet/swap/settle'
+import { MAKER_FUND_WITHIN_S, MAKER_LOCK_S, TAKER_LOCK_S } from '../wallet/swap/settle'
 import { publishOwnSwapOffer } from '../wallet/swap/settleRunner'
 import { fillOffer } from '../wallet/swap/offer'
 import { listSwapOffers, quoteSwap, type SwapQuoteRefusal } from '../wallet/swap/quote'
@@ -381,6 +382,10 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
       {view === 'offer' && draft ? (
         <OfferStep
           draft={draft}
+          onParts={(allow) => {
+            playWalletSound('soft')
+            send({ type: 'PARTS', allow })
+          }}
           publishing={snap.matches('publishing')}
           failure={failure?.message ?? null}
           onBack={() => send({ type: 'BACK' })}
@@ -492,7 +497,7 @@ function ReviewStep({
             </dd>
             <dt>Timing</dt>
             <dd>
-              The maker locks for {hours(MAKER_LOCK_S)}, you for {hours(TAKER_LOCK_S)}. Each side waits for the other's lock to confirm on its chain; network fees are paid on top.
+              You lock now. The maker need not be online: it has up to {hours(MAKER_FUND_WITHIN_S)} to lock its side, and this wallet claims once that lock confirms. Its lock stands for {hours(MAKER_LOCK_S)}, yours for {Math.round(TAKER_LOCK_S / 86_400)} days; network fees are paid on top.
             </dd>
           </>
         ) : null}
@@ -509,7 +514,7 @@ function ReviewStep({
           <StatusBanner.Copy>
             <StatusBanner.Title>Both sides complete, or both are refunded</StatusBanner.Title>
             <StatusBanner.Body>
-              Coins are locked on their own chains, never held by anyone. If the maker does not lock, or the swap stalls, your coins come back to this wallet after your lock time.
+              Coins are locked on their own chains, never held by anyone. If the maker declines (someone filled the offer first) or never locks, your coins come back to this wallet after {Math.round(TAKER_LOCK_S / 86_400)} days.
             </StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
@@ -528,12 +533,14 @@ function ReviewStep({
 
 function OfferStep({
   draft,
+  onParts,
   publishing,
   failure,
   onBack,
   onPublish,
 }: {
   draft: SwapOfferDraft
+  onParts: (allow: boolean) => void
   publishing: boolean
   failure: string | null
   onBack: () => void
@@ -550,8 +557,23 @@ function OfferStep({
           {SWAP_ASSET_INFO[draft.get].ticker}, today's market rate
         </dd>
         <dt>Listed</dt>
-        <dd>For 24 hours, whole. Cancel any time from Offers.</dd>
+        <dd>
+          For 24 hours,{' '}
+          {draft.minWant < draft.want ? `in parts of at least ${fmt(draft.get, draft.minWant)}` : 'whole'}. Cancel any time from Offers. A take
+          made while you are away is honoured when you next open the wallet, within a day.
+        </dd>
       </dl>
+      {draft.partWant < draft.want ? (
+        <div data-aeon-part="parts" data-aeon-state={draft.minWant < draft.want ? 'on' : 'off'}>
+          <span data-aeon-part="parts-label">Let takers fill part of it</span>
+          <Switch.Root
+            checked={draft.minWant < draft.want}
+            aria-label="Let takers fill part of it"
+            disabled={publishing}
+            onCheckedChange={onParts}
+          />
+        </div>
+      ) : null}
       <StatusBanner.Root tone="info" status="offer">
         <StatusBanner.Copy>
           <StatusBanner.Title>Publishing moves no coins</StatusBanner.Title>

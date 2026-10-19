@@ -1,7 +1,8 @@
 import { PrivateKey, Utils } from '@bsv/sdk'
 import { DEFAULT_BRC_CLOUD_BASE_URL, PUBLIC_BRC_CLOUD_ORIGIN } from '../walletConfig'
 import { SWAP_ASSET_INFO, type SwapAsset } from './assets'
-import { MAX_OFFER_TTL_MS, signSwapOffer, signSwapOfferCancel, verifySwapOffer, type SignedSwapOffer, type SwapOffer } from './offer'
+import { DIRECT_CLAIM_COST } from './fee'
+import { MAX_OFFER_TTL_MS, signSwapOffer, signSwapOfferCancel, signSwapOfferFilled, verifySwapOffer, type SignedSwapOffer, type SwapOffer } from './offer'
 
 /**
  * The offer book: signed swap offers hosted by the market engine
@@ -22,18 +23,26 @@ export type SwapOfferDraft = {
   pay: bigint
   /** Units of `get` asked for the whole offer. */
   want: bigint
+  /** The smallest take, in units of `get`: `want` for an offer taken whole, `partWant` for one filled in parts. */
+  minWant: bigint
+  /** The smallest part this offer could be filled in; `want` when it is too small to split. */
+  partWant: bigint
   price: { give: string; get: string }
 }
+
+/** A part-fillable offer's smallest take is a tenth of it, and never so small that its claim eats a tenth of what it pays. */
+const PART_SHARE = 10n
 
 export type DraftRefusal = 'same-coin' | 'no-amount' | 'no-price' | 'over-balance'
 
 /**
- * An offer to give `pay` of `from` for `to` at the market rate, whole: a taker
- * takes all of it or none, so a maker who could not reach Exolix's minimum is
- * not split into smaller pieces it cannot settle either.
+ * An offer to give `pay` of `from` for `to` at the market rate. Whole by
+ * default: a taker takes all of it or none, so a maker who could not reach
+ * Exolix's minimum is not split into smaller pieces it cannot settle either.
+ * With `partial`, takers may each fill a part of it, down to a tenth.
  */
 export function draftOfferAtMarket(
-  args: { from: SwapAsset; to: SwapAsset; pay: bigint; held: bigint | null },
+  args: { from: SwapAsset; to: SwapAsset; pay: bigint; held: bigint | null; partial?: boolean },
   usd: (asset: SwapAsset) => number | null,
 ): { ok: true; draft: SwapOfferDraft } | { ok: false; reason: DraftRefusal } {
   const { from, to, pay, held } = args
@@ -49,7 +58,10 @@ export function draftOfferAtMarket(
   const priceGive = BigInt(Math.floor(perUnit))
   const want = (pay * PRICE_SCALE) / priceGive
   if (want <= 0n) return { ok: false, reason: 'no-amount' }
-  return { ok: true, draft: { give: from, get: to, pay, want, price: { give: priceGive.toString(), get: PRICE_SCALE.toString() } } }
+  const smallestUseful = (PART_SHARE * DIRECT_CLAIM_COST[from] * PRICE_SCALE + priceGive - 1n) / priceGive
+  const part = want / PART_SHARE > smallestUseful ? want / PART_SHARE : smallestUseful
+  const partWant = part < want ? part : want
+  return { ok: true, draft: { give: from, get: to, pay, want, minWant: args.partial ? partWant : want, partWant, price: { give: priceGive.toString(), get: PRICE_SCALE.toString() } } }
 }
 
 export function swapOfferBookUrl(path = ''): string {
@@ -87,7 +99,7 @@ export async function publishSwapOffer(
     give: draft.give,
     get: draft.get,
     price: draft.price,
-    minGet: draft.want.toString(),
+    minGet: draft.minWant.toString(),
     maxGet: draft.want.toString(),
     createdAt,
     expiresAt: createdAt + MAX_OFFER_TTL_MS,
@@ -106,16 +118,27 @@ export async function publishSwapOffer(
   return signed
 }
 
+export type OfferBookPage = {
+  offers: SignedSwapOffer[]
+  /** What each maker reports taken on of its part-fillable offers, by nonce: advice, signed by the maker. */
+  filled: ReadonlyMap<string, bigint>
+}
+
 /** Every standing offer the book holds, each verified here; anything that fails is dropped and counted. */
-export async function browseSwapOffers(
+export async function browseSwapOffers(filter: { give?: SwapAsset; get?: SwapAsset; maker?: string } = {}, deps: OfferBookDeps = {}): Promise<SignedSwapOffer[]> {
+  return (await browseSwapOfferBook(filter, deps)).offers
+}
+
+/** The standing offers and what the book says is filled of each. */
+export async function browseSwapOfferBook(
   filter: { give?: SwapAsset; get?: SwapAsset; maker?: string } = {},
   deps: OfferBookDeps = {},
-): Promise<SignedSwapOffer[]> {
+): Promise<OfferBookPage> {
   const query = new URLSearchParams({ limit: '100' })
   for (const [k, v] of Object.entries(filter)) if (v) query.set(k, v)
   const res = await (deps.fetch ?? fetch)(swapOfferBookUrl(`?${query}`), { headers: { Accept: 'application/json' }, cache: 'no-store', signal: timeoutSignal() })
   if (!res.ok) throw new Error(`offer book unavailable: ${await failure(res)}`)
-  const body = (await res.json().catch(() => null)) as { offers?: unknown } | null
+  const body = (await res.json().catch(() => null)) as { offers?: unknown; filled?: unknown } | null
   const now = (deps.now ?? Date.now)()
   const offers: SignedSwapOffer[] = []
   let dropped = 0
@@ -125,7 +148,25 @@ export async function browseSwapOffers(
     else dropped++
   }
   if (dropped) console.warn(`[swap] dropped ${dropped} offers that failed verification`)
-  return offers.sort((a, b) => b.createdAt - a.createdAt)
+  const filled = new Map<string, bigint>()
+  const reported = body?.filled && typeof body.filled === 'object' ? (body.filled as Record<string, unknown>) : {}
+  for (const offer of offers) {
+    const units = reported[offer.nonce]
+    if (typeof units === 'string' && /^[1-9]\d{0,17}$/.test(units)) filled.set(offer.nonce, BigInt(units))
+  }
+  return { offers: offers.sort((a, b) => b.createdAt - a.createdAt), filled }
+}
+
+/** Tell the book how much of this identity's offer `nonce` is taken on. */
+export async function reportSwapOfferFilled(nonce: string, filled: bigint, maker: { rootKeyHex: string }, deps: OfferBookDeps = {}): Promise<void> {
+  const sig = signSwapOfferFilled(nonce, filled, PrivateKey.fromHex(maker.rootKeyHex))
+  const res = await (deps.fetch ?? fetch)(swapOfferBookUrl(`/${nonce}/filled`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filled: filled.toString(), sig }),
+    signal: timeoutSignal(),
+  })
+  if (!res.ok) throw new Error(`offer book refused the fill report: ${await failure(res)}`)
 }
 
 /** Withdraw this identity's offer `nonce` from the book. */
