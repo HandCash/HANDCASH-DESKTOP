@@ -4,7 +4,7 @@ import { SWAP_ASSET_INFO, unitsToDecimal } from './assets'
 import { followedSwapRecords, refreshSwapRecords } from './exolixSwap'
 import { nextSettleStep, offerRemaining, proposeTerms, takeFits, takerTotals, type SettleStep } from './settle'
 import { requireActiveWallet, sendSettle } from './settlePorts'
-import { forgetLockSearches, findPeerLock, gather, recordFacts, reportFee } from './settleFacts'
+import { forgetFactsSeen, findPeerLock, gather, recordFacts, reportFee } from './settleFacts'
 import { serveBox } from './settleIntake'
 import { replaySwapCustody } from './settleReplay'
 import { canLock, log, rootOf, warn } from './settleShared'
@@ -300,6 +300,6 @@ export function resetSwapSettleForTest(): void {
   replayedFor = null
   checkAt.clear()
   waitLogged.clear()
-  forgetLockSearches()
+  forgetFactsSeen()
   forgetShortHeals()
 }

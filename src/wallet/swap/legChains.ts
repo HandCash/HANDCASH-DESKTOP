@@ -226,7 +226,8 @@ export const bsvLegChain: SwapLegChain = {
       return blockTime === undefined ? { kind: 'buried' } : { kind: 'buried', blockTime }
     }
     if (final.reason === 'invalid') return { kind: 'refused', reason: 'merkle', detail: 'the merkle path does not verify' }
-    return { kind: 'unconfirmed' }
+    if (final.reason === 'no_proof') return { kind: 'unconfirmed' }
+    return { kind: 'unchecked', detail: final.detail ?? final.reason }
   },
   async spendOf(outpoint, _lock, hash) {
     try {

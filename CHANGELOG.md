@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.619] - 2026-10-19
+
+### Fixed
+
+- A maker never locked its side of a swap whose taker paid in BSV: it never saw the taker's BSV lock as mined, however many blocks deep it was. The merkle-proof check (`verifyBumpFinality`) read a `chainTracker` property the wallet's services do not have, and read the block height off the services' result instead of the merkle path inside it, so it always answered "unavailable". It now takes the path from the result and the chain tracker from `getChainTracker()`, and is tested against a real merkle path. Swaps waiting on such a lock carry on by themselves once the maker runs this version. Dual-layer sends that wait on the same check are marked mined again too.
+- A BSV lock whose proof cannot be checked now says why (`unchecked: …`) instead of passing as "not in a block yet", and each swap logs its counterparty lock's standing once whenever it changes (`[swap-settle] … counterparty lock …`).
+
 ## [1.3.618] - 2026-10-19
 
 ### Changed

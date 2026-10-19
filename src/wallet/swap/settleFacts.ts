@@ -14,8 +14,27 @@ import type { ActiveWallet } from '../session'
 const lockSearchedAt = new Map<string, number>()
 const LOCK_SEARCH_MS = 60_000
 
-export function forgetLockSearches(): void {
+/** What each swap's counterparty lock was last logged as, so every upload says why a swap waits on it. */
+const sightingLogged = new Map<string, string>()
+
+export function forgetFactsSeen(): void {
   lockSearchedAt.clear()
+  sightingLogged.clear()
+}
+
+const sightingText = (s: LockSighting): string | null => {
+  switch (s.kind) {
+    case 'unconfirmed':
+      return 'counterparty lock not in a block yet'
+    case 'confirming':
+      return `counterparty lock ${s.confirmations}/${s.needed} confirmations`
+    case 'unchecked':
+      return `counterparty lock unchecked: ${s.detail}`
+    case 'gone':
+      return 'counterparty lock gone from its chain'
+    default:
+      return null
+  }
 }
 
 type Gathered = {
@@ -140,6 +159,11 @@ export function recordFacts(r: SettleRecord, g: Gathered): SettleRecord {
         delete rec.peer.confirmations
       }
       if (s?.kind === 'confirming') rec.peer.confirmations = { have: s.confirmations, need: s.needed }
+      const said = s ? sightingText(s) : null
+      if (said && sightingLogged.get(r.terms.swapId) !== said) {
+        sightingLogged.set(r.terms.swapId, said)
+        log(r.terms.swapId, said)
+      }
       const o = g.ownSighting
       if (o?.kind === 'buried') {
         if (!rec.own.buried) log(r.terms.swapId, 'own lock buried')
