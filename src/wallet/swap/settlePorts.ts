@@ -36,10 +36,25 @@ export function journalSwapLockSpent(active: ActiveWallet, outpoint: string): vo
   append(active, [{ k: 'spent', op: custodyOp(outpoint) }], `the spend of ${outpoint}`)
 }
 
-/** A BSV lock the landing watch proved will never be mined: a coin it spends went to another transaction. */
-export async function bsvLockProvenUnsent(txid: string): Promise<boolean> {
+/**
+ * A BSV lock that can never be mined: the landing watch retired it, and the
+ * chain holds another transaction spending one of its coins. Only that
+ * positive fact counts; silence, a 404 or an unreachable explorer never does.
+ */
+export async function bsvLockProvenUnsent(active: ActiveWallet, txid: string, beef: string | undefined): Promise<boolean> {
   const { txIsArcadeRejected } = await import('../arcadeSubmitGuard')
-  return txIsArcadeRejected(txid)
+  if (!txIsArcadeRejected(txid)) return false
+  const { inputOutpointsForSignedTx } = await import('../signedTxInputs')
+  const inputs = await inputOutpointsForSignedTx(txid, beef ? Array.from(atob(beef), (c) => c.charCodeAt(0)) : undefined)
+  if (inputs.length === 0) return false
+  const { probeOutpointSpends } = await import('../createActionInputFate')
+  const { txExistsOnChain } = await import('../legacyScan')
+  const probes = await probeOutpointSpends(inputs, txid, active.chain)
+  for (const probe of probes.values()) {
+    if (probe.kind !== 'spent' || probe.spender.toLowerCase() === txid.toLowerCase()) continue
+    if ((await txExistsOnChain(probe.spender, active.chain).catch(() => null)) === true) return true
+  }
+  return false
 }
 
 export async function sendSettle(active: ActiveWallet, to: string, message: SettleMessage): Promise<void> {

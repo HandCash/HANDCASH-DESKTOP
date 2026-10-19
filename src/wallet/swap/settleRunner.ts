@@ -413,7 +413,7 @@ async function serveBox(active: ActiveWallet): Promise<void> {
 
 type Gathered = { facts: SettleFacts; ownSpend: LegSpend | null; feeSpend: LegSpend | null; peerSpend: LegSpend | null; peerSighting: LockSighting | null }
 
-async function gather(r: SettleRecord): Promise<Gathered> {
+async function gather(active: ActiveWallet, r: SettleRecord): Promise<Gathered> {
   const agreed = agreedOf(r)
   const legs = swapLegs(r.terms)
   const own = legs[ownLegId(r)]
@@ -452,7 +452,7 @@ async function gather(r: SettleRecord): Promise<Gathered> {
     }
     if (outs.fee && r.peer.funding.fee === undefined) peerSighting = { kind: 'refused', reason: 'no-fee', detail: 'the lock carries no fee output' }
   }
-  const unsent = own.chain === 'bsv' && !!r.own.funding && !r.own.refunded && (await bsvLockProvenUnsent(r.own.funding.txid))
+  const unsent = own.chain === 'bsv' && !!r.own.funding && !r.own.refunded && (await bsvLockProvenUnsent(active, r.own.funding.txid, r.own.prepared?.beef))
   const secretKnown = r.role === 'taker' || !!r.secret || ownSpend?.kind === 'claimed'
   const facts: SettleFacts = {
     role: r.role,
@@ -726,11 +726,9 @@ async function finish(active: ActiveWallet, r: SettleRecord, step: Extract<Settl
   if (step.outcome === 'expired' && !r.own.funding && !r.declined) {
     await sendSettle(active, r.counterparty, { t: 'abort', swapId: r.terms.swapId, reason: 'expired' }).catch(() => {})
   }
-  if (step.outcome === 'unsent' && r.own.funding) {
-    // The journal kept the lock as recoverable custody; there is none.
-    journalSwapLockSpent(active, `${r.own.funding.txid}.${r.own.funding.main}`)
-    if (r.own.funding.fee !== undefined) journalSwapLockSpent(active, `${r.own.funding.txid}.${r.own.funding.fee}`)
-    if (!r.declined) await sendSettle(active, r.counterparty, { t: 'abort', swapId: r.terms.swapId, reason: 'lock never reached the chain' }).catch(() => {})
+  // The custody journal keeps the lock's recipe: should the verdict ever be wrong, a restore still finds it.
+  if (step.outcome === 'unsent' && !r.declined) {
+    await sendSettle(active, r.counterparty, { t: 'abort', swapId: r.terms.swapId, reason: 'lock never reached the chain' }).catch(() => {})
   }
   updateSwap(r.terms.swapId, (x) => ({ ...x, outcome: step.outcome, waiting: undefined }))
   log(r.terms.swapId, `done: ${step.outcome}`)
@@ -741,7 +739,7 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
   const c = chart(record)
   const savePhase = () => updateSwap(record.terms.swapId, (x) => (x.phase === c.phase() ? null : { ...x, phase: c.phase() }))
   try {
-    const g = await gather(record)
+    const g = await gather(active, record)
     const r = recordFacts(record, g)
     await reportFee(r)
     const step = nextSettleStep(r.terms, g.facts)

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.612] - 2026-10-19
+
+### Fixed
+
+- Swap claims and refunds on Litecoin, Bitcoin and Dogecoin pay twice the hourly fee estimate, never under 4 per vbyte. They paid the slow tier, and a claim still unconfirmed when the other side may refund hands that side both coins.
+- A direct swap ends as "your lock never reached the chain" only when the chain holds another transaction spending one of the lock's coins, not on a broadcast service's word alone. The lock stays in the custody journal either way.
+
 ## [1.3.611] - 2026-10-19
 
 ### Fixed

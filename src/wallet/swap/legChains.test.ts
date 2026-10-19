@@ -2,7 +2,7 @@ import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { fromHex, type Bytes } from '../ltc/litecoin'
 import { htlcScript, sha256, signHtlcSpend, type HtlcCoin } from './htlc'
-import { bsvCosignValid, bsvRefundValue, cosignBsvRefund, judgeSpend } from './legChains'
+import { bsvCosignValid, bsvRefundValue, cosignBsvRefund, htlcSpendFeeRate, judgeSpend } from './legChains'
 
 const claimKey = PrivateKey.fromString('11'.repeat(32), 'hex')
 const refundKey = PrivateKey.fromString('22'.repeat(32), 'hex')
@@ -80,5 +80,14 @@ describe('the lean lock BEEF a funded notice falls back to', () => {
     const back = bsvLockTx(lean, txid)
     expect(back.id('hex')).toBe(txid)
     expect(back.outputs[0]!.satoshis).toBe(100_000)
+  })
+})
+
+describe('the fee a claim or refund pays', () => {
+  it('is twice the hour estimate, never under 4/vB', () => {
+    expect(htlcSpendFeeRate(1)).toBe(4)
+    expect(htlcSpendFeeRate(3)).toBe(6)
+    expect(htlcSpendFeeRate(1000)).toBe(2000)
+    expect(htlcSpendFeeRate(Number.NaN)).toBe(4)
   })
 })

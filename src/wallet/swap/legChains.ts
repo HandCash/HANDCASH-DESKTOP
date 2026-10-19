@@ -71,7 +71,7 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
     },
     async spendLock({ coins, key, path, label }) {
       const to = wallet.receiveScript()
-      const signed = signHtlcSpend(chain, { coins, to: to.script, key, path, feeRate: await wallet.feeRate() })
+      const signed = signHtlcSpend(chain, { coins, to: to.script, key, path, feeRate: htlcSpendFeeRate(await wallet.feeRate()) })
       return {
         txid: signed.txid,
         hex: signed.hex,
@@ -83,6 +83,16 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
       }
     },
   }
+}
+
+/**
+ * A claim or refund races a lock time: a claim still unconfirmed when the
+ * payer may refund hands the counterparty both sides. The hour estimate is
+ * the slow tier (a 1/vB lock took two hours), so these spends pay twice it,
+ * and never under 4/vB.
+ */
+export function htlcSpendFeeRate(estimate: number): number {
+  return Math.max(4, Math.ceil(2 * (Number.isFinite(estimate) ? estimate : 1)))
 }
 
 // ── BSV ─────────────────────────────────────────────────────────────────────
