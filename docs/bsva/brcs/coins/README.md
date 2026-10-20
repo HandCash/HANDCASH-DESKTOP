@@ -15,8 +15,8 @@ is the source, so copy changes from here (absolute BRC links become `../`).
 | [BRC-213](./0213.md) | Native coins: the wallet holds its own key on the coin's chain. Burial at each binding's depth on its own header chain; `getCoinAddress` / `listCoins` / `sendCoins`, to an address or, when the recipient's signed record names the chain, to an identity (§7) | `src/wallet/coins/` (engine), `ltc/`, `bch/`, `btc/`, `doge/` (bindings), `coinMethods.ts`, `walletProtocols.ts`, `coins/coinPaymentBox.ts`, chart `coinMachine` |
 | [BRC-256](./0256.md) | Cross-chain atomic swaps between wallets: offers, HTLC legs, BSV refund pre-sign, optional fee output | `src/wallet/swap/` (`offer.ts`, `htlc.ts`, `settle.ts`, `legChains.ts`, `settleRunner.ts`), chart `swapSettleMachine` |
 | [BRC-214](./0214.md) | Asset profiles: every kind of value the wallet holds and how apps reach it (`listAssetProfiles`) | `src/wallet/assetProfiles.ts` |
-| [BRC-212](./0212.md) | Wrapped coins: BSV tokens backed by a reserve on the coin's chain, burial proof per mint | `src/wallet/hct/backing.ts` |
-| [HCT backed tokens](./hct-backed-tokens.md) | BRC-212 bound to HCT (`bk`, `hctb`); was BRC-255 §15 | `src/wallet/hct/payload.ts`, `validity.ts` |
+| [BRC-212](./0212.md) | Wrapped coins: BSV tokens backed by a reserve on the coin's chain, burial proof per mint | `src/wallet/bnt/backing.ts` |
+| [BNT backed tokens](./bnt-backed-tokens.md) | BRC-212 bound to BNT (`bk`, `bntb`); was BRC-255 §15 | `src/wallet/bnt/payload.ts`, `validity.ts` |
 
 Bindings shipped, each with its own key, address form, signature hash, header
 rules and burial depth:

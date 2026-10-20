@@ -1,6 +1,6 @@
-# HCT backed tokens (binding of BRC-212)
+# BNT backed tokens (binding of BRC-212)
 
-**Status:** held back. This was §15 of draft BRC-255 ([#335](https://github.com/bsv-blockchain/BRCs/pull/335)) until external coins were pulled from submission. Section numbers below (§2, §6, §7) are BRC-255's. The wallet still implements it in `src/wallet/hct/backing.ts`, `payload.ts` (`bk`) and `validity.ts`.
+**Status:** held back. This was §15 of draft BRC-255 ([#335](https://github.com/bsv-blockchain/BRCs/pull/335)) until external coins were pulled from submission. Section numbers below (§2, §6, §7) are BRC-255's. The wallet still implements it in `src/wallet/bnt/backing.ts`, `payload.ts` (`bk`) and `validity.ts`.
 
 ## Backed tokens
 
@@ -9,7 +9,7 @@ A backed token stands for value held on another chain. Each unit is one base uni
 **Backing output.** The deploy transaction, and every transaction that spends the authority and writes more units than it spends (a mint), MUST carry exactly one backing output for the asset:
 
 ```
-OP_FALSE OP_RETURN "hctb" <deposit: txid in internal byte order || vout, 4 bytes little-endian> <asset id | OP_0>
+OP_FALSE OP_RETURN "bntb" <deposit: txid in internal byte order || vout, 4 bytes little-endian> <asset id | OP_0>
 ```
 
 The output carries 0 satoshis. `OP_0` in place of the asset id names the deploy that this transaction writes, whose id is not yet known when it is signed. A transaction that issues no units MUST NOT carry a backing output for the asset. A deploy or mint without one, or with more than one, fails §2 or §4.
