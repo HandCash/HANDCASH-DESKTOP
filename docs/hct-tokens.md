@@ -7,7 +7,7 @@ Spec: BRC-255 draft, in `BRCs-255/tokens/0255.md` until it is reviewed. "HCT" is
 All new tokens and issuer items use one HandCash format. It is not built on BRC-162:
 
 - **Open mode (BNT, BRC-255).** The holder's signature alone moves an output, and validity is computed from transactions alone, so these are Bitcoin Native Tokens. Open tokens file in `p2pft`, open items in `p2pnft`.
-- **Countersigned mode (not BNT, BRC-253 §15).** The issuer accepts every transfer, and custodians can release the asset when the issuer is gone. Countersigned tokens file in `csft`, items in `csnft`.
+- **Countersigned mode (IPT, not BNT, BRC-253 §15).** The issuer accepts every transfer, and custodians can release the asset when the issuer is gone. Countersigned tokens file in `csft`, items in `csnft`.
 - **Items.** An item is a supply-1 deploy in either mode. One transaction can deploy up to 256 of them.
 
 An asset's mode and kind are fixed at deploy, so it never changes filing. HCT shares each filing with the older format of the same mode (BRC-162 in `p2pft`, BRC-253 in `csft` / `csnft`), so one view shows a holder's tokens or items whatever their format. Readers tell them apart by the `hct` tag and the 40-hex asset id, never by the filing.

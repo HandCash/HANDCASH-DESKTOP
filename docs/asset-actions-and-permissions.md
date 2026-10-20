@@ -17,7 +17,7 @@ Every asset the wallet holds belongs to exactly one profile. A profile is a stor
 | Holds | Items (one-sat ordinals) | Tokens (BRC-162, P2P-FT) | Countersigned tokens | Countersigned items (a supply-1 deploy) |
 | Spec | BRC-147, BRC-150, BRC-165 | BRC-162, BRC-251, BRC-252 | BRC-253 draft | BRC-253 draft |
 | Trades spec | BRC-254 draft | BRC-254 draft | BRC-254 draft, settled through BRC-253 §6 | Same as `csft` |
-| Bitcoin Native Token (BRC-251) | Not a token | Yes (`bnt: true`) | No: issuer-permissioned (`bnt: false`) | Same as `csft` |
+| Bitcoin Native Token (BRC-251) | Not a token | Yes (`bnt: true`) | No: IPT, Issuer-Permissioned Token (`bnt: false`) | Same as `csft` |
 | Authenticity | BRC-150 proof to the origin | BRC-176 lineage to the deploy | The issuer's countersignature in each transfer | Same as `csft` |
 | Who signs a transfer | Owner | Owner | Owner, then the issuer (or m of n cosigners); after release, the owner with the published keys | Same as `csft` |
 | App view (section 2) | `p 1sat all \| collection \| app \| creator \| id` | `p p2pft all \| token \| id` | `p csft all \| asset \| id` | `p csnft all \| asset \| collection \| id` |
