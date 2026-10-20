@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.624] - 2026-10-20
+
+### Changed
+
+- Dark mode keeps OLED pixels off: panels are true black and separated by borders, controls step up only to near-black, the page glow is gone, and the nav lights only the selected tab.
+- Receive follows Send's layout: the coin first, then the code where Send has the amount, the address and arrival where Send has the recipient, and PeerPay / Address as a small toggle.
+
+### Fixed
+
+- A narrow Mac window kept its title bar under the window buttons; the bar now leaves room for them.
+- The ticker carousel keeps a gutter between coins while it moves instead of cutting them at the card's padding.
+- The balance stacks above the buttons before it is squeezed, and its coin mark is no longer clipped.
+- Swap offers use the card's width, and side-column activity gives each title its own line instead of truncating it.
+
 ## [1.3.623] - 2026-10-20
 
 ### Added

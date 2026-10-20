@@ -24,14 +24,14 @@ const FONTS = {
  * Classic HandCash dark sheet.
  *
  * True black stage (`#000`) keeps the neon `#57ff97` at max pop — that pairing
- * *is* the brand. Surfaces step up in neutral zinc, not green-tinted grey, so
- * panels read as depth instead of “muddy black”.
+ * *is* the brand. Panels are black too, so an OLED screen keeps those pixels
+ * off; borders separate them, and only controls step up to near-black.
  */
 export const HANDCASH_DARK_PALETTE: BrandPaletteInput = {
   bg: '#000000',
-  surface: '#0a0a0a',
-  surfaceRaised: '#161616',
-  border: '#2a2a2a',
+  surface: '#000000',
+  surfaceRaised: '#0c0c0c',
+  border: '#262626',
   text: '#f4f4f5',
   muted: '#a1a1aa',
   accent: '#57ff97',

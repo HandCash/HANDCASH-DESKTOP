@@ -89,10 +89,10 @@ export function ReceivePanel({ address, identityKey }: Props) {
     ? (coinAddress?.chain === coin ? coinAddress.address : '')
     : mode === 'peerpay' && peerpayUri ? peerpayUri : address
   const subtitle = coinInfo
-    ? `${coinInfo.label} deposit address — send only ${coinInfo.ticker} here`
+    ? `${coinInfo.ticker} address · send only ${coinInfo.ticker}`
     : mode === 'peerpay'
-      ? 'PeerPay (BRC-125) — wallet key payment link'
-      : 'Payment address — scan or copy to receive BSV'
+      ? 'PeerPay link'
+      : 'BSV address'
 
   const viaIsSwap = viaId !== 'bsv' && !coin
   const viaLabel =
@@ -142,7 +142,22 @@ export function ReceivePanel({ address, identityKey }: Props) {
 
   return (
     <div className="nav-child-panel receive-panel" data-aeon-scope="receive" data-chain={coin ?? 'bsv'}>
-      <div className="receive-layout receive-layout-premium">
+      <AssetPicker
+        label="Coin"
+        value={viaId}
+        options={[
+          ...NETWORK_OPTIONS.map((o) =>
+            isCoinChain(o.value)
+              ? { ...o, detail: `${COIN_INFO[o.value].confirmations} confirmations` }
+              : { ...o, detail: NATIVE_BSV_ETA },
+          ),
+          ...swapCoins
+            .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code))
+            .map((c) => swapCoinOption(c, `Swap · ${c.eta}`)),
+        ]}
+        onChange={onViaChange}
+      />
+      <div className="receive-layout">
         <header className="receive-panel-intro">
           <h3 className="receive-panel-title">{coinInfo ? `Receive ${coinInfo.ticker}` : 'Receive BSV'}</h3>
         </header>
@@ -169,69 +184,40 @@ export function ReceivePanel({ address, identityKey }: Props) {
               <SkeletonQr size={260} />
             )}
           </button>
-          <p className="receive-qr-hint">Tap QR to copy</p>
-
           {peerpayUri && !coin ? (
-            <div className="actions receive-mode-actions">
-              <Button.Root variant="ghost"
-                className={mode === 'peerpay' ? 'btn btn-primary' : 'btn btn-ghost'}
-                onClick={() => {
-                  playWalletSound('soft')
-                  setMode('peerpay')
-                }}
-              >
-                <Button.Label>PeerPay</Button.Label>
-              </Button.Root>
-              <Button.Root variant="ghost"
-                className={mode === 'address' ? 'btn btn-primary' : 'btn btn-ghost'}
-                onClick={() => {
-                  playWalletSound('soft')
-                  setMode('address')
-                }}
-              >
-                <Button.Label>Address</Button.Label>
-              </Button.Root>
+            <div className="receive-mode-toggle" role="group" aria-label="Receive with">
+              {(['peerpay', 'address'] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className="receive-mode-opt"
+                  data-active={mode === m ? '' : undefined}
+                  aria-pressed={mode === m}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    setMode(m)
+                  }}
+                >
+                  {m === 'peerpay' ? 'PeerPay' : 'Address'}
+                </button>
+              ))}
             </div>
           ) : null}
         </div>
 
-        <div className="receive-info">
-          <div className="field receive-via-field">
-            <AssetPicker
-              label="Receive via"
-              value={viaId}
-              options={[
-                ...NETWORK_OPTIONS.map((o) =>
-                  isCoinChain(o.value)
-                    ? { ...o, detail: `${COIN_INFO[o.value].confirmations} confirmations` }
-                    : { ...o, detail: NATIVE_BSV_ETA },
-                ),
-                ...swapCoins
-                  .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code))
-                  .map((c) => swapCoinOption(c, `Swap · ${c.eta}`)),
-              ]}
-              onChange={onViaChange}
-            />
-            <p className="receive-eta-row" data-native={viaIsSwap ? undefined : ''}>
-              <span className="receive-eta-label">Arrival</span>
-              <strong className="receive-eta-value">{viaEta}</strong>
-            </p>
-            {viaIsSwap ? (
-              <p className="receive-swap-note">
-                Opening swap for {viaLabel}…
-              </p>
-            ) : null}
+        <div className="receive-side">
+          <div className="field receive-address-field">
+            <label htmlFor="receive-address">{subtitle}</label>
+            <button
+              id="receive-address"
+              type="button"
+              className="mono qr-value receive-address"
+              title="Click to copy"
+              onClick={() => void copy()}
+            >
+              {value}
+            </button>
           </div>
-
-          <p className="qr-subtitle receive-subtitle">{subtitle}</p>
-          <button
-            type="button"
-            className="mono qr-value receive-address"
-            title="Click to copy"
-            onClick={() => void copy()}
-          >
-            {value}
-          </button>
           {coin && waitingDeposits.length > 0 ? (
             <ul data-aeon-part="deposit-list" aria-label={`${COIN_INFO[coin].label} deposits confirming`}>
               {waitingDeposits.map((d) => (
@@ -241,16 +227,22 @@ export function ReceivePanel({ address, identityKey }: Props) {
               ))}
             </ul>
           ) : null}
-          <div className="actions receive-actions">
-            <Button.Root variant="solid" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
-              <Button.Label>{coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}</Button.Label>
+          <p className="receive-eta-row" data-native={viaIsSwap ? undefined : ''}>
+            <span className="receive-eta-label">Arrival</span>
+            <strong className="receive-eta-value">{viaEta}</strong>
+          </p>
+          {viaIsSwap ? <p className="receive-swap-note">Opening swap for {viaLabel}…</p> : null}
+        </div>
+
+        <div className="actions receive-actions">
+          <Button.Root variant="solid" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
+            <Button.Label>{coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}</Button.Label>
+          </Button.Root>
+          {coin ? null : (
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => openAddMoney()}>
+              <Button.Label>Add money</Button.Label>
             </Button.Root>
-            {coin ? null : (
-              <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => openAddMoney()}>
-                <Button.Label>Add money</Button.Label>
-              </Button.Root>
-            )}
-          </div>
+          )}
         </div>
       </div>
     </div>

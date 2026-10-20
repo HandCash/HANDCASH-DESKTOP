@@ -69,6 +69,11 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   min-height: 0;
 }
 
+/* A narrow Mac window is compact too, and its hiddenInset traffic lights still sit over the bar's top edge. */
+html.platform-darwin:is(.platform-mobile, .layout-compact) .titlebar {
+  padding-top: 36px;
+}
+
 /* Light sheet on phone: status-bar inset and chrome must match paper, not the
    dark Electron defaults or WebView force-dark leftovers. */
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) body {
@@ -240,7 +245,8 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv {
   flex-direction: row;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  --ticker-pad-x: 16px;
+  padding: 10px var(--ticker-pad-x);
   position: relative;
   overflow: hidden;
 }
@@ -564,9 +570,9 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   flex-shrink: 0;
   width: auto;
   margin: 0 8px 8px;
-  --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
-  /* Dark: clearer gray pills against the select plate. */
-  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 22%, transparent);
+  /* Only the selected tab is lit; idle tabs stay black. */
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px 2px 1px;
   border: 1px solid hsl(var(--border));

@@ -4,18 +4,18 @@
 
   --background: 0 0% 0%;
   --foreground: 0 0% 98%;
-  --card: 0 0% 3.9%;
+  --card: 0 0% 0%;
   --card-foreground: 0 0% 96%;
-  --popover: 0 0% 8.5%;
+  --popover: 0 0% 5%;
   --popover-foreground: 0 0% 96%;
   --primary: 143 100% 67%;
   --primary-foreground: 0 0% 8%;
-  --secondary: 0 0% 14.9%;
+  --secondary: 0 0% 7%;
   --secondary-foreground: 0 0% 96%;
-  --secondary-background: 0 0% 20%;
-  --muted: 0 0% 14.9%;
+  --secondary-background: 0 0% 10%;
+  --muted: 0 0% 7%;
   --muted-foreground: 240 5% 64.9%;
-  --accent: 0 0% 14.9%;
+  --accent: 0 0% 7%;
   --accent-foreground: 0 0% 96%;
   --destructive: 0 91% 71%;
   --destructive-foreground: 0 0% 98%;
@@ -23,7 +23,7 @@
   --input: 0 0% 16.5%;
   --ring: 0 0% 83.1%;
   --dark-green: 143 58% 54%;
-  --bg-light: 0 0% 15%;
+  --bg-light: 0 0% 7%;
   --radius: 0.4375rem;
 
   /* Brand neon, independent of --primary. On the light sheet --primary is
@@ -50,9 +50,8 @@
   /* Currency figures — neon on black; deep green on paper (see light block). */
   --hc-accent-deep: #57ff97;
   --hc-danger: var(--colors-aeon-danger, hsl(var(--destructive)));
-  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.18), transparent 55%),
-    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.12), transparent 50%),
-    var(--hc-bg);
+  /* OLED: black pixels are off, so dark surfaces stay true black and are told apart by their borders. */
+  --hc-glow: var(--hc-bg);
   --hc-font: var(--aeon-font, 'Archivo', ui-sans-serif, system-ui, sans-serif);
   --hc-display: var(--aeon-font-display, 'Syncopate', 'Archivo', ui-sans-serif, sans-serif);
   --hc-radius: var(--aeon-radius, var(--radius));
@@ -96,9 +95,9 @@
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
   --hc-sunken: rgba(0, 0, 0, 0.28);
   --hc-sunken-strong: rgba(0, 0, 0, 0.38);
-  --hc-field: color-mix(in srgb, #0a120e 80%, #1a1a1a);
+  --hc-field: #080808;
   --hc-hover: rgba(255, 255, 255, 0.04);
-  --hc-deep: #0a100e;
+  --hc-deep: #000000;
 
   /* Status inks. These were literal pastels tuned for black; as *text* they
      collapse to ~2:1 on paper, so the light sheet re-darkens them. */
@@ -1522,7 +1521,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 }
 
 /* Below this the figure and three buttons no longer share a row without crushing the figure. */
-@container wallet-hero (max-width: 640px) {
+@container wallet-hero (max-width: 760px) {
   .wallet-hero-main {
     flex-wrap: wrap;
     gap: 10px;
@@ -1740,6 +1739,44 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
   min-height: 0;
 }
 
+/* The side column is too narrow for title and amount on one line: the title gets its own, the amount sits beside the detail. */
+.dashboard-side > .history-panel .history-row {
+  grid-template-areas:
+    'icon title title'
+    'icon sub amount';
+  row-gap: 2px;
+}
+
+.dashboard-side > .history-panel .history-row > .history-icon-wrap {
+  grid-area: icon;
+}
+
+.dashboard-side > .history-panel .history-row > :is(.history-body, .history-amount-block) {
+  display: contents;
+}
+
+.dashboard-side > .history-panel .history-row .history-title {
+  grid-area: title;
+}
+
+.dashboard-side > .history-panel .history-row .history-body > .history-when {
+  grid-area: sub;
+}
+
+.dashboard-side > .history-panel .history-row .history-body > .history-progress-block {
+  grid-column: 2 / -1;
+}
+
+.dashboard-side > .history-panel .history-row .history-amount {
+  grid-area: amount;
+  align-self: baseline;
+  font-size: 0.8rem;
+}
+
+.dashboard-side > .history-panel .history-row .history-amount-block > :not(.history-amount) {
+  display: none;
+}
+
 /*
  * Connect / pay approval occupies the whole reserved right column
  * (replaces market + recent activity). Scroll body + pinned Deny/Approve.
@@ -1852,8 +1889,9 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
 }
 
 .what-is-bsv {
+  --ticker-pad-x: 14px;
   position: relative;
-  padding: 16px 14px 14px;
+  padding: 16px var(--ticker-pad-x) 14px;
   height: auto;
   min-height: 0;
   box-sizing: border-box;
@@ -7286,16 +7324,28 @@ html[data-aeon-mode='light']
   overflow-y: auto;
 }
 
+/* Same column as Send: coin above, then title, the code where Send has the amount, and the details where Send has the recipient. */
 .receive-layout {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   width: 100%;
-  max-width: 640px;
+  max-width: 400px;
   margin: 0 auto;
-  padding: 4px 8px 6px;
+  padding: 2px 8px 8px;
   box-sizing: border-box;
+}
+
+.receive-side {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.receive-panel .field {
+  gap: 4px;
+  margin-bottom: 0;
 }
 
 .receive-qr {
@@ -7348,28 +7398,9 @@ html[data-aeon-mode='light']
   aspect-ratio: 1;
 }
 
-.receive-qr-hint {
-  margin: 0;
-  color: var(--hc-muted);
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.receive-info {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  align-content: center;
-  justify-items: start;
-  text-align: left;
-}
-
-.receive-subtitle.qr-subtitle {
-  margin: 0;
-}
-
 .receive-address.qr-value {
+  width: 100%;
+  box-sizing: border-box;
   text-align: left;
   padding: 10px 12px;
   border-radius: 10px;
@@ -7380,37 +7411,12 @@ html[data-aeon-mode='light']
 }
 
 .receive-actions {
-  justify-content: flex-start;
+  justify-content: stretch;
   margin-top: 4px;
 }
 
-@container receive (max-width: 420px) {
-  .receive-layout {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    text-align: center;
-    gap: 16px;
-  }
-
-  .receive-info {
-    justify-items: center;
-    text-align: center;
-    width: 100%;
-  }
-
-  .receive-address.qr-value {
-    text-align: center;
-  }
-
-  .receive-actions {
-    justify-content: center;
-  }
-
-  .receive-qr-frame.qr-frame img,
-  .receive-qr-frame .skeleton-qr,
-  .receive-qr-frame .deferred-image {
-    max-width: min(196px, 100%);
-  }
+.receive-actions .btn {
+  flex: 1 1 0;
 }
 
 .nav-child-panel.payment-details {
@@ -9276,7 +9282,8 @@ html[data-aeon-mode='light'] .shortcut-key {
   color: var(--hc-text);
 }
 
-.send-currency-toggle {
+.send-currency-toggle,
+.receive-mode-toggle {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -9285,7 +9292,8 @@ html[data-aeon-mode='light'] .shortcut-key {
   background: color-mix(in srgb, var(--hc-muted) 12%, transparent);
 }
 
-.send-currency-opt {
+.send-currency-opt,
+.receive-mode-opt {
   appearance: none;
   margin: 0;
   padding: 3px 10px;
@@ -9301,7 +9309,8 @@ html[data-aeon-mode='light'] .shortcut-key {
   cursor: pointer;
 }
 
-.send-currency-opt[data-active] {
+.send-currency-opt[data-active],
+.receive-mode-opt[data-active] {
   background: var(--hc-panel, var(--hc-surface));
   color: var(--hc-text);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
@@ -9472,13 +9481,7 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 .send-dest-field,
-.receive-via-field {
-  display: grid;
-  gap: 4px;
-}
-
-.send-dest-field [data-aeon-scope='network-picker'],
-.receive-via-field [data-aeon-scope='network-picker'] {
+.send-dest-field [data-aeon-scope='network-picker'] {
   margin-bottom: 0;
 }
 
@@ -9538,46 +9541,11 @@ html[data-aeon-mode='dark'] .receive-eta-row[data-native] .receive-eta-value {
   line-height: 1.35;
 }
 
-.receive-layout-premium {
-  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
-  gap: 14px 22px;
-  max-width: 640px;
-  padding-top: 4px;
-}
-
-.receive-layout-premium .receive-panel-intro {
-  grid-column: 1 / -1;
-}
-
-.receive-layout-premium .receive-qr-frame.qr-frame {
-  width: min(180px, 100%);
-  padding: 10px;
+.receive-qr-frame.qr-frame {
   background: #fff;
   border-radius: 10px;
   box-shadow: 0 8px 20px -14px rgba(0, 0, 0, 0.3);
 }
-
-html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
-  box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.65);
-}
-
-.receive-mode-actions {
-  margin: 8px 0 0;
-  width: 100%;
-  justify-content: center;
-}
-
-@container receive (max-width: 560px) {
-  .receive-layout-premium {
-    grid-template-columns: 1fr;
-    justify-items: center;
-  }
-
-  .receive-layout-premium .receive-info {
-    width: 100%;
-  }
-}
-
 
 /* One reserved line under the amount: converted value, or the rate warning. */
 .send-amount-note {
@@ -15131,7 +15099,8 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
-html[data-aeon-mode='light'] .send-currency-opt[data-active] {
+html[data-aeon-mode='light'] .send-currency-opt[data-active],
+html[data-aeon-mode='light'] .receive-mode-opt[data-active] {
   color: var(--hc-text);
   background: #fff;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
@@ -15575,12 +15544,9 @@ html:not(.platform-mobile):not(.layout-compact)
   box-sizing: border-box;
   width: auto;
   margin: 0 var(--hc-space-3) var(--hc-space-3);
-  --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
-  --wallet-nav-unselected: color-mix(
-    in srgb,
-    var(--hc-text) 22%,
-    transparent
-  );
+  /* Only the selected tab is lit; idle tabs stay black. */
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px;
   border: 1px solid hsl(var(--border));
@@ -17031,6 +16997,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   box-sizing: border-box;
 }
 
+/* Offers are a list, not a form: they use the card's width like Activity. */
+[data-aeon-scope='swap-offers'] {
+  max-width: none;
+}
+
 :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-part='leg-label'] {
   font-size: 0.72rem;
   font-weight: 700;
@@ -17651,7 +17622,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 .balance-unit-mark {
   display: inline-block;
   line-height: 0;
-  margin-inline: -0.12em 0.04em;
+  margin-inline: 0 0.04em;
   vertical-align: -0.216em;
 }
 
@@ -17678,9 +17649,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   pointer-events: none;
 }
 
+/* The track runs to the card's edges and each slide carries the card's inset, so a slide in motion keeps a gutter from its neighbour instead of being cut at the padding. */
 .bsv-carousel {
   display: flex;
   flex: 1 1 auto;
+  margin-inline: calc(-1 * var(--ticker-pad-x));
   min-width: 0;
   min-height: 0;
   overflow-x: auto;
@@ -17698,12 +17671,14 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
 .bsv-carousel:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
-  outline-offset: 2px;
+  outline-offset: -2px;
   border-radius: var(--hc-radius);
 }
 
 .bsv-carousel > .bsv-slide {
   flex: 0 0 100%;
+  box-sizing: border-box;
+  padding-inline: var(--ticker-pad-x);
   min-width: 0;
   scroll-snap-align: start;
   scroll-snap-stop: always;
