@@ -2974,8 +2974,8 @@
       }
     },
     {
-      "name": "Protocol (directSession)",
-      "path": "src/wallet/directSession/protocol.ts",
+      "name": "Signal (directSession)",
+      "path": "src/wallet/directSession/signal.ts",
       "kind": "module",
       "area": "peer_sessions",
       "isFeature": 0.92,

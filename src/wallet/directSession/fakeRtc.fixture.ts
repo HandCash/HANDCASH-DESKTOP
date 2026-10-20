@@ -1,10 +1,12 @@
 /**
- * In-memory stand-in for RTCPeerConnection. Two fakes connect when each has
- * applied the other's description, matched by DTLS fingerprint, which is what
- * the signed session description binds.
+ * In-memory stand-in for RTCPeerConnection, enough for `@bsv/webrtpay`'s
+ * `PeerLink`. Two fakes connect when each has applied the other's
+ * description, matched by DTLS fingerprint, which is what the identity
+ * handshake binds. The answerer receives the offerer's channel through a
+ * `datachannel` event, as in a browser.
  */
 
-type Listener = () => void
+type Listener = (event: any) => void
 
 const registry = new Map<string, FakePeerConnection>()
 let counter = 0
@@ -34,51 +36,8 @@ function fingerprintOf(sdp: string): string {
   return sdp.match(/a=fingerprint:sha-256 (\S+)/)?.[1] ?? ''
 }
 
-export class FakeDataChannel {
-  readyState: RTCDataChannelState = 'connecting'
-  partner: FakeDataChannel | null = null
-  /** Swallow outgoing frames, as a stalled path would. */
-  mute = false
-  onopen: (() => void) | null = null
-  onclose: (() => void) | null = null
-  onmessage: ((event: { data: unknown }) => void) | null = null
-
-  send(data: string): void {
-    if (this.readyState !== 'open') throw new Error('channel not open')
-    if (this.mute) return
-    const partner = this.partner
-    queueMicrotask(() => partner?.onmessage?.({ data }))
-  }
-
-  open(): void {
-    this.readyState = 'open'
-    this.onopen?.()
-  }
-
-  close(): void {
-    if (this.readyState === 'closed') return
-    this.readyState = 'closed'
-    this.onclose?.()
-    this.partner?.close()
-  }
-}
-
-export class FakePeerConnection {
-  readonly fingerprint: string
-  readonly channel = new FakeDataChannel()
-  localDescription: RTCSessionDescriptionInit | null = null
-  remoteDescription: RTCSessionDescriptionInit | null = null
-  iceGatheringState: RTCIceGatheringState = 'new'
-  connectionState: RTCPeerConnectionState = 'new'
-  sctp = { maxMessageSize: 262_144 }
-  closed = false
+class Events {
   private listeners = new Map<string, Set<Listener>>()
-
-  constructor() {
-    counter += 1
-    this.fingerprint = Array.from({ length: 32 }, (_, i) => ((counter * 7 + i) & 255).toString(16).padStart(2, '0').toUpperCase()).join(':')
-    registry.set(this.fingerprint, this)
-  }
 
   addEventListener(type: string, listener: Listener): void {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set())
@@ -89,11 +48,70 @@ export class FakePeerConnection {
     this.listeners.get(type)?.delete(listener)
   }
 
-  private emit(type: string): void {
-    for (const listener of [...(this.listeners.get(type) ?? [])]) listener()
+  protected emit(type: string, event: unknown = {}): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener(event)
+  }
+}
+
+export class FakeDataChannel extends Events {
+  readyState: RTCDataChannelState = 'connecting'
+  readonly ordered = true
+  readonly maxRetransmits = null
+  readonly maxPacketLifeTime = null
+  binaryType = 'blob'
+  bufferedAmount = 0
+  bufferedAmountLowThreshold = 0
+  partner: FakeDataChannel | null = null
+  /** Swallow outgoing frames, as a stalled path would. */
+  mute = false
+
+  constructor(readonly label: string) {
+    super()
   }
 
-  createDataChannel(): FakeDataChannel {
+  send(data: Uint8Array | string): void {
+    if (this.readyState !== 'open') throw new Error('channel not open')
+    if (this.mute) return
+    const partner = this.partner
+    const copy = typeof data === 'string' ? data : data.slice()
+    queueMicrotask(() => {
+      if (partner?.readyState === 'open') partner.emit('message', { data: copy })
+    })
+  }
+
+  open(): void {
+    if (this.readyState !== 'connecting') return
+    this.readyState = 'open'
+    this.emit('open')
+  }
+
+  close(): void {
+    if (this.readyState === 'closed') return
+    this.readyState = 'closed'
+    this.emit('close')
+    this.partner?.close()
+  }
+}
+
+export class FakePeerConnection extends Events {
+  readonly fingerprint: string
+  channel: FakeDataChannel | null = null
+  localDescription: RTCSessionDescriptionInit | null = null
+  remoteDescription: RTCSessionDescriptionInit | null = null
+  iceGatheringState: RTCIceGatheringState = 'new'
+  connectionState: RTCPeerConnectionState = 'new'
+  signalingState: RTCSignalingState = 'stable'
+  closed = false
+
+  constructor() {
+    super()
+    counter += 1
+    this.fingerprint = Array.from({ length: 32 }, (_, i) => ((counter * 7 + i) & 255).toString(16).padStart(2, '0').toUpperCase()).join(':')
+    registry.set(this.fingerprint, this)
+  }
+
+  createDataChannel(label: string): FakeDataChannel {
+    this.channel = new FakeDataChannel(label)
     return this.channel
   }
 
@@ -115,6 +133,7 @@ export class FakePeerConnection {
   }
 
   async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
+    if (this.closed) throw new Error('closed')
     this.remoteDescription = description
     this.tryConnect()
   }
@@ -124,15 +143,21 @@ export class FakePeerConnection {
     const other = registry.get(fingerprintOf(this.remoteDescription.sdp ?? ''))
     if (!other || other.closed || !other.localDescription || !other.remoteDescription) return
     if (fingerprintOf(other.remoteDescription.sdp ?? '') !== this.fingerprint) return
-    this.channel.partner = other.channel
-    other.channel.partner = this.channel
-    for (const pc of [this, other]) {
+    const offerer = this.channel ? this : other
+    const answerer = offerer === this ? other : this
+    const offered = offerer.channel!
+    const taken = new FakeDataChannel(offered.label)
+    answerer.channel = taken
+    offered.partner = taken
+    taken.partner = offered
+    for (const pc of [offerer, answerer]) {
       pc.connectionState = 'connected'
       pc.emit('connectionstatechange')
     }
     queueMicrotask(() => {
-      this.channel.open()
-      other.channel.open()
+      answerer.emit('datachannel', { channel: taken })
+      offered.open()
+      taken.open()
     })
   }
 
@@ -141,15 +166,18 @@ export class FakePeerConnection {
     this.closed = true
     registry.delete(this.fingerprint)
     this.connectionState = 'closed'
-    this.channel.close()
+    this.signalingState = 'closed'
+    this.channel?.close()
     this.emit('connectionstatechange')
   }
 }
 
-export function fakeRtcFactory(created: FakePeerConnection[] = []) {
-  return () => {
-    const pc = new FakePeerConnection()
-    created.push(pc)
-    return pc as unknown as RTCPeerConnection
-  }
+/** An RTCPeerConnection constructor whose instances land in `created`. */
+export function fakeRtc(created: FakePeerConnection[] = []): typeof RTCPeerConnection {
+  return class extends FakePeerConnection {
+    constructor() {
+      super()
+      created.push(this)
+    }
+  } as unknown as typeof RTCPeerConnection
 }

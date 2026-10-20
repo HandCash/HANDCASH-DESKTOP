@@ -1,18 +1,19 @@
 /**
  * The device link between installs of one vault (draft BRC-249 over draft
- * BRC-246 v2).
+ * BRC-246, `webrtpay/1`).
  *
- * Every install keeps a WebRTC data channel to every other install it knows
- * of (the device ids its holder records name), on the vault identity
- * (account 0). Account moves ride it: a release request goes straight to the
- * holding device, and its accept comes straight back. Each message is still
- * signed by the account root, so the link adds reach, not authority.
+ * Every install keeps a session to every other install it knows of (the
+ * device ids its holder records name), on the vault identity (account 0).
+ * Account moves ride it: a release request goes straight to the holding
+ * device, and its accept comes straight back. Each message is still signed by
+ * the account root, so the link adds reach, not authority.
  *
- * Signals ride box `vault-link` on the vault identity, sealed to itself. It is
- * not `session-upgrade`, so the account's chat sessions never answer an
- * install's offer. The box stays the rendezvous; nothing custodial crosses it.
+ * Signals ride box `vault-link` on the vault identity, encrypted to itself.
+ * It is not `webrtpay_messages`, so the account's chat sessions never answer
+ * an install's dial. The box stays the rendezvous; nothing custodial crosses it.
  */
-import { createSessionTable, type RtcFactory, type SessionTable } from './directSession/session'
+import { createBoxPoller, type BoxPoller } from './directSession/boxPoller'
+import { createSessionTable, type RtcConstructor, type SessionTable } from './directSession/session'
 import type { ListedMessage } from './messageTransport'
 import { rootKeyHexForAccount } from './vaultAccounts'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
@@ -31,8 +32,6 @@ export type VaultLinkIo = {
   list: (rootKeyHex: string) => Promise<ListedMessage[] | null>
   send: (rootKeyHex: string, body: string) => Promise<void>
   acknowledge: (rootKeyHex: string, messageIds: string[]) => Promise<void>
-  seal: (rootKeyHex: string, plaintext: string) => Promise<string>
-  open: (rootKeyHex: string, body: string) => Promise<string | null>
 }
 
 export type VaultLinkListener = (body: string, device: string) => void
@@ -42,9 +41,8 @@ type Link = {
   rootKeyHex: string
   deviceId: string
   table: SessionTable
-  io: VaultLinkIo
+  poller: BoxPoller
   pingedAt: Map<string, number>
-  reading: Promise<void> | null
 }
 
 let link: Link | null = null
@@ -57,17 +55,19 @@ function lazyIo(): VaultLinkIo {
     list: async (root) => (await t()).listOwnBox(root, VAULT_LINK_BOX),
     send: async (root, body) => (await t()).sendToOwnBox(root, VAULT_LINK_BOX, body),
     acknowledge: async (root, ids) => (await t()).acknowledgeOwnBox(root, VAULT_LINK_BOX, ids),
-    seal: async (root, plaintext) => (await t()).sealToSelf(root, plaintext),
-    open: async (root, body) => (await t()).openFromSelf(root, body),
   }
 }
 
-/** Bind the link to this vault and install. Idempotent; another vault resets it. */
+/**
+ * Bind the link to this vault and install. Idempotent; another vault resets
+ * it. `poll: false` leaves box reads to the holding-service ticks (tests).
+ */
 export function startVaultLink(args: {
   master: VaultMaster
   deviceId: string
   io?: VaultLinkIo
-  rtc?: RtcFactory | null
+  rtc?: RtcConstructor | null
+  poll?: boolean
 }): void {
   const identityKey = vaultIdentityKey(args.master)
   if (link && link.identityKey === identityKey && link.deviceId === args.deviceId) return
@@ -75,45 +75,33 @@ export function startVaultLink(args: {
   const rootKeyHex = rootKeyHexForAccount(args.master, 0)
   const io = args.io ?? lazyIo()
   const table = createSessionTable('vault-link')
-  if (args.rtc !== undefined) table.installRtcFactory(args.rtc)
+  if (args.rtc !== undefined) table.installRtc(args.rtc)
   table.setIdentity({ rootKeyHex, identityKey, device: args.deviceId })
-  // Only installs of this vault: an offer from any other identity is refused.
+  // Only installs of this vault: a dial from any other identity is refused.
   table.installOfferPolicy(() => false)
-  table.installSignalSender(async (_to, body) => io.send(rootKeyHex, await io.seal(rootKeyHex, body)))
+  table.installSignalSender((_to, body) => io.send(rootKeyHex, body))
   table.setInboundHandler((_sender, body, device) => {
     if (body === PING) return
     for (const listener of listeners) listener(body, device)
   })
-  link = { identityKey, rootKeyHex, deviceId: args.deviceId, table, io, pingedAt: new Map(), reading: null }
+  const poller = createBoxPoller({
+    tag: 'vault-link',
+    io: {
+      list: async () =>
+        (await io.list(rootKeyHex))?.map((m) => ({ messageId: m.messageId, body: m.body, sender: m.sender ?? m.senderIdentityKey ?? identityKey })) ?? null,
+      acknowledge: (ids) => io.acknowledge(rootKeyHex, ids),
+    },
+    handle: async (m) => ((await table.ingest(m.sender, m.body)) === 'not-mine' ? 'leave' : 'ack'),
+    dialing: table.hasActiveDials,
+  })
+  link = { identityKey, rootKeyHex, deviceId: args.deviceId, table, poller, pingedAt: new Map() }
+  if (args.poll !== false) poller.start()
 }
 
 export function stopVaultLink(): void {
+  link?.poller.stop()
   link?.table.reset()
   link = null
-}
-
-async function readSignals(current: Link): Promise<void> {
-  const messages = await current.io.list(current.rootKeyHex)
-  if (!messages) return
-  const ack: string[] = []
-  for (const m of messages) {
-    const plaintext = await current.io.open(current.rootKeyHex, m.body)
-    const disposition = plaintext == null ? 'invalid' : await current.table.ingest(plaintext)
-    if (disposition !== 'not-mine') ack.push(m.messageId)
-  }
-  if (ack.length) await current.io.acknowledge(current.rootKeyHex, ack)
-}
-
-/** One read of box `vault-link`; concurrent callers share it. */
-function pollSignals(current: Link): Promise<void> {
-  current.reading ??= readSignals(current)
-    .catch((error: unknown) => {
-      console.info('[vault-link] signal read failed', error instanceof Error ? error.message : String(error))
-    })
-    .finally(() => {
-      current.reading = null
-    })
-  return current.reading
 }
 
 /**
@@ -123,11 +111,11 @@ function pollSignals(current: Link): Promise<void> {
 export async function serveVaultLink(peers: Iterable<string>, now = Date.now()): Promise<void> {
   const current = link
   if (!current) return
-  await pollSignals(current)
+  await current.poller.poll()
   for (const device of new Set(peers)) {
     if (!device || device === current.deviceId) continue
     if (!current.table.hasSession(current.identityKey, device)) {
-      await current.table.request(current.identityKey, device, now)
+      if (await current.table.request(current.identityKey, device, now)) current.poller.nudge()
       continue
     }
     if (now - (current.pingedAt.get(device) ?? 0) < LINK_PING_MS) continue
@@ -145,12 +133,12 @@ export async function dialVaultLink(device: string, waitMs = LINK_DIAL_MS, pollM
   const current = link
   if (!current || !device || device === current.deviceId) return false
   if (current.table.hasSession(current.identityKey, device)) return true
-  await current.table.request(current.identityKey, device)
+  if (await current.table.request(current.identityKey, device)) current.poller.nudge()
   const deadline = Date.now() + waitMs
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))))
     if (link !== current) return false
-    await pollSignals(current)
+    await current.poller.poll()
     if (current.table.hasSession(current.identityKey, device)) return true
   }
   return false

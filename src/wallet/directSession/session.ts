@@ -1,39 +1,63 @@
 /**
- * Hot-path session table (draft BRC-246 v2). The messagebox remains the
- * rendezvous and the offline inbox. A message goes direct only on an open,
- * authenticated data channel and falls back to the box when it is not acked.
+ * Direct session table (draft BRC-246 over `webrtpay/1`). The messagebox
+ * remains the rendezvous and the offline inbox. A message goes direct only on
+ * an open, authenticated session and falls back to the box when it is not
+ * acked within a second.
  *
  * A table is bound to one local identity. Chat uses the module-level table
- * (the active account); the link between installs of one vault
- * (`vaultLink.ts`) has its own, so neither answers the other's offers.
+ * (the active account) on box `webrtpay_messages`; the link between installs
+ * of one vault (`vaultLink.ts`) has its own on box `vault-link`, so neither
+ * answers the other's dials.
  */
 
+import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import {
-  SESSION_ACK_MS,
-  SESSION_CHANNEL_LABEL,
-  SESSION_GATHER_MS,
-  SESSION_IDLE_MS,
-  SESSION_MAX_BODY,
-  SESSION_OFFER_REPEAT_MS,
-  SESSION_SKEW_MS,
-  acceptableSessionSdp,
-  decodeSessionSignal,
-  encodeSessionSignal,
-  keepsOwnOfferOnGlare,
-  signSessionSignal,
-  verifySessionAnswer,
-  verifySessionOffer,
-  type SessionSignal,
-} from './protocol'
+  DEFAULTS,
+  DEFAULT_INBOUND_LIMITS,
+  InboundLimiter,
+  PeerLink,
+  ReplayCache,
+  type RtcOptions,
+} from '@bsv/webrtpay'
+import {
+  PRE_AUTH_MAX_BYTES,
+  SESSION_MAX_MSG_BYTES,
+  authenticateChannel,
+  messageBytes,
+  type MessageChannel,
+  type SessionMessage,
+} from './channel'
+import {
+  keepsOwnDialOnGlare,
+  newSid,
+  openMessageSignal,
+  sealMessageSignal,
+  type MessageSignal,
+  type MessageSignalKind,
+} from './signal'
 
-export type RtcFactory = (config: RTCConfiguration) => RTCPeerConnection
-/** Seal `body` to `to` and post it to `to`'s signalling box. */
+export const SESSION_ACK_MS = 1_000
+export const SESSION_IDLE_MS = 10 * 60_000
+/** One dial per endpoint in this window, so a chat burst does not knock on every line. */
+export const SESSION_DIAL_REPEAT_MS = 20_000
+/**
+ * `webrtpay/1`'s presence and dial windows assume a live carrier; a polled
+ * one adds up to a poll interval of the peer's before it hears the signal.
+ */
+export const SESSION_PRESENCE_MS = DEFAULTS.presenceTimeoutMs + DEFAULTS.payeePollMs
+export const SESSION_DIAL_MS = DEFAULTS.dialTimeoutMs + DEFAULTS.payeePollMs
+const CONNECT_MS = DEFAULTS.connectTimeoutMs
+const GATHER_MS = DEFAULTS.dialGatherTimeoutMs
+const REJECT_GAP_MS = 1_000
+
+export type RtcConstructor = typeof RTCPeerConnection
+/** Post `body` (a signalling envelope as JSON) to `to`'s signalling box. */
 export type SignalSender = (to: string, body: string) => Promise<void>
-/** Whether to answer an offer from this identity. */
+/** Whether to ring and answer a dial from this identity (own installs are always answered). */
 export type OfferPolicy = (identityKey: string) => boolean
 /** `not-mine` is addressed to another install of this identity: leave it unacknowledged. */
 export type SignalDisposition = 'handled' | 'not-mine' | 'invalid'
-/** `device` is the sending install, as its signed offer or answer named it. */
+/** `device` is the sending install, as its signals named it. */
 export type InboundHandler = (sender: string, body: string, device: string) => void
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -44,17 +68,24 @@ const ICE_SERVERS: RTCIceServer[] = [
 type Live = {
   peer: string
   device: string
-  pc: RTCPeerConnection
-  channel: RTCDataChannel
+  channel: MessageChannel
   acks: Map<string, (ok: boolean) => void>
-  idle: ReturnType<typeof setTimeout> | null
+  idle: ReturnType<typeof setTimeout> | undefined
+  /** Intake slot of an answered dial, released when the session ends. */
+  slot?: string
 }
 
-type Pending = {
-  offer: SessionSignal
-  pc: RTCPeerConnection
-  channel: RTCDataChannel
-  timer: ReturnType<typeof setTimeout>
+type Dial = {
+  sid: string
+  peer: string
+  /** Empty until a ring names the answering install, when the dial named none. */
+  device: string
+  phase: 'knocked' | 'offered' | 'connecting'
+  /** Gathered from the knock on; sent once the peer rings. */
+  offer: Promise<{ link: PeerLink; sdp: string } | null>
+  timer?: ReturnType<typeof setTimeout>
+  total?: ReturnType<typeof setTimeout>
+  done: boolean
 }
 
 function norm(key: string): string {
@@ -65,174 +96,281 @@ function endpointKey(identity: string, device: string): string {
   return `${norm(identity)}\n${device}`
 }
 
-function closeQuietly(pc: RTCPeerConnection): void {
-  try {
-    pc.close()
-  } catch {
-    /* already closed */
-  }
-}
-
 function messageId(): string {
   return Array.from(globalThis.crypto.getRandomValues(new Uint8Array(12)), b => b.toString(16).padStart(2, '0')).join('')
 }
 
-function gathered(pc: RTCPeerConnection): Promise<void> {
-  return new Promise((resolve) => {
-    if (pc.iceGatheringState === 'complete') return resolve()
-    const timer = setTimeout(done, SESSION_GATHER_MS)
-    function done() {
-      clearTimeout(timer)
-      pc.removeEventListener('icegatheringstatechange', check)
-      resolve()
-    }
-    function check() {
-      if (pc.iceGatheringState === 'complete') done()
-    }
-    pc.addEventListener('icegatheringstatechange', check)
-  })
-}
-
-function frameBytes(frame: string): number {
-  return new TextEncoder().encode(frame).length
-}
-
-export type SessionTable = ReturnType<typeof createSessionTable>
-
 export function createSessionTable(tag = 'direct-session') {
-  let rtcFactory: RtcFactory | null =
-    typeof globalThis.RTCPeerConnection === 'function'
-      ? (config) => new globalThis.RTCPeerConnection(config)
-      : null
+  let rtc: RtcConstructor | null = null
   let sendSignal: SignalSender | null = null
-  let offerPolicy: OfferPolicy = () => true
+  let offerPolicy: OfferPolicy = () => false
   let onInboundBody: InboundHandler | null = null
-  let rootKeyHex = ''
+  let wallet: ProtoWallet | null = null
   let localIdentity = ''
   let localDevice = ''
+  let chain: string | undefined
+  let replay = new ReplayCache()
+  let limiter = new InboundLimiter({ ...DEFAULT_INBOUND_LIMITS, maxConcurrent: 16 })
+  let rejectedAt = 0
   const live = new Map<string, Live>()
-  const pending = new Map<string, Pending>()
-  const offerSentAt = new Map<string, number>()
-  /** Offers already answered: a box read twice must not replace a live channel. */
-  const answered = new Map<string, number>()
+  const dials = new Map<string, Dial>()
+  /** Answered dials still connecting, by endpoint. */
+  const answering = new Map<string, PeerLink>()
+  const dialedAt = new Map<string, number>()
 
-  function drop(key: string): void {
-    const session = live.get(key)
-    if (!session) return
-    live.delete(key)
-    if (session.idle) clearTimeout(session.idle)
-    for (const resolve of session.acks.values()) resolve(false)
-    closeQuietly(session.pc)
-  }
-
-  function abandon(target: string): void {
-    const offer = pending.get(target)
-    if (!offer) return
-    pending.delete(target)
-    clearTimeout(offer.timer)
-    closeQuietly(offer.pc)
-  }
-
-  function reset(): void {
-    for (const key of [...live.keys()]) drop(key)
-    for (const target of [...pending.keys()]) abandon(target)
-    offerSentAt.clear()
-    answered.clear()
-  }
-
-  function openSession(identity: string, device?: string): Live | null {
-    const peer = norm(identity)
-    for (const session of live.values()) {
-      if (session.peer !== peer || (device && session.device !== device)) continue
-      if (session.channel.readyState === 'open') return session
-    }
-    return null
-  }
-
-  function touch(key: string, session: Live): void {
-    if (session.idle) clearTimeout(session.idle)
-    session.idle = setTimeout(() => drop(key), SESSION_IDLE_MS)
-  }
-
-  function adopt(peer: string, device: string, pc: RTCPeerConnection, channel: RTCDataChannel): void {
-    const key = endpointKey(peer, device)
-    drop(key)
-    const session: Live = { peer: norm(peer), device, pc, channel, acks: new Map(), idle: null }
-    live.set(key, session)
-    touch(key, session)
-    channel.onmessage = (event) => {
-      if (live.get(key) !== session || typeof event.data !== 'string') return
-      let frame: { t?: unknown; id?: unknown; body?: unknown }
-      try {
-        frame = JSON.parse(event.data) as typeof frame
-      } catch {
-        return
-      }
-      if (typeof frame.id !== 'string') return
-      if (frame.t === 'ack') {
-        session.acks.get(frame.id)?.(true)
-        return
-      }
-      if (frame.t !== 'msg' || typeof frame.body !== 'string') return
-      touch(key, session)
-      onInboundBody?.(session.peer, frame.body, session.device)
-      try {
-        channel.send(JSON.stringify({ t: 'ack', id: frame.id }))
-      } catch {
-        drop(key)
-      }
-    }
-    channel.onclose = () => {
-      if (live.get(key) === session) drop(key)
-    }
-    pc.addEventListener('connectionstatechange', () => {
-      if (live.get(key) === session && (pc.connectionState === 'failed' || pc.connectionState === 'closed')) drop(key)
-    })
-  }
-
-  function newPeer(): { pc: RTCPeerConnection; channel: RTCDataChannel } | null {
-    if (!rtcFactory) return null
-    const pc = rtcFactory({ iceServers: ICE_SERVERS })
-    const channel = pc.createDataChannel(SESSION_CHANNEL_LABEL, { negotiated: true, id: 0, ordered: true })
-    return { pc, channel }
+  function rtcConstructor(): RtcConstructor | undefined {
+    return rtc ?? (globalThis as { RTCPeerConnection?: RtcConstructor }).RTCPeerConnection
   }
 
   function ready(): boolean {
-    return !!rtcFactory && !!sendSignal && !!rootKeyHex && !!localIdentity && !!localDevice
+    return !!wallet && !!localIdentity && !!localDevice && !!sendSignal && !!rtcConstructor()
   }
 
-  async function answer(offer: SessionSignal): Promise<void> {
-    const created = newPeer()
-    if (!created) return
-    const { pc, channel } = created
-    try {
-      await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp })
-      await pc.setLocalDescription(await pc.createAnswer())
-      await gathered(pc)
-      const sdp = pc.localDescription?.sdp ?? ''
-      if (!acceptableSessionSdp(sdp)) throw new Error('unacceptable local description')
-      const reply = signSessionSignal({
-        rootKeyHex,
-        t: 'answer',
-        fromDevice: localDevice,
-        to: offer.from,
-        toDevice: offer.fromDevice,
-        offerNonce: offer.nonce,
-        sdp,
-        expiresAt: offer.expiresAt,
-      })
-      adopt(offer.from, offer.fromDevice, pc, channel)
-      await sendSignal!(offer.from, encodeSessionSignal(reply))
-    } catch (err) {
-      drop(endpointKey(offer.from, offer.fromDevice))
-      closeQuietly(pc)
-      console.info(`[${tag}] answer failed — ${err instanceof Error ? err.message : String(err)}`)
+  function rtcOptions(): RtcOptions & { maxMessageBytes: number } {
+    return {
+      RTCPeerConnection: rtcConstructor(),
+      iceServers: ICE_SERVERS,
+      gatherTimeoutMs: GATHER_MS,
+      maxMessageBytes: PRE_AUTH_MAX_BYTES,
     }
   }
 
+  function log(what: string, err?: unknown): void {
+    console.info(`[${tag}] ${what}${err === undefined ? '' : ` — ${err instanceof Error ? err.message : String(err)}`}`)
+  }
+
+  async function post(
+    to: string,
+    p: { kind: MessageSignalKind; sid: string; toDevice: string; sdp?: string; reason?: string },
+  ): Promise<void> {
+    const envelope = await sealMessageSignal(wallet!, {
+      ...p,
+      from: localIdentity,
+      to,
+      ts: Date.now(),
+      fromDevice: localDevice,
+      ...(chain ? { chain } : {}),
+    })
+    await sendSignal!(to, JSON.stringify(envelope))
+  }
+
+  function openSession(identity: string, device?: string): Live | undefined {
+    const peer = norm(identity)
+    if (device) {
+      const session = live.get(endpointKey(peer, device))
+      return session?.channel.isOpen ? session : undefined
+    }
+    for (const session of live.values()) {
+      if (session.peer === peer && session.channel.isOpen) return session
+    }
+    return undefined
+  }
+
+  function touch(key: string, session: Live): void {
+    clearTimeout(session.idle)
+    session.idle = setTimeout(() => drop(key, session), SESSION_IDLE_MS)
+  }
+
+  /** End a session in order (`bye`) and forget it. */
+  function drop(key: string, session: Live): void {
+    if (live.get(key) === session) live.delete(key)
+    clearTimeout(session.idle)
+    for (const settle of [...session.acks.values()]) settle(false)
+    if (session.slot) limiter.release(session.slot)
+    session.channel.bye()
+  }
+
+  function adopt(peer: string, device: string, channel: MessageChannel, slot?: string): void {
+    const key = endpointKey(peer, device)
+    const old = live.get(key)
+    if (old) drop(key, old)
+    const session: Live = { peer, device, channel, acks: new Map(), idle: undefined, slot }
+    live.set(key, session)
+    channel.onMessage((m) => receive(key, session, m))
+    channel.onClose(() => {
+      if (live.get(key) === session) drop(key, session)
+    })
+    touch(key, session)
+  }
+
+  function receive(key: string, session: Live, m: SessionMessage): void {
+    if (m.t === 'ack') {
+      session.acks.get(m.id)?.(true)
+      return
+    }
+    if (m.t === 'error' || m.t === 'bye') {
+      drop(key, session)
+      return
+    }
+    touch(key, session)
+    try {
+      onInboundBody?.(session.peer, m.body, session.device)
+    } catch (err) {
+      log('inbound body failed', err)
+      return
+    }
+    session.channel.send({ t: 'ack', id: m.id }).catch(() => undefined)
+  }
+
+  /** Forget a dial; its link closes unless the dial connected (`keepLink`). */
+  function endDial(dial: Dial, why?: string, keepLink = false): void {
+    if (dial.done) return
+    dial.done = true
+    clearTimeout(dial.timer)
+    clearTimeout(dial.total)
+    for (const [key, d] of dials) if (d === dial) dials.delete(key)
+    if (!keepLink) void dial.offer.then((made) => made?.link.close())
+    if (why) log(`dial ended: ${why}`)
+  }
+
+  function dialFor(s: MessageSignal): Dial | undefined {
+    for (const dial of dials.values()) {
+      if (dial.sid === s.sid && dial.peer === s.from && (!dial.device || dial.device === s.fromDevice)) return dial
+    }
+    return undefined
+  }
+
+  function wanted(s: MessageSignal): boolean {
+    if (s.kind === 'knock' || s.kind === 'offer') return true
+    const dial = dialFor(s)
+    if (!dial || dial.done) return false
+    if (s.kind === 'ring') return dial.phase === 'knocked'
+    if (s.kind === 'answer') return dial.phase === 'offered'
+    return true
+  }
+
+  async function onRing(dial: Dial, s: MessageSignal): Promise<void> {
+    clearTimeout(dial.timer)
+    dial.device ||= s.fromDevice
+    dial.timer = setTimeout(() => endDial(dial, 'timeout'), SESSION_DIAL_MS)
+    dial.phase = 'offered'
+    const made = await dial.offer
+    if (dial.done) return
+    if (!made) return endDial(dial, 'no local offer')
+    try {
+      await post(dial.peer, { kind: 'offer', sid: dial.sid, toDevice: dial.device, sdp: made.sdp })
+    } catch (err) {
+      endDial(dial)
+      log('offer not posted', err)
+    }
+  }
+
+  async function onAnswer(dial: Dial, s: MessageSignal): Promise<void> {
+    const link = (await dial.offer)?.link
+    if (dial.done) return
+    if (!link || !s.sdp) return endDial(dial, 'answer without a description')
+    if (chain && s.chain !== chain) return endDial(dial, 'rejected: wrong_network')
+    try {
+      await link.acceptAnswer(s.sdp)
+    } catch (err) {
+      endDial(dial)
+      log('answer refused', err)
+      return
+    }
+    if (dial.done) return
+    dial.phase = 'connecting'
+    authenticateChannel(link, { wallet: wallet!, expectedPeer: dial.peer, timeoutMs: SESSION_DIAL_MS }).then(
+      (channel) => {
+        if (dial.done) return channel.close()
+        endDial(dial, undefined, true)
+        adopt(dial.peer, dial.device, channel)
+      },
+      (err) => {
+        endDial(dial)
+        log('handshake failed', err)
+      },
+    )
+  }
+
+  /** Whether to take a knock or offer from `s.from`; replies with a reject when it should. */
+  async function admissible(s: MessageSignal): Promise<boolean> {
+    if (!ready()) return false
+    if (s.from !== localIdentity && !offerPolicy(s.from)) return false
+    if (chain && s.chain !== chain) {
+      await reject(s, 'wrong_network')
+      return false
+    }
+    const mine = dials.get(endpointKey(s.from, s.fromDevice)) ?? dials.get(endpointKey(s.from, ''))
+    if (mine && !mine.done) {
+      if (keepsOwnDialOnGlare({ identityKey: localIdentity, device: localDevice }, { identityKey: s.from, device: s.fromDevice })) {
+        return false
+      }
+      endDial(mine)
+    }
+    return true
+  }
+
+  async function reject(s: MessageSignal, reason: string): Promise<void> {
+    const now = Date.now()
+    if (now - rejectedAt < REJECT_GAP_MS) return
+    rejectedAt = now
+    await post(s.from, { kind: 'reject', sid: s.sid, toDevice: s.fromDevice, reason }).catch(() => undefined)
+  }
+
+  async function onKnock(s: MessageSignal): Promise<void> {
+    if (!(await admissible(s))) return
+    const slot = endpointKey(s.from, s.fromDevice)
+    const refusal = limiter.refusal(slot, undefined, { superseding: live.has(slot) })
+    if (refusal === 'busy') return reject(s, 'busy')
+    if (refusal) return
+    await post(s.from, { kind: 'ring', sid: s.sid, toDevice: s.fromDevice }).catch((err) => log('ring not posted', err))
+  }
+
+  async function onOffer(s: MessageSignal): Promise<void> {
+    if (!s.sdp || !(await admissible(s))) return
+    const slot = endpointKey(s.from, s.fromDevice)
+    if (answering.has(slot)) return
+    const old = live.get(slot)
+    if (old) drop(slot, old)
+    if (!limiter.tryAdmit(slot)) {
+      if (limiter.refusal(slot) === 'busy') await reject(s, 'busy')
+      return
+    }
+    let link: PeerLink | undefined
+    try {
+      const made = await PeerLink.acceptOffer(s.sdp, rtcOptions())
+      link = made.link
+      answering.set(slot, link)
+      const sent = post(s.from, { kind: 'answer', sid: s.sid, toDevice: s.fromDevice, sdp: made.sdp })
+      const handshake = authenticateChannel(link, { wallet: wallet!, expectedPeer: s.from, timeoutMs: CONNECT_MS, startAfter: sent })
+      await sent
+      handshake.then(
+        (channel) => {
+          if (answering.get(slot) !== link) {
+            channel.close()
+            limiter.release(slot)
+            return
+          }
+          answering.delete(slot)
+          adopt(s.from, s.fromDevice, channel, slot)
+        },
+        (err) => {
+          if (answering.get(slot) === link) answering.delete(slot)
+          limiter.release(slot)
+          log('handshake failed', err)
+        },
+      )
+    } catch (err) {
+      if (link && answering.get(slot) === link) answering.delete(slot)
+      link?.close()
+      limiter.release(slot)
+      log('answer failed', err)
+    }
+  }
+
+  function reset(): void {
+    for (const [key, session] of [...live]) drop(key, session)
+    for (const dial of [...dials.values()]) endDial(dial)
+    for (const link of answering.values()) link.close()
+    answering.clear()
+    dialedAt.clear()
+    replay = new ReplayCache()
+    limiter = new InboundLimiter({ ...DEFAULT_INBOUND_LIMITS, maxConcurrent: 16 })
+  }
+
   return {
-    installRtcFactory(next: RtcFactory | null): void {
-      rtcFactory = next
+    installRtc(next: RtcConstructor | null): void {
+      rtc = next
     },
 
     installSignalSender(next: SignalSender | null): void {
@@ -247,144 +385,136 @@ export function createSessionTable(tag = 'direct-session') {
       onInboundBody = handler
     },
 
-    setIdentity(args: { rootKeyHex: string; identityKey: string; device?: string }): void {
+    /** Bind to an identity; another identity, or a lock, ends every session first. */
+    setIdentity(args: { rootKeyHex: string; identityKey: string; device?: string; chain?: string }): void {
       const identity = norm(args.identityKey)
-      if (localIdentity && identity !== localIdentity) reset()
-      rootKeyHex = args.rootKeyHex
+      if (localIdentity && identity !== localIdentity) {
+        reset()
+        chain = undefined
+      }
+      wallet = new ProtoWallet(PrivateKey.fromHex(args.rootKeyHex.trim()))
       localIdentity = identity
       if (args.device) localDevice = args.device
+      if (args.chain) chain = args.chain
     },
 
     reset,
 
-    hasPendingOffers(): boolean {
-      return pending.size > 0
+    /** A dial waits on the box: read it at the dialling cadence. */
+    hasActiveDials(): boolean {
+      return dials.size > 0
     },
 
     hasSession(identity: string, device?: string): boolean {
       return !!openSession(identity, device)
     },
 
-    /** Offer a session to `identity` (one install of it, when `device` is set). True when an offer went out. */
+    /** Dial `identity` (one install of it, when `device` is set). True when a knock went out. */
     async request(identity: string, device = '', now = Date.now()): Promise<boolean> {
       if (!ready()) return false
       const peer = norm(identity)
       if (peer === localIdentity && (!device || device === localDevice)) return false
       if (openSession(peer, device || undefined)) return false
       const target = endpointKey(peer, device)
-      // An answered offer still connecting: a second offer would replace it on the far end.
-      if (device && live.has(target)) return false
-      if (pending.has(target)) return false
-      if (now - (offerSentAt.get(target) ?? 0) < SESSION_OFFER_REPEAT_MS) return false
-      offerSentAt.set(target, now)
-      const created = newPeer()
-      if (!created) return false
-      const { pc, channel } = created
+      if (dials.has(target) || (device && answering.has(target))) return false
+      if (now - (dialedAt.get(target) ?? 0) < SESSION_DIAL_REPEAT_MS) return false
+      dialedAt.set(target, now)
+      const dial: Dial = {
+        sid: newSid(),
+        peer,
+        device,
+        phase: 'knocked',
+        offer: PeerLink.createOffer(rtcOptions()).catch((err) => {
+          log('local offer failed', err)
+          return null
+        }),
+        done: false,
+      }
+      dials.set(target, dial)
       try {
-        await pc.setLocalDescription(await pc.createOffer())
-        await gathered(pc)
-        const sdp = pc.localDescription?.sdp ?? ''
-        if (!acceptableSessionSdp(sdp)) throw new Error('unacceptable local description')
-        const offer = signSessionSignal({ rootKeyHex, t: 'offer', fromDevice: localDevice, to: peer, toDevice: device, sdp, now })
-        pending.set(target, {
-          offer,
-          pc,
-          channel,
-          timer: setTimeout(() => abandon(target), Math.max(0, offer.expiresAt - Date.now())),
-        })
-        await sendSignal!(peer, encodeSessionSignal(offer))
-        return true
+        await post(peer, { kind: 'knock', sid: dial.sid, toDevice: device })
       } catch (err) {
-        if (pending.get(target)?.pc === pc) abandon(target)
-        else closeQuietly(pc)
-        console.info(`[${tag}] offer failed — ${err instanceof Error ? err.message : String(err)}`)
+        endDial(dial)
+        log('knock not posted', err)
         return false
       }
+      if (dial.done) return false
+      dial.timer = setTimeout(() => endDial(dial, 'peer_unreachable'), SESSION_PRESENCE_MS)
+      dial.total = setTimeout(() => endDial(dial, 'timeout'), CONNECT_MS)
+      return true
     },
 
-    /** One decrypted body from the signalling box. */
-    async ingest(body: string, now = Date.now()): Promise<SignalDisposition> {
-      const signal = decodeSessionSignal(body)
-      if (!signal || !localIdentity || !localDevice) return 'invalid'
-      if (signal.expiresAt < now - SESSION_SKEW_MS) return 'invalid'
-      if (signal.from === localIdentity && signal.fromDevice === localDevice) return 'not-mine'
-      if (signal.toDevice && signal.toDevice !== localDevice) return 'not-mine'
-      if (signal.to !== localIdentity || !ready()) return 'invalid'
-
-      if (signal.t === 'answer') {
-        const entry = [...pending.entries()].find(([, p]) => p.offer.nonce === signal.offerNonce)
-        if (!entry) return 'invalid'
-        const [target, offer] = entry
-        if (!verifySessionAnswer(signal, { offer: offer.offer, now })) return 'invalid'
-        pending.delete(target)
-        clearTimeout(offer.timer)
-        try {
-          await offer.pc.setRemoteDescription({ type: 'answer', sdp: signal.sdp })
-          adopt(signal.from, signal.fromDevice, offer.pc, offer.channel)
-        } catch {
-          closeQuietly(offer.pc)
+    /** One message from the signalling box, as `sender` (the carrier's sender) posted it. */
+    async ingest(sender: string, body: string, now = Date.now()): Promise<SignalDisposition> {
+      if (!wallet || !localIdentity || !localDevice) return 'invalid'
+      let envelope: unknown
+      try {
+        envelope = JSON.parse(body)
+      } catch {
+        return 'invalid'
+      }
+      const opened = await openMessageSignal(wallet, norm(sender), envelope, {
+        me: localIdentity,
+        device: localDevice,
+        replay,
+        now,
+        wanted,
+      })
+      if (opened.status !== 'signal') return opened.status === 'invalid' ? 'invalid' : 'not-mine'
+      const s = opened.signal
+      if (s.kind === 'knock') await onKnock(s)
+      else if (s.kind === 'offer') await onOffer(s)
+      else {
+        const dial = dialFor(s)
+        if (dial && !dial.done) {
+          if (s.kind === 'ring') await onRing(dial, s)
+          else if (s.kind === 'answer') await onAnswer(dial, s)
+          else endDial(dial, `rejected: ${s.reason ?? 'no reason'}`)
         }
-        return 'handled'
       }
-
-      if (!verifySessionOffer(signal, { identityKey: localIdentity, device: localDevice, now })) return 'invalid'
-      if (answered.has(signal.nonce)) return 'handled'
-      for (const [nonce, expiresAt] of answered) if (expiresAt < now - SESSION_SKEW_MS) answered.delete(nonce)
-      answered.set(signal.nonce, signal.expiresAt)
-      if (signal.from !== localIdentity && !offerPolicy(signal.from)) return 'handled'
-      const ours = [endpointKey(signal.from, signal.fromDevice), endpointKey(signal.from, '')].find(t => pending.has(t))
-      if (ours) {
-        const local = { identityKey: localIdentity, device: localDevice }
-        if (keepsOwnOfferOnGlare(local, { identityKey: signal.from, device: signal.fromDevice })) return 'handled'
-        abandon(ours)
-      }
-      await answer(signal)
       return 'handled'
     },
 
-    /** Send on an open data channel, or report `box`. Never waits for a connection. */
+    /** Send on an open session, or report `box`. Never waits for a connection. */
     async deliver(args: { recipientIdentityKey: string; body: string; recipientDevice?: string }): Promise<'direct' | 'box'> {
       if (!args.body) return 'box'
-      const session = openSession(args.recipientIdentityKey, args.recipientDevice)
-      if (!session) return 'box'
+      const found = openSession(args.recipientIdentityKey, args.recipientDevice)
+      if (!found) return 'box'
+      const session = found
       const key = endpointKey(session.peer, session.device)
-      const id = messageId()
-      const frame = JSON.stringify({ t: 'msg', id, body: args.body })
-      const limit = Math.min(SESSION_MAX_BODY, session.pc.sctp?.maxMessageSize || SESSION_MAX_BODY)
-      if (frameBytes(frame) > limit) return 'box'
+      const frame = { t: 'msg' as const, id: messageId(), body: args.body }
+      if (messageBytes(frame) > SESSION_MAX_MSG_BYTES) return 'box'
       const acked = await new Promise<boolean>((resolve) => {
         const timer = setTimeout(() => settle(false), SESSION_ACK_MS)
         function settle(ok: boolean) {
           clearTimeout(timer)
-          session!.acks.delete(id)
+          session.acks.delete(frame.id)
           resolve(ok)
         }
-        session.acks.set(id, settle)
-        try {
-          session.channel.send(frame)
-        } catch {
-          settle(false)
-        }
+        session.acks.set(frame.id, settle)
+        session.channel.send(frame).catch(() => settle(false))
       })
       if (acked) {
         touch(key, session)
         return 'direct'
       }
-      drop(key)
+      drop(key, session)
       return 'box'
     },
   }
 }
 
+export type SessionTable = ReturnType<typeof createSessionTable>
+
 const chat = createSessionTable()
 
-export const installRtcFactory = chat.installRtcFactory
+export const installRtc = chat.installRtc
 export const installSignalSender = chat.installSignalSender
 export const installOfferPolicy = chat.installOfferPolicy
 export const setDirectInboundHandler = chat.setInboundHandler
 export const setDirectSessionIdentity = chat.setIdentity
 export const resetDirectSessions = chat.reset
-export const hasPendingSessionOffers = chat.hasPendingOffers
+export const hasActiveSessionDials = chat.hasActiveDials
 export const hasDirectSession = chat.hasSession
 export const requestDirectSession = chat.request
 export const ingestSessionSignal = chat.ingest

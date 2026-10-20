@@ -14,9 +14,9 @@ import { getWalletRuntime } from './walletRuntime'
  * Android CORS misses). Bodies are BRC-169 §7 envelopes (BRC-78 content).
  * Legacy plaintext inbound still decodes. `/files` is a HandCash extension.
  *
- * A live draft-BRC-246 WebRTC data channel carries the same sealed body and
- * skips the box for that message; signalling rides box `session-upgrade`. The
- * box stays the rendezvous and the offline inbox.
+ * A live draft-BRC-246 session (`webrtpay/1`) carries the same sealed body and
+ * skips the box for that message; signalling rides box `webrtpay_messages`.
+ * The box stays the rendezvous and the offline inbox.
  */
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import {
@@ -55,7 +55,7 @@ import {
   type ProvenanceV2,
 } from './oneSatProvenance'
 import {
-  hasPendingSessionOffers,
+  hasActiveSessionDials,
   ingestSessionSignal,
   installOfferPolicy,
   installSignalSender,
@@ -64,12 +64,15 @@ import {
   setDirectSessionIdentity,
   tryDirectDeliver,
 } from './directSession/session'
-import { SESSION_BOX, isLegacySessionOffer } from './directSession/protocol'
+import { MESSAGES_BOX } from './directSession/signal'
+import { createBoxPoller, type BoxPoller } from './directSession/boxPoller'
 import { getOrCreateDeviceId } from './deviceWallets'
 
 export { bytesToBase64 }
 
 const WIRE_PREFIX = 'handcash-message:'
+/** Session offers from installs before draft BRC-246 v2 land in `inbox`; never show them as chat. */
+const LEGACY_SESSION_OFFER_PREFIX = 'handcash-session-offer:'
 const MARKET_WIRE_PREFIX = 'handcash-market-v2:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
 /**
@@ -344,7 +347,7 @@ export type ListedMessage = {
   createdAt: number
 }
 
-function listedSender(m: ListedMessage): string {
+export function listedSender(m: ListedMessage): string {
   return String(m.sender || m.senderIdentityKey || '')
     .trim()
     .toLowerCase()
@@ -926,22 +929,45 @@ function threadIdForSender(identityKey: string): string | null {
   return getFriendByIdentityKey(identityKey)?.id ?? null
 }
 
+let signalPoller: { identity: string; poller: BoxPoller } | null = null
+
 function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }): void {
   const self = env.senderIdentityKey.trim().toLowerCase()
-  setDirectSessionIdentity({
-    rootKeyHex: env.rootKeyHex,
-    identityKey: self,
-    device: getOrCreateDeviceId(),
-  })
+  setDirectSessionIdentity({ rootKeyHex: env.rootKeyHex, identityKey: self, device: getOrCreateDeviceId() })
   setDirectInboundHandler((sender, body) => {
     acceptDirectBody(sender, body, env.rootKeyHex)
   })
   installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey))
-  installSignalSender((to, body) => postSessionSignal(env.rootKeyHex, self, to, body))
+  installSignalSender((to, body) => postToPeerBox(env.rootKeyHex, to, MESSAGES_BOX, body))
+  if (signalPoller?.identity === self) return
+  signalPoller?.poller.stop()
+  const rootKeyHex = env.rootKeyHex
+  const poller = createBoxPoller({
+    tag: 'direct-session',
+    io: {
+      list: async () =>
+        (await listOwnBox(rootKeyHex, MESSAGES_BOX))?.map((m) => ({ messageId: String(m.messageId ?? ''), body: m.body, sender: listedSender(m) })) ?? null,
+      acknowledge: (ids) => acknowledgeOwnBox(rootKeyHex, MESSAGES_BOX, ids),
+    },
+    handle: async (m) => ((await ingestSessionSignal(m.sender, m.body)) === 'not-mine' ? 'leave' : 'ack'),
+    dialing: hasActiveSessionDials,
+  })
+  signalPoller = { identity: self, poller }
+  poller.start()
+}
+
+/** Stop reading box `webrtpay_messages` (lock, account switch). */
+export function stopDirectSignalPolling(): void {
+  signalPoller?.poller.stop()
+  signalPoller = null
+}
+
+async function dialDirectSession(identityKey: string): Promise<void> {
+  if (await requestDirectSession(identityKey)) signalPoller?.poller.nudge()
 }
 
 /**
- * Offer a direct session (draft BRC-246) through the friend's box so a live
+ * Dial a direct session (draft BRC-246) through the friend's box so a live
  * pair can move chat onto a data channel before the next typed line.
  */
 export async function preparePeerDirectPath(args: {
@@ -951,7 +977,7 @@ export async function preparePeerDirectPath(args: {
   messagebox?: string | null
 }): Promise<void> {
   armDirectSession(args)
-  await requestDirectSession(args.recipientIdentityKey)
+  await dialDirectSession(args.recipientIdentityKey)
 }
 
 /** Deliver outbound text. An open direct session skips the box; otherwise the box is the path. */
@@ -1032,7 +1058,7 @@ export async function deliverOutbound(
       }
     }
     if (res.ok) {
-      void requestDirectSession(env.recipientIdentityKey)
+      void dialDirectSession(env.recipientIdentityKey)
       shareIdentityCard(env)
       return { delivered: 'cloud', messagebox: box, beefStripped }
     }
@@ -1076,18 +1102,22 @@ function sessionSignalBox(self: string, to: string): string {
   return normalizeMessageboxBase(getFriendByIdentityKey(to)?.messagebox)
 }
 
-async function postSessionSignal(rootKeyHex: string, self: string, to: string, plaintext: string): Promise<void> {
-  const box = sessionSignalBox(self, to)
-  const body = sealForPeer({ plaintext, rootKeyHex, recipientIdentityKey: to })
+/**
+ * Post `body` as is in `messageBox` on `to`'s box. For `webrtpay/1` signals,
+ * which are already encrypted to their recipient (BRC-2).
+ */
+export async function postToPeerBox(rootKeyHex: string, to: string, messageBox: string, body: string): Promise<void> {
+  const self = PrivateKey.fromHex(rootKeyHex.trim()).toPublicKey().toString().toLowerCase()
+  const box = sessionSignalBox(self, to.trim().toLowerCase())
   const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/sendMessage`, {
     method: 'POST',
     headers: signedMessageboxHeaders(rootKeyHex, 'sendMessage', {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-    }, box, SESSION_BOX),
-    body: JSON.stringify({ message: { recipient: to, messageBox: SESSION_BOX, body } }),
+    }, box, messageBox),
+    body: JSON.stringify({ message: { recipient: to, messageBox, body } }),
   })
-  if (!res.ok) throw new Error(`session signal refused (${res.status})`)
+  if (!res.ok) throw new Error(`${messageBox} send refused (${res.status})`)
 }
 
 /**
@@ -1192,44 +1222,9 @@ export function openFromSelf(rootKeyHex: string, body: string): string | null {
   return 'refuse' in opened || !opened.sealed ? null : opened.plaintext
 }
 
-let sessionBoxPolledAt = 0
-const SESSION_BOX_IDLE_POLL_MS = 20_000
-
-/**
- * Offers and answers live in box `session-upgrade` (draft BRC-246), which
- * older installs never list. Poll it on every inbox pass while an offer
- * awaits its answer, otherwise at the idle cadence.
- */
-async function pollSessionSignals(rootKeyHex: string, box: string): Promise<void> {
-  const now = Date.now()
-  if (!hasPendingSessionOffers() && now - sessionBoxPolledAt < SESSION_BOX_IDLE_POLL_MS) return
-  sessionBoxPolledAt = now
-  try {
-    const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/listMessages`, {
-      method: 'POST',
-      headers: signedMessageboxHeaders(rootKeyHex, 'listMessages', {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      }, box, SESSION_BOX),
-      body: JSON.stringify({ messageBox: SESSION_BOX }),
-    })
-    if (!res.ok) return
-    const data = (await res.json()) as { messages?: ListedMessage[] }
-    const ackIds: string[] = []
-    for (const m of Array.isArray(data.messages) ? data.messages : []) {
-      const inner = plaintextFromPeer(m.body, rootKeyHex, listedSender(m))
-      const disposition = inner == null ? 'invalid' : await ingestSessionSignal(inner)
-      if (disposition !== 'not-mine' && m.messageId) ackIds.push(String(m.messageId))
-    }
-    if (ackIds.length) await acknowledgeMessages(ackIds, rootKeyHex, box, SESSION_BOX)
-  } catch (err) {
-    console.info('[direct-session] signal poll failed', err instanceof Error ? err.message : String(err))
-  }
-}
-
 function acceptDirectBody(sender: string, body: string, rootKeyHex: string): void {
   const inner = plaintextFromPeer(body, rootKeyHex, sender)
-  if (inner == null || isLegacySessionOffer(inner)) return
+  if (inner == null || inner.startsWith(LEGACY_SESSION_OFFER_PREFIX)) return
   if (isIdentityCardControl(inner)) {
     void ingestIdentityCard(sender, inner)
     return
@@ -1451,12 +1446,11 @@ export async function pollInboundTipHints(args: {
     } catch {
       /* locked or unreadable key — inbox parse still runs */
     }
-    void pollSessionSignals(args.rootKeyHex, box)
     for (const m of list) {
       const senderKey = listedSender(m)
       const inner = plaintextFromPeer(m.body, args.rootKeyHex, senderKey)
       if (inner == null) continue
-      if (isLegacySessionOffer(inner)) {
+      if (inner.startsWith(LEGACY_SESSION_OFFER_PREFIX)) {
         if (m.messageId) ackIds.push(String(m.messageId))
         continue
       }

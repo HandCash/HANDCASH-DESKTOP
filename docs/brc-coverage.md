@@ -243,7 +243,7 @@ BRCs the wallet relies on without implementing: [BRC-2](https://github.com/bsv-b
 | Feature | What it does | Implements | Uses | Module |
 |---|---|---|---|---|
 | Device peer handler | Handles /handcash-device/v1/* for paired same-identity peers on the LAN. | none | — | [`src/wallet/devicePeerHandler.ts`](../src/wallet/devicePeerHandler.ts) |
-| Protocol (directSession) | Session upgrade (draft BRC-246 v2). | BRC-246 (draft) | — | [`src/wallet/directSession/protocol.ts`](../src/wallet/directSession/protocol.ts) |
+| Signal (directSession) | BRC-246 `messages` signals over `webrtpay/1`. | BRC-246 (draft) | — | [`src/wallet/directSession/signal.ts`](../src/wallet/directSession/signal.ts) |
 | Session (directSession) | Hot-path session table (draft BRC-246 v2). | BRC-246 (draft) | — | [`src/wallet/directSession/session.ts`](../src/wallet/directSession/session.ts) |
 | Vault link | The device link between installs of one vault (draft BRC-249 over draft BRC-246 v2). | BRC-249 (draft) | — | [`src/wallet/vaultLink.ts`](../src/wallet/vaultLink.ts) |
 

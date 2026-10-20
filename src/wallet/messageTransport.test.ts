@@ -26,6 +26,7 @@ import {
   withOptionalIdentities,
   withOptionalProvenance,
   withOptionalTokenLineage,
+  stopDirectSignalPolling,
 } from './messageTransport'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
 import { IDENTITY_CARD_REQUEST } from './identityCard'
@@ -460,7 +461,7 @@ describe('messagebox base URL', () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const { openPeerMessage } = await import('./messageEnvelope')
     const local = await import('./directSession/session')
-    const { fakeRtcFactory } = await import('./directSession/fakeRtc.fixture')
+    const { fakeRtc } = await import('./directSession/fakeRtc.fixture')
     vi.resetModules()
     const remote = await import('./directSession/session')
     const me = PrivateKey.fromRandom()
@@ -471,17 +472,19 @@ describe('messagebox base URL', () => {
     const toMe: string[] = []
     const received: string[] = []
     local.setDirectSessionIdentity({ rootKeyHex: me.toHex(), identityKey: meKey, device: 'mac' })
-    local.installRtcFactory(fakeRtcFactory())
+    local.installRtc(fakeRtc())
     local.installSignalSender(async (_to, body) => void toPeer.push(body))
     remote.setDirectSessionIdentity({ rootKeyHex: peer.toHex(), identityKey: peerKey, device: 'phone' })
-    remote.installRtcFactory(fakeRtcFactory())
+    remote.installRtc(fakeRtc())
+    remote.installOfferPolicy(() => true)
     remote.installSignalSender(async (_to, body) => void toMe.push(body))
     remote.setDirectInboundHandler((_sender, body) => received.push(body))
     await local.requestDirectSession(peerKey)
-    await remote.ingestSessionSignal(toPeer.shift()!)
-    await local.ingestSessionSignal(toMe.shift()!)
-    await new Promise((r) => setTimeout(r, 0))
-    expect(local.hasDirectSession(peerKey)).toBe(true)
+    await vi.waitFor(async () => {
+      while (toPeer.length) await remote.ingestSessionSignal(meKey, toPeer.shift()!)
+      while (toMe.length) await local.ingestSessionSignal(peerKey, toMe.shift()!)
+      expect(local.hasDirectSession(peerKey)).toBe(true)
+    })
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -505,30 +508,25 @@ describe('messagebox base URL', () => {
       sealed: true,
     })
     local.resetDirectSessions()
-    local.installRtcFactory(null)
+    local.installRtc(null)
     remote.resetDirectSessions()
+    stopDirectSignalPolling()
   })
 
-  it('leaves a signal for another install of this account on the session box, even without WebRTC', async () => {
-    const { PrivateKey } = await import('@bsv/sdk')
-    const { sealPeerMessage } = await import('./messageEnvelope')
-    const { signSessionSignal, encodeSessionSignal, SESSION_BOX } = await import('./directSession/protocol')
-    const { fakeSdp } = await import('./directSession/fakeRtc.fixture')
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+  it('leaves a signal for another install of this account in webrtpay_messages, even without WebRTC', async () => {
+    const { PrivateKey, ProtoWallet } = await import('@bsv/sdk')
+    const { sealMessageSignal, newSid, MESSAGES_BOX } = await import('./directSession/signal')
     const me = PrivateKey.fromRandom()
     const meKey = me.toPublicKey().toString().toLowerCase()
-    const seal = (plaintext: string) =>
-      sealPeerMessage({ plaintext, rootKeyHex: me.toHex(), recipientIdentityKey: meKey })
-    const forSibling = encodeSessionSignal(
-      signSessionSignal({
-        rootKeyHex: me.toHex(),
-        t: 'offer',
-        fromDevice: 'tablet',
-        to: meKey,
-        toDevice: 'phone',
-        sdp: fakeSdp('AA:BB'),
-      }),
-    )
+    const forSibling = await sealMessageSignal(new ProtoWallet(me), {
+      kind: 'knock',
+      sid: newSid(),
+      from: meKey,
+      to: meKey,
+      ts: Date.now(),
+      fromDevice: 'tablet',
+      toDevice: 'phone',
+    })
     const posts: { url: string; body: string }[] = []
     vi.stubGlobal(
       'fetch',
@@ -536,13 +534,13 @@ describe('messagebox base URL', () => {
         const url = String(input)
         const body = String(init?.body ?? '')
         posts.push({ url, body })
-        if (url.endsWith('/listMessages') && body.includes(SESSION_BOX))
+        if (url.endsWith('/listMessages') && body.includes(MESSAGES_BOX))
           return new Response(
             JSON.stringify({
               status: 'success',
               messages: [
-                { messageId: 'sig-sibling', body: seal(forSibling), sender: meKey, createdAt: 1 },
-                { messageId: 'sig-junk', body: seal('not a signal'), sender: meKey, createdAt: 2 },
+                { messageId: 'sig-sibling', body: JSON.stringify(forSibling), sender: meKey, createdAt: 1 },
+                { messageId: 'sig-junk', body: 'not a signal', sender: meKey, createdAt: 2 },
               ],
             }),
             { status: 200 },
@@ -552,17 +550,22 @@ describe('messagebox base URL', () => {
         return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
       }),
     )
-    await pollInboundTipHints({
-      rootKeyHex: me.toHex(),
-      messagebox: 'https://mb.peer.example/v1/messagebox',
-      peerIdForSender: () => null,
-    })
-    await vi.waitFor(() =>
-      expect(posts.some((post) => post.url.endsWith('/acknowledgeMessage'))).toBe(true),
-    )
-    const acks = posts.filter((post) => post.url.endsWith('/acknowledgeMessage'))
-    expect(acks).toHaveLength(1)
-    expect(JSON.parse(acks[0]!.body)).toMatchObject({ messageBox: SESSION_BOX, messageIds: ['sig-junk'] })
+    try {
+      await pollInboundTipHints({
+        rootKeyHex: me.toHex(),
+        messagebox: 'https://mb.peer.example/v1/messagebox',
+        peerIdForSender: () => null,
+      })
+      await vi.waitFor(() =>
+        expect(posts.some((post) => post.url.endsWith('/acknowledgeMessage'))).toBe(true),
+      )
+      expect(posts.some((post) => post.url.endsWith('/listMessages') && post.body.includes(MESSAGES_BOX))).toBe(true)
+      const acks = posts.filter((post) => post.url.endsWith('/acknowledgeMessage'))
+      expect(acks).toHaveLength(1)
+      expect(JSON.parse(acks[0]!.body)).toMatchObject({ messageBox: MESSAGES_BOX, messageIds: ['sig-junk'] })
+    } finally {
+      stopDirectSignalPolling()
+    }
   })
 
   it('uploads BEEF as raw bytes with Content-Length (not a File body)', async () => {

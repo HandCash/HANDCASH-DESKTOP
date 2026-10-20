@@ -55,7 +55,11 @@ function ensureLifecycleRegistered(): void {
       setDirectSessionIdentity({
         rootKeyHex: wallet.rootKeyHex,
         identityKey: wallet.identityKey,
+        chain: wallet.chain,
       })
+      void import('./directPayments').then(({ startDirectPayments }) =>
+        startDirectPayments({ rootKeyHex: wallet.rootKeyHex, chain: wallet.chain }),
+      )
       void import('./deadCoinSweep').then(({ scheduleUnlockDeadCoinPass }) =>
         scheduleUnlockDeadCoinPass(runtime),
       )
@@ -73,6 +77,8 @@ function ensureLifecycleRegistered(): void {
       clearPaymentProgress()
       clearVerificationProgress()
       resetDirectSessions()
+      void import('./messageTransport').then(({ stopDirectSignalPolling }) => stopDirectSignalPolling())
+      void import('./directPayments').then(({ stopDirectPayments }) => stopDirectPayments())
     },
   })
 }

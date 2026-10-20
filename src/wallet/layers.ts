@@ -193,8 +193,8 @@ import { getActiveWallet } from './session'
  *     `externalBroadcast` classify only metadata delivery/internalization; a
  *     messagebox miss never changes transaction propagation or creates a second
  *     spend. Remittance ± inline BEEF rides `sendMessage`. A live pair
- *     may skip the box on a WebRTC data channel opened by signed offer/answer
- *     on box `session-upgrade` (draft BRC-246, `directSession/`). The box stays
+ *     may skip the box on a `webrtpay/1` data channel dialled through box
+ *     `webrtpay_messages` (draft BRC-246, `directSession/`). The box stays
  *     the rendezvous and the offline inbox.
  *   - **1Sat market** (`marketListing.ts` + `marketSettlement.ts`): listing
  *     spends the tip into a re-tipped item + BRC-48 offer. Settlement is one

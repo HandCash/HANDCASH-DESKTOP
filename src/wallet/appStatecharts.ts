@@ -1708,8 +1708,8 @@ const MESSAGEBOX_CHART = `flowchart TB
 
   subgraph Today["HandCash today"]
     HARD["resolved messagebox URL\\nBRC-CLOUD fallback"] --> SEND2["sendMessage\\nBRC-169 envelope + BRC-78 content"]
-    HARD --> SIGNAL["box session-upgrade\\nsigned offer / answer"]
-    SIGNAL --> RTC["WebRTC data channel\\ndraft BRC-246"]
+    HARD --> SIGNAL["box webrtpay_messages\\nknock / ring / offer / answer"]
+    SIGNAL --> RTC["webrtpay/1 data channel\\ndraft BRC-246"]
     RTC -->|ack within 1s| LOCAL2["messageStore friend thread"]
     RTC -.->|no ack| SEND2
     SEND2 --> FILES["optional chat attachments only\\nPOST /files → R2"]
