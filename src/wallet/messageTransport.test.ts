@@ -25,7 +25,6 @@ import {
   withOptionalBeefB64,
   withOptionalIdentities,
   withOptionalProvenance,
-  withOptionalTokenLineage,
   stopDirectSignalPolling,
 } from './messageTransport'
 import { bapIdentityFixture } from './issuerIdentity.fixture'
@@ -51,23 +50,6 @@ describe('message transport envelopes', () => {
     const fitted = withOptionalIdentities(base, [huge, other, pkg])
     expect(decodeMessageBody(fitted.body).identities).toEqual([other, pkg])
     expect(withOptionalIdentities('plain text', [pkg]).identitiesInBox).toBe(false)
-  })
-  it('carries BSV-21 lineage beside a token, never into chat metadata', () => {
-    const base = encodeMessageBody({
-      kind: 'tip',
-      text: 'Sent you 5 TEST',
-      meta: { txid: 'cd'.repeat(32), item: true, sats: 1 },
-    })
-    const packed = withOptionalTokenLineage(base, [1, 2, 3, 250])
-    expect(packed.lineageInBox).toBe(true)
-    const decoded = decodeMessageBody(packed.body)
-    expect(decoded.tokenLineage).toBe(btoa(String.fromCharCode(1, 2, 3, 250)))
-    expect(decoded.meta).not.toHaveProperty('tokenLineage')
-    expect(withOptionalTokenLineage(base, new Array(MESSAGEBOX_INNER_MAX).fill(7))).toEqual({
-      body: base,
-      lineageInBox: false,
-    })
-    expect(withOptionalTokenLineage(base, null).lineageInBox).toBe(false)
   })
   it('round-trips bounded market settlement responses', () => {
     const body = encodeMarketSettlementWire({
@@ -148,57 +130,22 @@ describe('message transport envelopes', () => {
     expect(decodeMessageBody('hello')).toEqual({ kind: 'text', text: 'hello' })
   })
 
-  it('round-trips tagged BSV-21 settle metadata', () => {
-    const tokenId = `${'ab'.repeat(32)}_0`
-    const decoded = decodeMessageBody(
-      encodeMessageBody({
-        kind: 'tip',
-        text: 'Sent you TST',
-        meta: {
-          txid: 'cd'.repeat(32),
-          item: true,
-          asset: {
-            kind: 'fungible',
-            tokenId,
-            amount: '125',
-            sym: 'TST',
-            dec: 2,
-          },
-        },
-      }),
-    )
-    expect(decoded.meta?.item).toBe(true)
-    expect(decoded.meta?.asset).toEqual({
-      kind: 'fungible',
-      tokenId,
-      amount: '125',
-      sym: 'TST',
-      dec: 2,
-    })
-  })
-
-  it('reads a BRC-251 token notice with any tag or none', () => {
-    const tokenId = `${'ab'.repeat(32)}_0`
+  it('reads a BRC-251 item notice with any tag or none', () => {
     const notice = JSON.stringify({
       version: 1,
       kind: 'tip',
-      text: 'Sent you TST',
-      meta: { txid: 'cd'.repeat(32), item: true, asset: { kind: 'fungible', tokenId, amount: '7', sym: 'TST', dec: 0 } },
+      text: 'Sent you a card',
+      meta: { txid: 'cd'.repeat(32), item: true, asset: { kind: 'collectable' } },
     })
     for (const body of [notice, `other-wallet:${notice}`]) {
-      expect(decodeMessageBody(body).meta?.asset).toEqual({
-        kind: 'fungible',
-        tokenId,
-        amount: '7',
-        sym: 'TST',
-        dec: 0,
-      })
+      expect(decodeMessageBody(body).meta?.asset).toEqual({ kind: 'collectable' })
     }
     expect(decodeMessageBody('note: {not json')).toEqual({ kind: 'text', text: 'note: {not json' })
     expect(decodeMessageBody('{"just":"text"}')).toEqual({ kind: 'text', text: '{"just":"text"}' })
   })
 
-  it('does not expose the retired fungible wire variant', () => {
+  it('does not expose the retired fungible wire variants', () => {
+    for (const kind of ['fungible', '1sat-ft']) {
     const decoded = decodeMessageBody(
       encodeMessageBody({
         kind: 'tip',
@@ -214,10 +161,11 @@ describe('message transport envelopes', () => {
             dec: 0,
           },
         },
-      }).replace('"fungible"', '"1sat-ft"'),
+      }).replace('"fungible"', `"${kind}"`),
     )
     expect(decoded.meta?.item).toBe(true)
     expect(decoded.meta?.asset).toBeUndefined()
+    }
   })
 
   it('round-trips a sub-cent tip as a semantic card', () => {
@@ -728,16 +676,14 @@ describe('messagebox base URL', () => {
     expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
   })
 
-  it('never trades a BSV-21 Atomic BEEF away for provenance', async () => {
+  it('never trades an Atomic BEEF away for provenance', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ status: 'success' }), { status: 200 })),
     )
-    // Provenance too fat to share the cap with the BEEF. A collectable may drop
-    // the BEEF here and let the payee SPV-fetch; a fungible payee cannot settle
-    // at all without it, so the BEEF must win.
+    // Provenance too fat to share the cap with the BEEF: the BEEF must win.
     const provenance = {
       v: 2 as const,
       origin: `${'aa'.repeat(32)}_0`,
@@ -750,16 +696,10 @@ describe('messagebox base URL', () => {
       rootKeyHex: root.toHex(),
       senderIdentityKey: root.toPublicKey().toString(),
       txid: 'c'.repeat(64),
-      itemName: 'Token',
+      itemName: 'Card',
       atomicBeef: [1, 2, 3],
       provenance,
     }
-
-    const fungible = await notifyPeerItemIncoming({
-      ...args,
-      asset: { kind: 'fungible', tokenId: `${'dd'.repeat(32)}_0`, amount: '100' },
-    })
-    expect(fungible.beefInBox).toBe(true)
 
     const collectable = await notifyPeerItemIncoming({
       ...args,

@@ -146,7 +146,7 @@ describe('custody journal capture', () => {
     expect(await journalAllToolboxOutputs(walletOver(sp), owner)).toEqual({ added: 2, rows: 3 })
   })
 
-  it('keeps an oversized HCT row\'s holder derivation and asset, dropping display text', async () => {
+  it('keeps an oversized BNT row\'s holder derivation and asset, dropping display text', async () => {
     const { replayableCustomInstructions } = await import('./custodyJournalCapture')
     const row = {
       asset: 'ab'.repeat(20),

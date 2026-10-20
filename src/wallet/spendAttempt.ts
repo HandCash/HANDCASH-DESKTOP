@@ -28,7 +28,6 @@ import {
   isCollectableOutpointSpendable,
   sendCollectable,
 } from "./collectables";
-import { getCachedFungibles, getFungible, sendFungible } from "./token";
 import {
   counterpartyMaySettle,
   forgetItemsSent,
@@ -207,13 +206,10 @@ function hasTxid(entry: ActivityEntry): boolean {
  */
 function publishableSignedTransfer(
   entry: ActivityEntry
-): Extract<ActivityRetry, { kind: "send-collectable" | "send-token" }> | null {
+): Extract<ActivityRetry, { kind: "send-collectable" }> | null {
   const retry = entry.retry;
   if (!hasTxid(entry)) return null;
-  if (
-    retry?.kind === "send-collectable" ||
-    retry?.kind === "send-token"
-  ) {
+  if (retry?.kind === "send-collectable") {
     return senderMayPublishSignedTransfer(entry) ? retry : null;
   }
   // Older item rows predate durable retry details, but rebroadcast needs only
@@ -341,26 +337,6 @@ async function pinBindsRow(
   return arcadePinStillBinds(entry.txid!, chain);
 }
 
-/** True when the wallet still holds enough of this token to recreate the send. */
-function isTokenSendRetryable(
-  retry: Extract<ActivityRetry, { kind: "send-token" }>
-): boolean | null {
-  try {
-    const token =
-      getFungible(retry.tokenId) ??
-      getCachedFungibles().find((t) => t.tokenId === retry.tokenId);
-    if (!token) return false;
-    if (token.spendKind === "cosigned" || token.spendKind === "mixed")
-      return false;
-    const held = BigInt(token.amt.replace(/\D/g, "") || "0");
-    const need = BigInt(retry.amount.replace(/\D/g, "") || "0");
-    if (need <= 0n) return false;
-    return held >= need;
-  } catch {
-    return null;
-  }
-}
-
 export async function resolveSpendAttemptFate(
   entry: ActivityEntry,
   chain: Chain
@@ -476,37 +452,6 @@ export async function resolveSpendAttemptFate(
     };
   }
 
-  if (retry.kind === "send-token") {
-    const spendable = isTokenSendRetryable(retry);
-    if (spendable === null) {
-      return {
-        kind: "refuse",
-        reason: "statusUnknown",
-        message:
-          "Token balance could not be checked. Retry stays disabled until the wallet refreshes.",
-        mayClear: false,
-      };
-    }
-    if (!spendable) {
-      return {
-        kind: "refuse",
-        reason: "sourceNotSpendable",
-        message:
-          "This send cannot be retried — there is no longer enough of this token spendable in this wallet.",
-        mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
-      };
-    }
-    return {
-      kind: "retry",
-      action: hasTxid(entry) ? "rebroadcast" : "recreateItem",
-      retry,
-      message: hasTxid(entry)
-        ? "This send did not confirm. The token tips are still unspent, so the signed transfer can be broadcast again."
-        : "This send failed before it produced a transaction. The token is still spendable and can be retried.",
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain, pinBinds),
-    };
-  }
-
   const spendable = await Promise.resolve(
     isCollectableOutpointSpendable(retry.outpoint)
   ).catch(() => null);
@@ -574,26 +519,6 @@ export async function retrySpendAttempt(
       toAddress: fate.retry.toAddress,
       satoshis: fate.retry.satoshis,
     };
-  }
-
-  if (fate.retry.kind === "send-token") {
-    if (fate.action === "recreateItem") {
-      const sent = await sendFungible({
-        tokenId: fate.retry.tokenId,
-        amount: fate.retry.amount,
-        toAddress: fate.retry.toAddress,
-        recipientIdentityKey: fate.retry.recipientIdentityKey,
-        friendLabel: fate.retry.friendLabel,
-      });
-      return { kind: "recreated", txid: sent.txid };
-    }
-    const spentTip = entry.item?.outpoint?.trim();
-    if (!spentTip) {
-      throw new Error(
-        "The token input for this signed transfer is no longer available."
-      );
-    }
-    return rebroadcastSignedTransfer(entry, spentTip);
   }
 
   if (fate.retry.kind !== "send-collectable") {

@@ -15,7 +15,7 @@ const tx = (n: number) => n.toString(16).padStart(64, '0')
 const baskets = [
   { basketId: 1, name: 'default' },
   { basketId: 2, name: '1sat' },
-  { basketId: 3, name: 'bsv21' },
+  { basketId: 3, name: 'bntft' },
 ]
 
 describe('ledgerActivityRows', () => {

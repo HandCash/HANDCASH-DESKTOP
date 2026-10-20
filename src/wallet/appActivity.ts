@@ -49,18 +49,18 @@ export type ActivityStatus = "pending" | "complete" | "failed";
 /** Collectable / NFT / fungible remittance attached to an activity row. */
 export type ActivityItem = {
   name: string;
-  /** NFT origin, or BSV-21 token id when {@link tokenId} is set. */
+  /** NFT origin, or the token id when {@link tokenId} is set. */
   origin: string;
   outpoint?: string;
   imageUrl?: string;
   app?: string;
-  /** When set, this row is a BSV-21 fungible tip (not a 1Sat collectable). */
+  /** When set, this row is a token (not a 1Sat collectable). */
   tokenId?: string;
-  /** Integer token units (BSV-21 `amt`); formatted with {@link dec}. */
+  /** Integer token units; formatted with {@link dec}. */
   amt?: string;
   /** Deploy decimals for {@link amt} (0–18). */
   dec?: number;
-  /** BSV-21 icon inscription outpoint (`txid_vout`) when known. */
+  /** Icon inscription outpoint (`txid_vout`) when known. */
   icon?: string;
   /** Set when the quantity is a native coin (BRC-213): LTC or BCH rows, or an earlier build's wLTC token (`ltc`). */
   backedBy?: CoinChain;
@@ -71,14 +71,6 @@ export type ActivityRetry =
   | {
       kind: "send-collectable";
       outpoint: string;
-      toAddress: string;
-      recipientIdentityKey?: string;
-      friendLabel?: string;
-    }
-  | {
-      kind: "send-token";
-      tokenId: string;
-      amount: string;
       toAddress: string;
       recipientIdentityKey?: string;
       friendLabel?: string;
@@ -186,7 +178,7 @@ export function sameActivityRow(
 }
 
 export type ActivityBurn = {
-  asset: "bsv21" | "1sat";
+  asset: "token" | "1sat";
   destroyedAmount: string;
   recoveredSatoshis?: number;
   feeSatoshis?: number;
@@ -373,19 +365,6 @@ function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
     return {
       kind: "send-collectable",
       outpoint,
-      toAddress,
-      ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
-      ...(friendLabel ? { friendLabel } : {}),
-    };
-  }
-  if (row.kind === "send-token") {
-    const tokenId = typeof row.tokenId === "string" ? row.tokenId.trim() : "";
-    const amount = typeof row.amount === "string" ? row.amount.trim() : "";
-    if (!tokenId || !amount) return undefined;
-    return {
-      kind: "send-token",
-      tokenId,
-      amount,
       toAddress,
       ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
       ...(friendLabel ? { friendLabel } : {}),
@@ -1264,25 +1243,16 @@ export function noteInboundReceivePending(args: {
   itemName?: string;
   itemOrigin?: string;
   outpoint?: string;
-  token?: {
-    tokenId: string;
-    amount: string;
-    sym: string;
-    dec: number;
-    icon?: string;
-  };
 }, owner?: BoundAccountKeyScope): void {
   const txid = args.txid.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(txid)) return;
   if (isGhostTxSuppressed(txid)) return;
   if (args.item) {
-    const name =
-      args.token?.sym?.trim() || args.itemName?.trim() || "Collectable";
+    const name = args.itemName?.trim() || "Collectable";
     const outpoint = args.outpoint?.trim() || undefined;
     // Never invent `${txid}.0` — batch receives tip at other vouts, and a fake
     // .0 orphans Verifying… or collapses two foxes onto one activity row.
     const origin =
-      args.token?.tokenId?.trim() ||
       args.itemOrigin?.trim() ||
       (outpoint ? outpoint.replace(/\.(\d+)$/, "_$1") : undefined) ||
       `${txid}_pending`;
@@ -1291,27 +1261,14 @@ export function noteInboundReceivePending(args: {
       from: args.from,
       kind: "earned",
       sats: 1,
-      method: args.token ? "receive-token" : "receive-collectable",
-      note: args.token
-        ? `Receiving ${formatActivityTokenAmt(
-            args.token.amount,
-            args.token.dec
-          )} ${name}`
-        : `Receiving ${name}`,
+      method: "receive-collectable",
+      note: `Receiving ${name}`,
       txid,
       status: "pending",
       item: {
         name,
         origin,
         ...(outpoint ? { outpoint } : {}),
-        ...(args.token
-          ? {
-              tokenId: args.token.tokenId,
-              amt: args.token.amount,
-              dec: args.token.dec,
-              ...(args.token.icon ? { icon: args.token.icon } : {}),
-            }
-          : {}),
       },
     }, owner);
     return;
@@ -1436,26 +1393,19 @@ export function noteOutboundSendPending(args: {
       pendingId,
       ...(sendGroupId ? { sendGroupId } : {}),
       item: args.item,
-      retry: isToken
-        ? {
-            kind: "send-token",
-            tokenId: args.item.tokenId!,
-            amount: args.item.amt ?? "0",
-            toAddress: args.to,
-            ...(args.recipientIdentityKey
-              ? { recipientIdentityKey: args.recipientIdentityKey }
-              : {}),
-            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-          }
+      ...(isToken
+        ? {}
         : {
-            kind: "send-collectable",
-            outpoint: args.item.outpoint ?? "",
-            toAddress: args.to,
-            ...(args.recipientIdentityKey
-              ? { recipientIdentityKey: args.recipientIdentityKey }
-              : {}),
-            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-          },
+            retry: {
+              kind: "send-collectable",
+              outpoint: args.item.outpoint ?? "",
+              toAddress: args.to,
+              ...(args.recipientIdentityKey
+                ? { recipientIdentityKey: args.recipientIdentityKey }
+                : {}),
+              ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+            },
+          }),
     });
     return;
   }
@@ -1595,26 +1545,19 @@ export function noteOutboundSendComplete(args: {
       status: "complete",
       pendingId,
       item: args.item,
-      retry: isToken
-        ? {
-            kind: "send-token",
-            tokenId: args.item.tokenId!,
-            amount: args.item.amt ?? "0",
-            toAddress: args.to,
-            ...(args.recipientIdentityKey
-              ? { recipientIdentityKey: args.recipientIdentityKey }
-              : {}),
-            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-          }
+      ...(isToken
+        ? {}
         : {
-            kind: "send-collectable",
-            outpoint: args.item.outpoint ?? "",
-            toAddress: args.to,
-            ...(args.recipientIdentityKey
-              ? { recipientIdentityKey: args.recipientIdentityKey }
-              : {}),
-            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-          },
+            retry: {
+              kind: "send-collectable",
+              outpoint: args.item.outpoint ?? "",
+              toAddress: args.to,
+              ...(args.recipientIdentityKey
+                ? { recipientIdentityKey: args.recipientIdentityKey }
+                : {}),
+              ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+            },
+          }),
     });
     return;
   }
@@ -2442,7 +2385,7 @@ export function isItemActivity(entry: ActivityEntry): boolean {
   );
 }
 
-/** True when the row is a BSV-21 fungible tip (Collect → Tokens). */
+/** True when the row moves a token or coin (Collect → Tokens). */
 export function isTokenActivity(entry: ActivityEntry): boolean {
   if (entry.item?.tokenId?.trim()) return true;
   if (isCoinPaymentActivity(entry)) return true;
@@ -2450,7 +2393,7 @@ export function isTokenActivity(entry: ActivityEntry): boolean {
     entry.method === "receive-token" ||
     entry.method === "send-token" ||
     entry.method === "mint-token" ||
-    /bsv-?21|fungible|receive-token|send-token|mint-token/i.test(entry.method)
+    /fungible|receive-token|send-token|mint-token/i.test(entry.method)
   );
 }
 
@@ -2515,7 +2458,7 @@ export function pendingOutpointFlightVerb(
 }
 
 /**
- * Format BSV-21 integer `amt` with deploy decimals for activity rows.
+ * Format an integer token `amt` with its decimals for activity rows.
  * Kept local so appActivity does not import the full fungibles stack.
  */
 export function formatActivityTokenAmt(amt: string, dec = 0): string {

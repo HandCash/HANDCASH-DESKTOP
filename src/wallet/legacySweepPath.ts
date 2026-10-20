@@ -6,7 +6,7 @@
  *
  * Same pattern as `TipKind` / `SendPath` / `ItemSettlePath` — a tagged union so
  * a future change cannot silently treat asset companions or sub-fee dust as
- * funding. Assets (1-sat tips, BSV-21) never reach this chooser with a sweep
+ * funding. Assets (1-sat tips, tokens) never reach this chooser with a sweep
  * path; they are routed by `classifyLegacyUtxos` into baskets instead.
  *
  * HARD RULES:

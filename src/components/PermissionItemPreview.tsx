@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { tokenIssuerAsset, type IssuerAsset } from '../hooks/useIssuerView'
+import type { IssuerAsset } from '../hooks/useIssuerView'
 import { getCachedCollectables } from '../wallet/collectables'
-import { getCachedFungibles, getTokenIconDataUrl, shortTokenLabel } from '../wallet/token'
+import { TOKEN_BASKET } from '../wallet/assetBaskets'
 import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon, InventoryIcon } from './icons'
@@ -15,6 +15,10 @@ type Preview = {
   issuer?: IssuerAsset
 }
 
+function shortAssetId(id: string): string {
+  return id.length > 14 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id
+}
+
 function norm(raw: string): string {
   return raw.replace('_', '.').toLowerCase()
 }
@@ -25,7 +29,6 @@ function resolvePreview(
   hints?: {
     itemName?: string
     itemImageUrl?: string
-    itemIcon?: string
     previewKind?: 'token' | 'collectable'
   },
 ): Preview | null {
@@ -45,36 +48,16 @@ function resolvePreview(
       }
     }
   }
-  const tokens = getCachedFungibles()
-  const token = tokens.find((row) => {
-    const rowOp = norm(row.outpoint)
-    const rowId = norm(row.tokenId)
-    return (tip && (rowOp === tip || rowId === tip)) || (id && rowId === id)
-  })
-  if (token) {
-    return {
-      name: token.sym || 'Token',
-      imageUrl:
-        token.iconUrl ||
-        getTokenIconDataUrl(token.icon) ||
-        hints?.itemImageUrl ||
-        (hints?.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined),
-      kind: 'token',
-      subtitle: id ? `p2pft · ${shortTokenLabel(id)}` : 'p2pft',
-      issuer: tokenIssuerAsset(token),
-    }
-  }
   if (hints?.itemName) {
-    const iconUrl = hints.itemIcon ? getTokenIconDataUrl(hints.itemIcon) : undefined
     return {
       name: hints.itemName,
-      imageUrl: hints.itemImageUrl || iconUrl,
+      imageUrl: hints.itemImageUrl,
       kind: hints.previewKind ?? (id ? 'token' : 'collectable'),
       subtitle:
         hints.previewKind === 'token'
           ? id
-            ? `p2pft · ${shortTokenLabel(id)}`
-            : 'p2pft'
+            ? `${TOKEN_BASKET} · ${shortAssetId(id)}`
+            : TOKEN_BASKET
           : 'Collectable',
     }
   }
@@ -86,14 +69,12 @@ export function PermissionItemPreview({
   tokenId,
   itemName,
   itemImageUrl,
-  itemIcon,
   previewKind,
 }: {
   outpoint?: string
   tokenId?: string
   itemName?: string
   itemImageUrl?: string
-  itemIcon?: string
   previewKind?: 'token' | 'collectable'
 }) {
   const [item, setItem] = useState<Preview | null>(null)
@@ -103,11 +84,10 @@ export function PermissionItemPreview({
       resolvePreview(outpoint, tokenId, {
         itemName,
         itemImageUrl,
-        itemIcon,
         previewKind,
       }),
     )
-  }, [outpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind])
+  }, [outpoint, tokenId, itemName, itemImageUrl, previewKind])
   const issuers = useMemo(() => (item?.issuer ? [item.issuer] : []), [item])
 
   if (!item) return null

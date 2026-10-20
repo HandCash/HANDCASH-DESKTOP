@@ -1,20 +1,10 @@
 import { assign, setup, type SnapshotFrom } from 'xstate'
-import type {
-  DirectOfferBuyPath,
-  DirectOfferCancelPath,
-  DirectOfferCollectPath,
-  DirectOfferListPath,
-} from '../wallet/directOfferPath'
 import type { MarketCancelPath, MarketListingPath } from '../wallet/marketListingPath'
 import type { OfferOperation, OfferVenue } from '../wallet/offerTerms'
 
 type OfferPath =
   | MarketListingPath
   | MarketCancelPath
-  | DirectOfferListPath
-  | DirectOfferBuyPath
-  | DirectOfferCollectPath
-  | DirectOfferCancelPath
 
 type Context = {
   venue: OfferVenue | null
@@ -27,15 +17,10 @@ type Context = {
 
 type Event =
   | { type: 'LIST'; venue: 'market'; path: MarketListingPath }
-  | { type: 'LIST'; venue: 'direct'; path: DirectOfferListPath }
   | { type: 'CANCEL'; venue: 'market'; path: MarketCancelPath }
-  | { type: 'CANCEL'; venue: 'direct'; path: DirectOfferCancelPath }
-  | { type: 'BUY'; venue: 'direct'; path: DirectOfferBuyPath }
-  | { type: 'COLLECT'; venue: 'direct'; path: DirectOfferCollectPath }
   | { type: 'STAGED'; reference: string }
   | { type: 'SIGNED_UNKNOWN' }
   | { type: 'BROADCASTED'; txid: string }
-  | { type: 'COLLECTED' }
   | { type: 'COMMITTED' }
   | { type: 'RECOVER' }
   | { type: 'ABORTED'; error: string }
@@ -43,31 +28,20 @@ type Event =
 
 const OPERATION = {
   LIST: 'list',
-  BUY: 'buy',
-  COLLECT: 'collect',
   CANCEL: 'cancel',
 } as const satisfies Record<string, OfferOperation>
 
 /**
- * One offer operation, market or direct. list / cancel / buy each sign one
- * noSend transaction and share the signed-cheque lifecycle: abort and restore
- * the lot until the cheque is registered, never after BROADCASTED. collect
- * signs nothing on the offer; it files what the buyer paid and only then
- * retires the listed lot. A market purchase runs in `marketPurchaseMachine`
- * (overlay hydrate and seller receipt); a direct purchase runs here.
+ * One market offer operation. list and cancel each sign one noSend
+ * transaction and share the signed-cheque lifecycle: abort and restore the lot
+ * until the cheque is registered, never after BROADCASTED. A purchase runs in
+ * `marketPurchaseMachine` (overlay hydrate and seller receipt).
  */
 export const offerMachine = setup({
   types: { context: {} as Context, events: {} as Event },
   actions: {
     begin: assign(({ event }) => {
-      if (
-        event.type !== 'LIST' &&
-        event.type !== 'BUY' &&
-        event.type !== 'COLLECT' &&
-        event.type !== 'CANCEL'
-      ) {
-        return {}
-      }
+      if (event.type !== 'LIST' && event.type !== 'CANCEL') return {}
       return {
         venue: event.venue,
         operation: OPERATION[event.type],
@@ -89,7 +63,6 @@ export const offerMachine = setup({
   },
   guards: {
     refused: ({ context }) => context.path?.path === 'refuse',
-    collecting: ({ context }) => context.operation === 'collect',
   },
 }).createMachine({
   id: 'offer',
@@ -106,15 +79,12 @@ export const offerMachine = setup({
     idle: {
       on: {
         LIST: { target: 'classifying', actions: 'begin' },
-        BUY: { target: 'classifying', actions: 'begin' },
-        COLLECT: { target: 'classifying', actions: 'begin' },
         CANCEL: { target: 'classifying', actions: 'begin' },
       },
     },
     classifying: {
       always: [
         { guard: 'refused', target: 'failed' },
-        { guard: 'collecting', target: 'collecting' },
         { target: 'staging' },
       ],
     },
@@ -148,12 +118,6 @@ export const offerMachine = setup({
         // Still abortable when Arcade never set BROADCASTED (no context.txid).
         ABORTED: { target: 'failed', actions: 'error' },
         FAIL: { actions: 'error' },
-      },
-    },
-    collecting: {
-      on: {
-        COLLECTED: 'committed',
-        FAIL: { target: 'failed', actions: 'error' },
       },
     },
     committed: { type: 'final' },

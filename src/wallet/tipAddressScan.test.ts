@@ -1,0 +1,235 @@
+/**
+ * Inscribed tips are invisible to address providers, so the ordinal index is
+ * what stands between an incoming 1Sat tip and a wallet that never
+ * sees it. These tests pin the queries and the sat guard that keeps an indexer
+ * from steering real funds into the sweep.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  mergeIndexedTips,
+  resetTipAddressScanCooldownForTests,
+  scanAddressOrdinalTxos,
+  scanLiveTipUtxos,
+} from './tipAddressScan'
+import type { ActiveWallet } from './session'
+
+const scanLegacyAddressMock = vi.fn()
+vi.mock('./legacyScan', () => ({
+  scanLegacyAddress: (...args: unknown[]) => scanLegacyAddressMock(...args),
+}))
+
+const ADDRESS = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
+const TXID = '1a985778ab19fade1eecc04558793fbb4bc1cb66062baa9bf2068d198aacb313'
+const NFT_TXID = '6eddee85e3470be56a295287f236d7ce63fcb09c5512d7703f7e03884c9326b9'
+
+const tipRow = (over: Record<string, unknown> = {}) => ({
+  txid: TXID,
+  vout: 0,
+  outpoint: `${TXID}_0`,
+  satoshis: 1,
+  height: 963591,
+  spend: '',
+  ...over,
+})
+
+beforeEach(() => {
+  resetTipAddressScanCooldownForTests()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+  resetTipAddressScanCooldownForTests()
+})
+
+describe('scanAddressOrdinalTxos', () => {
+  it('pages past the first thousand tips until the index answers short', async () => {
+    const page = (offset: number, n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        tipRow({ txid: (offset + i + 1).toString(16).padStart(64, '0'), vout: 0 }),
+      )
+    const fetchMock = vi.fn(async (url: string) => {
+      const offset = Number(new URL(url).searchParams.get('offset'))
+      return new Response(JSON.stringify(page(offset, offset < 2_000 ? 1_000 : 823)), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    expect(utxos).toHaveLength(2_823)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('limit=1000')
+  })
+
+  it('returns the tip the address providers cannot see', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify([tipRow()]), { status: 200 })),
+    )
+
+    const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    expect(utxos).toEqual([
+      { outpoint: `${TXID}.0`, txid: TXID, vout: 0, satoshis: 1, height: 963591 },
+    ])
+  })
+
+  it('drops spent rows and anything that is not a 1-sat tip', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              tipRow({ vout: 1, spend: 'ab'.repeat(32) }),
+              tipRow({ vout: 2, satoshis: 23_259_098 }),
+              tipRow({ vout: 3, satoshis: 0 }),
+              tipRow({ vout: 4, txid: 'not-a-txid' }),
+            ]),
+            { status: 200 },
+          ),
+      ),
+    )
+
+    await expect(scanAddressOrdinalTxos(ADDRESS, 'main')).resolves.toEqual([])
+  })
+
+  it('degrades instead of rejecting when the wallet has no address yet', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      scanAddressOrdinalTxos(undefined as unknown as string, 'main'),
+    ).resolves.toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('degrades to no tips rather than failing the whole Refresh', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('index offline')
+      }),
+    )
+
+    await expect(scanAddressOrdinalTxos(ADDRESS, 'main')).resolves.toEqual([])
+  })
+
+  it('skips the index while it is cooling down after a failure', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error('index offline')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await scanAddressOrdinalTxos(ADDRESS, 'main')
+    await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks the index without bsv20 so NFT ords are included', async () => {
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    const url = String(fetchMock.mock.calls[0]?.[0])
+    expect(url).toContain(`/api/txos/address/${ADDRESS}/unspent`)
+    expect(url).not.toContain('bsv20=true')
+  })
+
+  it('returns self-sent 1Sat tips WOC cannot list', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              tipRow({
+                txid: NFT_TXID,
+                outpoint: `${NFT_TXID}_0`,
+                height: 964166,
+              }),
+            ]),
+            { status: 200 },
+          ),
+      ),
+    )
+
+    const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
+    expect(utxos).toEqual([
+      {
+        outpoint: `${NFT_TXID}.0`,
+        txid: NFT_TXID,
+        vout: 0,
+        satoshis: 1,
+        height: 964166,
+      },
+    ])
+  })
+})
+
+describe('mergeIndexedTips', () => {
+  const scan = (utxos: Array<{ vout: number; satoshis: number }>) => ({
+    address: ADDRESS,
+    chain: 'main' as const,
+    sats: utxos.reduce((s, u) => s + u.satoshis, 0),
+    utxos: utxos.map((u) => ({
+      outpoint: `${TXID}.${u.vout}`,
+      txid: TXID,
+      vout: u.vout,
+      satoshis: u.satoshis,
+    })),
+    source: 'whatsonchain' as const,
+  })
+
+  const tip = { outpoint: `${TXID}.0`, txid: TXID, vout: 0, satoshis: 1 }
+
+  it('carries an index-only tip into an otherwise empty scan', () => {
+    const merged = mergeIndexedTips(scan([]), [tip])
+    expect(merged.utxos).toEqual([tip])
+    expect(merged.sats).toBe(1)
+  })
+
+  it('leaves the provider row alone when both sources saw the output', () => {
+    const base = scan([{ vout: 0, satoshis: 1 }])
+    expect(mergeIndexedTips(base, [tip])).toBe(base)
+  })
+
+  it('returns the scan untouched when the index found nothing', () => {
+    const base = scan([{ vout: 5, satoshis: 5_000 }])
+    expect(mergeIndexedTips(base, [])).toBe(base)
+  })
+})
+
+describe('scanLiveTipUtxos', () => {
+  const wallet = { address: ADDRESS, chain: 'main' } as ActiveWallet
+
+  // Every ownership judgement reads this set. Built from the address provider
+  // alone it omits every inscribed tip, and the send gate then called them
+  // spent and hid them.
+  it('carries index-only tips the address provider cannot see', async () => {
+    scanLegacyAddressMock.mockResolvedValue({
+      address: ADDRESS,
+      chain: 'main',
+      sats: 3,
+      utxos: [{ outpoint: `${TXID}.7`, txid: TXID, vout: 7, satoshis: 3 }],
+      source: 'bitails',
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify([tipRow({ txid: NFT_TXID, outpoint: `${NFT_TXID}_0` })]), {
+            status: 200,
+          }),
+      ),
+    )
+
+    const scan = await scanLiveTipUtxos(wallet)
+
+    expect(scan.utxos.map((u) => u.outpoint)).toEqual([
+      `${TXID}.7`,
+      `${NFT_TXID}.0`,
+    ])
+  })
+})

@@ -24,9 +24,7 @@ export const burnMachine = setup({
     events: {} as BurnMachineEvent,
   },
   guards: {
-    executable: ({ context }) =>
-      context.plan?.path === 'burnBsv21' ||
-      context.plan?.path === 'burnOneSat',
+    executable: ({ context }) => context.plan?.path === 'burnOneSat',
   },
   actions: {
     begin: assign(({ event }) =>

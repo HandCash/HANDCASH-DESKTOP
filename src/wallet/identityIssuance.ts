@@ -1,37 +1,45 @@
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { selfP2pkhOutput } from './brc29Keys'
-import { rememberTipKey, selfTokenOutput } from './token/tipKeys'
+import { rememberTipKey, selfTokenOutput } from './tipKeys'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 import { isItemIssuanceArgs } from './itemAccess'
 import { issuanceSigner } from './publicIdentities'
 import { appendIssuerMetadata } from './issuerMetadata'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberBeefBinary } from './beefCache'
-import {
-  enrichCreateActionForBsv21Issuer,
-  isBsv21IdentityMintArgs,
-  isBsv21SigmaDeployOutput,
-  sigmaSignDeployLockingScript,
-  completeBsv21SignableWithRootP2pkh,
-} from './token/issuer'
-import { framedInputBeef } from './token/verifiableInputBeef'
+import { sigmaSignLockingScript } from './sigmaIssuer'
+import { completeSignableWithTipKeys } from './signableCompletion'
+import { framedInputBeef } from './verifiableInputBeef'
+import { ITEM_STORAGE_BASKET } from './assetBaskets'
 
-type Args = Parameters<typeof enrichCreateActionForBsv21Issuer>[1]
+type Args = {
+  description?: string
+  labels?: string[]
+  inputs?: Array<{ outpoint: string; inputDescription?: string; unlockingScriptLength?: number }>
+  inputBEEF?: number[]
+  outputs?: Array<{
+    lockingScript?: string
+    satoshis?: number
+    outputDescription?: string
+    basket?: string
+    tags?: string[]
+    customInstructions?: string
+  }>
+  options?: Record<string, unknown>
+}
 
 /**
- * Whether a new item or token carries a BRC-247 issuer stamp by the selected
- * identity key. Unsigned is a valid asset (BRC-163, BRC-160): its content and
- * balance do not depend on a maker, and the user may always choose it.
+ * Whether a new item carries a BRC-247 issuer stamp by the selected identity
+ * key. Unsigned is a valid item: its content does not depend on a maker, and
+ * the user may always choose it.
  */
 export type IssuanceAttestation =
   | { kind: 'signed'; identityKey: string; displayName?: string }
   | { kind: 'unsigned'; reason: 'opted-out' }
 
 export function isIdentityIssuanceArgs(method: string, args: unknown): boolean {
-  return (
-    isBsv21IdentityMintArgs(method, args) || isItemIssuanceArgs(method, args)
-  )
+  return isItemIssuanceArgs(method, args)
 }
 
 /**
@@ -125,17 +133,13 @@ export async function enrichIdentityIssuance(
   if (!runtimeIsCurrent(runtime))
     throw new Error('Wallet changed; approve again.')
   const active = runtime.instance
-  const nft = isNftIssuance(args)
-  if (!nft && !isBsv21IdentityMintArgs('createAction', args)) return args
+  if (!isNftIssuance(args)) return args
   const signer = issuanceSigner(runtime, expectedIssuer)
-  const targets = (args.outputs ?? []).filter(
-    (out) => (nft && isOrdinal(out)) || isBsv21SigmaDeployOutput(out),
-  )
   // Validate new inscriptions before making a durable anchor transaction.
-  if (nft) assertValidInscriptions(args)
-  const funded = targets.length ? await withSigmaAnchor(active, args) : args
+  assertValidInscriptions(args)
+  const funded = await withSigmaAnchor(active, args)
   try {
-    const signed = await signIssuance(runtime, funded, signer, nft, isOrdinal)
+    const signed = await signIssuance(runtime, funded, signer)
     if (funded !== args) anchors.set(signed, funded.inputs![0]!.outpoint)
     return signed
   } catch (err) {
@@ -152,9 +156,7 @@ export async function prepareUnsignedIssuance(
   if (!runtimeIsCurrent(runtime))
     throw new Error('Wallet changed; approve again.')
   if (isNftIssuance(args)) assertValidInscriptions(args)
-  const unclaimed: Args = { ...args, outputs: args.outputs?.map(withoutIssuerClaim) }
-  if (!isBsv21IdentityMintArgs('createAction', unclaimed)) return unclaimed
-  return enrichCreateActionForBsv21Issuer(runtime.instance, unclaimed, null)
+  return { ...args, outputs: args.outputs?.map(withoutIssuerClaim) }
 }
 
 /** BRC-247: an unstamped output names no issuer in its tags or remittance. */
@@ -176,7 +178,7 @@ function withoutIssuerClaim(out: NonNullable<Args['outputs']>[number]): NonNulla
 }
 
 function isOrdinal(out: NonNullable<Args['outputs']>[number]): boolean {
-  return out.satoshis === 1 && out.basket?.trim().toLowerCase() === '1sat'
+  return out.satoshis === 1 && out.basket?.trim().toLowerCase() === ITEM_STORAGE_BASKET
 }
 
 function isNftIssuance(args: Args): boolean {
@@ -224,16 +226,12 @@ async function signIssuance(
   runtime: WalletRuntime,
   args: Args,
   signer: IdentitySigner,
-  nft: boolean,
-  isOrdinal: (out: NonNullable<Args['outputs']>[number]) => boolean,
 ): Promise<Args> {
-  const active = runtime.instance
   // Selection/account can change while anchor creation waits. Never sign with
   // a different key from the one the user saw in the approval.
   if (issuanceSigner(runtime, signer.identityKey).identityKey !== signer.identityKey)
     throw new Error('Issuer identity changed after approval; approve again.')
-  const funded = await enrichCreateActionForBsv21Issuer(active, args, signer)
-  if (!nft) return funded
+  const funded = args
   const match = funded.inputs![0]!.outpoint.match(/^([0-9a-f]{64})[._](\d+)$/i)
   if (!match)
     throw new Error('Issuer signature requires a valid funding outpoint.')
@@ -261,7 +259,7 @@ async function signIssuance(
           ),
           `issuer:${signer.identityKey}`,
         ],
-        lockingScript: sigmaSignDeployLockingScript({
+        lockingScript: sigmaSignLockingScript({
           lockingScriptHex: appendIssuerMetadata(out.lockingScript!, signer.identityKey),
           fundTxid: match[1]!,
           fundVout: Number(match[2]),
@@ -289,7 +287,7 @@ export async function finishIdentityIssuance(
   }
   if (row.txid || !row.signableTransaction || !args.inputs?.length)
     return result
-  const completed = await completeBsv21SignableWithRootP2pkh(
+  const completed = await completeSignableWithTipKeys(
     active,
     row.signableTransaction,
     args.inputs.map((input) => input.outpoint),

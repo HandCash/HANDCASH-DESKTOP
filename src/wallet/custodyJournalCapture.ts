@@ -129,7 +129,7 @@ export function replayableCustomInstructions(raw: string): string {
   const lean = JSON.stringify(body)
   if (lean.length <= INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX) return lean
   if (typeof body.derivationPrefix === 'string' && typeof body.form === 'string') {
-    // An HCT row's holder key exists only through its remittance: keep that and the asset, drop display text.
+    // A BNT row's holder key exists only through its remittance: keep that and the asset, drop display text.
     const keep = ['asset', 'kind', 'mode', 'form', 'amt', 'dec', 'col', 'derivationPrefix', 'derivationSuffix', 'senderIdentityKey']
     const core = JSON.stringify(Object.fromEntries(keep.filter((k) => body[k] !== undefined).map((k) => [k, body[k]])))
     return core.length <= INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX ? core : ''

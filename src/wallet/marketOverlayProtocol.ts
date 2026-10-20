@@ -44,7 +44,7 @@ export type MarketOfferFields = {
   sellerIdentityKey: string
   /**
    * v2: the seller's BRC-29 child that locks the offer token and (for `1sat` /
-   * `p2pft`) the listed output. v1 used the identity key for both.
+   * `bntft`) the listed output. v1 used the identity key for both.
    */
   listingKey?: string
   payTo: string

@@ -16,7 +16,7 @@ import { getActiveWallet } from './session'
  *              + write-once on-device archive under userData/brc39-archive (never overwritten)
  * balanceView    what UI shows: owned cash = spendable managed change
  *                + unconfirmed change of live local sends (never payment outs,
- *                never 1sat / p2pft / bsv21). See `balanceView.ts`.
+ *                never 1sat / bntft / bntnft). See `balanceView.ts`.
  *                Activity is the same kind of view: stored annotations over
  *                the localState transaction table (`activityLedger.ts`).
  * health         chain ingest health ⊕ history replica health ⊕ bridge
@@ -93,7 +93,7 @@ import { getActiveWallet } from './session'
  *   sheds rows the table still shows first; wallet logic reads stored rows
  *   only (`listRecentActivity`), display reads the view (`listActivityFeed`).
  * - **Holdings** → the token and item lists are projections of baskets
- *   `p2pft` / `bsv21` / `1sat`, read only while every coordinator region is idle and
+ *   `bntft` / `bntnft` / `1sat`, read only while every coordinator region is idle and
  *   only when the read is the whole basket. Each disagreement with the chain
  *   — a listed output that left the basket, a basket row the address scan
  *   omits — is filed durably in `holdingsReconcile.ts` and settled by one
@@ -310,17 +310,12 @@ import { getActiveWallet } from './session'
  *   `maxPossibleSatoshis` output (same primitive as `Wallet.sweepTo`, aimed at
  *   self). It runs in the exclusive spend region so it never races a send, yields
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
- *   `p2pft` / `bsv21`) live in their own baskets and are never touched.
- * - **Tokens (fungible)** → BRC-162 binary filed under `p2pft` (legacy `bsv21` moves once; BRC-163 remittance).
- *   Balance = Σ `amt` per tip. Transfers spend 162 inputs and create payee (+ change)
- *   162 outputs with conserved amount; subject BEEF via BRC-176. See `token/`.
- *   The envelope carries the token-parent bodies back to the deploy as
- *   `meta.tokenLineage` (the BSV-21 twin of BRC-150 remittance), so the payee
- *   proves offline. It keeps the deploy (`token/genesisStore.ts`), which holds
- *   the issuer's Sigma, and files which tips reached it (`token/lineage.ts`).
- *   A tip is issuer-attested only when it is the deploy or a recorded walk
- *   bound it there; naming a token id is not enough.
- *   Legacy JSON BSV-21 rows may remain visible read-only; native JSON send is retired.
+ *   `bntft` / `bntnft`) live in their own baskets and are never touched.
+ * - **Tokens** → compact native tokens (BRC-255: a 3-byte marker and a 20-byte asset id),
+ *   filed under `bntft` (fungible) and `bntnft` (items). Engine `bnt/wallet.ts`; every
+ *   transfer carries its proof back to issuance (`bnt/proof.ts`, `bnt/validity.ts`).
+ *   BSV-20 / BSV-21 inscriptions are never imported, sent or shown as assets: token
+ *   tips stay where they are.
  * - **Asset burn** → `burnPlan` + `burnMachine` + `burn`.
  *   This is an explicit, irreversible spend — never local abandon and never a
  *   send/sweep fallback. A 1Sat burn ends tips (and BRC-150 origin when
@@ -356,23 +351,12 @@ export const WALLET_LAYER_MODULES = {
     "session.ts",
     "walletPool.ts",
     "collectables.ts",
-    "token/index.ts",
-    "token/types.ts",
-    "token/decode162.ts",
-    "token/list.ts",
-    "token/listTips.ts",
-    "token/send.ts",
-    "token/sendEntry.ts",
-    "token/sendPlan.ts",
-    "token/burn.ts",
-    "token/prove176.ts",
-    "token/settle.ts",
-    "token/issuer.ts",
+    "bnt/wallet.ts",
+    "bnt/script.ts",
+    "bnt/store.ts",
+    "bnt/proof.ts",
+    "bnt/validity.ts",
     "retiredFungible.ts",
-    "token/sendMachine.ts",
-    "token/icons/cache.ts",
-    "token/icons/resolve.ts",
-    "token/marketView.ts",
     "burnPlan.ts",
     "burnMachine.ts",
     "burn.ts",
@@ -449,7 +433,6 @@ export const WALLET_LAYER_MODULES = {
     "reclaimSealBatch.ts",
     "oneSatImportGuard.ts",
     "oneSatCollectableGuard.ts",
-    "oneSatAsBsv21.ts",
     "staleOutputRelease.ts",
     "holdingsReconcile.ts",
     "spendVerdict/index.ts",
@@ -499,10 +482,10 @@ export const WALLET_LAYER_MODULES = {
  * - XState machine if the module mutates UTXOs
  * - tests that pin the public surface
  *
- * Template: `token/`. Callers import the module, never internals.
+ * Template: `spendVerdict/`. Callers import the module, never internals.
  */
 export const WALLET_FEATURE_MODULES = {
-  tokens: "token/index.ts",
+  tokens: "bnt/wallet.ts",
   spendVerdict: "spendVerdict/index.ts",
   chainProbe: "chainProbe/index.ts",
   marketOffer: "marketOffer/index.ts",
@@ -571,7 +554,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
   // Item/token outputs from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history, so
-  // baskets `1sat` / `p2pft` / `bsv21` are never read here (thousands of fat rows).
+  // baskets `1sat` / `bntft` / `bntnft` are never read here (thousands of fat rows).
   const [spendableSats, defaultOutputCount, actionCount] = await Promise.all([
     fetchBalanceSats(active.wallet).catch(() => 0),
     countOutputs(active.wallet, "default"),

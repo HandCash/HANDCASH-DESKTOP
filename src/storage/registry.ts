@@ -388,16 +388,16 @@ export const storageRegistry = Object.freeze({
     retention: 'rebuildable',
   }),
   /** IndexedDB: BRC-255 transactions in Extended Format, validated (txid, asset) pairs and deploy locations. Chain facts. */
-  hctChain: defineStorage({
-    key: 'handcash-brc100-hct',
+  bntChain: defineStorage({
+    key: 'handcash-brc100-bnt',
     owner: 'tokens',
     scope: 'chain',
     version: 1,
     retention: 'rebuildable',
   }),
-  /** HCT outbox, per-peer proof frontier and issued-asset records. */
-  hct: defineStorage({
-    key: 'handcash.hct.v1',
+  /** BNT outbox, per-peer proof frontier and issued-asset records. */
+  bnt: defineStorage({
+    key: 'handcash.bnt.v1',
     owner: 'tokens',
     scope: 'wallet',
     version: 1,
@@ -502,26 +502,6 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 2,
   }),
-  directOffers: defineStorage({
-    key: 'handcash.market.directOffers.v1',
-    owner: 'market',
-    scope: 'wallet',
-    version: 1,
-  }),
-  /** Countersigned assets: deploy bodies, the acceptor's accept-once record, open requests. */
-  countersign: defineStorage({
-    key: 'handcash.countersign.v1',
-    owner: 'tokens',
-    scope: 'wallet',
-    version: 1,
-  }),
-  /** Direct offers from 1.3.573, named token swaps then. Read once into `directOffers`. */
-  directOffersLegacy: defineStorage({
-    key: 'handcash.tokenSwap.offers.v1',
-    owner: 'market',
-    scope: 'wallet',
-    version: 1,
-  }),
   marketPending: defineStorage({
     key: 'handcash.market.pending.v2',
     owner: 'market',
@@ -571,44 +551,45 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
-  tokenIcons: defineStorage({
+  /** Outputs a counterparty was given in a package their box accepted. */
+  proofFrontier: defineStorage({
+    key: 'handcash.proofFrontier.v1',
+    owner: 'tokens',
+    scope: 'chain',
+    version: 1,
+    retention: 'rebuildable',
+  }),
+  /** Retired token caches an upgraded profile may still hold; only reclaimed. */
+  retiredTokenIcons: defineStorage({
     key: 'handcash.bsv21.tokenIcons',
     owner: 'tokens',
     scope: 'chain',
     version: 1,
     retention: 'rebuildable',
   }),
-  tokenDeployCaps: defineStorage({
-    key: 'handcash.bsv21.deploy-cap.v1',
-    owner: 'tokens',
-    scope: 'chain',
-    version: 1,
-  }),
-  tokenGenesis: defineStorage({
+  retiredTokenGenesis: defineStorage({
     key: 'handcash.tokenGenesis.v1',
     owner: 'tokens',
     scope: 'chain',
     version: 1,
     retention: 'rebuildable',
   }),
-  tokenLineage: defineStorage({
+  retiredTokenLineage: defineStorage({
     key: 'handcash.tokenLineage.v1',
     owner: 'tokens',
     scope: 'chain',
     version: 1,
     retention: 'rebuildable',
   }),
-  /** Set once the `bsv21` filing has been moved into `p2pft`. */
-  legacyTokenFilingMoved: defineStorage({
+  retiredTokenFilingMoved: defineStorage({
     key: 'handcash.p2pft.legacyMoved.v1',
     owner: 'tokens',
     scope: 'chain',
     version: 1,
     retention: 'rebuildable',
   }),
-  /** Outputs a counterparty was given in a package their box accepted. */
-  proofFrontier: defineStorage({
-    key: 'handcash.proofFrontier.v1',
+  retiredHctOutbox: defineStorage({
+    key: 'handcash.hct.v1',
     owner: 'tokens',
     scope: 'chain',
     version: 1,

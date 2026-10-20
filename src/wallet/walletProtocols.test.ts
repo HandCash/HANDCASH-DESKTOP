@@ -42,14 +42,14 @@ afterEach(() => {
 
 describe('wallet protocols record (BRC-213 §7.2)', () => {
   it('names BSV-21 and a coin protocol for every chain the wallet holds', () => {
-    expect(WALLET_PROTOCOLS).toEqual(['bsv21', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge'])
+    expect(WALLET_PROTOCOLS).toEqual(['coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge'])
   })
 
   it('verifies only a record its identity signed', () => {
-    const record = signWalletProtocols(root.toHex(), ['coin:btc', 'bsv21'], 1_000)
-    expect(record.protocols).toEqual(['bsv21', 'coin:btc'])
+    const record = signWalletProtocols(root.toHex(), ['coin:btc', 'coin:bch'], 1_000)
+    expect(record.protocols).toEqual(['coin:bch', 'coin:btc'])
     expect(parseWalletProtocolsRecord(record, identityKey)).toEqual(record)
-    expect(parseWalletProtocolsRecord({ ...record, protocols: ['bsv21', 'coin:btc', 'coin:doge'] }, identityKey)).toBeNull()
+    expect(parseWalletProtocolsRecord({ ...record, protocols: ['coin:bch', 'coin:btc', 'coin:doge'] }, identityKey)).toBeNull()
     expect(parseWalletProtocolsRecord({ ...record, at: 2_000 }, identityKey)).toBeNull()
     expect(parseWalletProtocolsRecord(record, PrivateKey.fromRandom().toPublicKey().toString())).toBeNull()
     const forged = signWalletProtocols(PrivateKey.fromRandom().toHex(), ['coin:btc'], 1_000)
@@ -73,7 +73,7 @@ describe('wallet protocols record (BRC-213 §7.2)', () => {
   it('a coin goes to an identity only when its signed record names the coin', async () => {
     const peer = PrivateKey.fromRandom()
     const peerKey = peer.toPublicKey().toString()
-    served = { status: 200, body: signWalletProtocols(peer.toHex(), ['bsv21', 'coin:btc']) }
+    served = { status: 200, body: signWalletProtocols(peer.toHex(), ['coin:bch', 'coin:btc']) }
     expect(await coinRecipientSupport(peerKey, 'btc')).toEqual({ kind: 'supported' })
     expect(await coinRecipientSupport(peerKey, 'doge')).toEqual({ kind: 'unsupported' })
     expect(fetchMock).toHaveBeenCalledTimes(1)

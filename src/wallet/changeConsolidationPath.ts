@@ -11,7 +11,7 @@
  * (`.cursor/rules/explicit-wallet-paths.mdc`): a future change cannot silently
  * start moving coins on a bare `count > N` test, and it can never touch assets —
  * the enumeration that feeds this only counts spendable managed change (baskets
- * other than `1sat` / `bsv21`).
+ * other than the item and token baskets).
  *
  * HARD RULES:
  * - fragments < MIN_FRAGMENTS_TO_CONSOLIDATE → skip (selection already cheap)
@@ -54,7 +54,7 @@ export type ConsolidationSkipReason =
   | 'unsettledChange'
 
 export type ChangeConsolidationStats = {
-  /** Spendable managed-change outputs (never `1sat` / `bsv21`). */
+  /** Spendable managed-change outputs (never item or token baskets). */
   fragments: number
   /** Sum of their satoshis. */
   totalSats: number

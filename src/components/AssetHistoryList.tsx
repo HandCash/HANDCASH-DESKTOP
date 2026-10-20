@@ -3,10 +3,9 @@ import {
   openAddFriend,
   openCollectableDetails,
   openFriendDetails,
-  openFungibleDetails,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import type { ItemHistoryEvent } from '../wallet/itemHistory'
+import type { HistoryAssetLink, ItemHistoryEvent } from '../wallet/itemHistory'
 
 function openContact(event: ItemHistoryEvent) {
   const contact = event.contact
@@ -22,12 +21,23 @@ function openContact(event: ItemHistoryEvent) {
   })
 }
 
-function openAsset(event: ItemHistoryEvent) {
-  const asset = event.asset
-  if (!asset) return
+function openAsset(outpoint: string) {
   playWalletSound('soft')
-  if (asset.kind === 'token') openFungibleDetails(asset.tokenId)
-  else openCollectableDetails(asset.outpoint)
+  openCollectableDetails(outpoint)
+}
+
+function AssetChip({ asset }: { asset: HistoryAssetLink }) {
+  if (asset.kind === 'token') return <span className="item-history-chip">{asset.name}</span>
+  return (
+    <button
+      type="button"
+      className="item-history-chip"
+      title="Open asset"
+      onClick={() => openAsset(asset.outpoint)}
+    >
+      {asset.name}
+    </button>
+  )
 }
 
 export function AssetHistoryList({ events }: { events: ItemHistoryEvent[] }) {
@@ -61,16 +71,7 @@ export function AssetHistoryList({ events }: { events: ItemHistoryEvent[] }) {
                       {event.contact.label}
                     </button>
                   ) : null}
-                  {event.asset ? (
-                    <button
-                      type="button"
-                      className="item-history-chip"
-                      title="Open asset"
-                      onClick={() => openAsset(event)}
-                    >
-                      {event.asset.name}
-                    </button>
-                  ) : null}
+                  {event.asset ? <AssetChip asset={event.asset} /> : null}
                 </div>
               ) : null}
               {event.at ? (

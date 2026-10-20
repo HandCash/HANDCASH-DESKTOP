@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { P2PKH, PrivateKey, Script } from '@bsv/sdk'
+import { PrivateKey } from '@bsv/sdk'
 import { hasOrdEnvelope, p2pkhScriptHex, scriptPaysAddress } from './ordinalOwnership'
-import { encodeBsv21Binary } from './token/decode162'
 
 const ADDRESS = PrivateKey.fromRandom().toAddress()
 const OTHER = PrivateKey.fromRandom().toAddress()
@@ -47,18 +46,11 @@ describe('ordinal ownership', () => {
     expect(scriptPaysAddress(script, ADDRESS)).toBe(true)
   })
 
-  it('matches a BRC-162 token tip by its remainder lock', () => {
-    const tokenId = `${'ab'.repeat(32)}_0`
-    const ours = encodeBsv21Binary({ tokenId, amount: 7n, rest: new P2PKH().lock(ADDRESS) }).toHex()
-    const theirs = encodeBsv21Binary({ tokenId, amount: 7n, rest: new P2PKH().lock(OTHER) }).toHex()
-    const inscribed = encodeBsv21Binary({
-      tokenId,
-      amount: 7n,
-      rest: Script.fromHex(p2pkhScriptHex(ADDRESS) + ORD_ENVELOPE),
-    }).toHex()
-    expect(scriptPaysAddress(ours, ADDRESS)).toBe(true)
-    expect(scriptPaysAddress(inscribed, ADDRESS)).toBe(true)
-    expect(scriptPaysAddress(theirs, ADDRESS)).toBe(false)
+  it('never claims a BRC-162 token tip, so it stays at the source', () => {
+    // <push 36-byte id> OP_7 OP_2DROP <P2PKH>
+    const prefix = '24' + 'ab'.repeat(36) + '57' + '6d'
+    expect(scriptPaysAddress(prefix + p2pkhScriptHex(ADDRESS), ADDRESS)).toBe(false)
+    expect(scriptPaysAddress(prefix + p2pkhScriptHex(ADDRESS) + ORD_ENVELOPE, ADDRESS)).toBe(false)
   })
 
   it('rejects the template carried as data rather than as the lock', () => {

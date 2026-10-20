@@ -5,7 +5,7 @@ import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { coinUsd as coinUnitsUsd } from '../wallet/heldValue'
 import { COIN_INFO, formatCoin, formatCoinShort, isCoinChain } from '../wallet/coins/coinChains'
-import { parseFungibleAmount } from '../wallet/token/types'
+import { parseTokenAmount } from '../wallet/amounts'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -237,7 +237,7 @@ export function SendPanel({
   /** The amount in the network's smallest unit: satoshis on BSV, the coin's own smallest unit elsewhere. */
   const amountUnits = (draft: string) =>
     coinInfo && currency === 'bsv'
-      ? Number(parseFungibleAmount(draft.trim(), coinInfo.decimals) ?? 0)
+      ? Number(parseTokenAmount(draft.trim(), coinInfo.decimals) ?? 0)
       : amountToSats(draft, currency, coinUsd)
   const amountSats = amountUnits(amountDraft)
   const coinAmountUsd = coin ? coinUnitsUsd(coin, BigInt(amountSats), usdPerCoin) : null

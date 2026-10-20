@@ -20,9 +20,9 @@ export type AssetSendInput = {
  * Chart: assetSend
  * States: editing → confirming → handoff | failure
  *
- * Compose for collectable and BSV-21 send panels. Review does not require a
+ * Compose for collectable and token send panels. Review does not require a
  * sat amount. Token panels set `needsQuantity`. Path refuse is classified by
- * collectableSendMachine / bsv21SendMachine, then stored here so Confirm cannot
+ * collectableSendMachine, then stored here so Confirm cannot
  * proceed on a chart the domain already failed.
  */
 export const assetSendMachine = setup({

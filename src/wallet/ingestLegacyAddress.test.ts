@@ -42,20 +42,9 @@ vi.mock('./oneSatImport', () => ({
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
-vi.mock('./tokenAddressScan', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./tokenAddressScan')>()),
+vi.mock('./tipAddressScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tipAddressScan')>()),
   scanAddressOrdinalTxos: vi.fn(async () => []),
-  scanAddressTokenTxos: vi.fn(async () => []),
-}))
-
-vi.mock('./token/list', () => ({
-  importBsv21Tokens: vi.fn(async (items: Array<{ outpoint: string }>) => ({
-    imported: items.length,
-    failed: 0,
-    errors: [],
-    outpoints: items.map((i) => i.outpoint),
-  })),
-  listFungibles: vi.fn(async () => []),
 }))
 
 const OUTPOINT = 'bb.0'
@@ -81,7 +70,6 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [FUNDING],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],
@@ -294,59 +282,5 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
 
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
-  })
-
-  it('imports classified on-address BSV-21 fungibles into basket bsv21', async () => {
-    const tipOp = `${'aa'.repeat(32)}.0`
-    const tokenId = `${'aa'.repeat(32)}_0`
-    mockScanLegacyAddress.mockResolvedValue({
-      address: 'addr',
-      chain: 'main' as const,
-      sats: 1,
-      utxos: [{ outpoint: tipOp, txid: 'aa'.repeat(32), vout: 0, satoshis: 1 }],
-      source: 'whatsonchain' as const,
-    })
-    mockClassifyLegacyUtxos.mockResolvedValue({
-      funding: [],
-      oneSats: [],
-      bsv21: [
-        {
-          outpoint: tipOp,
-          txid: 'aa'.repeat(32),
-          vout: 0,
-          tokenId,
-          amt: '1000',
-          op: 'mint',
-          sym: 'DEMO',
-        },
-      ],
-      heldOneSats: [],
-      heldUneconomical: [],
-      pendingTips: [],
-    })
-    mockImportLegacyUtxos.mockResolvedValue({
-      imported: 0,
-      failed: 0,
-      errors: [],
-      skippedOneSats: 0,
-      skippedKnown: 0,
-      importedOutpoints: [],
-      importedReceipts: [],
-    })
-
-    const { importBsv21Tokens } = await import('./token/list')
-    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
-    await ingestLegacyAddressUtxos({ active })
-
-    expect(importBsv21Tokens).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          outpoint: tipOp,
-          tokenId,
-          amt: '1000',
-        }),
-      ]),
-      active,
-    )
   })
 })

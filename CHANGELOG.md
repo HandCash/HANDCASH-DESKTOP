@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Removed
+
+- BSV-21 (BRC-162) tokens: no list, send, receive, burn, icon, import sweep or market listing. A BSV-21 output already at a wallet address stays there; the wallet never spends it as coin or as an item. Tokens are BNT only.
+- Direct offers, token and countersigned (BRC-253) listings, countersigned issuance, and MNEE token detection and sweeps.
+- Bridge methods `getTokenIcon`, the direct-offer methods and the countersigned-asset methods. Apps that call them get 404.
+
+### Changed
+
+- Token baskets follow BRC-100 basket naming: `bntft` and `bntnft` for BNT tokens and items, `iptft` and `iptnft` reserved for issuer-accepted assets, and `bnt issuer` for the issuer coin. App scopes and filing tags follow (`p bntft all`, `bntft:<assetId>`). Rows left in `p2pft`, `p2pnft`, `csft` and `csnft` are never spent as cash. `1sat` is unchanged.
+- HCT tokens are now BNT (BRC-255 open mode): marker `bnt`, protocol IDs `bnt holder`, `bnt issuer` and `bnt fee`, box and tag `bnt`, and the bridge methods `issueBntAsset`, `mintBntAsset`, `transferBntAsset` and `listBntAssets`. Outputs written under the old `hct` marker are not read.
+- The market lists 1Sat items only. A receipt from an earlier token sale no longer reads as a market payout.
+- Apps can no longer write into the `bntft` token basket or spend from it by label; tokens move only through `issueBntAsset`, `mintBntAsset` and `transferBntAsset`.
+- Caches the removed token code left on disk give way first when storage is full.
+
 ## [1.3.624] - 2026-10-20
 
 ### Changed

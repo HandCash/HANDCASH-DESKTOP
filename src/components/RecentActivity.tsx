@@ -95,7 +95,6 @@ import {
 } from "../wallet/activityRecords";
 import { subscribeCollectables } from "../wallet/collectables";
 import { isItemProven } from "../wallet/provenCache";
-import { subscribeFungibles } from "../wallet/token";
 import {
   getVerificationProgress,
   isOutpointVerifying,
@@ -906,7 +905,6 @@ function useActivityFeed(limit: number) {
       assetTimer = window.setTimeout(() => refresh(true), 280);
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
-    const unsubTokens = subscribeFungibles(refreshAfterAssetPaint);
     // Activity writes usually happen while spend priority is held, which makes
     // stale-row expiry correctly yield. Without a later tick there may be no
     // event after the spend releases, so an old approval placeholder can stay
@@ -920,7 +918,6 @@ function useActivityFeed(limit: number) {
       unsubActivity();
       unsubApps();
       unsubItems();
-      unsubTokens();
     };
   }, [limit]);
 

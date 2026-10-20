@@ -9,7 +9,7 @@
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle } from './handleFormat'
-import { parseWalletProtocols } from './peerTokenCapability'
+import { parseWalletProtocols } from './walletProtocols'
 import {
   HandleCertificateError,
   verifyHandleCertificate,
@@ -28,7 +28,7 @@ export type ResolvedHandle = {
   /** BRC-169 messagebox URL when the resolve host returns one. */
   messagebox: string | null
   /**
-   * Optional wallet protocol tags from the resolve host (e.g. `bsv21`, `1sat`).
+   * Optional wallet protocol tags from the resolve host (e.g. `coin:ltc`).
    * Empty when the host does not publish them yet — treat as unknown, not denial.
    */
   protocols: string[]

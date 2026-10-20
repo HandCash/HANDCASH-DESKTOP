@@ -9,8 +9,7 @@ import {
 } from './collectableGroups'
 import type { Collectable } from './collectables'
 import { issuerTrustFrom } from './issuerTrust'
-import type { FungibleToken } from './token/types'
-import type { HctAssetSummary } from './hct/wallet'
+import type { BntAssetSummary } from './bnt/wallet'
 
 function item(
   partial: Partial<Collectable> & Pick<Collectable, 'outpoint'>,
@@ -29,16 +28,22 @@ function item(
   }
 }
 
-function token(
-  partial: Partial<FungibleToken> & Pick<FungibleToken, 'tokenId' | 'sym'>,
-): FungibleToken {
+function compact(
+  assetId: string,
+  kind: 'token' | 'item',
+  issuer: string,
+  partial: Partial<BntAssetSummary> = {},
+): BntAssetSummary {
   return {
-    amt: '100',
-    dec: 0,
-    utxoCount: 1,
-    outpoint: `${partial.tokenId}.0`,
-    spendKind: 'plain',
-    issuerAttested: true,
+    assetId,
+    kind,
+    mode: 'open',
+    ...(kind === 'token' ? { sym: 'GOLD' } : { name: 'Member' }),
+    issuers: [issuer],
+    balance: kind === 'item' ? '1' : '100',
+    outputs: 1,
+    authority: false,
+    deploy: `${assetId.slice(0, 2).repeat(32)}_0`,
     ...partial,
   }
 }
@@ -51,14 +56,13 @@ describe('groupCollectables', () => {
         item({ outpoint: 'aa.0', issuer, issuerAttested: true }),
         item({ outpoint: 'cc.0', issuer, issuerAttested: false }),
       ],
-      [token({ tokenId: 'bb', sym: 'FAKE', issuer, issuerAttested: false })],
     )
     expect(result.issuers.map((group) => group.key).sort()).toEqual([
       `issuer:claim:${issuer}`,
       `issuer:pubkey:${issuer}`,
     ])
     const claimed = result.issuers.find((group) => !group.issuerAttested)
-    expect(claimed?.tokens).toHaveLength(1)
+    expect(claimed?.items.map((i) => i.outpoint)).toEqual(['cc.0'])
     expect(claimed?.label).toContain('Issuer claim')
     expect(claimed?.icon).toBeUndefined()
   })
@@ -72,14 +76,12 @@ describe('groupCollectables', () => {
       item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId, app: 'An app', collectionId: 'awards' }),
       item({ outpoint: 'cc.0', issuer: identityKey }),
     ]
-    const tokens = [token({ tokenId: 'bb', sym: 'FT', issuer: signer, bapId: f.bapId, issuerHandle: 'unverified-handle' })]
     const seen: unknown[] = []
-    const result = groupCollectables(assets, tokens, (asset) => {
+    const result = groupCollectables(assets, (asset) => {
       seen.push(asset)
       return asset.bapId === f.bapId || asset.issuer === identityKey ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) } : null
     })
     expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'aa_0' })
-    expect(seen).toContainEqual({ issuer: signer, bapId: f.bapId, origin: 'bb' })
     expect(seen).toContainEqual({ issuer: identityKey, origin: 'cc_0' })
     expect(result.issuers).toHaveLength(1)
     expect(result.issuers[0]).toMatchObject({
@@ -90,38 +92,25 @@ describe('groupCollectables', () => {
       issuerAttested: true,
     })
     expect(result.issuers[0]?.items).toHaveLength(2)
-    expect(result.issuers[0]?.tokens).toHaveLength(1)
     expect(result.issuers[0]?.collections[0]?.quantity).toBe(1)
   })
 
-  it('shelves HCT assets with the same issuer as its items and tokens, named by the same profile', () => {
+  it('shelves compact assets with the same issuer as its items, named by the same profile', () => {
     const f = bapIdentityFixture({ name: 'Example Studio', linked: true })
     const identity = verifyIssuerIdentityPackage(f.pkg)!
     const identityKey = f.master.toPublicKey().toString()
-    const hct = (assetId: string, kind: 'token' | 'item'): HctAssetSummary => ({
-      assetId,
-      kind,
-      mode: 'open',
-      ...(kind === 'token' ? { sym: 'GOLD' } : { name: 'Member' }),
-      issuers: [identityKey],
-      balance: kind === 'item' ? '1' : '100',
-      outputs: 1,
-      authority: false,
-      deploy: `${'d'.repeat(64)}_0`,
-      imageUrl: 'data:image/png;base64,AA==',
-      supply: { policy: 'fixed' },
-    })
     const seen: unknown[] = []
     const result = groupCollectables(
       [item({ outpoint: 'cc.0', issuer: identityKey })],
-      [token({ tokenId: 'bb', sym: 'FT', issuer: identityKey })],
       (asset) => {
         seen.push(asset)
         return asset.issuer === identityKey ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) } : null
       },
       undefined,
-      undefined,
-      [hct('1'.repeat(40), 'token'), hct('2'.repeat(40), 'item')],
+      [
+        compact('1'.repeat(40), 'token', identityKey, { deploy: `${'d'.repeat(64)}_0` }),
+        compact('2'.repeat(40), 'item', identityKey, { deploy: `${'d'.repeat(64)}_1` }),
+      ],
     )
     expect(seen).toContainEqual({ issuer: identityKey, origin: `${'d'.repeat(64)}_0` })
     expect(result.issuers).toHaveLength(1)
@@ -131,16 +120,14 @@ describe('groupCollectables', () => {
       profile: { id: f.bapId, state: 'verified' },
       issuerAttested: true,
     })
-    expect(result.issuers[0]?.hct.map((a) => a.kind).sort()).toEqual(['item', 'token'])
-    expect(groupQuantityLabel(result.issuers[0]!)).toBe('2 tokens · 2 items · 1 verified')
+    expect(result.issuers[0]?.bnt.map((a) => a.kind).sort()).toEqual(['item', 'token'])
+    expect(groupQuantityLabel(result.issuers[0]!)).toBe('1 token · 2 items · 1 verified')
   })
 
-  it('shelves an HCT asset without a usable issuer key apart', () => {
-    const result = groupCollectables([], [], () => null, undefined, undefined, [
-      { assetId: '3'.repeat(40), kind: 'token', mode: 'open', issuers: ['not-a-key'], balance: '1', outputs: 1, authority: false, deploy: `${'e'.repeat(64)}_0` },
-    ])
+  it('shelves a compact asset without a usable issuer key apart', () => {
+    const result = groupCollectables([], () => null, undefined, [compact('3'.repeat(40), 'token', 'not-a-key')])
     expect(result.issuers).toHaveLength(0)
-    expect(result.ungroupedHct).toHaveLength(1)
+    expect(result.ungroupedBnt).toHaveLength(1)
   })
 
   it('never shows an identity for an unattested asset or one the resolver refuses', () => {
@@ -148,13 +135,12 @@ describe('groupCollectables', () => {
     const identity = verifyIssuerIdentityPackage(f.pkg)!
     const signer = f.signer.toPublicKey().toString()
     const assets = [item({ outpoint: 'aa.0', issuer: signer, bapId: f.bapId })]
-    const refused = groupCollectables(assets, [], () => null)
+    const refused = groupCollectables(assets, () => null)
     expect(refused.issuers[0]).toMatchObject({ key: `issuer:pubkey:${signer}` })
     expect(refused.issuers[0]?.icon).toBeUndefined()
     const identityKey = f.master.toPublicKey().toString()
     const unattested = groupCollectables(
       assets.map((asset) => ({ ...asset, issuerAttested: false })),
-      [],
       () => ({ kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }),
     )
     expect(unattested.issuers[0]?.key).toBe(`issuer:claim:${signer}`)
@@ -162,11 +148,10 @@ describe('groupCollectables', () => {
     const otherId = bapIdentityFixture({}).bapId
     const mismatched = groupCollectables(
       [item({ outpoint: 'aa.0', issuer: signer, bapId: otherId })],
-      [],
       () => ({ kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }),
     )
     expect(mismatched.issuers[0]?.key).toBe(`issuer:pubkey:${signer}`)
-    const retired = groupCollectables(assets, [], () => ({
+    const retired = groupCollectables(assets, () => ({
       kind: 'refused',
       bapId: f.bapId,
       reason: 'retired-key',
@@ -191,7 +176,6 @@ describe('groupCollectables', () => {
         item({ outpoint: 'a4.0', app: 'Aardvark app' }),
         item({ outpoint: 'a5.0', issuer: identityKey }),
       ],
-      [],
       (asset) =>
         asset.issuer === identityKey
           ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }
@@ -220,7 +204,6 @@ describe('groupCollectables', () => {
         item({ outpoint: 'bb.0', issuer: stranger, bapId: f.bapId }),
         item({ outpoint: 'dd.0', issuer: PrivateKey.fromRandom().toPublicKey().toString(), bapId: f.bapId }),
       ],
-      [token({ tokenId: 'cc', sym: 'FT', issuer: stranger, bapId: f.bapId, issuerHandle: '$studio' })],
       (asset) =>
         asset.issuer === signer
           ? { kind: 'verified', identityKey, profile: profileFromBap(identityKey, identity) }
@@ -233,10 +216,8 @@ describe('groupCollectables', () => {
     expect(unconfirmed).toMatchObject({ profile: { id: f.bapId }, issuerAttested: true })
     expect(unconfirmed.label).toMatch(/^Unconfirmed profile /)
     expect(unconfirmed.label).not.toContain('Example Studio')
-    expect(unconfirmed.label).not.toContain('$studio')
     expect(unconfirmed.icon).toBeUndefined()
     expect(unconfirmed.items.map((i) => i.outpoint)).toEqual(['bb.0', 'dd.0'])
-    expect(unconfirmed.tokens).toHaveLength(1)
     expect(result.issuers.find((i) => i.profile?.state === 'verified')?.label).toBe('Example Studio')
   })
 
@@ -258,7 +239,6 @@ describe('groupCollectables', () => {
         item({ outpoint: 'bb.0', issuer: fake.signer.toPublicKey().toString(), bapId: fake.bapId }),
         item({ outpoint: 'cc.0', issuer: stranger, bapId: real.bapId }),
       ],
-      [],
       (asset) => {
         if (asset.issuer === stranger) return { kind: 'unconfirmed', bapId: real.bapId, reason: 'unknown-key' }
         const f = asset.bapId === real.bapId ? real : fake
@@ -295,7 +275,7 @@ describe('groupCollectables', () => {
       storedIdentities: () => [{ id: identityKey, name: own.name }],
     })
     const resolve = () => ({ kind: 'verified' as const, identityKey, profile: profileFromIdentityKey(own, bap) })
-    const [shelf] = groupCollectables([item({ outpoint: 'aa.0', issuer: identityKey })], [], resolve, trust).issuers
+    const [shelf] = groupCollectables([item({ outpoint: 'aa.0', issuer: identityKey })], resolve, trust).issuers
     expect(shelf).toMatchObject({
       key: `issuer:pubkey:${identityKey}`,
       label: 'Example Studio Ltd',
@@ -305,7 +285,6 @@ describe('groupCollectables', () => {
     const unlisted = issuerTrustFrom({ listed: () => null, listedEntries: [], storedIdentities: () => [] })
     const [alone] = groupCollectables(
       [item({ outpoint: 'aa.0', issuer: identityKey })],
-      [],
       () => ({ kind: 'verified', identityKey, profile: profileFromIdentityKey(own) }),
       unlisted,
     ).issuers
@@ -446,127 +425,71 @@ describe('groupCollectables', () => {
   })
 })
 
-describe('groupCollectables with fungibles', () => {
-  it('keeps label-only collectables separate from a keyed token with the same handle', () => {
-    const issuer = '02' + 'ab'.repeat(32)
+describe('groupCollectables with compact tokens', () => {
+  const issuer = '02' + 'ab'.repeat(32)
+
+  it('keeps label-only collectables separate from a keyed token', () => {
     const { issuers } = groupCollectables(
       [item({ outpoint: 'aa.0', collectionId: 'foxes', app: '$mint' })],
-      [token({ tokenId: 't1', sym: 'FOX', issuerHandle: '$mint', issuer })],
+      () => null,
+      undefined,
+      [compact('1'.repeat(40), 'token', issuer, { sym: 'FOX' })],
     )
     expect(issuers).toHaveLength(2)
     const keyed = issuers.find((row) => row.identityKey === issuer)!
-    expect(keyed.tokens.map((t) => t.sym)).toEqual(['FOX'])
+    expect(keyed.bnt.map((t) => t.sym)).toEqual(['FOX'])
     expect(keyed.items).toHaveLength(0)
   })
 
   it('cannot join a keyed shelf through a crafted app label', () => {
-    const issuer = '02' + 'ab'.repeat(32)
     const { issuers } = groupCollectables(
       [item({ outpoint: 'aa.0', app: `pubkey:${issuer}` })],
-      [token({ tokenId: 't1', sym: 'A', issuer })],
+      () => null,
+      undefined,
+      [compact('1'.repeat(40), 'token', issuer)],
     )
     expect(issuers).toHaveLength(2)
-    expect(
-      issuers.find((row) => row.identityKey === issuer)?.items,
-    ).toHaveLength(0)
+    expect(issuers.find((row) => row.identityKey === issuer)?.items).toHaveLength(0)
   })
 
-  it('groups the same key despite different handles, key casing and whitespace', () => {
-    const issuer = '02' + 'ab'.repeat(32)
-    const { issuers } = groupCollectables(
-      [],
-      [
-        token({ tokenId: 't1', sym: 'A', issuer, issuerHandle: '$old' }),
-        token({
-          tokenId: 't2',
-          sym: 'B',
-          issuer: '  ' + issuer.toUpperCase() + '  ',
-          issuerHandle: '$new',
-        }),
-        token({ tokenId: 't3', sym: 'C', issuer }),
-      ],
-    )
+  it('groups the same key despite key casing and whitespace', () => {
+    const { issuers } = groupCollectables([], () => null, undefined, [
+      compact('1'.repeat(40), 'token', issuer, { sym: 'A' }),
+      compact('2'.repeat(40), 'token', '  ' + issuer.toUpperCase() + '  ', { sym: 'B' }),
+      compact('3'.repeat(40), 'token', issuer, { sym: 'C' }),
+    ])
     expect(issuers).toHaveLength(1)
     expect(issuers[0]?.key).toBe(`issuer:pubkey:${issuer}`)
     expect(issuers[0]?.identityKey).toBe(issuer)
-    expect(issuers[0]?.tokens).toHaveLength(3)
-    expect(issuers[0]?.label).not.toContain('$')
+    expect(issuers[0]?.bnt).toHaveLength(3)
   })
 
-  it('separates different issuer keys even when they share a display handle', () => {
-    const { issuers } = groupCollectables(
-      [],
-      [
-        token({
-          tokenId: 't1',
-          sym: 'A',
-          issuer: '02' + 'ab'.repeat(32),
-          issuerHandle: '$same',
-        }),
-        token({
-          tokenId: 't2',
-          sym: 'B',
-          issuer: '03' + 'cd'.repeat(32),
-          issuerHandle: '$same',
-        }),
-      ],
-    )
+  it('separates different issuer keys', () => {
+    const { issuers } = groupCollectables([], () => null, undefined, [
+      compact('1'.repeat(40), 'token', issuer),
+      compact('2'.repeat(40), 'token', '03' + 'cd'.repeat(32)),
+    ])
     expect(issuers).toHaveLength(2)
-    expect(issuers.every((row) => row.tokens.length === 1)).toBe(true)
+    expect(issuers.every((row) => row.bnt.length === 1)).toBe(true)
   })
 
-  it('keeps missing and malformed keys unknown despite an issuer handle', () => {
-    const { issuers, ungroupedTokens } = groupCollectables(
-      [],
-      [
-        token({ tokenId: 't1', sym: 'A', issuerHandle: '$known' }),
-        token({
-          tokenId: 't2',
-          sym: 'B',
-          issuer: '02ab',
-          issuerHandle: '$known',
-        }),
-      ],
-    )
-    expect(issuers).toHaveLength(0)
-    expect(ungroupedTokens).toHaveLength(2)
-  })
-
-  it('keeps tokens with no issuer on the top shelf', () => {
-    const { issuers, ungroupedTokens } = groupCollectables(
+  it('keeps missing and malformed keys off every issuer shelf', () => {
+    const { issuers, ungroupedBnt } = groupCollectables(
       [item({ outpoint: 'aa.0', app: 'Zoo' })],
-      [token({ tokenId: 't1', sym: 'FREE' })],
-    )
-    expect(issuers).toHaveLength(1)
-    expect(issuers[0]?.tokens).toHaveLength(0)
-    expect(ungroupedTokens.map((t) => t.sym)).toEqual(['FREE'])
-  })
-
-  it('holds a token whose issuer is still being read off the issuer-less shelf', () => {
-    const { ungroupedTokens, pendingTokens } = groupCollectables(
-      [],
-      [token({ tokenId: 't1', sym: 'READING' }), token({ tokenId: 't2', sym: 'FREE' })],
       () => null,
       undefined,
-      (t) => t.tokenId === 't1',
+      [compact('1'.repeat(40), 'token', ''), compact('2'.repeat(40), 'token', '02ab')],
     )
-    expect(pendingTokens.map((t) => t.sym)).toEqual(['READING'])
-    expect(ungroupedTokens.map((t) => t.sym)).toEqual(['FREE'])
+    expect(issuers).toHaveLength(1)
+    expect(issuers[0]?.bnt).toHaveLength(0)
+    expect(ungroupedBnt).toHaveLength(2)
   })
 
   it('keeps token facepiles and quantities under their key', () => {
-    const { issuers } = groupCollectables(
-      [],
-      [
-        token({
-          tokenId: 't1',
-          sym: 'A',
-          issuer: '02' + 'ab'.repeat(32),
-          iconUrl: 'data:image/png;base64,a',
-        }),
-        token({ tokenId: 't2', sym: 'B', issuer: '02' + 'ab'.repeat(32) }),
-      ],
-    )
+    const { issuers } = groupCollectables([], () => null, undefined, [
+      compact('1'.repeat(40), 'token', issuer, { sym: 'A', imageUrl: 'data:image/png;base64,a' }),
+      compact('2'.repeat(40), 'token', issuer, { sym: 'B' }),
+    ])
     expect(issuers[0]?.faces.map((f) => f.name)).toEqual(['A'])
     expect(issuers[0]?.overflow).toBe(1)
     expect(groupQuantityLabel(issuers[0]!)).toBe('2 tokens')

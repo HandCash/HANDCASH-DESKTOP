@@ -1,9 +1,8 @@
 import { KeyDeriver, P2PKH, PrivateKey, PublicKey, Random, Utils, type WalletProtocol } from '@bsv/sdk'
-import { legacyColorPrivateKey } from './legacyColorKeys'
 
 /**
  * BRC-29 keys for every output this wallet writes: token value outputs and
- * change (BRC-251), countersigned holder keys (BRC-253), direct-offer
+ * change (draft BRC-255), IPT holder keys (BRC-253), direct-offer
  * proceeds, fee coins and pads. A fresh prefix per transfer and suffix per
  * output give each output its own child; whoever holds the output derives its
  * private key from the same strings and the sender's identity key.
@@ -68,23 +67,6 @@ export function selfBrc29Output(
   }
   const key = brc29PrivateKey(PrivateKey.fromHex(active.rootKeyHex), remittance)
   return { address: key.toAddress(), remittance, key }
-}
-
-/**
- * Every key an already-held output may sit under: BRC-29 first, then the
- * `p color` child earlier releases wrote. Callers match by pubkey hash; the
- * legacy key only ever spends or receives, it is never written to a new output.
- */
-export function heldKeyCandidates(root: PrivateKey, assetId: string | null, remittance: Remittance): PrivateKey[] {
-  const keys = [brc29PrivateKey(root, remittance)]
-  if (assetId) {
-    try {
-      keys.push(legacyColorPrivateKey(root, assetId, remittance))
-    } catch {
-      /* not a token id the legacy scheme could name */
-    }
-  }
-  return keys
 }
 
 /** `customInstructions` JSON with `remittance` written over any earlier one, so the row finds its key again. */

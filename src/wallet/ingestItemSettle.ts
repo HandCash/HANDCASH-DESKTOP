@@ -19,7 +19,7 @@ import { Beef, PrivateKey } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 import { brc29PrivateKey, readDeliveryRemittance, type Remittance } from './brc29Keys'
 import { heldItemRow } from './itemRecipientKey'
-import { rememberTipKey } from './token/tipKeys'
+import { rememberTipKey } from './tipKeys'
 
 import {
   atomicBeefForSubject,
@@ -27,8 +27,7 @@ import {
   rememberBeefTree,
 } from './beefCache'
 import { decodeBProtocol } from './bProtocol'
-import { decodeBsv21Binary } from './token'
-import { scriptPaysAddress } from './ordinalOwnership'
+import { isTokenScript, scriptPaysAddress } from './ordinalOwnership'
 import {
   buildInternalizeCustomInstructions,
   parseProvenanceV2,
@@ -69,7 +68,7 @@ export type IngestItemSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
-  /** Parents no source could supply; see `IngestFungibleSettleResult`. */
+  /** Parents no source could supply. */
   missingParents?: string[]
 }
 
@@ -144,39 +143,21 @@ function originForTipVout(
 }
 
 /**
- * The one-sat item tips and the first BSV-21 value output of a peer transfer
- * that pay this wallet: a BRC-29 child the envelope remittance names, or the
+ * The one-sat item tips of a peer transfer that pay this wallet: a BRC-29 child the envelope remittance names, or the
  * identity address senders before 1.3.597 used.
  */
 export function outputsPayingUs(
   outputs: readonly { satoshis?: number; lockingScriptHex?: string }[],
   identityAddress: string,
   delivered: ReadonlyMap<number, { address: string }>,
-): { tipVouts: number[]; tokenVout: number; tokenAmount: bigint; tokenId: string | null; tokenSym: string; tokenDec: number } {
-  const out = { tipVouts: [] as number[], tokenVout: -1, tokenAmount: 0n, tokenId: null as string | null, tokenSym: 'Token', tokenDec: 0 }
+): { tipVouts: number[] } {
+  const tipVouts: number[] = []
   outputs.forEach(({ satoshis, lockingScriptHex: hex }, i) => {
-    if (!hex) return
+    if (!hex || satoshis !== 1 || isTokenScript(hex) || decodeBProtocol(hex)) return
     const child = delivered.get(i)
-    if (child && scriptPaysAddress(hex, child.address)) {
-      if (satoshis === 1 && !decodeBsv21Binary(hex) && !decodeBProtocol(hex)) out.tipVouts.push(i)
-      return
-    }
-    if (!scriptPaysAddress(hex, identityAddress)) return
-    const binary = decodeBsv21Binary(hex)
-    if (binary && binary.amount > 0n && binary.role !== 'authority') {
-      if (out.tokenVout < 0) {
-        out.tokenVout = i
-        out.tokenAmount = binary.amount
-        out.tokenId = binary.tokenId ?? null
-        out.tokenSym = binary.payload?.sym?.trim() || out.tokenSym
-        out.tokenDec = binary.payload?.dec ?? 0
-      }
-      return
-    }
-    if (decodeBProtocol(hex)) return
-    if (satoshis === 1) out.tipVouts.push(i)
+    if ((child && scriptPaysAddress(hex, child.address)) || scriptPaysAddress(hex, identityAddress)) tipVouts.push(i)
   })
-  return out
+  return { tipVouts }
 }
 
 export async function internalizePeerItemSettle(opts: {
@@ -299,26 +280,6 @@ export async function internalizePeerItemSettle(opts: {
       delivered,
     )
     tipVouts.push(...paying.tipVouts)
-    const { tokenVout, tokenAmount } = paying
-    const tokenId = paying.tokenId ?? (tokenVout >= 0 ? `${id}_${tokenVout}` : '')
-    const tokenSym = paying.tokenSym
-    const tokenDec = paying.tokenDec
-    if (tipVouts.length === 0 && tokenVout >= 0 && tokenAmount > 0n) {
-      clearInboundReceivePending(id)
-      const { internalizePeerFungibleSettle } = await import('./token')
-      return internalizePeerFungibleSettle({
-        txid: id,
-        tx: atomic,
-        token: {
-          kind: 'fungible',
-          tokenId: tokenId || `${id}_${tokenVout}`,
-          amount: tokenAmount.toString(),
-          sym: tokenSym,
-          dec: tokenDec,
-        },
-        beefPurpose: opts.beefPurpose,
-      })
-    }
     if (tipVouts.length === 0) {
       clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'no-tip-paying-us' }

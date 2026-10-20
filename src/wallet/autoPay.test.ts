@@ -91,7 +91,7 @@ describe('autoPay', () => {
     expect(canAutoProcessPayment('game.example', 'sendCoins', 2_000_000)).toBe(true)
     expect(canAutoProcessPayment('game.example', 'sendCoins', 20_000_001)).toBe(false)
     expect(canAutoProcessPayment('game.example', 'sendCoins', undefined)).toBe(false)
-    expect(canAutoProcessPayment('game.example', 'transferHctAsset', 2_000_000)).toBe(false)
+    expect(canAutoProcessPayment('game.example', 'transferBntAsset', 2_000_000)).toBe(false)
   })
 
   it('falls back to cached maxSats when FX is missing', async () => {

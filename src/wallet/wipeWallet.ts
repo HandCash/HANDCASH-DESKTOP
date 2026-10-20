@@ -7,7 +7,6 @@ import { clearActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
-import { clearFungiblesCache } from './token'
 import { durableForgetCached, durableRemoveItem } from './durableStorage'
 import { listLocalHandcashKeysToWipe } from './wipePolicy'
 import { getOpenUnlockSecret, isNoDeviceLock } from './deviceLockPrefs'
@@ -140,7 +139,6 @@ export async function wipeAllWalletData(
   clearPermissionSession()
   clearActiveWallet()
   clearCollectablesCache()
-  clearFungiblesCache({ notify: false })
 
   wipeLocalStorage()
   await wipeIndexedDatabases()

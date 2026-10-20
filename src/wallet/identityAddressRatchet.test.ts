@@ -50,10 +50,10 @@ describe('identity-address locks', () => {
     expect(census()).toEqual(ALLOWED)
   })
 
-  it('never writes p color keys outside the legacy spend path', () => {
+  it('never writes p color keys', () => {
     const writers = sources(join(ROOT, 'src'))
       .filter((p) => /legacyColorPublicKey\(/.test(readFileSync(p, 'utf8')))
       .map(repoPath)
-    expect(writers.sort()).toEqual(['src/wallet/countersign/holderKeys.ts', 'src/wallet/legacyColorKeys.ts'])
+    expect(writers).toEqual([])
   })
 })

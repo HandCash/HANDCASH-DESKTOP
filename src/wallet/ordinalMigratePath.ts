@@ -18,11 +18,9 @@
  * ordinal is — and exactly what destroys a token or a RUN jig. Those stay on
  * the source address, refused by name.
  */
-import { parseOrdEnvelope, hasOrdEnvelope } from './ordinalOwnership'
-import { decodeBsv21Binary } from './token/decode162'
+import { hasOrdEnvelope, isTokenScript } from './ordinalOwnership'
 
-/** BSV-20 and BSV-21 inscriptions share this content type (`token/types` BSV21_MIME). */
-const TOKEN_MIME = 'application/bsv-20'
+/** Fungible inscriptions (BSV-20 and BSV-21) share this content type. */
 
 export type OrdinalMigrateSkipReason =
   /** Cash or any other non-1-sat output the indexer returned for the address. */
@@ -77,12 +75,6 @@ function tipScriptShape(lock: string, p2pkh: string): 'collectable' | 'covenant'
     after.startsWith('6a') ||
     (after.startsWith(ORD_ENVELOPE_START) && hasOrdEnvelope(after))
   return beforeOk && afterOk ? 'collectable' : 'covenant'
-}
-
-function isTokenScript(lock: string): boolean {
-  const contentType = parseOrdEnvelope(lock)?.contentType?.trim().toLowerCase() ?? ''
-  if (contentType.startsWith(TOKEN_MIME)) return true
-  return decodeBsv21Binary(lock) != null
 }
 
 /**

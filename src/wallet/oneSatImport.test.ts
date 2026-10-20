@@ -472,16 +472,14 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('never blind-paints a BSV-21 envelope tip as an NFT', async () => {
-    // A fungible misfiled into basket `1sat` corrupts token accounting, so a
-    // bsv-20 mime must fall through to the indexer instead of the fast path.
+  it('holds a fungible inscription tip at the source, never painted as an item', async () => {
     const mimeHex = Array.from(new TextEncoder().encode('application/bsv-20'))
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('')
-    const bsv21Envelope = '0063036f726451' + '12' + mimeHex + '0002' + '7b7d' + '68'
+    const fungibleEnvelope = '0063036f726451' + '12' + mimeHex + '0002' + '7b7d' + '68'
     const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
     const mint = buildTx(
-      [{ scriptHex: bsv21Envelope + P2PKH_HEX, satoshis: 1 }],
+      [{ scriptHex: fungibleEnvelope + P2PKH_HEX, satoshis: 1 }],
       [{ txid: funding.id('hex'), vout: 0 }],
     )
     serveRawTxs(funding, mint)
@@ -493,69 +491,13 @@ describe('classifyLegacyUtxos', () => {
 
     expect(result.oneSats).toEqual([])
     expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
-    // It asked the indexer (and missed) rather than painting blind.
-    expect(fetchMock).toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
 
     activeWallet = null
     vi.unstubAllGlobals()
   })
 
-  /**
-   * Our own legacy JSON mints carry the holding in the inscription. Reading it
-   * is what keeps a fresh `deploy+mint` out of the unrecognized one-sat pile
-   * while no indexer has heard of the transaction yet.
-   */
-  it('names a legacy JSON deploy+mint from its own inscription', async () => {
-    const payload = JSON.stringify({
-      p: 'bsv-20',
-      op: 'deploy+mint',
-      sym: 'COPE',
-      amt: '4444444',
-      dec: 0,
-    })
-    const hex = (text: string): string =>
-      Array.from(new TextEncoder().encode(text))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')
-    const bodyHex = hex(payload)
-    const envelope =
-      '0063036f726451' +
-      '12' +
-      hex('application/bsv-20') +
-      '00' +
-      '4c' +
-      (bodyHex.length / 2).toString(16).padStart(2, '0') +
-      bodyHex +
-      '68'
-    const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
-    const mint = buildTx(
-      [{ scriptHex: envelope + P2PKH_HEX, satoshis: 1 }],
-      [{ txid: funding.id('hex'), vout: 0 }],
-    )
-    serveRawTxs(funding, mint)
-    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const tipOutpoint = `${mint.id('hex')}.0`
-    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
-
-    expect(result.heldOneSats).toEqual([])
-    expect(result.oneSats).toEqual([])
-    expect(result.bsv21).toEqual([
-      expect.objectContaining({
-        outpoint: tipOutpoint,
-        tokenId: `${mint.id('hex')}_0`,
-        amt: '4444444',
-        op: 'deploy+mint',
-        encoding: 'legacy-json',
-      }),
-    ])
-
-    activeWallet = null
-    vi.unstubAllGlobals()
-  })
-
-  it('never routes a latched 1sat collectable to bsv21 even if the indexer answers', async () => {
+  it('names a latched 1sat collectable from its remittance without asking the indexer', async () => {
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
     const remittance = new Map([
@@ -585,7 +527,6 @@ describe('classifyLegacyUtxos', () => {
         collectionId: `${TXID_B}_0`,
       }),
     ])
-    expect(result.bsv21).toEqual([])
     expect(result.heldOneSats).toEqual([])
     expect(fetchMock).not.toHaveBeenCalled()
     vi.unstubAllGlobals()

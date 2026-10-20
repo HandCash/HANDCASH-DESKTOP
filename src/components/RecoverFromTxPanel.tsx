@@ -11,11 +11,7 @@ function count(n: number, noun: string): string {
 }
 
 function summary(r: RecoverFromTxResult): { title: string; body?: string } {
-  const claimed = [
-    r.tokens ? count(r.tokens, "token tip") : "",
-    r.items ? count(r.items, "item") : "",
-  ].filter(Boolean);
-  if (claimed.length) return { title: `Recovered ${claimed.join(" and ")}` };
+  if (r.items) return { title: `Recovered ${count(r.items, "item")}` };
   if (r.ours === 0) {
     return {
       title: "Nothing here for this wallet",
@@ -31,14 +27,14 @@ function summary(r: RecoverFromTxResult): { title: string; body?: string } {
   return {
     title: "Nothing new to recover",
     body: r.unrecognized
-      ? `${count(r.unrecognized, "output")} could not be named as a token or item yet. Try again in a minute.`
+      ? `${count(r.unrecognized, "output")} could not be named as an item yet. Try again in a minute.`
       : "This wallet already holds what this transaction paid it.",
   };
 }
 
 /**
- * Recover from transaction: the sender's txid brings back token and item tips
- * a reinstall cannot rediscover from keys alone.
+ * Recover from transaction: the sender's txid brings back item tips a
+ * reinstall cannot rediscover from keys alone.
  */
 export function RecoverFromTxPanel() {
   const action = useAsyncAction<"recover">();
@@ -61,7 +57,7 @@ export function RecoverFromTxPanel() {
     const { title, body } = summary(done.result);
     playWalletSound("soft");
     toastSuccess(title, body);
-    if (done.result.tokens || done.result.items) setTxid("");
+    if (done.result.items) setTxid("");
   };
 
   return (

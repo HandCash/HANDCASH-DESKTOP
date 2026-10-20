@@ -1,7 +1,6 @@
 import { Transaction } from '@bsv/sdk'
 import { fileHoldingsDepartures } from './holdingsReconcile'
-import { scriptPaysAddress } from './ordinalOwnership'
-import { decodeBsv21Binary } from './token/decode162'
+import { isTokenScript, scriptPaysAddress } from './ordinalOwnership'
 import { subjectRawTxFromAtomicBeef } from './txOutpoints'
 
 /**
@@ -26,7 +25,7 @@ export function fileUnstoredSendTips(
     const script = out.lockingScript.toHex()
     if (!scriptPaysAddress(script, address)) return
     const outpoint = `${txid.toLowerCase()}.${vout}`
-    if (decodeBsv21Binary(out.lockingScript)) tokens.push(outpoint)
+    if (isTokenScript(script)) tokens.push(outpoint)
     else items.push(outpoint)
   })
   if (tokens.length > 0) fileHoldingsDepartures('token', tokens)

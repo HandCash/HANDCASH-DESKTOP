@@ -31,21 +31,6 @@ export type IssuerAsset = {
   origin?: string
 }
 
-/** A token's issuer: the deploy outpoint is the origin whose height judges the signer. */
-export function tokenIssuerAsset(token: {
-  tokenId: string
-  issuer?: string
-  issuerAttested?: boolean
-  bapId?: string
-}): IssuerAsset {
-  return {
-    issuer: token.issuer,
-    issuerAttested: token.issuerAttested,
-    bapId: token.bapId,
-    origin: token.tokenId,
-  }
-}
-
 /** Resolver bound to the current runtime, for one render pass. */
 export function currentIssuerResolver(): IssuerIdentityResolver {
   return issuerAttributionResolver(getWalletRuntime())

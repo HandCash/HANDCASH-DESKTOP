@@ -37,8 +37,8 @@ export type Friend = {
    */
   handle?: string | null
   /**
-   * Optional wallet protocols from handle resolve (`bsv21`, …).
-   * Copied locally so Send Fungible can warn without another round trip.
+   * Optional wallet protocols from handle resolve (`coin:ltc`, …).
+   * Copied locally so a send can check them without another round trip.
    */
   protocols?: string[]
 }

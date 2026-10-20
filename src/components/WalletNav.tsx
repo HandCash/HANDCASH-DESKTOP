@@ -31,7 +31,6 @@ import {
   getSettingBackStack,
   openAppDetails,
   openCollectableDetails,
-  openFungibleDetails,
   openMessagesInbox,
   openNavChild,
   openSwapFlow,
@@ -52,9 +51,7 @@ import { MessagesPanel } from './MessagesPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
-import { FungibleDetailsPanel } from './FungibleDetailsPanel'
 import { SendCollectablePanel } from './SendCollectablePanel'
-import { SendFungiblePanel } from './SendFungiblePanel'
 import { BurnAssetPanel } from './BurnAssetPanel'
 import { TransactionsPanel } from './RecentActivity'
 import { RenderProbe } from './RenderProbe'
@@ -93,7 +90,6 @@ import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
-import { getFungible, getCachedFungibles } from '../wallet/token'
 import {
   ActivityIcon,
   AppsIcon,
@@ -218,7 +214,6 @@ export const WalletNav = memo(function WalletNav({
   const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
   const clickSoundArmed = useRef(false)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
-  const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const [registeredDock, setRegisteredDock] = useState<{
     owner: symbol
@@ -380,22 +375,6 @@ export const WalletNav = memo(function WalletNav({
     }
   }, [nav.child])
 
-  useEffect(() => {
-    const child = nav.child
-    if (
-      !child ||
-      (child.type !== 'fungible' &&
-        child.type !== 'send-fungible' &&
-        child.type !== 'burn-fungible')
-    ) {
-      return
-    }
-    const cached =
-      getFungible(child.tokenId) ??
-      getCachedFungibles().find((t) => t.tokenId === child.tokenId)
-    setFungibleLabel(cached?.sym || 'Token')
-  }, [nav.child])
-
   const child = nav.child
   // Desktop hosts Scan in the BSV price column — keep the activity feed visible.
   const scanInSide = child?.type === 'scan' && !compact
@@ -487,9 +466,6 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'collectable') {
       return [root, { label: collectableLabel }]
     }
-    if (stageChild.type === 'fungible') {
-      return [root, { label: fungibleLabel }]
-    }
     if (stageChild.type === 'send-collectable') {
       return [
         root,
@@ -503,16 +479,6 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'send-collectables') {
       return [root, { label: `${stageChild.outpoints.length} items` }, { label: 'Send' }]
     }
-    if (stageChild.type === 'send-fungible') {
-      return [
-        root,
-        {
-          label: fungibleLabel,
-          onClick: () => openFungibleDetails(stageChild.tokenId),
-        },
-        { label: 'Send' },
-      ]
-    }
     if (stageChild.type === 'burn-collectable') {
       return [
         root,
@@ -525,16 +491,6 @@ export const WalletNav = memo(function WalletNav({
     }
     if (stageChild.type === 'burn-collectables') {
       return [root, { label: `${stageChild.outpoints.length} items` }, { label: 'Burn' }]
-    }
-    if (stageChild.type === 'burn-fungible') {
-      return [
-        root,
-        {
-          label: fungibleLabel,
-          onClick: () => openFungibleDetails(stageChild.tokenId),
-        },
-        { label: 'Burn' },
-      ]
     }
     if (stageChild.type === 'payment') {
       const entry = getActivityById(stageChild.entryId)
@@ -709,9 +665,6 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'collectable' && (
                 <CollectableDetailsPanel outpoint={stageChild.outpoint} />
               )}
-              {stageChild.type === 'fungible' && (
-                <FungibleDetailsPanel tokenId={stageChild.tokenId} />
-              )}
               {stageChild.type === 'send-collectable' && (
                 <SendCollectablePanel
                   outpoint={stageChild.outpoint}
@@ -728,14 +681,6 @@ export const WalletNav = memo(function WalletNav({
                   onFail={onFail}
                 />
               )}
-              {stageChild.type === 'send-fungible' && (
-                <SendFungiblePanel
-                  tokenId={stageChild.tokenId}
-                  chain={profile.chain}
-                  onSent={onSent}
-                  onFail={onFail}
-                />
-              )}
               {stageChild.type === 'burn-collectable' && (
                 <BurnAssetPanel target={{ kind: 'collectable', outpoint: stageChild.outpoint }} />
               )}
@@ -743,9 +688,6 @@ export const WalletNav = memo(function WalletNav({
                 <BurnAssetPanel
                   target={{ kind: 'collectables', outpoints: stageChild.outpoints }}
                 />
-              )}
-              {stageChild.type === 'burn-fungible' && (
-                <BurnAssetPanel target={{ kind: 'fungible', tokenId: stageChild.tokenId }} />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'change-password' && (
                 <UnlockSettingsPanel />

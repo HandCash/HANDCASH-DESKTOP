@@ -6,7 +6,7 @@ import {
   assetBurnUiMachine,
   type AssetBurnUiSnapshot,
 } from '../machines/assetBurnUiMachine'
-import { burnBsv21, burnOneSat, previewFungibleBurn } from '../wallet/burn'
+import { burnOneSat } from '../wallet/burn'
 import {
   estimateBurnEconomics,
   type BurnEconomics,
@@ -26,13 +26,6 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
-  formatFungibleAmount,
-  getFungible,
-  listFungibles,
-  subscribeFungibles,
-  type FungibleToken,
-} from '../wallet/token'
-import {
   formatSecondaryFromSats,
   getCachedUsdPerBsv,
   subscribeUsdRate,
@@ -40,27 +33,23 @@ import {
 import {
   clearNavChild,
   openCollectableDetails,
-  openFungibleDetails,
 } from '../wallet/navStore'
 import {
   isOutpointSending,
   inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { parseFungibleSendAmount } from '../wallet/token'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
-import { tokenIssuerAsset, type IssuerAsset } from '../hooks/useIssuerView'
+import type { IssuerAsset } from '../hooks/useIssuerView'
 import { AssetIssuers } from './AssetIssuers'
 import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
-import { FungibleTokenFace } from './FungibleTokenFace'
 import { CheckIcon, CloseIcon, CollectablesIcon, FireIcon } from './icons'
 import { WalletRequestTemplate } from './WalletRequestTemplate'
 
 /** Explicit target — a burn never guesses which protocol it is destroying. */
 export type BurnTarget =
-  | { kind: 'fungible'; tokenId: string }
   | { kind: 'collectable'; outpoint: string }
   | { kind: 'collectables'; outpoints: string[] }
 
@@ -69,7 +58,6 @@ type Props = {
 }
 
 export function BurnAssetPanel({ target }: Props) {
-  if (target.kind === 'fungible') return <BurnFungiblePanel tokenId={target.tokenId} />
   if (target.kind === 'collectables') {
     return <BurnCollectablesPanel outpoints={target.outpoints} />
   }
@@ -96,7 +84,6 @@ function BurnShell({
   subtitle,
   amountLabel,
   confirmSubtitle,
-  amountField,
   economics,
   grossLabel,
   refusal,
@@ -121,7 +108,6 @@ function BurnShell({
   amountLabel: string
   /** Second line on confirm: what survives the burn, not a repeat of the name. */
   confirmSubtitle: string
-  amountField?: ReactNode
   economics: BurnEconomics
   grossLabel: string
   refusal?: string | null
@@ -332,7 +318,6 @@ function BurnShell({
                   {refusal}
                 </CopyableError>
               ) : null}
-              {amountField}
               {breakdown}
               <p className="burn-note">
                 Only eligible physical sats come back as wallet change. The
@@ -343,243 +328,6 @@ function BurnShell({
         </div>
       )}
     </WalletRequestTemplate>
-  )
-}
-
-function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
-  const [token, setToken] = useState<FungibleToken | null>(() =>
-    getFungible(tokenId)
-  )
-  const issuerAssets = useMemo(() => (token ? [tokenIssuerAsset(token)] : []), [token])
-  const [snapshot, event] = useMachine(assetBurnUiMachine)
-
-  useEffect(() => {
-    event({ type: 'OPEN' })
-  }, [event])
-
-  useEffect(() => {
-    const pick = (list: FungibleToken[]) =>
-      list.find((t) => t.tokenId === tokenId) ?? null
-    const unsubscribe = subscribeFungibles((list) => setToken(pick(list)))
-    let cancelled = false
-    void listFungibles().then((list) => {
-      if (!cancelled) setToken(pick(list))
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [tokenId])
-
-  const typed = snapshot.context.amount
-
-  // Coalesce keystrokes: the preview selects real outputs, so it must not run
-  // once per typed digit.
-  useEffect(() => {
-    if (!token || !typed.trim()) return
-    let units: string
-    try {
-      units = parseFungibleSendAmount(typed, token).unitsStr
-    } catch {
-      event({ type: 'PREVIEW', preview: null })
-      return
-    }
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      void previewFungibleBurn({ tokenId: token.tokenId, amount: units })
-        .then((preview) => {
-          if (cancelled) return
-          event({
-            type: 'PREVIEW',
-            preview: {
-              grossSats: preview.grossAssetSats,
-              protocolOutputSats: preview.protocolOutputSats,
-              estimatedFeeSats: preview.estimatedFeeSats,
-            },
-          })
-        })
-        .catch(() => {
-          if (!cancelled) event({ type: 'PREVIEW', preview: null })
-        })
-    }, 220)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [token, typed, event])
-
-  if (!token) {
-    return (
-      <EmptyState
-        icon={<CollectablesIcon size={28} />}
-        title="Token not available to burn"
-        body="This wallet no longer holds this token here. Refresh Tokens, or burn it on the install that holds it."
-      />
-    )
-  }
-
-  const held = formatFungibleAmount(token.amt, token.dec)
-  const heldUnits = BigInt(token.amt.replace(/\D/g, '') || '0')
-  let typedUnits: bigint | null = null
-  try {
-    typedUnits = parseFungibleSendAmount(typed, token).units
-  } catch {
-    typedUnits = null
-  }
-  const refusal =
-    token.spendKind === 'cosigned'
-      ? 'This token requires a cosigner, so it cannot be burned here.'
-      : token.spendKind === 'mixed'
-        ? 'This balance mixes plain and cosigned outputs — separate them first.'
-        : null
-  const tokenChange = typedUnits != null && typedUnits < heldUnits
-  const preview = snapshot.context.preview
-  // A real plan selects real outputs, so it replaces the estimate outright.
-  const economics: BurnEconomics = preview
-    ? {
-        grossAssetSats: preview.grossSats,
-        protocolOutputSats: preview.protocolOutputSats,
-        recoverableSats: Math.max(
-          0,
-          preview.grossSats - preview.protocolOutputSats
-        ),
-        estimatedFeeSats: preview.estimatedFeeSats,
-        estimatedPayEffectSats:
-          Math.max(0, preview.grossSats - preview.protocolOutputSats) -
-          preview.estimatedFeeSats,
-      }
-    : estimateBurnEconomics({
-        inputCount: token.utxoCount,
-        protocolOutputCount: tokenChange ? 1 : 0,
-        recoveryOutput: true,
-        grossAssetSats: token.utxoCount,
-      })
-
-  /** Pre-flight the amount while it can still be edited, as Send does. */
-  const review = () => {
-    playWalletSound('soft')
-    try {
-      if (refusal) throw new Error(refusal)
-      const { units } = parseFungibleSendAmount(typed, token)
-      if (units <= 0n) throw new Error('Enter an amount to burn')
-      if (units > heldUnits)
-        throw new Error(`You only hold ${held} ${token.sym}`)
-    } catch (err) {
-      event({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return
-    }
-    event({ type: 'REVIEW' })
-  }
-
-  /**
-   * Hand the burn to the wallet and step back to the token page — progress and
-   * the settled row belong to Activity, exactly as with a send.
-   */
-  const confirm = () => {
-    let units: string
-    try {
-      units = parseFungibleSendAmount(typed, token).unitsStr
-    } catch (err) {
-      event({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return
-    }
-    event({ type: 'CONFIRM' })
-    const sym = token.sym
-    const label = `${typed.trim()} ${sym}`
-    openFungibleDetails(token.tokenId)
-    void burnBsv21({ tokenId: token.tokenId, amount: units })
-      .then((result) => {
-        playWalletSound('success')
-        toastSuccess(
-          `${sym} burned`,
-          `${label} permanently destroyed. ${result.recoveredSatoshis.toLocaleString()} physical sats recovered${
-            result.feeSatoshis != null
-              ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
-              : ' before fees.'
-          }`
-        )
-      })
-      .catch((err) => {
-        playWalletSound('error')
-        toastError(
-          'Token burn failed',
-          err instanceof Error ? err.message : String(err)
-        )
-      })
-  }
-
-  return (
-    <BurnShell
-      stage={stageOf(snapshot)}
-      media={
-        <FungibleTokenFace
-          tokenId={token.tokenId}
-          sym={token.sym}
-          iconUrl={token.iconUrl}
-          size={48}
-        />
-      }
-      issuers={issuerAssets}
-      eyebrow="Burn token"
-      title={token.sym}
-      subtitle={`You hold ${held} ${token.sym}`}
-      amountLabel={`${typed.trim() || '0'} ${token.sym}`}
-      confirmSubtitle={
-        typedUnits != null && typedUnits < heldUnits
-          ? `Leaves ${formatFungibleAmount(
-              (heldUnits - typedUnits).toString(),
-              token.dec
-            )} ${token.sym}`
-          : `Your whole ${token.sym} balance`
-      }
-      amountField={
-        <div className="field send-amount-field burn-amount-field">
-          <label htmlFor="burn-amount">Amount to destroy</label>
-          <div className="send-amount-row">
-            <input
-              id="burn-amount"
-              inputMode="decimal"
-              autoComplete="off"
-              spellCheck={false}
-              autoFocus
-              value={typed}
-              disabled={refusal != null}
-              placeholder={
-                token.dec > 0 ? `0.${'0'.repeat(Math.min(token.dec, 4))}` : '0'
-              }
-              onChange={(e) =>
-                event({ type: 'SET_AMOUNT', amount: e.target.value })
-              }
-            />
-            <Button.Root variant="ghost"
-              className="btn btn-ghost"
-              disabled={refusal != null}
-              onClick={() => event({ type: 'SET_AMOUNT', amount: held })}
-            >
-              <Button.Label>All</Button.Label>
-            </Button.Root>
-          </div>
-          <p className="field-hint burn-available">
-            {held} {token.sym} available
-          </p>
-        </div>
-      }
-      economics={economics}
-      grossLabel={preview ? 'Asset sats selected' : 'Asset sats available'}
-      refusal={refusal}
-      error={snapshot.context.error}
-      canReview={refusal == null && typed.trim().length > 0}
-      onReview={review}
-      onConfirm={confirm}
-      onBack={() => event({ type: 'BACK' })}
-      onCancel={() => openFungibleDetails(token.tokenId)}
-    />
   )
 }
 

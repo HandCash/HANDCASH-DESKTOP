@@ -36,10 +36,10 @@ describe('retired fungible protocol boundary', () => {
   })
 
   it('does not expose obsolete token APIs', () => {
-    const barrel = readFileSync(join(walletRoot, 'token', 'index.ts'), 'utf8')
-    expect(barrel).not.toMatch(
-      /Colour|OnesatFt|listColour|sendColour|burnColour|settleLegacy/,
+    const violations = productionTypeScript(walletRoot).filter((path) =>
+      /OnesatFt|listColour|sendColour|burnColour|settleLegacy/.test(readFileSync(path, 'utf8')),
     )
+    expect(violations).toEqual([])
   })
 
   it('fails closed for historical basket, tag, and remittance shapes', () => {

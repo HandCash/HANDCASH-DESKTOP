@@ -17,27 +17,6 @@ describe('market listing permission summary', () => {
     expect(summary.itemOutpoint).toBe(`${'b'.repeat(64)}.0`)
   })
 
-  it('names a token listing as p2pft and keeps its id and icon', () => {
-    const origin = `${'a'.repeat(64)}_0`
-    const icon = `${'c'.repeat(64)}_1`
-    const summary = summarizeAction('createMarketListingAdvert', {
-      outpoint: `${'b'.repeat(64)}_0`,
-      assetType: 'bsv21',
-      sym: 'KING',
-      origin,
-      icon,
-      listAmt: 240,
-      priceSats: 57600,
-    })
-    expect(summary.summary).toContain('p2pft')
-    expect(summary.summary).not.toMatch(/BSV-21/i)
-    expect(summary.tokenId).toBe(`${'a'.repeat(64)}.0`)
-    expect(summary.itemIcon).toBe(`${'c'.repeat(64)}.1`)
-    expect(summary.itemName).toBe('KING')
-    expect(summary.previewKind).toBe('token')
-    expect(summary.details?.join('\n')).toContain(`${'a'.repeat(64)}.0`)
-  })
-
   it('ignores anything the app says about the item itself', () => {
     const summary = summarizeAction('createMarketListingAdvert', {
       outpoint: `${'b'.repeat(64)}_0`,
@@ -74,44 +53,6 @@ describe('market listing permission summary', () => {
     expect(summary.itemImageUrl).toBe('https://cdn.example/fox.png')
     expect(summary.previewKind).toBe('collectable')
     expect(summary.summary).toContain('Rare Fox')
-  })
-
-  it('shows the token and its icon on a BSV-21 buy', () => {
-    const origin = `${'d'.repeat(64)}_0`
-    const icon = `${'e'.repeat(64)}_1`
-    const summary = summarizeAction('purchaseMarketListing', {
-      listing: {
-        outpoint: `${'f'.repeat(64)}_0`,
-        assetType: 'bsv21',
-        origin,
-        sym: 'KING',
-        amt: 1000,
-        icon,
-        priceSats: 2500,
-      },
-      provenance: { sym: 'KING', icon },
-    })
-    expect(summary.title).toBe('Buy 1,000 KING')
-    expect(summary.itemName).toBe('KING')
-    expect(summary.itemIcon).toBe(icon)
-    expect(summary.tokenId).toBe(origin)
-    expect(summary.previewKind).toBe('token')
-  })
-
-  it('shows token sym on BSV-21 purchase intent', () => {
-    const origin = `${'d'.repeat(64)}_0`
-    const summary = summarizeAction('createMarketPurchaseIntent', {
-      listing: {
-        outpoint: `${'e'.repeat(64)}_0`,
-        assetType: 'bsv21',
-        origin,
-        sym: 'HNDC',
-        priceSats: 100,
-      },
-    })
-    expect(summary.tokenId).toBe(origin)
-    expect(summary.itemName).toBe('HNDC')
-    expect(summary.previewKind).toBe('token')
   })
 
   it('never lets one approval authorize a different market request', async () => {

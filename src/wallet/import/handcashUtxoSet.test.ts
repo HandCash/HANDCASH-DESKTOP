@@ -201,7 +201,7 @@ describe('verifyUtxoSet', () => {
     expect(verified.rejected).toBe(1)
   })
 
-  it('routes cosigned MNEE owned by these keys to the MNEE index, and rejects one owned by anyone else', async () => {
+  it('rejects cosigned outputs, even ones naming these keys: this wallet signs plain P2PKH only', async () => {
     const deriver = makeDeriver()
     const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
     const hash = (path: string) => deriver.privateKeyAt(path).toPublicKey().toHash('hex') as string
@@ -211,10 +211,9 @@ describe('verifyUtxoSet', () => {
       utxo(1, { path: 'm/7/0', address: at('m/7/0'), script: cosigned('m/7/0'), type: 'instrument' }),
       utxo(2, { path: 'm/7/1', address: at('m/7/1'), script: cosigned('m/7/2'), type: 'instrument' }),
     ])
-    expect([...verified.mneeAddresses]).toEqual([at('m/7/0')])
     expect([...verified.readAddresses]).toEqual([])
-    expect(verified.addresses.map((a) => a.path)).toEqual(['m/7/0'])
-    expect(verified.rejected).toBe(1)
+    expect(verified.addresses).toEqual([])
+    expect(verified.rejected).toBe(2)
   })
 })
 

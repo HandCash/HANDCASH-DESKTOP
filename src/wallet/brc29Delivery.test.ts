@@ -10,7 +10,7 @@ import {
   type Remittance,
 } from './brc29Keys'
 import { heldItemRow, itemDeliveryRemittance, planItemRecipientKey } from './itemRecipientKey'
-import { lockHolder } from './token/tipKeys'
+import { lockHolder } from './tipKeys'
 import { shouldRejectSendForMissingLiveTip } from './collectableOwnership'
 import { settlementReceiptPreimage, type MarketSettlementReceipt } from './marketListing'
 import type { ActiveWallet } from './session'

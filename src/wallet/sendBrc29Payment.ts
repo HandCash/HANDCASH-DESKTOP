@@ -1330,11 +1330,10 @@ export async function ingestPaymentsFromTipHints(
       sats: hint.satoshis,
       item: hint.item,
       itemName: hint.itemName,
-      token: hint.asset?.kind === 'fungible' ? hint.asset : undefined,
     })
   }
 
-  // Item/token AtomicBEEF is expensive; keep retries bounded per tip poll.
+  // Item AtomicBEEF is expensive; keep retries bounded per tip poll.
   const phoneShell = isPhoneShell()
   const ingestAttempts = phoneShell ? 1 : 2
   const ingestDelayMs = 4_000
@@ -1446,7 +1445,7 @@ export async function ingestPaymentsFromTipHints(
         /* unknown keeps the hint pending */
       }
     }
-    // Fungible inbox settle intentionally refuses an indexer custody fallback,
+    // Inbox settle intentionally refuses an indexer custody fallback,
     // so it may never have asked for a raw body. Once the grace window expires,
     // perform one durable multi-provider existence probe solely to decide
     // whether the body-less envelope can be retired.
@@ -1606,33 +1605,21 @@ export async function ingestPaymentsFromTipHints(
       let missingParents: string[] = []
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const asset = hint.asset
-        const result =
-          asset?.kind === 'fungible'
-            ? await import('./token/settle').then(
-                ({ internalizePeerFungibleSettle }) =>
-                  internalizePeerFungibleSettle({
-                    txid: hint.txid,
-                    tx: attempt === 0 ? atomic : undefined,
-                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-                    token: asset,
-                    beefPurpose: 'inboundItemHint',
-                  }),
-              )
-            : await import('./ingestItemSettle').then(
-                ({ internalizePeerItemSettle }) =>
-                  internalizePeerItemSettle({
-                    txid: hint.txid,
-                    tx: attempt === 0 ? atomic : undefined,
-                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-                    name: hint.itemName,
-                    origin: hint.itemOrigin,
-                    collectionId: hint.itemCollectionId,
-                    provenance: hint.provenance,
-                    items: hint.items,
-                    remittance: asset?.kind === 'collectable' ? asset.remittance : undefined,
-                    beefPurpose: 'inboundItemHint',
-                  }),
-              )
+        const result = await import('./ingestItemSettle').then(
+          ({ internalizePeerItemSettle }) =>
+            internalizePeerItemSettle({
+              txid: hint.txid,
+              tx: attempt === 0 ? atomic : undefined,
+              beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+              name: hint.itemName,
+              origin: hint.itemOrigin,
+              collectionId: hint.itemCollectionId,
+              provenance: hint.provenance,
+              items: hint.items,
+              remittance: asset?.kind === 'collectable' ? asset.remittance : undefined,
+              beefPurpose: 'inboundItemHint',
+            }),
+        )
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true
@@ -1653,24 +1640,12 @@ export async function ingestPaymentsFromTipHints(
         // again or hide it. Peer sends return 'wait' here and fall through.
         try {
           const { reconcileSelfSendReceive } = await import('./selfSendReceive')
-          const asset = hint.asset?.kind === 'fungible' ? hint.asset : undefined
           await reconcileSelfSendReceive({
             txid: hint.txid,
             firstSeenAt: hint.firstSeenAt,
-            ...(asset
-              ? {
-                  item: {
-                    name: asset.sym,
-                    origin: asset.tokenId,
-                    tokenId: asset.tokenId,
-                    amt: asset.amount,
-                    dec: asset.dec,
-                    ...(asset.icon ? { icon: asset.icon } : {}),
-                  },
-                }
-              : hint.itemName
-                ? { item: { name: hint.itemName, origin: hint.itemOrigin ?? hint.txid } }
-                : {}),
+            ...(hint.itemName
+              ? { item: { name: hint.itemName, origin: hint.itemOrigin ?? hint.txid } }
+              : {}),
           })
         } catch (err) {
           console.warn('[tip-ingest] self-send reconcile skipped', hint.txid.slice(0, 12), err)

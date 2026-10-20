@@ -1,5 +1,5 @@
 import { getActiveWallet } from './session'
-import { looksLikeHct } from './hct/script'
+import { looksLikeBnt } from './bnt/script'
 import { storageRegistry } from '../storage/registry'
 
 import {
@@ -35,21 +35,8 @@ import {
   verifyProvenanceV2Async,
   type ProvenanceV2,
 } from './oneSatProvenance'
-import {
-  buildBsv21SendRemittance,
-  buildBsv21ValueLock,
-  bsv21SpendLayout,
-  decodeBsv21Binary,
-  decodeListedBsv21Tip,
-  getTokenIconDataUrl,
-  listBsv21BinaryTips,
-  mergeIconTxIntoBeef,
-  parseBsv21CustomInstructions,
-  planBsv21Send,
-  prove,
-} from './token'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
-import { isTokenFilingBasket, TOKEN_FILING_BASKETS } from './token/filing'
+import { ITEM_STORAGE_BASKET } from './assetBaskets'
 import { getBeefForTxidCached, getLocalBeefForTxid } from './beefCache'
 import { withStorageLockLabel } from './storageLockTrace'
 import { getProvenVerdict } from './provenCache'
@@ -84,7 +71,6 @@ import {
   type MarketOfferFields,
 } from './marketOverlayProtocol'
 import {
-  chooseBsv21ListingLock,
   chooseMarketCancelPath,
   chooseMarketCancelReturn,
   chooseMarketListingPath,
@@ -97,17 +83,11 @@ import {
   marketSettlementShape,
   type MarketSettlementUnlocksV2,
 } from './marketSettlementLayout'
-import { DIRECT_OFFER_BASKET } from './directOfferPath'
 import { signSellerInputs } from './offerSeal'
 import { SELLER_SIGHASH } from './offerTerms'
-import { rememberTipKey, selfTokenOutput, tipSigningKey } from './token/tipKeys'
+import { rememberTipKey, selfTokenOutput, tipSigningKey } from './tipKeys'
 import { heldItemRow } from './itemRecipientKey'
-import { brc29PrivateKey, selfBrc29Output, withRemittance, type Remittance } from './brc29Keys'
-import {
-  checkCountersignedListing,
-  parseCountersignedListingProof,
-  type CountersignedListingProof,
-} from './marketCountersigned'
+import { brc29PrivateKey, selfBrc29Output, type Remittance } from './brc29Keys'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -131,7 +111,6 @@ export type MarketListingAdvert = {
   offerOutpoint: string
   offerLockingScript: string
   assetType: MarketAssetType
-  amt?: number
   seller: string
   payTo: string
   priceSats: number
@@ -163,15 +142,13 @@ export type CreateMarketListingArgs = {
   outpoint: string
   assetType?: MarketAssetType
   priceSats: number
-  /** BSV-21 or csft units to list. Defaults to the whole tip. Remainder is change. */
-  listAmt?: number
   expiresAt?: number | null
   messagebox?: string | null
 }
 
 export type MarketListingPostPayload = {
   listing: MarketListingAdvert
-  provenance: ProvenanceV2 | Bsv21ListingProof | CountersignedListingProof
+  provenance: ProvenanceV2
   txid: string
   beef: number[]
   token: {
@@ -303,11 +280,11 @@ export function marketListingKey(active: ActiveWallet, sellerKeys?: MarketSeller
   return sellerKeys ? brc29PrivateKey(root, sellerKeys.listing) : root
 }
 
-/** HCT shares the p2pft / p2pnft filings but is neither an ordinal nor a BRC-162 tip. */
-function isHctRow(row: { tags?: string[]; lockingScript?: unknown }): boolean {
+/** Compact tokens and items are filed apart from 1Sat items and are not ordinals. */
+function isBntRow(row: { tags?: string[]; lockingScript?: unknown }): boolean {
   return (
-    (row.tags ?? []).includes('hct') ||
-    (typeof row.lockingScript === 'string' && looksLikeHct(row.lockingScript))
+    (row.tags ?? []).includes('bnt') ||
+    (typeof row.lockingScript === 'string' && looksLikeBnt(row.lockingScript))
   )
 }
 
@@ -319,154 +296,8 @@ export class MarketListingError extends Error {
 }
 
 
-/**
- * What a listing sells: a 1sat item, a p2pft (BRC-162) token, or a
- * countersigned asset (csft units, a csnft item) whose issuer countersigns
- * the sale when either side asks.
- */
-export type MarketAssetType = 'ordinal' | 'bsv21' | CountersignedMarketAsset
-export type CountersignedMarketAsset = 'csft' | 'csnft'
-
-export function isCountersignedMarketAsset(value: unknown): value is CountersignedMarketAsset {
-  return value === 'csft' || value === 'csnft'
-}
-
-/** BRC-176 listing proof for 162 tips. Not BRC-150. */
-export type Bsv21ListingProof = {
-  v: 176
-  tokenId: string
-  amt: string
-  deployOutpoint: string
-  role: 'deploy' | 'value'
-  tip: string
-}
-
-export function parseBsv21ListingProof(raw: unknown): Bsv21ListingProof | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const o = raw as Record<string, unknown>
-  if (o.v !== 176) return null
-  const tokenId = typeof o.tokenId === 'string' ? o.tokenId.trim().toLowerCase() : ''
-  const amt = typeof o.amt === 'string' ? o.amt.trim() : ''
-  const deployOutpoint =
-    typeof o.deployOutpoint === 'string' ? o.deployOutpoint.trim().toLowerCase() : ''
-  const tip = typeof o.tip === 'string' ? o.tip.trim().toLowerCase() : ''
-  const role = o.role === 'deploy' || o.role === 'value' ? o.role : null
-  if (!tokenId || !/^[0-9a-f]{64}_\d+$/.test(tokenId)) return null
-  if (!amt || !/^\d+$/.test(amt) || amt === '0') return null
-  if (!deployOutpoint || !role || !tip) return null
-  return { v: 176, tokenId, amt, deployOutpoint, role, tip }
-}
-
-/**
- * Prove a 162 tip for market listing from the binary + 163 amt/id.
- * Optional BEEF is checked with BRC-176. Never walks BRC-150 FIFO.
- */
-export function buildBsv21ListingProof(args: {
-  outpoint: string
-  lockingScriptHex: string
-  customInstructions?: string
-  beef?: Parameters<typeof prove>[1]
-}): Bsv21ListingProof {
-  const lock = chooseBsv21ListingLock(args.lockingScriptHex)
-  if (lock.lock === 'refuse') {
-    console.warn(`[market-list] refuse bsv21 proof — ${lock.reason}`)
-    throw new MarketListingError('MARKET_ASSET_UNSUPPORTED', lock.message)
-  }
-  const decoded = decodeBsv21Binary(args.lockingScriptHex)!
-  const tip = normalizeOutpoint(args.outpoint)
-  const tokenId = lock.tokenId ?? (decoded.role === 'deploy' ? tip : null)
-  if (!tokenId) {
-    throw new MarketListingError(
-      'MARKET_ASSET_UNSUPPORTED',
-      'BSV-21 listing requires a token id.',
-    )
-  }
-  const ci = parseBsv21CustomInstructions(args.customInstructions)
-  if (ci?.id) {
-    const ciId = ci.id.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-    if (ciId !== tokenId) {
-      throw new MarketListingError(
-        'ITEM_ORIGIN_UNPROVEN',
-        'BRC-163 token id does not match the 162 lock.',
-      )
-    }
-  }
-  if (ci?.amt && ci.amt !== decoded.amount.toString()) {
-    throw new MarketListingError(
-      'ITEM_ORIGIN_UNPROVEN',
-      'BRC-163 amt does not match the 162 lock.',
-    )
-  }
-  // BRC-176: "what is proven is the record from the packet, not a claim".
-  // A `v:176` advert is a proof-shaped statement; it is only emitted when
-  // prove() walked this tip to its deploy. No BEEF or a failed walk is a
-  // named refusal, never a proof built from the lock's own token id.
-  if (!args.beef) {
-    throw new MarketListingError(
-      'ITEM_ORIGIN_UNPROVEN',
-      'BRC-176 proof needs the token transaction package; refresh and list again.',
-    )
-  }
-  const result = prove(tip, args.beef)
-  if (!result.ok) {
-    console.warn(`[market-list] refuse bsv21 proof — ${result.reason}`)
-    throw new MarketListingError(
-      'ITEM_ORIGIN_UNPROVEN',
-      `BRC-176 proof failed: ${result.reason}`,
-    )
-  }
-  if (result.tokenId !== tokenId || result.amount !== decoded.amount) {
-    throw new MarketListingError(
-      'ITEM_ORIGIN_UNPROVEN',
-      'BRC-176 proof does not match the 162 lock.',
-    )
-  }
-  return {
-    v: 176,
-    tokenId,
-    amt: decoded.amount.toString(),
-    deployOutpoint: result.deployOutpoint,
-    role: result.role,
-    tip,
-  }
-}
-
-/**
- * Token-parent complete BEEF for a listing proof: the tip's own package plus
- * every token ancestor body back to the deploy (raw bodies are enough for
- * prove; SPV is the toolbox's job on settle).
- */
-async function loadBsv21ProofBeef(
-  active: ActiveWallet,
-  itemTxid: string,
-): Promise<Beef | undefined> {
-  let beef: Beef | undefined
-  try {
-    beef = await getBeefForTxidCached(active, itemTxid, {
-      needProof: true,
-      allowUnprovenRawTx: true,
-    })
-  } catch {
-    beef = undefined
-  }
-  if (!beef) return undefined
-  const { fillTokenParentBodies } = await import('./token/prove176')
-  return fillTokenParentBodies(
-    beef,
-    async (txid) => {
-      try {
-        return await getBeefForTxidCached(active, txid, {
-          needProof: false,
-          allowUnprovenRawTx: true,
-        })
-      } catch {
-        return null
-      }
-    },
-    [itemTxid],
-  )
-}
-
+/** What a listing sells: a 1Sat item. */
+export type MarketAssetType = 'ordinal'
 
 function provenanceFromCustomInstructions(
   customInstructions: unknown,
@@ -507,8 +338,6 @@ function listedActivityIdentity(args: {
   listedAsset: MarketAssetType
   customName?: string
   tags?: string[]
-  sym?: string
-  icon?: string
 }): { name: string; imageUrl?: string; app?: string } {
   const input = args.inputOutpoint.trim().toLowerCase().replace(/_/g, '.')
   const origin = args.origin.trim().toLowerCase().replace(/\./g, '_')
@@ -517,11 +346,6 @@ function listedActivityIdentity(args: {
     const og = c.origin.trim().toLowerCase().replace(/\./g, '_')
     return op === input || og === origin
   })
-  if (args.listedAsset === 'bsv21') {
-    const name = args.sym?.trim() || held?.name?.trim() || 'Token'
-    const imageUrl = (args.icon ? getTokenIconDataUrl(args.icon) : undefined) || held?.imageUrl
-    return { name, ...(imageUrl ? { imageUrl } : {}) }
-  }
   const name =
     args.customName?.trim() ||
     held?.name?.trim() ||
@@ -543,8 +367,6 @@ export function classifyMarketListingAsset(args: {
   lockingScriptHex?: string
 }): {
   assetType: MarketAssetType
-  tokenId?: string
-  amt?: number
   refuse?: 'retired-protocol'
 } {
   if (
@@ -556,27 +378,9 @@ export function classifyMarketListingAsset(args: {
   ) {
     return { assetType: 'ordinal', refuse: 'retired-protocol' }
   }
-  const tip = decodeListedBsv21Tip({
-    outpoint: args.outpoint,
-    satoshis: args.satoshis ?? 1,
-    tags: args.tags,
-    customInstructions: args.customInstructions,
-    lockingScript: args.lockingScriptHex,
-  })
-  if (!tip) return { assetType: 'ordinal' }
-  const amt = Number(tip.amt)
-  return {
-    assetType: 'bsv21',
-    tokenId: tip.tokenId,
-    amt: Number.isSafeInteger(amt) && amt > 0 ? amt : undefined,
-  }
+  return { assetType: 'ordinal' }
 }
 
-/**
- * Held-item remittance for a market listing or settlement.
- * Fungibles: basket `bsv21`, 163 amt/id copied from the 162 tip.
- * Collectables use basket `1sat`.
- */
 /** Files the listing key's remittance on the listed output so BRC-39 carries it and listings recognise it. */
 function heldWithListingKey(
   keys: MarketSellerKeys,
@@ -588,37 +392,17 @@ function heldWithListingKey(
 export function buildMarketHeldRemittance(args: {
   assetType: MarketAssetType
   origin: string
-  amt?: number
   name?: string
-  icon?: string
   provenance?: ProvenanceV2
   extraTags?: string[]
 }): { basket: string; tags: string[]; customInstructions: string } {
-  if (args.assetType === 'bsv21') {
-    if (args.amt == null || !(args.amt > 0)) {
-      throw new MarketListingError(
-        'MARKET_ASSET_UNSUPPORTED',
-        'BSV-21 listing requires a 162 amount.',
-      )
-    }
-    const remit = buildBsv21SendRemittance({
-      tokenId: args.origin,
-      amt: BigInt(args.amt),
-      icon: args.icon,
-    })
-    return {
-      basket: remit.basket,
-      tags: [...remit.tags, ...(args.extraTags ?? [])],
-      customInstructions: remit.customInstructions,
-    }
-  }
   const customInstructions = buildCollectableCustomInstructions({
     origin: args.origin,
     name: args.name?.trim() || 'Market item',
     provenance: args.provenance,
   })
   return {
-    basket: '1sat',
+    basket: ITEM_STORAGE_BASKET,
     tags: [
       'ordinal',
       ...(args.extraTags ?? []),
@@ -783,7 +567,7 @@ export function choosePublishableProvenance(
 }
 
 export function hashMarketProvenance(
-  provenance: ProvenanceV2 | Bsv21ListingProof | CountersignedListingProof,
+  provenance: ProvenanceV2,
 ): {
   json: string
   hash: string
@@ -861,14 +645,9 @@ function verifyRawSignature(
 
 export type MarketListingPreview = {
   itemOutpoint?: string
-  tokenId?: string
   itemName?: string
   itemImageUrl?: string
-  /** BSV-21 icon inscription outpoint, when the listing has no inline image. */
-  itemIcon?: string
-  /** Token units being bought, already a display string. */
-  units?: string
-  previewKind?: 'token' | 'collectable'
+  previewKind?: 'collectable'
 }
 
 /** Display hints for permission prompts — market sends full listing JSON, not just advert fields. */
@@ -883,7 +662,6 @@ export function marketListingPreviewFromArgs(args: unknown): MarketListingPrevie
   const outpoint =
     typeof listing.outpoint === 'string' ? listing.outpoint.trim().toLowerCase() : ''
   if (!outpoint) return null
-  const isToken = listing.assetType === 'bsv21' || listing.assetType === 'csft'
   const provenance =
     body.provenance && typeof body.provenance === 'object' && !Array.isArray(body.provenance)
       ? (body.provenance as Record<string, unknown>)
@@ -894,22 +672,13 @@ export function marketListingPreviewFromArgs(args: unknown): MarketListingPrevie
     }
     return ''
   }
-  const origin = text(listing.origin, provenance?.tokenId).toLowerCase()
-  const sym = text(listing.sym, provenance?.sym)
   const name = text(listing.name, provenance?.name)
   const contentUrl = text(listing.contentUrl, provenance?.contentUrl)
-  const icon = text(listing.icon, provenance?.icon)
-  const amt = Number(listing.amt ?? listing.listAmt)
-  const units =
-    isToken && Number.isSafeInteger(amt) && amt > 0 ? amt.toLocaleString() : ''
   return {
     itemOutpoint: outpoint.replace(/_(\d+)$/, '.$1'),
-    ...(isToken && origin ? { tokenId: origin } : {}),
-    itemName: sym || name || (isToken ? 'Token' : 'Collectable'),
+    itemName: name || 'Collectable',
     ...(contentUrl ? { itemImageUrl: contentUrl } : {}),
-    ...(icon ? { itemIcon: icon } : {}),
-    ...(units ? { units } : {}),
-    previewKind: isToken ? 'token' : 'collectable',
+    previewKind: 'collectable',
   }
 }
 
@@ -1173,8 +942,6 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
   }
 }
 
-const LISTING_BASKETS = new Set<string>(['1sat', ...TOKEN_FILING_BASKETS])
-
 type ListedTip = {
   outpoint: string
   satoshis?: number
@@ -1227,7 +994,6 @@ function lockingScriptHexFromBytes(
 async function readListedOutputByOutpoint(
   active: ActiveWallet,
   outpoint: string,
-  preferred: Array<'1sat' | 'bsv21'>,
 ): Promise<ListedTip | 'unsupported' | undefined> {
   const dotted = outpoint.replace('_', '.')
   const [txid, voutText] = dotted.split('.')
@@ -1258,17 +1024,9 @@ async function readListedOutputByOutpoint(
         const [basket] = await sp.findOutputBaskets({ partial: { basketId: row.basketId } })
         if (basket?.name) basketName.set(row.basketId, basket.name)
       }
-      const rank = (name: string) => {
-        const at = preferred.indexOf(isTokenFilingBasket(name) ? 'bsv21' : (name as '1sat'))
-        return at < 0 ? preferred.length : at
-      }
-      const hit = rows
-        .filter((row) => row.spendable && LISTING_BASKETS.has(basketName.get(row.basketId ?? -1) ?? ''))
-        .sort(
-          (a, b) =>
-            rank(basketName.get(a.basketId ?? -1) ?? '') -
-            rank(basketName.get(b.basketId ?? -1) ?? ''),
-        )[0]
+      const hit = rows.find(
+        (row) => row.spendable && basketName.get(row.basketId ?? -1) === ITEM_STORAGE_BASKET,
+      )
       if (!hit) return undefined
       const tags: string[] = []
       if (sp.findOutputTagMaps && sp.findOutputTags && hit.outputId != null) {
@@ -1307,25 +1065,18 @@ function knownItemOriginTag(outpoint: string): string | null {
 
 async function loadListedOutput(
   outpoint: string,
-  preferredAsset?: 'ordinal' | 'bsv21',
   mark: (phase: string) => void = () => {},
 ) {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
-  const baskets: Array<'1sat' | 'bsv21'> =
-    preferredAsset === 'bsv21'
-      ? ['bsv21', '1sat']
-      : preferredAsset === 'ordinal'
-        ? ['1sat', 'bsv21']
-        : ['1sat', 'bsv21']
   // Only when storage has no outpoint index. A tag query still walks the tag
   // map; it never becomes a full basket read with scripts and remittance.
   const findByOriginTag = async (): Promise<ListedTip | undefined> => {
     const originTag = knownItemOriginTag(outpoint)
     if (!originTag) return undefined
-    for (const basket of baskets) {
+    {
       const listed = await active.wallet.listOutputs({
-        basket,
+        basket: ITEM_STORAGE_BASKET,
         limit: 25,
         includeTags: true,
         includeCustomInstructions: true,
@@ -1337,7 +1088,7 @@ async function loadListedOutput(
       const hit = (listed.outputs ?? []).find(
         (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint,
       )
-      if (!hit) continue
+      if (!hit) return undefined
       return {
         outpoint: hit.outpoint,
         satoshis: hit.satoshis,
@@ -1348,7 +1099,7 @@ async function loadListedOutput(
     }
     return undefined
   }
-  const readSelected = () => readListedOutputByOutpoint(active, outpoint, baskets)
+  const readSelected = () => readListedOutputByOutpoint(active, outpoint)
   // Liveness is a network probe and the row read is local storage. Starting
   // both together means a list waits for the slower one, not for their sum.
   const liveness = tipStillUnspentOnChain(active, outpoint).catch(() => null)
@@ -1376,10 +1127,10 @@ async function loadListedOutput(
       'The listed item is no longer held by this wallet.'
     )
   }
-  if (isHctRow(output)) {
+  if (isBntRow(output)) {
     throw new MarketListingError(
       'UNSUPPORTED_TOKEN_FORMAT',
-      'HCT assets cannot be listed on the market yet.',
+      'BNT assets cannot be listed on the market yet.',
     )
   }
   // Basket rows lag the chain. A tip still listed locally but spent elsewhere
@@ -1418,249 +1169,9 @@ async function loadListedOutput(
     active,
     output,
     assetType: classified.assetType,
-    tokenId: classified.tokenId,
-    amt: classified.amt,
   }
 }
 
-const EXACT_LOT_PURPOSE = {
-  'market-list': {
-    description: 'Split BSV-21 cover for market list',
-    labels: ['market-v3', 'bsv21-split'],
-    lotDescription: 'BSV-21 list amount',
-    changeDescription: 'BSV-21 listing change',
-    flow: 'market_listing',
-    lotBasket: null,
-  },
-  'direct-offer': {
-    description: 'Split BSV-21 cover for a direct offer',
-    labels: ['direct-offer', 'bsv21-split'],
-    lotDescription: 'BSV-21 direct offer amount',
-    changeDescription: 'BSV-21 direct offer change',
-    flow: 'direct_offer',
-    lotBasket: DIRECT_OFFER_BASKET,
-  },
-} as const
-
-/**
- * When listAmt is not the covering tip's 162 amt, split/consolidate first so
- * the listed UTXO lock equals listAmt (remainder is 162 change to the seller).
- * The listing tx then lists that exact tip: advert.amt === lock amt === 176
- * proof.amt. Never advertise a partial amt against a larger covering lock.
- */
-export async function splitBsv21CoverToExactAmt(args: {
-  active: ActiveWallet
-  origin: string
-  requested: number | bigint
-  covers: Array<{ outpoint: string; amt: bigint; lockingScript?: string }>
-  icon?: string
-  sym?: string
-  /** What the exact lot is for; names the action and files the lot. */
-  purpose?: keyof typeof EXACT_LOT_PURPOSE
-  onStaged?: (reference: string) => void
-  onSigned?: () => void
-}): Promise<{
-  outpoint: string
-  lockingScript: string
-  beef: Awaited<ReturnType<typeof getBeefForTxidCached>>
-}> {
-  const requested = BigInt(args.requested)
-  const purpose = EXACT_LOT_PURPOSE[args.purpose ?? 'market-list']
-  const coverSum = args.covers.reduce((sum, t) => sum + t.amt, 0n)
-  if (coverSum < requested) {
-    throw new Error('Not enough units available to list that amount.')
-  }
-  const changeAmt = coverSum - requested
-  const layout = bsv21SpendLayout(args.covers)
-  const lotKey = selfTokenOutput(args.active)
-  const changeKey = changeAmt > 0n ? selfTokenOutput(args.active, lotKey.remittance.derivationPrefix) : null
-  const listedLock = buildBsv21ValueLock({
-    tokenId: args.origin,
-    amount: requested,
-    address: lotKey.address,
-    layout,
-  })
-  const vin0 = args.covers[0]
-  if (!vin0) throw new Error('Not enough units available to list that amount.')
-  const itemTxid = vin0.outpoint.slice(0, 64)
-  const splitPhase = (name: string, since: number) => {
-    const ms = Date.now() - since
-    if (ms >= 250) console.info(`[list-split] ${name} done ${ms}ms`)
-  }
-  const beefAt = Date.now()
-  const splitBeef = await getBeefForTxidCached(args.active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
-  for (const extra of args.covers.slice(1)) {
-    const extraTxid = extra.outpoint.slice(0, 64)
-    if (extraTxid === itemTxid) continue
-    try {
-      const extraBeef = await getBeefForTxidCached(args.active, extraTxid, {
-        needProof: true,
-        allowUnprovenRawTx: true,
-      })
-      splitBeef.mergeBeef(extraBeef.toBinary())
-    } catch {
-      // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
-    }
-  }
-  splitPhase(`input beef (${args.covers.length} cover)`, beefAt)
-  const createAt = Date.now()
-  const created = await args.active.wallet.createAction({
-    description: purpose.description,
-    labels: [...purpose.labels],
-    inputBEEF: splitBeef.toBinary(),
-    inputs: args.covers.map((tip, i) => ({
-      outpoint: tip.outpoint.replace('_', '.'),
-      inputDescription: i === 0 ? 'BSV-21 list cover' : 'BSV-21 list extra cover',
-      unlockingScriptLength: 108,
-    })),
-    outputs: [
-      {
-        lockingScript: listedLock,
-        satoshis: 1,
-        outputDescription: purpose.lotDescription,
-        ...buildBsv21SendRemittance({
-          tokenId: args.origin,
-          amt: requested,
-          icon: args.icon,
-          ...(args.sym ? { sym: args.sym } : {}),
-          remittance: lotKey.remittance,
-        }),
-        ...(purpose.lotBasket ? { basket: purpose.lotBasket } : {}),
-      },
-      ...(changeKey
-        ? [
-            {
-              lockingScript: buildBsv21ValueLock({
-                tokenId: args.origin,
-                amount: changeAmt,
-                address: changeKey.address,
-                layout,
-              }),
-              satoshis: 1,
-              outputDescription: purpose.changeDescription,
-              ...buildBsv21SendRemittance({
-                tokenId: args.origin,
-                amt: changeAmt,
-                icon: args.icon,
-                ...(args.sym ? { sym: args.sym } : {}),
-                remittance: changeKey.remittance,
-              }),
-            },
-          ]
-        : []),
-    ],
-    options: {
-      randomizeOutputs: false,
-      signAndProcess: false,
-      trustSelf: 'known',
-    },
-  })
-  splitPhase('createAction', createAt)
-  const signable = created.signableTransaction
-  if (!signable) throw new Error('BSV-21 list split did not return a signable action')
-  let reference: string | null = signable.reference
-  args.onStaged?.(signable.reference)
-  try {
-    const beef = Beef.fromBinary(signable.tx)
-    const vin0Vout = Number(vin0.outpoint.split('_')[1])
-    const tx = beef.txs.find((entry) =>
-      entry.tx?.inputs.some(
-        (input) =>
-          String(input.sourceTXID).toLowerCase() === itemTxid &&
-          input.sourceOutputIndex === vin0Vout,
-      ),
-    )?.tx
-    if (!tx) throw new Error('BSV-21 list split is missing cover input')
-    const selectedPoints = new Set(args.covers.map((tip) => tip.outpoint))
-    if (
-      String(tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
-      tx.inputs[0]?.sourceOutputIndex !== vin0Vout ||
-      tx.outputs[0]?.lockingScript?.toHex() !== listedLock
-    ) {
-      throw new MarketListingError(
-        'MARKET_LISTING_SHAPE_MISMATCH',
-        'Wallet did not preserve BSV-21 list-split output ordering.',
-      )
-    }
-    const spends: Record<number, { unlockingScript: string }> = {}
-    for (let i = 0; i < tx.inputs.length; i += 1) {
-      const vin = tx.inputs[i]!
-      const src = `${String(vin.sourceTXID).toLowerCase()}_${vin.sourceOutputIndex}`
-      if (i !== 0 && !selectedPoints.has(src)) continue
-      vin.sourceTransaction ??=
-        splitBeef.findTxid(String(vin.sourceTXID))?.tx ??
-        beef.findTxid(String(vin.sourceTXID))?.tx
-      const sourceOut = vin.sourceTransaction?.outputs[vin.sourceOutputIndex]
-      const satoshis = sourceOut?.satoshis
-      const lockingScript = sourceOut?.lockingScript
-      if (typeof satoshis !== 'number' || !lockingScript) {
-        throw new Error('List-split input is missing its source locking script')
-      }
-      vin.unlockingScriptTemplate = new P2PKH().unlock(
-        await tipSigningKey(args.active, lockingScript.toHex()),
-        'all',
-        false,
-        satoshis,
-        lockingScript,
-      )
-    }
-    await tx.sign()
-    for (let i = 0; i < tx.inputs.length; i += 1) {
-      const unlockingScript = tx.inputs[i]?.unlockingScript?.toHex()
-      if (!unlockingScript) {
-        if (i === 0) throw new Error('BSV-21 list-split signature missing')
-        continue
-      }
-      spends[i] = { unlockingScript }
-    }
-    if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
-    rememberTipKey(args.active, lotKey.key)
-    if (changeKey) rememberTipKey(args.active, changeKey.key)
-    args.onSigned?.()
-    // The cover may be a deploy still queued for miners. An inline broadcast
-    // then fails "missing inputs" and the toolbox throws review; the signed
-    // send outbox below retries until the parent lands.
-    const signAt = Date.now()
-    const signed = await args.active.wallet.signAction({
-      reference,
-      spends,
-      options: { noSend: true },
-    })
-    splitPhase('signAction', signAt)
-    // Signed: the toolbox holds this spend, so it is never aborted from here.
-    reference = null
-    const txid = signed.txid?.toLowerCase() ?? ''
-    const atomic = signed.tx ? Array.from(signed.tx) : []
-    if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) {
-      throw new MarketListingError(
-        'MARKET_LISTING_BROADCAST_UNKNOWN',
-        'BSV-21 list split was signed but did not return a transaction.',
-      )
-    }
-    rememberGhostTx(txid)
-    const { registerSignedSend, startSignedSendPropagation } = await import(
-      './signedSendLifecycle'
-    )
-    startSignedSendPropagation(
-      await registerSignedSend({ txid, atomicBeef: atomic, flow: purpose.flow }),
-    )
-    return {
-      outpoint: `${txid}_0`,
-      lockingScript: listedLock,
-      beef: Beef.fromBinary(atomic),
-    }
-  } catch (err) {
-    if (reference) await args.active.wallet.abortAction({ reference }).catch(() => {})
-    throw err
-  }
-}
-
-/**
- * Which input a miner spend-conflict actually belongs to.
- *
- * "Already spent" on a listing is read by the seller as an accusation against the
- * item. Usually it is a dead funding coin: the tip is still live and sendable.
- */
 export type MarketSpendConflict =
   | 'item-spent'
   | 'funding-spent'
@@ -1863,12 +1374,6 @@ async function dropSpentListingTip(
   } catch {
     /* already gone from basket */
   }
-  try {
-    const { relinquishTokenFiling } = await import('./token/filingStore')
-    await relinquishTokenFiling(active.wallet, tipOutpoint.replace('_', '.'))
-  } catch {
-    /* not a 162 tip */
-  }
   console.info(
     `[market] retired spent listing tip ${tipOutpoint.slice(0, 18)}… — inventory dropped`,
   )
@@ -1950,43 +1455,14 @@ async function createMarketListingAdvertExclusive(
   }
   mark('spend region acquired')
   const outpoint = normalizeOutpoint(args.outpoint)
-  let listingOutpoint = outpoint
-  let itemTxid = listingOutpoint.slice(0, 64)
-  const extraCoverTips: Array<{
-    outpoint: string
-    amt: bigint
-    lockingScript?: string
-  }> = []
-  /** Signed BEEF of a just-broadcast BSV-21 cover split — never re-fetched. */
-  let splitListingBeef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
+  const listingOutpoint = outpoint
+  const itemTxid = listingOutpoint.slice(0, 64)
   const activeEarly = getActiveWallet()
   if (!activeEarly) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
   await prepareMarketListingSpend(activeEarly)
   mark('reservations cleared')
-  const countersignedSource = async () => {
-    const { countersignedHoldingAt } = await import('./countersign/wallet')
-    return countersignedHoldingAt(activeEarly, outpoint).catch(() => null)
-  }
-  if (isCountersignedMarketAsset(args.assetType)) {
-    const source = await countersignedSource()
-    if (!source) throw new MarketListingError('ITEM_NOT_HELD', 'The listed asset is no longer held by this wallet.')
-    return createCountersignedListing(args, activeEarly, source, mark)
-  }
-  const preferred =
-    args.assetType === 'bsv21' || args.assetType === 'ordinal'
-      ? args.assetType
-      : undefined
-  let loaded: Awaited<ReturnType<typeof loadListedOutput>>
-  try {
-    loaded = await loadListedOutput(outpoint, preferred, mark)
-  } catch (err) {
-    // csft / csnft outputs live in their own baskets; the asset type is optional.
-    const source = err instanceof MarketListingError && err.code === 'ITEM_NOT_HELD' ? await countersignedSource() : null
-    if (source) return createCountersignedListing(args, activeEarly, source, mark)
-    throw err
-  }
-  const { active, output, assetType, tokenId, amt: classifiedAmt } = loaded
-  mark(`item loaded asset=${assetType}`)
+  const { active, output, assetType: listedAsset } = await loadListedOutput(outpoint, mark)
+  mark(`item loaded asset=${listedAsset}`)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
     throw new Error('Listing price must be at least 20 satoshis')
@@ -2002,227 +1478,70 @@ async function createMarketListingAdvertExclusive(
   }
 
   const custom = parseCustomInstructions(output.customInstructions)
-  const lockingScriptHex =
-    typeof output.lockingScript === 'string' ? output.lockingScript : undefined
-  const lockTip = lockingScriptHex
-    ? decodeListedBsv21Tip({
-        outpoint,
-        satoshis: output.satoshis ?? 1,
-        tags: output.tags,
-        customInstructions: output.customInstructions,
-        lockingScript: lockingScriptHex,
-      })
-    : null
-  const lockIsBsv21 = Boolean(
-    assetType === 'bsv21' ||
-      lockTip ||
-      (lockingScriptHex && decodeBsv21Binary(lockingScriptHex)),
+  const origin = resolveOrdinalListingOrigin({
+    outpoint,
+    customOrigin: custom.origin,
+    tags: output.tags,
+  })
+  // Inventory paints "verified" from durable provenCache; remittance is often
+  // absent from customInstructions (internalize 1k cap). Rebuild the same way
+  // collectable send does — trust the verdict, replay its path, allow a
+  // publish-sized package the overlay size-gates separately.
+  const remittanceProvenance =
+    provenanceFromCustomInstructions(output.customInstructions) ??
+    getRememberedProvenanceRemittance(outpoint)
+  const verdict = getProvenVerdict(outpoint)
+  const trustProven = verdict?.tier === 'brc150'
+  const built = await tryBuildProvenanceV2({
+    tipOutpoint: outpoint,
+    origin,
+    wallet: active,
+    priorProvenance: remittanceProvenance ?? custom.provenance,
+    allowLineageHydrate: true,
+    trustProven,
+    allowOversized: true,
+    ...(verdict?.path?.length ? { path: verdict.path } : {}),
+  })
+  mark(`brc-150 rebuilt built=${String(Boolean(built))} trusted=${String(trustProven)}`)
+  const seed = built ?? remittanceProvenance
+  if (!seed) {
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      trustProven
+        ? 'This item is verified locally but a publishable BRC-150 package could not be rebuilt. Refresh Collectables and try again.'
+        : 'A complete BRC-150 proof could not be built for this item.',
+    )
+  }
+  const outstanding = provenanceMissingPathBodies(seed)
+  const complete =
+    outstanding && outstanding.length <= MARKET_OVERLAY_HYDRATE_MAX_TXS
+      ? null
+      : await completeProvenanceForPublish({
+          provenance: seed,
+          getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
+        })
+  mark(
+    `brc-150 publish package hydrated=${String(Boolean(complete))} outstanding=${outstanding?.length ?? 0}`,
   )
-  const askedBsv21 = args.assetType === 'bsv21'
-  const listedAsset: MarketAssetType =
-    askedBsv21 || lockIsBsv21 ? 'bsv21' : 'ordinal'
-  if (askedBsv21 && !lockIsBsv21) {
-    const refusal = chooseBsv21ListingLock(lockingScriptHex)
-    const message =
-      refusal.lock === 'refuse'
-        ? refusal.message
-        : 'BSV-21 listing requires a 162 value lock.'
-    console.warn(
-      `[market-list] refuse ${outpoint} — asked bsv21, lock is ${
-        refusal.lock === 'refuse' ? refusal.reason : 'unclassified'
-      }`,
+  const chosen = choosePublishableProvenance([complete, seed])
+  if (!chosen) {
+    throw new MarketListingError(
+      'ITEM_PROVENANCE_TOO_LARGE',
+      'This item’s BRC-150 proof is too large for the market overlay.'
     )
-    throw new MarketListingError('MARKET_ASSET_UNSUPPORTED', message)
   }
-  const origin =
-    listedAsset === 'bsv21'
-      ? normalizeOriginOutpoint(tokenId || lockTip?.tokenId || custom.origin)
-      : resolveOrdinalListingOrigin({
-          outpoint,
-          customOrigin: custom.origin,
-          tags: output.tags,
-        })
-  let provenance: ProvenanceV2 | Bsv21ListingProof
-  let amt = listedAsset === 'bsv21' ? classifiedAmt : undefined
-  let tipAmt = classifiedAmt
-  if (listedAsset === 'bsv21') {
-    const listedLock = chooseBsv21ListingLock(lockingScriptHex)
-    if (listedLock.lock === 'refuse') {
-      console.warn(`[market-list] refuse ${outpoint} — ${listedLock.reason}`)
-      throw new MarketListingError(
-        'MARKET_ASSET_UNSUPPORTED',
-        listedLock.message,
-      )
-    }
-    const beef = await loadBsv21ProofBeef(active, itemTxid)
-    provenance = buildBsv21ListingProof({
-      outpoint: listingOutpoint,
-      lockingScriptHex: listedLock.lockingScriptHex,
-      customInstructions: output.customInstructions,
-      ...(beef ? { beef } : {}),
-    })
-    let provenAmt = Number(provenance.amt)
-    if (!Number.isSafeInteger(provenAmt) || provenAmt <= 0) {
-      throw new MarketListingError(
-        'MARKET_ASSET_UNSUPPORTED',
-        'BSV-21 listing requires a 162 amount.',
-      )
-    }
-    tipAmt = provenAmt
-    const requested = args.listAmt == null ? provenAmt : Math.trunc(Number(args.listAmt))
-    if (!Number.isSafeInteger(requested) || requested < 1) {
-      throw new Error('List at least 1 unit')
-    }
-    if (requested > provenAmt) {
-      const tips = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
-      const plannedTips = tips.map((t) => ({
-        outpoint: t.outpoint,
-        tokenId: t.tokenId,
-        amt: BigInt(String(t.amt).replace(/\D/g, '') || '0'),
-        lockingScript: t.lockingScript,
-      }))
-      if (!plannedTips.some((t) => normalizeOutpoint(t.outpoint) === listingOutpoint)) {
-        plannedTips.push({
-          outpoint: listingOutpoint,
-          tokenId: origin,
-          amt: BigInt(provenAmt),
-          lockingScript: listedLock.lockingScriptHex,
-        })
-      }
-      let plan
-      try {
-        plan = planBsv21Send({
-          tokenId: origin,
-          amount: BigInt(requested),
-          tips: plannedTips,
-        })
-      } catch {
-        throw new Error('Not enough units available to list that amount.')
-      }
-      const selected = [...plan.selected]
-      const origIdx = selected.findIndex(
-        (t) => normalizeOutpoint(t.outpoint) === listingOutpoint,
-      )
-      if (origIdx > 0) {
-        const [orig] = selected.splice(origIdx, 1)
-        selected.unshift(orig!)
-      } else if (origIdx < 0) {
-        const vin0 = selected[0]
-        if (!vin0?.lockingScript) {
-          throw new Error('Not enough units available to list that amount.')
-        }
-        listingOutpoint = normalizeOutpoint(vin0.outpoint)
-        itemTxid = listingOutpoint.slice(0, 64)
-        provenAmt = Number(vin0.amt)
-        const vin0Beef = await loadBsv21ProofBeef(active, itemTxid)
-        provenance = buildBsv21ListingProof({
-          outpoint: listingOutpoint,
-          lockingScriptHex: vin0.lockingScript,
-          ...(vin0Beef ? { beef: vin0Beef } : {}),
-        })
-      }
-      extraCoverTips.push(
-        ...selected.slice(1).map((t) => ({
-          outpoint: normalizeOutpoint(t.outpoint),
-          amt: t.amt,
-          lockingScript: t.lockingScript,
-        })),
-      )
-      tipAmt = Number(selected.reduce((sum, t) => sum + t.amt, 0n))
-    }
-    if (requested !== provenAmt || extraCoverTips.length > 0) {
-      const split = await splitBsv21CoverToExactAmt({
-        active,
-        origin,
-        requested,
-        covers: [
-          {
-            outpoint: listingOutpoint,
-            amt: BigInt(provenAmt),
-            lockingScript: listedLock.lockingScriptHex,
-          },
-          ...extraCoverTips,
-        ],
-        icon: lockTip?.icon,
-        ...(lockTip?.sym ? { sym: lockTip.sym } : {}),
-      })
-      listingOutpoint = split.outpoint
-      itemTxid = listingOutpoint.slice(0, 64)
-      // The split tx is seconds old. Asking an indexer to prove it costs the
-      // full fetch/WoC/raw ladder and can never succeed until it is mined — we
-      // already hold the signed BEEF, so carry it into the listing.
-      splitListingBeef = split.beef
-      extraCoverTips.length = 0
-      provenAmt = requested
-      tipAmt = requested
-      provenance = buildBsv21ListingProof({
-        outpoint: listingOutpoint,
-        lockingScriptHex: split.lockingScript,
-        beef: split.beef,
-      })
-    }
-    amt = requested
-  } else {
-    // Inventory paints "verified" from durable provenCache; remittance is often
-    // absent from customInstructions (internalize 1k cap). Rebuild the same way
-    // collectable send does — trust the verdict, replay its path, allow a
-    // publish-sized package the overlay size-gates separately.
-    const remittanceProvenance =
-      provenanceFromCustomInstructions(output.customInstructions) ??
-      getRememberedProvenanceRemittance(outpoint)
-    const verdict = getProvenVerdict(outpoint)
-    const trustProven = verdict?.tier === 'brc150'
-    const built = await tryBuildProvenanceV2({
-      tipOutpoint: outpoint,
-      origin,
-      wallet: active,
-      priorProvenance: remittanceProvenance ?? custom.provenance,
-      allowLineageHydrate: true,
-      trustProven,
-      allowOversized: true,
-      ...(verdict?.path?.length ? { path: verdict.path } : {}),
-    })
-    mark(`brc-150 rebuilt built=${String(Boolean(built))} trusted=${String(trustProven)}`)
-    const seed = built ?? remittanceProvenance
-    if (!seed) {
-      throw new MarketListingError(
-        'ITEM_ORIGIN_UNPROVEN',
-        trustProven
-          ? 'This item is verified locally but a publishable BRC-150 package could not be rebuilt. Refresh Collectables and try again.'
-          : 'A complete BRC-150 proof could not be built for this item.',
-      )
-    }
-    const outstanding = provenanceMissingPathBodies(seed)
-    const complete =
-      outstanding && outstanding.length <= MARKET_OVERLAY_HYDRATE_MAX_TXS
-        ? null
-        : await completeProvenanceForPublish({
-            provenance: seed,
-            getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
-          })
-    mark(
-      `brc-150 publish package hydrated=${String(Boolean(complete))} outstanding=${outstanding?.length ?? 0}`,
+  const verified = await verifyProvenanceV2Async(chosen, outpoint, {
+    enforceBudget: false,
+    getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
+  })
+  if (!verified.proven) {
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      `BRC-150 verification failed: ${verified.reason ?? 'unknown reason'}`
     )
-    const chosen = choosePublishableProvenance([complete, seed])
-    if (!chosen) {
-      throw new MarketListingError(
-        'ITEM_PROVENANCE_TOO_LARGE',
-        'This item’s BRC-150 proof is too large for the market overlay.'
-      )
-    }
-    const verified = await verifyProvenanceV2Async(chosen, outpoint, {
-      enforceBudget: false,
-      getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true, allowUnprovenRawTx: true }),
-    })
-    if (!verified.proven) {
-      throw new MarketListingError(
-        'ITEM_ORIGIN_UNPROVEN',
-        `BRC-150 verification failed: ${verified.reason ?? 'unknown reason'}`
-      )
-    }
-    mark('brc-150 publish package verified')
-    provenance = chosen
   }
+  mark('brc-150 publish package verified')
+  const provenance = chosen
   const digest = hashMarketProvenance(provenance)
   const nonce = randomNonce()
   const exactFeeSats = Math.floor(
@@ -2247,21 +1566,11 @@ async function createMarketListingAdvertExclusive(
   })
   const offerKey = seller.listingKey
   const offerLockingScript = encodeMarketOffer(fields, PrivateKey.fromHex(active.rootKeyHex))
-  const itemLockingScript =
-    listedAsset === 'bsv21'
-      ? buildBsv21ValueLock({
-          tokenId: origin,
-          amount: BigInt(amt!),
-          address: seller.listingAddress,
-          layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
-        })
-      : new P2PKH().lock(seller.listingAddress).toHex()
+  const itemLockingScript = new P2PKH().lock(seller.listingAddress).toHex()
   const path = chooseMarketListingPath({
     itemOutpoint: listingOutpoint,
     satoshis: output.satoshis ?? 0,
-    ordinal:
-      listedAsset === 'bsv21' ||
-      (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
+    ordinal: (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
     provenanceProven: true,
     termsValid: true,
   })
@@ -2270,29 +1579,9 @@ async function createMarketListingAdvertExclusive(
   }
   const chart = createActor(offerMachine).start()
   chart.send({ type: 'LIST', venue: 'market', path })
-  const listingBeef =
-    splitListingBeef ??
-    (await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true }))
+  const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true, allowUnprovenRawTx: true })
   mark('item beef ready')
-  if (listedAsset === 'bsv21' && lockTip?.icon) {
-    await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
-  }
-  for (const extra of extraCoverTips) {
-    const extraTxid = extra.outpoint.slice(0, 64)
-    if (extraTxid === itemTxid) continue
-    try {
-      const extraBeef = await getBeefForTxidCached(active, extraTxid, { needProof: true, allowUnprovenRawTx: true })
-      listingBeef.mergeBeef(extraBeef.toBinary())
-    } catch {
-      // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
-    }
-  }
   const inputBEEF = listingBeef.toBinary()
-  const listChangeKey =
-    listedAsset === 'bsv21' && tipAmt != null && amt != null && tipAmt > amt
-      ? selfTokenOutput(active, seller.keys.listing.derivationPrefix)
-      : null
-  if (listChangeKey) rememberTipKey(active, listChangeKey.key)
   let reference: string | null = null
   let signedTxid: string | null = null
   let signedAtomic: number[] | null = null
@@ -2307,11 +1596,6 @@ async function createMarketListingAdvertExclusive(
           inputDescription: 'Market item input zero',
           unlockingScriptLength: 108,
         },
-        ...extraCoverTips.map((tip) => ({
-          outpoint: tip.outpoint.replace('_', '.'),
-          inputDescription: 'BSV-21 listing cover',
-          unlockingScriptLength: 108,
-        })),
       ],
       outputs: [
         {
@@ -2321,15 +1605,11 @@ async function createMarketListingAdvertExclusive(
           ...heldWithListingKey(seller.keys, buildMarketHeldRemittance({
             assetType: listedAsset,
             origin,
-            amt,
-            icon: listedAsset === 'bsv21' ? lockTip?.icon : undefined,
             name:
               typeof custom.name === 'string' && custom.name.trim()
                 ? custom.name.trim()
                 : undefined,
-            ...(listedAsset === 'ordinal' && 'origin' in provenance
-              ? { provenance: provenance }
-              : {}),
+            provenance,
             extraTags: ['market-held'],
           })),
         },
@@ -2341,27 +1621,6 @@ async function createMarketListingAdvertExclusive(
           tags: ['brc48', `nonce:${nonce}`, `origin:${origin.replace('_', '.')}`],
           customInstructions: JSON.stringify({ fields, sellerKeys: seller.keys }),
         },
-        ...(listChangeKey && tipAmt != null && amt != null
-          ? [
-              {
-                lockingScript: buildBsv21ValueLock({
-                  tokenId: origin,
-                  amount: BigInt(tipAmt - amt),
-                  address: listChangeKey.address,
-                  layout: bsv21SpendLayout([{ lockingScript: lockingScriptHex }, ...extraCoverTips]),
-                }),
-                satoshis: 1,
-                outputDescription: 'BSV-21 listing change',
-                ...buildBsv21SendRemittance({
-                  tokenId: origin,
-                  amt: BigInt(tipAmt - amt),
-                  icon: lockTip?.icon,
-                  ...(lockTip?.sym ? { sym: lockTip.sym } : {}),
-                  remittance: listChangeKey.remittance,
-                }),
-              },
-            ]
-          : []),
       ],
       options: {
         randomizeOutputs: false,
@@ -2385,16 +1644,9 @@ async function createMarketListingAdvertExclusive(
       )
     )?.tx
     if (!tx) throw new Error('Market listing transaction is missing item input')
-    const selectedPoints = new Set([
-      listingOutpoint,
-      ...extraCoverTips.map((tip) => tip.outpoint),
-    ])
     if (
       String(tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
       tx.inputs[0]?.sourceOutputIndex !== vin0Vout ||
-      !selectedPoints.has(
-        `${String(tx.inputs[0]?.sourceTXID).toLowerCase()}_${tx.inputs[0]?.sourceOutputIndex}`,
-      ) ||
       tx.outputs[MARKET_ITEM_VOUT]?.satoshis !== 1 ||
       tx.outputs[MARKET_ITEM_VOUT]?.lockingScript?.toHex() !== itemLockingScript ||
       tx.outputs[MARKET_OFFER_VOUT]?.satoshis !== MARKET_OFFER_DEPOSIT_SATS ||
@@ -2408,8 +1660,7 @@ async function createMarketListingAdvertExclusive(
     const spends: Record<number, { unlockingScript: string }> = {}
     for (let i = 0; i < tx.inputs.length; i += 1) {
       const vin = tx.inputs[i]!
-      const src = `${String(vin.sourceTXID).toLowerCase()}_${vin.sourceOutputIndex}`
-      if (i !== 0 && !selectedPoints.has(src)) continue
+      if (i !== 0) continue
       vin.sourceTransaction ??=
         listingBeef.findTxid(String(vin.sourceTXID))?.tx ??
         beef.findTxid(String(vin.sourceTXID))?.tx
@@ -2419,7 +1670,7 @@ async function createMarketListingAdvertExclusive(
       if (typeof satoshis !== 'number' || !lockingScript) {
         throw new Error('Listing input is missing its source locking script')
       }
-      // 162 and 1sat tips are prefix ‖ P2PKH. getUnlockP2PKH hashes bare P2PKH
+      // 1sat tips are prefix ‖ P2PKH. getUnlockP2PKH hashes bare P2PKH
       // and fails CHECKSIG ("top stack element must be truthy").
       vin.unlockingScriptTemplate = new P2PKH().unlock(
         await tipSigningKey(active, lockingScript.toHex()),
@@ -2483,7 +1734,6 @@ async function createMarketListingAdvertExclusive(
       offerOutpoint,
       offerLockingScript,
       assetType: listedAsset,
-      amt,
       seller: fields.sellerIdentityKey,
       payTo: fields.payTo,
       priceSats: fields.grossPriceSats,
@@ -2558,42 +1808,20 @@ async function createMarketListingAdvertExclusive(
       listedAsset,
       customName: typeof custom.name === 'string' ? custom.name : undefined,
       tags: output.tags,
-      sym: lockTip?.sym,
-      icon: lockTip?.icon,
     })
     // Listing replaces the held tip with txid.0. Paint that replacement now;
     // a market attempt or an unavailable indexer must never make owned assets
     // disappear while listOutputs catches up.
-    if (listedAsset === 'bsv21' && amt != null) {
-      void import('./token/list').then(({ replaceFungibleToken }) => {
-        replaceFungibleToken({
-          tokenId: origin,
-          sym: lockTip?.sym || identity.name,
-          amt: String(amt),
-          dec: lockTip?.dec ?? 0,
-          utxoCount: 1,
-          tipOutpoints: [listedOutpoint],
-          outpoint: listedOutpoint.replace('_', '.'),
-          spendKind: 'plain',
-          ...(lockTip?.icon ? { icon: lockTip.icon } : {}),
-          ...(lockTip?.issuer ? { issuer: lockTip.issuer } : {}),
-        })
+    void import('./collectables').then(({ noteIngestedItem }) => {
+      noteIngestedItem({
+        outpoint: listedOutpoint.replace('_', '.'),
+        chain: active.chain,
+        origin,
+        name: identity.name,
+        app: identity.app,
       })
-    } else {
-      void import('./collectables').then(({ noteIngestedItem }) => {
-        noteIngestedItem({
-          outpoint: listedOutpoint.replace('_', '.'),
-          chain: active.chain,
-          origin,
-          name: identity.name,
-          app: identity.app,
-        })
-      })
-    }
-    const listedNote =
-      listedAsset === 'bsv21' && amt != null
-        ? `Listed ${amt.toLocaleString()} ${identity.name} for ${priceSats.toLocaleString()} sats`
-        : `Listed ${identity.name} for ${priceSats.toLocaleString()} sats`
+    })
+    const listedNote = `Listed ${identity.name} for ${priceSats.toLocaleString()} sats`
     recordWalletEvent({
       method: 'market-list',
       note: listedNote,
@@ -2604,13 +1832,6 @@ async function createMarketListingAdvertExclusive(
         outpoint: listedOutpoint.replace('_', '.'),
         ...(identity.imageUrl ? { imageUrl: identity.imageUrl } : {}),
         ...(identity.app ? { app: identity.app } : {}),
-        ...(listedAsset === 'bsv21'
-          ? {
-              tokenId: origin,
-              ...(amt != null ? { amt: String(amt) } : {}),
-              ...(lockTip?.icon ? { icon: lockTip.icon } : {}),
-            }
-          : {}),
       },
     })
     return {
@@ -2645,7 +1866,7 @@ async function createMarketListingAdvertExclusive(
         status: 'failed',
         failureReason: reason.slice(0, 280),
         item: {
-          name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
+          name: 'Collectable',
           origin,
           outpoint: broadcastedTxid
             ? `${broadcastedTxid}.0`
@@ -2685,7 +1906,7 @@ async function createMarketListingAdvertExclusive(
       status: 'failed',
       failureReason: failureReason.slice(0, 280),
       item: {
-        name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
+        name: 'Collectable',
         origin,
         outpoint: listingOutpoint.replace('_', '.'),
       },
@@ -2696,284 +1917,14 @@ async function createMarketListingAdvertExclusive(
   }
 }
 
-type CountersignedListingSource = NonNullable<
-  Awaited<ReturnType<typeof import('./countersign/wallet').countersignedHoldingAt>>
->
-
-/**
- * List a countersigned asset. The listing transaction moves the units into
- * output 0 (to a fresh holder key) beside the offer token, so it is itself a
- * countersigned trade: fee coins fund it and the issuer countersigns it now.
- * The list-time signature then binds that output to the seller's payment
- * SINGLE|ANYONECANPAY, and the buyer asks the issuer again at the sale.
- */
-async function createCountersignedListing(
-  args: CreateMarketListingArgs,
-  active: ActiveWallet,
-  source: CountersignedListingSource,
-  mark: (phase: string) => void,
-): Promise<MarketListingPostPayload> {
-  const { holding, deploy, profile } = source
-  if (holding.listed) {
-    throw new MarketListingError('ITEM_ALREADY_LISTED', 'This output is already listed. Cancel that listing to list it again.')
-  }
-  const priceSats = Math.trunc(Number(args.priceSats))
-  if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
-    throw new Error('Listing price must be at least 20 satoshis')
-  }
-  const listedAt = Date.now()
-  const expiresAt = args.expiresAt == null ? null : Math.trunc(Number(args.expiresAt))
-  if (expiresAt != null && (!Number.isSafeInteger(expiresAt) || expiresAt <= listedAt)) {
-    throw new Error('Listing expiry must be in the future')
-  }
-  const { listCountersignedHoldings, runFundedCountersignedTrade, tradeHolderKey, MARKET_HELD_TAG } = await import(
-    './countersign/wallet'
-  )
-  const isItem = deploy.kind === 'item'
-  const raw = isItem ? '1' : args.listAmt == null ? holding.amount.toString() : String(Math.trunc(Number(args.listAmt)))
-  if (!/^[1-9]\d*$/.test(raw)) throw new Error('List at least 1 unit')
-  const requested = BigInt(raw)
-  if (requested > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('List at most 9,007,199,254,740,991 units at once')
-  const covers = [holding]
-  let covered = holding.amount
-  if (covered < requested) {
-    const others = (await listCountersignedHoldings(active, holding.assetId))
-      .filter((h) => normalizeOutpoint(h.outpoint) !== normalizeOutpoint(holding.outpoint))
-      .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))
-    for (const other of others) {
-      if (covered >= requested) break
-      covers.push(other)
-      covered += other.amount
-    }
-  }
-  if (covered < requested) throw new Error('Not enough units available to list that amount.')
-  const assetId = holding.assetId
-  const self = active.identityKey.toLowerCase()
-  const proof: CountersignedListingProof = { v: 253, assetId, kind: deploy.kind, amt: requested.toString() }
-  const digest = hashMarketProvenance(proof)
-  const nonce = randomNonce()
-  const seller = planMarketSellerKeys(active)
-  const fields = normalizeMarketOfferFields({
-    sellerIdentityKey: active.identityKey,
-    listingKey: seller.listingKey.toPublicKey().toString(),
-    payTo: seller.payTo,
-    grossPriceSats: priceSats,
-    feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
-    feePayTo: MARKET_FEE_PAY_TO_ADDRESS,
-    feeBasisPoints: MARKET_FEE_BASIS_POINTS,
-    exactFeeSats: Math.floor((priceSats * MARKET_FEE_BASIS_POINTS) / 10_000),
-    provenanceHash: digest.hash,
-    provenanceSize: digest.size,
-    provenanceVersion: MARKET_PROVENANCE_VERSION,
-    expiresAt,
-    nonce,
-    messagebox: publicMessageboxBase(args.messagebox),
-  })
-  const offerKey = seller.listingKey
-  const offerLockingScript = encodeMarketOffer(fields, PrivateKey.fromHex(active.rootKeyHex))
-  const path = chooseMarketListingPath({
-    itemOutpoint: normalizeOutpoint(holding.outpoint),
-    satoshis: 1,
-    ordinal: true,
-    provenanceProven: true,
-    termsValid: true,
-  })
-  if (path.path === 'refuse') throw new MarketListingError('MARKET_LISTING_REFUSED', path.reason)
-  const name = (isItem ? deploy.fields.name : deploy.fields.sym) || deploy.fields.name || (isItem ? 'Item' : 'Token')
-  const chart = createActor(offerMachine).start()
-  chart.send({ type: 'LIST', venue: 'market', path })
-  try {
-    const trade = await runFundedCountersignedTrade({
-      assetId,
-      holdings: covers,
-      outputs: [
-        { kind: 'asset', amount: requested, identityKey: self, tags: [MARKET_HELD_TAG] },
-        {
-          kind: 'plain',
-          lockingScript: offerLockingScript,
-          satoshis: MARKET_OFFER_DEPOSIT_SATS,
-          file: {
-            basket: 'market-offers',
-            tags: ['brc48', `nonce:${nonce}`, `origin:${assetId.replace('_', '.')}`],
-            customInstructions: JSON.stringify({ fields, sellerKeys: seller.keys }),
-          },
-        },
-        ...(covered > requested ? [{ kind: 'asset' as const, amount: covered - requested, identityKey: self }] : []),
-      ],
-      description: 'market list',
-      flow: 'market_listing',
-      progress: {
-        staged: (requestId) => chart.send({ type: 'STAGED', reference: requestId }),
-        countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
-        broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
-      },
-    })
-    const txid = trade.txid
-    mark(`countersigned listing ${txid.slice(0, 12)} (${trade.acceptedBy})`)
-    const listedOutpoint = `${txid}_0`
-    const advert: MarketListingAdvert = {
-      outpoint: listedOutpoint,
-      offerOutpoint: `${txid}_1`,
-      offerLockingScript,
-      assetType: profile,
-      amt: Number(requested),
-      seller: fields.sellerIdentityKey,
-      payTo: fields.payTo,
-      priceSats: fields.grossPriceSats,
-      feeIdentityKey: fields.feeIdentityKey,
-      feePayTo: fields.feePayTo,
-      feeBasisPoints: fields.feeBasisPoints,
-      exactFeeSats: fields.exactFeeSats,
-      depositSats: fields.depositSats,
-      messagebox: fields.messagebox,
-      origin: assetId,
-      provenanceHash: fields.provenanceHash,
-      provenanceSize: fields.provenanceSize,
-      provenanceVersion: fields.provenanceVersion,
-      listedAt,
-      expiresAt: fields.expiresAt,
-      nonce: fields.nonce,
-    }
-    advert.settlementUnlocks = await buildMarketSettlementUnlocks({
-      listingTx: trade.tx,
-      txid,
-      assetType: profile,
-      itemLockingScript: trade.tx.outputs[MARKET_ITEM_VOUT]!.lockingScript!.toHex(),
-      offerLockingScript,
-      payTo: fields.payTo,
-      priceSats,
-      feePayToAddress: fields.feePayTo,
-      privateKey: offerKey,
-      itemPrivateKey: tradeHolderKey(active, assetId, trade.remittance, MARKET_ITEM_VOUT),
-    })
-    mark('settlement unlocks pre-signed')
-    saveAuthorization({
-      key: listingAuthorizationKey(listedOutpoint, nonce),
-      outpoint: listedOutpoint,
-      nonce,
-      seller: advert.seller,
-      origin: assetId,
-      provenanceHash: digest.hash,
-      priceSats,
-      state: 'active',
-      createdAt: listedAt,
-      updatedAt: listedAt,
-      listing: advert,
-      sellerKeys: seller.keys,
-    })
-    chart.send({ type: 'COMMITTED' })
-    scheduleHistoryBackupPush('market-list')
-    rememberGhostTx(txid)
-    recordWalletEvent({
-      method: 'market-list',
-      note: isItem
-        ? `Listed ${name} for ${priceSats.toLocaleString()} sats`
-        : `Listed ${Number(requested).toLocaleString()} ${name} for ${priceSats.toLocaleString()} sats`,
-      txid,
-      item: { name, origin: assetId, outpoint: listedOutpoint.replace('_', '.') },
-    })
-    mark('done — countersigned advert ready to publish')
-    return {
-      listing: advert,
-      provenance: proof,
-      txid,
-      beef: trade.atomic,
-      token: {
-        outpoint: advert.offerOutpoint,
-        outputIndex: MARKET_OFFER_VOUT,
-        satoshis: MARKET_OFFER_DEPOSIT_SATS,
-        lockingScript: offerLockingScript,
-        fields,
-      },
-    }
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    const snap = chart.getSnapshot()
-    if (snap.matches('preSignAbortable')) chart.send({ type: 'ABORTED', error: reason })
-    else if (!snap.matches('broadcast') && !snap.matches('committed')) chart.send({ type: 'FAIL', error: reason })
-    recordWalletEvent({
-      method: 'market-list',
-      note: snap.context.txid ? 'Listed (broadcast ok; finish failed)' : 'Listing failed',
-      status: 'failed',
-      failureReason: reason.slice(0, 280),
-      ...(snap.context.txid ? { txid: snap.context.txid } : {}),
-      item: { name, origin: assetId, outpoint: holding.outpoint.replace('_', '.') },
-    })
-    throw err
-  } finally {
-    chart.stop()
-  }
-}
-
-/**
- * Cancel a countersigned listing: the listed output and the offer token go
- * back in one trade the issuer countersigns. It shares the offer token with
- * every buyer's request, so it conflicts with them and the issuer may sign it
- * whatever a silent buyer left reserved.
- */
-async function cancelCountersignedListing(args: {
-  active: ActiveWallet
-  current: MarketListingAuthorization
-  listing: MarketListingAdvert
-  listingTx: Transaction
-  chart: { send: (event: { type: 'STAGED'; reference: string } | { type: 'SIGNED_UNKNOWN' } | { type: 'BROADCASTED'; txid: string } | { type: 'COMMITTED' }) => void }
-}): Promise<MarketCancelAdvert> {
-  const { active, current, listing, listingTx, chart } = args
-  const { countersignedHoldingAt, runFundedCountersignedTrade } = await import('./countersign/wallet')
-  const source = await countersignedHoldingAt(active, listing.outpoint)
-  if (!source || source.holding.assetId !== normalizeOutpoint(listing.origin)) {
-    throw new MarketListingError('MARKET_CANCEL_REFUSED', 'This wallet no longer holds the listed output. Nothing was spent.')
-  }
-  const offerKey = marketListingKey(active, current.sellerKeys)
-  const offerOut = listingTx.outputs[MARKET_OFFER_VOUT]
-  if (!offerOut?.lockingScript || offerOut.satoshis !== MARKET_OFFER_DEPOSIT_SATS) {
-    throw new Error('Cancellation needs the offer output of the listing transaction')
-  }
-  const trade = await runFundedCountersignedTrade({
-    assetId: source.holding.assetId,
-    holdings: [source.holding],
-    plainInputs: [
-      {
-        outpoint: normalizeOutpoint(listing.offerOutpoint),
-        sourceTransaction: listingTx,
-        sign: (tx, vin) => checksigOnlyUnlock(offerKey, MARKET_OFFER_DEPOSIT_SATS, offerOut.lockingScript).sign(tx, vin),
-        basket: 'market-offers',
-      },
-    ],
-    outputs: [{ kind: 'asset', amount: source.holding.amount, identityKey: active.identityKey.toLowerCase() }],
-    description: 'market cancel',
-    flow: 'market_cancel',
-    progress: {
-      staged: (requestId) => chart.send({ type: 'STAGED', reference: requestId }),
-      countersigned: () => chart.send({ type: 'SIGNED_UNKNOWN' }),
-      broadcast: (txid) => chart.send({ type: 'BROADCASTED', txid }),
-    },
-  })
-  markMarketListingCancelled({ outpoint: current.outpoint, nonce: current.nonce, txid: trade.txid })
-  chart.send({ type: 'COMMITTED' })
-  scheduleHistoryBackupPush('market-list')
-  return {
-    action: 'cancel',
-    itemOutpoint: current.outpoint,
-    offerOutpoint: listing.offerOutpoint,
-    txid: trade.txid,
-    beef: trade.atomic,
-  }
-}
-
 export async function verifyMarketListingProvenance(args: {
   listing: MarketListingAdvert
   provenance: unknown
 }): Promise<{ verified: boolean; reason: string | null }> {
   const advert = args.listing
-  const isBsv21 = advert.assetType === 'bsv21'
-  const countersigned = isCountersignedMarketAsset(advert.assetType) ? advert.assetType : null
-  const provenance = countersigned
-    ? parseCountersignedListingProof(args.provenance)
-    : isBsv21
-      ? parseBsv21ListingProof(args.provenance)
-      : parseProvenanceV2(args.provenance)
   const fail = (reason: string) => ({ verified: false, reason })
+  if (advert.assetType && advert.assetType !== 'ordinal') return fail('MARKET_ASSET_UNSUPPORTED')
+  const provenance = parseProvenanceV2(args.provenance)
   if (!provenance || advert.provenanceVersion !== 2) {
     return fail('INVALID_PROVENANCE_VERSION')
   }
@@ -3024,23 +1975,11 @@ export async function verifyMarketListingProvenance(args: {
     return fail('OFFER_TOKEN_TERMS_MISMATCH')
   }
   try {
-    const proofOrigin = countersigned
-      ? (provenance as CountersignedListingProof).assetId
-      : isBsv21
-        ? (provenance as Bsv21ListingProof).tokenId
-        : (provenance as ProvenanceV2).origin
     if (
-      normalizeOriginOutpoint(proofOrigin) !==
+      normalizeOriginOutpoint(provenance.origin) !==
       normalizeOriginOutpoint(advert.origin)
     ) {
       return fail('PROVENANCE_ORIGIN_MISMATCH')
-    }
-    if (
-      (isBsv21 || countersigned) &&
-      advert.amt != null &&
-      (provenance as Bsv21ListingProof | CountersignedListingProof).amt !== String(advert.amt)
-    ) {
-      return fail('PROVENANCE_AMT_MISMATCH')
     }
   } catch {
     return fail('PROVENANCE_ORIGIN_MISMATCH')
@@ -3059,37 +1998,7 @@ export async function verifyMarketListingProvenance(args: {
   ) {
     return fail('INVALID_LISTING_TERMS')
   }
-  if (isBsv21) {
-    return { verified: true, reason: null }
-  }
   const active = getActiveWallet()
-  if (countersigned) {
-    if (!active) return fail('WALLET_LOCKED')
-    const proof = provenance as CountersignedListingProof
-    try {
-      const txid = outpoint.slice(0, 64)
-      const { countersignedDeploy } = await import('./countersign/wallet')
-      const [beef, deploy] = await Promise.all([
-        getBeefForTxidCached(active, txid, { needProof: false, allowUnprovenRawTx: true }),
-        countersignedDeploy(active, proof.assetId),
-      ])
-      const listingTx = beef.findTxid(txid)?.tx
-      if (!listingTx) return fail('LISTING_TX_UNAVAILABLE')
-      if (!deploy) return fail('COUNTERSIGNED_DEPLOY_UNAVAILABLE')
-      const checked = checkCountersignedListing({
-        assetType: countersigned,
-        origin: advert.origin,
-        amt: advert.amt,
-        offerLockingScript: advert.offerLockingScript,
-        proof,
-        listingTx,
-        deploy,
-      })
-      return checked.ok ? { verified: true, reason: null } : fail(`COUNTERSIGNED_LISTING_${checked.reason.toUpperCase().replace('-', '_')}`)
-    } catch (err) {
-      return fail(`COUNTERSIGNED_LISTING_UNVERIFIED: ${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
   // Overlay BRC-150 proves the pre-list item tip. The listing outpoint is
   // output 0 of a new tx the buyer does not have in BEEF — do not treat it
   // as a held tip. Hash / origin / offer terms already bound the listing.
@@ -3358,8 +2267,6 @@ export async function buildMarketSettlementUnlocks(args: {
   priceSats: number
   feePayToAddress: string
   privateKey: PrivateKey
-  /** The listed item's own key when it is not `privateKey` (a countersigned holder key). */
-  itemPrivateKey?: PrivateKey
 }): Promise<MarketSettlementUnlocks> {
   const txid = args.txid.trim().toLowerCase()
   if (String(args.listingTx.id('hex')).toLowerCase() !== txid) {
@@ -3380,7 +2287,6 @@ export async function buildMarketSettlementUnlocks(args: {
         sourceSatoshis: 1,
         lockingScript: args.itemLockingScript,
         bound: { satoshis: amounts.sellerSats, lockingScript: new P2PKH().lock(args.payTo).toHex() },
-        ...(args.itemPrivateKey ? { privateKey: args.itemPrivateKey } : {}),
       },
       {
         vin: shape.offerVin,
@@ -3463,14 +2369,11 @@ function markMarketListingCancelled(args: {
   const listed = current.listing
   recordWalletEvent({
     method: 'market-cancel',
-    note:
-      listed?.assetType === 'bsv21' || listed?.assetType === 'csft'
-        ? 'Cancelled token listing'
-        : 'Cancelled listing',
+    note: 'Cancelled listing',
     ...(args.txid ? { txid: args.txid } : {}),
     item: listed
       ? {
-          name: listed.assetType === 'bsv21' || listed.assetType === 'csft' ? 'Token' : 'Collectable',
+          name: 'Collectable',
           origin: listed.origin,
           outpoint: listed.outpoint,
         }
@@ -3483,13 +2386,12 @@ function markMarketListingCancelled(args: {
 async function listedItemRemittance(
   active: ActiveWallet,
   listing: MarketListingAdvert,
-  assetType: MarketAssetType,
 ): Promise<{ basket: string; tags: string[]; customInstructions: string }> {
   const point = normalizeOutpoint(listing.outpoint)
-  for (const basket of assetType === 'bsv21' ? TOKEN_FILING_BASKETS : (['1sat'] as const)) {
+  {
     try {
       const page = await active.wallet.listOutputs({
-        basket,
+        basket: ITEM_STORAGE_BASKET,
         tags: ['market-held'],
         includeCustomInstructions: true,
         includeTags: true,
@@ -3499,21 +2401,19 @@ async function listedItemRemittance(
       const held = page.outputs.find((o) => normalizeOutpoint(o.outpoint) === point)
       if (held?.customInstructions) {
         return {
-          // Returned tokens file under the current name, never the legacy one.
-          basket: assetType === 'bsv21' ? TOKEN_FILING_BASKETS[0] : basket,
+          basket: ITEM_STORAGE_BASKET,
           tags: (held.tags ?? []).filter((tag) => tag !== 'market-held'),
           customInstructions: held.customInstructions,
         }
       }
     } catch {
-      // Next basket, then the advert: it names origin and amount.
+      // Rebuilt from the advert below: it names the origin.
     }
   }
-  const provenance = assetType === 'ordinal' ? getRememberedProvenanceRemittance(point) : null
+  const provenance = getRememberedProvenanceRemittance(point)
   return buildMarketHeldRemittance({
-    assetType,
+    assetType: 'ordinal',
     origin: listing.origin,
-    amt: listing.amt,
     ...(provenance && 'origin' in provenance ? { provenance } : {}),
   })
 }
@@ -3522,15 +2422,9 @@ async function listedItemRemittance(
 async function repaintReturnedItem(
   active: ActiveWallet,
   listing: MarketListingAdvert,
-  assetType: MarketAssetType,
   returnedOutpoint: string,
 ): Promise<void> {
   try {
-    if (assetType === 'bsv21') {
-      const { listFungibles } = await import('./token')
-      await listFungibles(active)
-      return
-    }
     const { noteIngestedItem, retireCollectableAfterSpend } = await import('./collectables')
     retireCollectableAfterSpend(listing.outpoint, returnedOutpoint.slice(0, 64))
     noteIngestedItem({
@@ -3549,11 +2443,7 @@ async function repaintReturnedItem(
 
 const MARKET_CANCEL_RETURN_REFUSAL: Record<Extract<MarketCancelReturn, { kind: 'refuse' }>['reason'], string> = {
   'no-listed-lock': 'The listing transaction does not hold the listed output, so it cannot be cancelled here.',
-  'legacy-json': 'This listing holds a legacy JSON token, which this wallet cannot return. Nothing was spent.',
-  'authority-lock': 'This listing holds a token authority output with no units to return. Nothing was spent.',
-  'not-a-token': 'This token listing does not hold a token lock. Nothing was spent.',
-  'asset-mismatch': 'This listing holds a different kind of asset than its advert names. Nothing was spent.',
-  'token-mismatch': 'The listed token or amount does not match its advert. Nothing was spent.',
+  'asset-mismatch': 'This listing holds a token, not an item, so it cannot be returned here. Nothing was spent.',
 }
 
 export async function createCancelMarketListingAdvert(args: {
@@ -3641,16 +2531,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
     if (itemTxid !== offerTxid || !listingTx || !listedLock) {
       throw new Error('Cancellation needs the listing transaction that holds item and offer')
     }
-    if (isCountersignedMarketAsset(listing.assetType)) {
-      return await cancelCountersignedListing({ active, current, listing, listingTx, chart })
-    }
-    const assetType: MarketAssetType = listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal'
-    const back = chooseMarketCancelReturn({
-      assetType,
-      listedLockHex: listedLock.toHex(),
-      tokenId: assetType === 'bsv21' ? listing.origin : null,
-      amt: assetType === 'bsv21' ? listing.amt : null,
-    })
+    const back = chooseMarketCancelReturn({ listedLockHex: listedLock.toHex() })
     console.info(`[market] cancel ${listing.offerOutpoint.slice(0, 18)}… return=${back.kind}${back.kind === 'refuse' ? ` ${back.reason}` : ''}`)
     if (back.kind === 'refuse') {
       throw new MarketListingError('MARKET_CANCEL_REFUSED', MARKET_CANCEL_RETURN_REFUSAL[back.reason])
@@ -3659,20 +2540,9 @@ async function createCancelMarketListingAdvertExclusive(args: {
     // to a fresh child rather than the listing's payout lock.
     const returnKey = selfTokenOutput(active)
     rememberTipKey(active, returnKey.key)
-    const returnLock =
-      back.kind === 'ordinal'
-        ? new P2PKH().lock(returnKey.address).toHex()
-        : buildBsv21ValueLock({
-            tokenId: back.tokenId,
-            amount: back.amount,
-            address: returnKey.address,
-            layout: back.kind,
-          })
-    const listedRemittance = await listedItemRemittance(active, listing, assetType)
-    const heldRemittance =
-      back.kind === 'ordinal'
-        ? { ...listedRemittance, ...heldItemRow(listedRemittance, returnKey.remittance) }
-        : { ...listedRemittance, customInstructions: withRemittance(listedRemittance.customInstructions, returnKey.remittance) }
+    const returnLock = new P2PKH().lock(returnKey.address).toHex()
+    const listedRemittance = await listedItemRemittance(active, listing)
+    const heldRemittance = { ...listedRemittance, ...heldItemRow(listedRemittance, returnKey.remittance) }
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',
       labels: ['market-v3', 'brc48', 'market-cancel'],
@@ -3787,7 +2657,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
       const { pinBroadcastLocalTx } = await import('./staleOutputRelease')
       await pinBroadcastLocalTx(txid, beefBytes).catch(() => false)
     }
-    await repaintReturnedItem(active, listing, assetType, `${txid}.0`)
+    await repaintReturnedItem(active, listing, `${txid}.0`)
     scheduleHistoryBackupPush('market-list')
     return {
       action: 'cancel',

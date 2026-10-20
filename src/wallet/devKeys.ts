@@ -44,7 +44,7 @@ import { presentedBapMaterial, presentedIdentityKeyAt } from './publicIdentities
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import type { ActiveWallet } from './session'
 import { serverWalletRecoverMachine } from './serverWalletRecoverMachine'
-import { BSV21_BASKET, tokenIdFromBsv21Tags } from './token/types'
+import { ITEM_STORAGE_BASKET, TOKEN_BASKET, tokenIdFromFilingTags } from './assetBaskets'
 import {
   registerWalletRuntimeLifecycle,
   requireWalletRuntime,
@@ -105,7 +105,7 @@ export type DevWalletSummary = {
   money: number
   moneyOutputs: number
   items: number
-  /** Distinct BSV-21 token ids. */
+  /** Distinct token ids. */
   tokens: number
 }
 
@@ -582,12 +582,12 @@ async function listAll(
 export async function summarizeDevWallet(wallet: WalletInterface): Promise<DevWalletSummary> {
   const [money, items, tokens] = await Promise.all([
     listAll(wallet, 'default'),
-    wallet.listOutputs({ basket: '1sat', limit: 1 }),
-    listAll(wallet, BSV21_BASKET, true),
+    wallet.listOutputs({ basket: ITEM_STORAGE_BASKET, limit: 1 }),
+    listAll(wallet, TOKEN_BASKET, true),
   ])
   const tokenIds = new Set<string>()
   for (const out of tokens) {
-    const id = tokenIdFromBsv21Tags(out.tags)
+    const id = tokenIdFromFilingTags(out.tags)
     if (id) tokenIds.add(id)
   }
   return {

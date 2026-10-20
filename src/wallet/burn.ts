@@ -20,22 +20,12 @@ import {
   type BurnInput,
   type BurnPlan,
   burnRecoveryOutputSatoshis,
-  planBsv21Burn,
   planOneSatBurn,
 } from './burnPlan'
 import { executeBurnLifecycle } from './burnMachine'
 import { mapPool } from './asyncPool'
 import { signTipInputs } from './signTipInputs'
-import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
-import {
-  BSV21_BASKET,
-  bsv21Tags,
-  buildBsv21BurnLockingScript,
-  buildBsv21CustomInstructions,
-  buildBsv21TransferLockingScript,
-  normalizeTokenId,
-  type Bsv21Utxo,
-} from './token'
+import { ITEM_STORAGE_BASKET } from './assetBaskets'
 import { refreshFromChainDuringSpend } from './chainIngest'
 import {
   getCachedCollectables,
@@ -43,13 +33,6 @@ import {
   listCollectables,
 } from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import {
-  forgetFungibleToken,
-  getFungible,
-  listFungibleTips,
-  paintFungibleAfterSpend,
-} from './token'
-import { stampBrc164Id } from './itemAccess'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import {
   describeInsufficientFunds,
@@ -64,7 +47,7 @@ import { markItemsConsumed } from './sentItemGuard'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { type ActiveWallet } from './session'
-import { ownsTokenLock, primeItemTipKeys, primeTipKeys, rememberTipKey, selfTokenOutput, tipSigningKey } from './token/tipKeys'
+import { ownsTokenLock, primeItemTipKeys, tipSigningKey } from './tipKeys'
 
 type SelfPayment = {
   lockingScript: string
@@ -74,6 +57,22 @@ type SelfPayment = {
 
 /** Confirmed + pending self-change needed to fund the next burn fee. */
 const MIN_BURN_FEE_SATS = 50
+
+const CREATE_ACTION_TIMEOUT_MS = 45_000
+
+async function withCreateActionTimeout<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Burn preparation timed out')), CREATE_ACTION_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 async function assertBurnFeeAvailable(minSats = MIN_BURN_FEE_SATS): Promise<void> {
   try {
@@ -271,10 +270,6 @@ export { executeBurnLifecycle, type BurnExecutionEffects } from './burnMachine'
 async function executeBurnPlan(args: {
   active: ActiveWallet
   plan: Exclude<BurnPlan, { path: 'refuse' }>
-  symbol?: string
-  icon?: string
-  dec?: number
-  issuer?: string
   /** Primary tip for inventory Burning badge while this plan runs. */
   progressOutpoint?: string
 }): Promise<{
@@ -284,56 +279,6 @@ async function executeBurnPlan(args: {
 }> {
   const self = await deriveSelfPayment(args.active)
   const outputs: BurnOutput[] = []
-  if (args.plan.path === 'burnBsv21') {
-    // The burn inscription's sat is spent dust; it still sits on a BRC-29 child.
-    const burn = buildBsv21BurnLockingScript({
-      address: selfTokenOutput(args.active).address,
-      tokenId: args.plan.tokenId,
-      amt: args.plan.burnAmount.toString(),
-    })
-    outputs.push({
-      lockingScript: burn.lockingScript,
-      satoshis: 1,
-      outputDescription: 'BSV-21 burn',
-    })
-    if (args.plan.changeAmount > 0n) {
-      const amount = args.plan.changeAmount.toString()
-      const change = selfTokenOutput(args.active)
-      rememberTipKey(args.active, change.key)
-      outputs.push({
-        lockingScript: buildBsv21TransferLockingScript({
-          address: change.address,
-          tokenId: args.plan.tokenId,
-          amt: amount,
-          sym: args.symbol,
-          icon: args.icon,
-          dec: args.dec,
-        }).lockingScript,
-        satoshis: 1,
-        outputDescription: `${args.symbol ?? 'Token'} change`,
-        basket: BSV21_BASKET,
-        tags: stampBrc164Id([
-          ...bsv21Tags({
-            tokenId: args.plan.tokenId,
-            amt: amount,
-            sym: args.symbol,
-            issuer: args.issuer,
-            op: 'transfer',
-          }),
-        ]),
-        customInstructions: buildBsv21CustomInstructions({
-          tokenId: args.plan.tokenId,
-          amt: amount,
-          op: 'transfer',
-          sym: args.symbol,
-          icon: args.icon,
-          dec: args.dec,
-          issuer: args.issuer,
-          remittance: change.remittance,
-        }),
-      })
-    }
-  }
   const recoveryIndex = args.plan.recoverSatoshis > 0 ? outputs.length : -1
   if (args.plan.recoverSatoshis > 0) {
     // A 1Sat identity only ends when its sat is packed into a multi-sat output.
@@ -390,17 +335,12 @@ async function executeBurnPlan(args: {
         )
       }
       await assertBurnFeeAvailable()
-      const { withFungibleCreateActionTimeout, FUNGIBLE_CREATE_ACTION_TIMEOUT_MS } =
-        await import('./token')
       console.info(
         `[burn] createAction start asset=${args.plan.asset} inputs=${args.plan.inputs.length}`,
       )
-      const created = await withFungibleCreateActionTimeout(
+      const created = await withCreateActionTimeout(
         args.active.wallet.createAction({
-          description:
-            args.plan.path === 'burnBsv21'
-              ? 'Burn BSV-21 token'
-              : 'Burn collectables',
+          description: 'Burn collectables',
           labels: ['handcash-burn', args.plan.asset],
           ...(inputBEEF?.length ? { inputBEEF } : {}),
           inputs: args.plan.inputs.map((input) => ({
@@ -417,7 +357,6 @@ async function executeBurnPlan(args: {
             noSend: true,
           },
         }),
-        FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
       )
       signable = created.signableTransaction as SignableTransaction | undefined
       if (!signable)
@@ -494,7 +433,7 @@ async function executeBurnPlan(args: {
       for (const input of args.plan.inputs) {
         try {
           await args.active.wallet.relinquishOutput({
-            basket: args.plan.asset === 'bsv21' ? BSV21_BASKET : '1sat',
+            basket: ITEM_STORAGE_BASKET,
             output: wireOutpoint(input.outpoint),
           } as never)
         } catch {
@@ -536,288 +475,8 @@ async function executeBurnPlan(args: {
   }
 }
 
-async function hydrateBsv21Scripts(
-  active: ActiveWallet,
-  tips: Bsv21Utxo[]
-): Promise<Bsv21Utxo[]> {
-  return Promise.all(
-    tips.map(async (tip) => {
-      if (tip.lockingScript?.trim()) return tip
-      const [txid, voutRaw] = wireOutpoint(tip.outpoint).split('.')
-      const vout = Number(voutRaw)
-      if (!txid || !Number.isInteger(vout) || vout < 0) return tip
-      try {
-        const beef = await getBeefForTxidCached(active, txid, { needProof: true })
-        const lockingScript = beef
-          .findTxid(txid)
-          ?.tx?.outputs[vout]?.lockingScript?.toHex()
-        return lockingScript ? { ...tip, lockingScript } : tip
-      } catch {
-        return tip
-      }
-    })
-  )
-}
-
 function refusalMessage(reason: string): Error {
   return new Error(`Burn refused: ${reason}`)
-}
-
-export async function previewBsv21Burn(args: {
-  tokenId: string
-  amount: string
-}): Promise<BurnEconomics> {
-  const active = getActiveWallet()
-  if (!active) throw new Error('Wallet locked')
-  const tokenId = normalizeTokenId(args.tokenId)
-  if (!tokenId) throw new Error('Invalid token id')
-  const token = getFungible(tokenId)
-  if (!token) throw new Error('Token not found')
-  const tips = await hydrateBsv21Scripts(
-    active,
-    await listFungibleTips(active, { tokenIds: [token.tokenId] })
-  )
-  if (tips.length === 0) {
-    forgetFungibleToken(token.tokenId)
-    throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
-  }
-  await primeTipKeys(active)
-  const plan = planBsv21Burn({
-    tokenId,
-    amount: args.amount,
-    tips,
-    ownsLockingScript: (script) => ownsTokenLock(active, script),
-  })
-  if (plan.path === 'refuse') throw refusalMessage(plan.reason)
-  const protocolOutputCount = 1 + (plan.changeAmount > 0n ? 1 : 0)
-  return estimateBurnEconomics({
-    inputCount: plan.inputs.length,
-    protocolOutputCount,
-    recoveryOutput: plan.recoverSatoshis > 0,
-    grossAssetSats: plan.inputs.reduce((sum, input) => sum + input.satoshis, 0),
-  })
-}
-
-/** Route burn preview to the binary or legacy BSV-21 plan. */
-export async function previewFungibleBurn(args: {
-  tokenId: string
-  amount: string
-}): Promise<BurnEconomics> {
-  const tokenId = normalizeTokenId(args.tokenId)
-  if (!tokenId) throw new Error('Invalid token id')
-  const token = getFungible(tokenId)
-  if (!token) throw new Error('Token not found')
-  if (token.binarySupply != null) {
-    const { previewBsv21Burn } = await import('./token')
-    return previewBsv21Burn({ tokenId: token.tokenId, amount: args.amount })
-  }
-  return previewBsv21Burn(args)
-}
-
-export async function burnBsv21(args: {
-  tokenId: string
-  amount: string
-}): Promise<{ txid: string; recoveredSatoshis: number; feeSatoshis?: number }> {
-  const tokenId = normalizeTokenId(args.tokenId)
-  if (!tokenId) throw new Error('Invalid token id')
-  const token = getFungible(tokenId)
-  if (!token) throw new Error('Token not found')
-  const pendingId = `burn-${Date.now()}-${Math.random()
-    .toString(16)
-    .slice(2, 8)}`
-  const item = {
-    name: token.sym,
-    origin: token.tokenId,
-    tokenId: token.tokenId,
-    amt: args.amount,
-    dec: token.dec,
-    outpoint: token.outpoint,
-    ...(token.icon ? { icon: token.icon } : {}),
-  }
-  // Activity owns progress after the confirmation panel closes. Write this
-  // before the spend FIFO and all network hydration so waiting/failure is never
-  // invisible.
-  upsertAppActivity({
-    origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
-    sats: 1,
-    method: 'burn-token',
-    note: `Burning ${token.sym}`,
-    item,
-    burn: {
-      asset: 'bsv21',
-      destroyedAmount: args.amount,
-    },
-    status: 'pending',
-    pendingId,
-  })
-  console.info(
-    `[burn] queued token=${tokenId.slice(0, 16)}… pending=${pendingId}`
-  )
-
-  // Binary BSV-21 burns destroy face-value units without a burn inscription.
-  if (token.binarySupply != null) {
-    try {
-      const { burnBsv21Tokens } = await import('./token')
-      const result = await burnBsv21Tokens({
-        tokenId: token.tokenId,
-        amount: args.amount,
-        sym: token.sym,
-        icon: token.icon,
-        pendingId,
-        item,
-      })
-      return result
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      upsertAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'spent',
-        sats: 1,
-        method: 'burn-token',
-        note: `${token.sym} was not burned`,
-        item,
-        burn: { asset: 'bsv21', destroyedAmount: args.amount },
-        status: 'failed',
-        pendingId,
-        failureReason: reason,
-      })
-      console.warn(`[burn] failed token=${tokenId.slice(0, 16)}…`, reason)
-      throw error
-    }
-  }
-
-  try {
-    return await runExclusiveBurn('burn-token', async () => {
-      assertOnlineForPayment()
-      const active = getActiveWallet()
-      if (!active) throw new Error('Wallet locked')
-      {
-        const {
-          abortReservedActionBatches,
-          releaseStuckNosends,
-        } = await import('./actionReview')
-        await releaseStuckNosends(active)
-        await abortReservedActionBatches(active)
-      }
-      const tips = await hydrateBsv21Scripts(
-        active,
-        (
-          await listFungibleTips(active, {
-            tokenIds: [tokenId],
-          })
-        ).filter((tip) => normalizeTokenId(tip.tokenId) === tokenId)
-      )
-      if (tips.length === 0) {
-        forgetFungibleToken(token.tokenId)
-        throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
-      }
-      await primeTipKeys(active)
-      const plan = planBsv21Burn({
-        tokenId,
-        amount: args.amount,
-        tips,
-        ownsLockingScript: (script) => ownsTokenLock(active, script),
-      })
-      if (plan.path === 'refuse') throw refusalMessage(plan.reason)
-      const result = await executeBurnPlan({
-        active,
-        plan,
-        symbol: token.sym,
-        icon: token.icon,
-        dec: token.dec,
-        issuer: token.issuer,
-      })
-      markItemsConsumed(
-        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
-      )
-      hideCollectablesAfterSpend(
-        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
-        result.txid,
-      )
-      const spent = new Set(
-        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
-      )
-      const untouched = tips.filter(
-        (tip) => !spent.has(wireOutpoint(tip.outpoint)),
-      )
-      const remainingAmount =
-        tips.reduce((sum, tip) => sum + BigInt(tip.amt), 0n) -
-        plan.burnAmount
-      const heldTips = [
-        ...untouched,
-        ...(plan.changeAmount > 0n
-          ? [{
-              outpoint: `${result.txid}_1`,
-              tokenId,
-              amt: plan.changeAmount.toString(),
-              op: 'transfer' as const,
-              sym: token.sym,
-              icon: token.icon,
-              dec: token.dec,
-              satoshis: 1,
-              binarySupply: 'locked' as const,
-              encoding: 'brc162' as const,
-              seenAt: Date.now(),
-            }]
-          : []),
-      ]
-      paintFungibleAfterSpend({
-        tokenId,
-        remainingAmt: remainingAmount,
-        outpoint:
-          plan.changeAmount > 0n
-            ? `${result.txid}_1`
-            : untouched[0]?.outpoint,
-        sym: token.sym,
-        dec: token.dec,
-        icon: token.icon,
-        heldTips,
-      })
-      upsertAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'spent',
-        sats: 1,
-        method: 'burn-token',
-        note: `Burned ${token.sym}`,
-        txid: result.txid,
-        item,
-        burn: {
-          asset: 'bsv21',
-          destroyedAmount: args.amount,
-          recoveredSatoshis: result.recoveredSatoshis,
-          ...(result.feeSatoshis != null
-            ? { feeSatoshis: result.feeSatoshis }
-            : {}),
-        },
-        status: 'complete',
-        pendingId,
-      })
-      console.info(
-        `[burn] complete token=${tokenId.slice(0, 16)}… txid=${result.txid}`
-      )
-      return result
-    })
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
-    upsertAppActivity({
-      origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'spent',
-      sats: 1,
-      method: 'burn-token',
-      note: `${token.sym} was not burned`,
-      item,
-      burn: { asset: 'bsv21', destroyedAmount: args.amount },
-      status: 'failed',
-      pendingId,
-      failureReason: reason,
-    })
-    console.error(`[burn] failed token=${tokenId.slice(0, 16)}…`, reason)
-    void import('./diagnosticLog').then(({ logSpendFailure }) =>
-      logSpendFailure('burn-token', { token: tokenId.slice(0, 16), reason }),
-    )
-    throw error
-  }
 }
 
 export async function burnOneSat(

@@ -10,8 +10,8 @@ import {
   grantableCollectionIdsFromOutputs,
   grantableCollectionsFromOutputs,
   grantableTokensFromOutputs,
-  isBsv21ReceiveArgs,
-  isBsv21SpendArgs,
+  isTokenReceiveArgs,
+  isTokenSpendArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemReceiveArgs,
@@ -40,10 +40,6 @@ import {
   type TokenViewRequest,
 } from './itemAccess'
 import { formatBsvSignificant} from './session'
-import {
-  bsv21IdentityMintHints,
-  isBsv21IdentityMintArgs,
-} from './token'
 import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
@@ -52,7 +48,7 @@ import type { IssuanceAttestation } from './identityIssuance'
 import { formatUsd } from './fx'
 import { coinBudgetSats, coinUsdValue } from './coins/budget'
 import { coinApprovalTitle, COIN_INFO, formatCoin, isCoinChain } from './coins/coinChains'
-import { hctAmountLabel } from './hct/assetLabel'
+import { bntAmountLabel } from './bnt/assetLabel'
 
 const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
@@ -68,9 +64,9 @@ export type ConnectedApp = {
   connectedAt: number
   /** Collectable / NFT capabilities — never implied by Pay. */
   itemAccess?: ItemAccess
-  /** BSV-21 token view — never implied by item view. */
+  /** Token view — never implied by item view. */
   tokenAccess?: TokenAccess
-  /** Issuer-accepted views granted, per profile (`csft`, `csnft`) — never implied by item or token view. */
+  /** Issuer-accepted views granted, per profile (`iptft`, `iptnft`) — never implied by item or token view. */
   countersignedViews?: CountersignedScheme[]
   /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
@@ -110,12 +106,11 @@ export type PendingAction = {
    * to describe what the user is about to approve.
    */
   itemOutpoint?: string
-  /** BSV-21 token id when this action spends or lists a fungible tip. */
+  /** Token id when this action issues, mints or sends a token. */
   tokenId?: string
   /** Market listing display when the buyer does not yet hold the item. */
   itemName?: string
   itemImageUrl?: string
-  itemIcon?: string
   previewKind?: 'token' | 'collectable'
   /** Whether this mint carries a BRC-247 issuer stamp; the prompt always says which. */
   issuance?:
@@ -169,7 +164,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
           ...(Array.isArray(a.countersignedViews) && a.countersignedViews.length
-            ? { countersignedViews: a.countersignedViews.filter((v) => v === 'csft' || v === 'csnft') }
+            ? { countersignedViews: a.countersignedViews.filter((v) => v === 'iptft' || v === 'iptnft') }
             : {}),
           acceptIncomingFunds:
             a.acceptIncomingFunds === true
@@ -642,19 +637,9 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
         'createCancelMarketListingAdvert',
         'purchaseMarketListing',
         'createMarketPurchaseIntent',
-        'createDirectOffer',
-        'buyDirectOffer',
-        'collectDirectOfferProceeds',
-        'cancelDirectOffer',
-        'issueCountersignedAsset',
-        'transferCountersignedAsset',
-        'retireCountersignedAsset',
-        'setCountersignedAssetPolicy',
-        'releaseCountersignedAsset',
-        'joinCountersignedAsset',
-        'issueHctAsset',
-        'mintHctAsset',
-        'transferHctAsset',
+        'issueBntAsset',
+        'mintBntAsset',
+        'transferBntAsset',
         'sendCoins',
       ].includes(prompt.method)
     ) {
@@ -859,8 +844,8 @@ function tokenIdFromBody(body: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-/** The supply line of an HCT token issue prompt: fixed, open, or capped. */
-function hctIssueSupplyLine(body: Record<string, unknown>): string {
+/** The supply line of a BNT token issue prompt: fixed, open, or capped. */
+function bntIssueSupplyLine(body: Record<string, unknown>): string {
   const caps = [
     body.max != null ? `at most ${String(body.max)} units` : '',
     body.size != null ? `at most ${String(body.size)} items` : '',
@@ -882,42 +867,13 @@ export function summarizeAction(method: string, args: unknown): {
   tokenId?: string
   itemName?: string
   itemImageUrl?: string
-  itemIcon?: string
   previewKind?: 'token' | 'collectable'
 } {
   const body = asRecord(args)
   const details: string[] = []
 
-  if (method === 'createAction' && isBsv21IdentityMintArgs(method, args)) {
-    const hints = bsv21IdentityMintHints(args)
-    const description =
-      typeof body.description === 'string' && body.description.trim()
-        ? body.description.trim()
-        : 'Mint a BSV-21 token'
-    details.push('Signed with your selected issuer identity (Sigma)')
-    if (hints.sym) details.push(`Token: ${hints.sym}`)
-    if (hints.amt) details.push(`Supply: ${hints.amt}`)
-    details.push('Not covered by Pay or Auto-pay')
-    const outputs = Array.isArray(body.outputs) ? body.outputs : []
-    let total = 0
-    for (const raw of outputs) {
-      if (!raw || typeof raw !== 'object') continue
-      const sats = typeof (raw as { satoshis?: unknown }).satoshis === 'number'
-        ? ((raw as { satoshis: number }).satoshis)
-        : 0
-      total += sats
-    }
-    return {
-      title: 'Mint token',
-      summary: description,
-      amountSats: total > 0 ? total : undefined,
-      amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
-      details,
-    }
-  }
-
   if (method === 'createAction' && isItemIssuanceArgs(method, args)) {
-    const fungible = isBsv21SpendArgs(method, args)
+    const fungible = isTokenSpendArgs(method, args)
     const description =
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
@@ -948,14 +904,11 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'createAction' && isBsv21SpendArgs(method, args)) {
+  if (method === 'createAction' && isTokenSpendArgs(method, args)) {
     const description =
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
         : 'Send a token'
-    if (Array.isArray(body.labels) && body.labels.includes('bsv21')) {
-      details.push('Type: BSV-21')
-    }
     details.push('Not covered by Pay or Auto-pay')
     return {
       title: 'Send token',
@@ -1010,7 +963,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'signAction' && isBsv21SpendArgs(method, args)) {
+  if (method === 'signAction' && isTokenSpendArgs(method, args)) {
     return {
       title: 'Confirm token send',
       summary: 'Finish signing a fungible token transfer',
@@ -1057,10 +1010,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'internalizeAction' && isBsv21ReceiveArgs(method, args)) {
-    if (Array.isArray(body.labels) && body.labels.includes('bsv21')) {
-      details.push('Type: BSV-21')
-    }
+  if (method === 'internalizeAction' && isTokenReceiveArgs(method, args)) {
     details.push('Adds a fungible token to your inventory')
     return {
       title: 'Receive token',
@@ -1095,7 +1045,7 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'relinquishOutput' && isBsv21SpendArgs(method, args)) {
+  if (method === 'relinquishOutput' && isTokenSpendArgs(method, args)) {
     return {
       title: 'Release token',
       summary: 'Remove a fungible tip from wallet tracking',
@@ -1159,33 +1109,15 @@ export function summarizeAction(method: string, args: unknown): {
 
   if (method === 'createMarketListingAdvert') {
     const price = Math.max(0, Math.trunc(Number(body.priceSats) || 0))
-    const isToken = body.assetType === 'bsv21'
-    const label =
-      (typeof body.sym === 'string' && body.sym.trim()) ||
-      (typeof body.name === 'string' && body.name.trim()) ||
-      (isToken ? 'token' : 'item')
-    const units =
-      isToken && Number.isSafeInteger(Number(body.listAmt))
-        ? `${Number(body.listAmt).toLocaleString()} `
-        : ''
-    const tokenId = isToken ? normalizeItemOutpoint(body.origin) ?? undefined : undefined
-    const itemIcon = isToken ? normalizeItemOutpoint(body.icon) ?? undefined : undefined
+    const label = (typeof body.name === 'string' && body.name.trim()) || 'item'
     return {
-      title: `List ${units}${label} for sale`,
-      summary: isToken
-        ? 'Create an on-chain offer for this p2pft token'
-        : 'Create an on-chain BRC-48 offer for this collectable',
+      title: `List ${label} for sale`,
+      summary: 'Create an on-chain BRC-48 offer for this collectable',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
       itemOutpoint: normalizeItemOutpoint(body.outpoint) ?? undefined,
-      tokenId,
-      itemName: isToken ? label : undefined,
-      itemIcon,
-      previewKind: isToken ? 'token' : 'collectable',
-      details: [
-        price ? `Price ${price.toLocaleString()} sats` : 'Price unset',
-        ...(tokenId ? [`Id ${tokenId}`] : []),
-      ],
+      previewKind: 'collectable',
+      details: [price ? `Price ${price.toLocaleString()} sats` : 'Price unset'],
     }
   }
 
@@ -1202,9 +1134,7 @@ export function summarizeAction(method: string, args: unknown): {
         ) || 0,
       ),
     )
-    const bought = preview?.units
-      ? `${preview.units} ${preview.itemName ?? 'Token'}`
-      : preview?.itemName
+    const bought = preview?.itemName
     return {
       title: bought ? `Buy ${bought}` : 'Buy market item',
       summary: bought
@@ -1213,10 +1143,8 @@ export function summarizeAction(method: string, args: unknown): {
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
       itemOutpoint: preview?.itemOutpoint,
-      tokenId: preview?.tokenId,
       itemName: preview?.itemName,
       itemImageUrl: preview?.itemImageUrl,
-      itemIcon: preview?.itemIcon,
       previewKind: preview?.previewKind,
       details: [
         'Total includes the 5% market fee',
@@ -1238,10 +1166,8 @@ export function summarizeAction(method: string, args: unknown): {
         ? `Sign intent to buy ${preview.itemName} for ${price.toLocaleString()} sats`
         : `Sign an intent to buy this item for ${price.toLocaleString()} sats`,
       itemOutpoint: preview?.itemOutpoint,
-      tokenId: preview?.tokenId,
       itemName: preview?.itemName,
       itemImageUrl: preview?.itemImageUrl,
-      itemIcon: preview?.itemIcon,
       previewKind: preview?.previewKind,
       details: ['The signed intent binds the listing, price, fee, and BRC-150 proof.'],
     }
@@ -1259,125 +1185,13 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'createDirectOffer') {
-    const give =
-      body.give && typeof body.give === 'object' ? (body.give as Record<string, unknown>) : {}
-    const want =
-      body.want && typeof body.want === 'object' ? (body.want as Record<string, unknown>) : {}
-    const giveAmount = String(give.amount ?? '').trim()
-    const wantLabel =
-      want.kind === 'sats'
-        ? `${Math.max(0, Math.trunc(Number(want.sats) || 0)).toLocaleString()} sats`
-        : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
-    return {
-      title: 'List as a direct offer',
-      summary: `List ${giveAmount || '?'} units for ${wantLabel}`,
-      tokenId: typeof give.tokenId === 'string' ? give.tokenId : undefined,
-      previewKind: 'token',
-      details: [
-        'Listed units leave your token balance until the offer is bought or cancelled, as on the market',
-        'Not published to the market and no market fee: share the offer with a buyer yourself',
-        'Anyone holding the offer can buy it, and only by paying exactly what you asked',
-      ],
-    }
-  }
 
-  if (method === 'buyDirectOffer') {
-    const offer =
-      body.offer && typeof body.offer === 'object' ? (body.offer as Record<string, unknown>) : {}
-    const give =
-      offer.give && typeof offer.give === 'object' ? (offer.give as Record<string, unknown>) : {}
-    const want =
-      offer.want && typeof offer.want === 'object' ? (offer.want as Record<string, unknown>) : {}
-    const sats = want.kind === 'sats' ? Math.max(0, Math.trunc(Number(want.sats) || 0)) : 0
-    const giveLabel = `${String(give.amount ?? '?')} ${typeof give.sym === 'string' ? give.sym : 'tokens'}`
-    const payLabel =
-      want.kind === 'sats'
-        ? `${sats.toLocaleString()} sats`
-        : `${String(want.amount ?? '?')} ${typeof want.sym === 'string' ? want.sym : 'tokens'}`
-    return {
-      title: `Buy ${giveLabel}`,
-      summary: `Pay ${payLabel} and receive ${giveLabel}`,
-      amountSats: sats || undefined,
-      amountLabel: sats ? formatBsvSignificant(sats, 5) : undefined,
-      tokenId: typeof give.tokenId === 'string' ? give.tokenId : undefined,
-      itemName: giveLabel,
-      previewKind: 'token',
-      details: [
-        'One atomic transaction: both sides settle or neither does',
-        'The offered token is proven back to its deploy before you pay',
-      ],
-    }
-  }
 
-  if (method === 'collectDirectOfferProceeds') {
-    return {
-      title: 'Collect sale proceeds',
-      summary: 'File what the buyer paid for your direct offer',
-      details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
-    }
-  }
 
-  if (method === 'cancelDirectOffer') {
-    return {
-      title: 'Cancel direct offer',
-      summary: 'Spend the listed units back to your token balance',
-      details: [typeof body.offerId === 'string' ? `Offer: ${body.offerId}` : 'Unknown offer'],
-    }
-  }
 
-  if (method === 'issueCountersignedAsset') {
-    const kind = body.kind === 'item' ? 'item' : 'token'
-    const label =
-      kind === 'item'
-        ? typeof body.name === 'string' ? body.name : 'item'
-        : `${String(body.supply ?? '?')} ${typeof body.sym === 'string' ? body.sym : 'tokens'}`
-    const release = body.release as { threshold?: unknown; keys?: unknown } | string | undefined
-    const custodians =
-      release && typeof release === 'object' && Array.isArray(release.keys)
-        ? `${String(release.threshold)} of ${release.keys.length} release custodians`
-        : null
-    const cosigners = body.cosigners as { threshold?: unknown; keys?: unknown } | undefined
-    const shared =
-      cosigners && typeof cosigners === 'object' && Array.isArray(cosigners.keys) && cosigners.keys.length > 1
-        ? `${String(cosigners.threshold)} of ${cosigners.keys.length}`
-        : null
-    return {
-      title: `Issue ${label}`,
-      summary: shared
-        ? `Deploy an issuer-accepted ${kind}; you hold it, and any ${shared} cosigners (you among them) accept each transfer`
-        : `Deploy an issuer-accepted ${kind}; you hold it and accept every transfer of it`,
-      itemName: label,
-      previewKind: kind === 'item' ? 'collectable' : 'token',
-      details: [
-        shared
-          ? `Every later transfer needs ${shared} cosigners online to countersign it; the recipient may be offline and credits it once mined`
-          : 'Every later transfer needs your wallet online to countersign it; the recipient may be offline',
-        shared
-          ? 'Each other cosigner is invited and countersigns only after joining'
-          : 'Your wallet keeps a beacon output alive while it answers',
-        release === 'self'
-          ? 'Only your wallet can release it: if your wallet stops without releasing it, it can never move again'
-          : `If your wallet retires it or stops answering, ${custodians ?? 'its release custodians'} can release it so holders move it on their own signature`,
-      ],
-    }
-  }
 
-  if (method === 'transferCountersignedAsset') {
-    const amount = String(body.amount ?? '1')
-    const recipient = typeof body.recipient === 'string' ? body.recipient : ''
-    return {
-      title: `Send ${amount} issuer-accepted`,
-      summary: 'You sign; the issuer countersigns or refuses. A refusal sends nothing.',
-      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
-      details: [
-        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
-        recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
-      ],
-    }
-  }
 
-  if (method === 'issueHctAsset') {
+  if (method === 'issueBntAsset') {
     const kind = body.kind === 'item' ? 'item' : 'token'
     const label =
       kind === 'item'
@@ -1390,14 +1204,14 @@ export function summarizeAction(method: string, args: unknown): {
       previewKind: kind === 'item' ? 'collectable' : 'token',
       details: [
         'Anyone can check it back to your deploy without an indexer',
-        typeof body.collection === 'string' ? `Collection: ${body.collection}` : kind === 'item' ? 'No collection' : hctIssueSupplyLine(body),
+        typeof body.collection === 'string' ? `Collection: ${body.collection}` : kind === 'item' ? 'No collection' : bntIssueSupplyLine(body),
       ],
     }
   }
 
-  if (method === 'mintHctAsset') {
+  if (method === 'mintBntAsset') {
     return {
-      title: `Mint ${hctAmountLabel(body.assetId, body.amount)}`,
+      title: `Mint ${bntAmountLabel(body.assetId, body.amount)}`,
       summary: 'Create new units of a token you issued. They come to you; a capped token never passes its cap.',
       tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
       previewKind: 'token',
@@ -1405,10 +1219,10 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'transferHctAsset') {
+  if (method === 'transferBntAsset') {
     const recipient = typeof body.recipient === 'string' ? body.recipient : ''
     return {
-      title: `Send ${hctAmountLabel(body.assetId, body.amount ?? '1')}`,
+      title: `Send ${bntAmountLabel(body.assetId, body.amount ?? '1')}`,
       summary: 'You sign the transfer; the recipient gets its proof in their inbox and checks it themselves.',
       tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
       details: [
@@ -1444,65 +1258,9 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
-  if (method === 'retireCountersignedAsset') {
-    return {
-      title: 'Retire issuer-accepted asset',
-      summary: 'Stop accepting transfers for good. Holders move it on their own signature once it is released.',
-      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
-      details: [
-        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
-        'Freezes and transfer rules end; this cannot be undone',
-      ],
-    }
-  }
 
-  if (method === 'setCountersignedAssetPolicy') {
-    const keyCount = (v: unknown) => (Array.isArray(v) ? v.length : 0)
-    const freeze = keyCount(body.freeze)
-    const unfreeze = keyCount(body.unfreeze)
-    const limit =
-      body.maxTransfer === null
-        ? 'Clear the transfer limit'
-        : body.maxTransfer !== undefined
-          ? `Limit each transfer to ${String(body.maxTransfer)} units`
-          : null
-    return {
-      title: 'Change transfer rules',
-      summary: 'Your wallet refuses to countersign transfers that break these rules. Holders keep what they hold.',
-      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
-      details: [
-        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
-        ...(freeze ? [`Freeze ${freeze} identit${freeze === 1 ? 'y' : 'ies'}`] : []),
-        ...(unfreeze ? [`Unfreeze ${unfreeze} identit${unfreeze === 1 ? 'y' : 'ies'}`] : []),
-        ...(limit ? [limit] : []),
-      ],
-    }
-  }
 
-  if (method === 'joinCountersignedAsset') {
-    return {
-      title: 'Become a cosigner',
-      summary: 'Countersign transfers of this issuer-accepted asset together with its other cosigners',
-      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
-      details: [
-        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
-        'Your wallet answers transfer requests and beacon refreshes for it while it is open',
-        'Retire later to stop; the asset ends only when too few cosigners remain',
-      ],
-    }
-  }
 
-  if (method === 'releaseCountersignedAsset') {
-    return {
-      title: 'Release issuer-accepted asset',
-      summary: 'Publish your release key on chain so holders can move it without the issuer',
-      tokenId: typeof body.assetId === 'string' ? body.assetId : undefined,
-      details: [
-        typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
-        'Only after the issuer retired or stopped refreshing its beacon',
-      ],
-    }
-  }
 
   if (method.startsWith('reveal')) {
     return {
@@ -1524,7 +1282,7 @@ function rememberItemActionGrant(
   method: string,
   args: unknown,
 ): void {
-  if (isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)) {
+  if (isItemReceiveArgs(method, args) || isTokenReceiveArgs(method, args)) {
     patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
   }
 }
@@ -1538,7 +1296,7 @@ export function requestActionApproval(
   attestation?: IssuanceAttestation,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats, amountNote, budgetSats, itemOutpoint, tokenId, itemName, itemImageUrl, itemIcon, previewKind } =
+  const { title, summary, details, amountLabel, amountSats, amountNote, budgetSats, itemOutpoint, tokenId, itemName, itemImageUrl, previewKind } =
     summarizeAction(method, args)
   const spendSats = budgetSats ?? amountSats
   const inputs = asRecord(args).inputs
@@ -1555,15 +1313,14 @@ export function requestActionApproval(
         : undefined
   const itemSpend =
     isItemSpendArgs(method, args) ||
-    isBsv21SpendArgs(method, args)
-  const itemReceive = isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)
+    isTokenSpendArgs(method, args)
+  const itemReceive = isItemReceiveArgs(method, args) || isTokenReceiveArgs(method, args)
   const incomingFunds = method === 'internalizeAction' && !itemReceive
-  const identityMint = isBsv21IdentityMintArgs(method, args)
 
   // Item send / receive and anything signed by an issuer identity are never
   // covered by Pay or Auto-pay. Send / mint always prompt; receive may reuse a
   // prior grant.
-  if (itemSpend || identityMint || issuance) {
+  if (itemSpend || issuance) {
     // fall through to prompt
   } else if (itemReceive) {
     const access = getItemAccess(key)
@@ -1604,7 +1361,6 @@ export function requestActionApproval(
     tokenId,
     itemName,
     itemImageUrl,
-    itemIcon,
     previewKind,
     ...(issuance ? { issuance } : {}),
     createdAt: Date.now(),
@@ -1713,7 +1469,7 @@ async function thirdPartyTokenViewRequest(
   if (!request.wantsAll && request.scope === 'token' && request.ids.length > 0) {
     return { request, tickers: request.ids }
   }
-  const outputs = await listHeldOutputs('p2pft')
+  const outputs = await listHeldOutputs('bntft')
   const tokens = grantableTokensFromOutputs(outputs)
   return {
     request: {
@@ -1748,7 +1504,7 @@ function summarizeTokenView(tickers: string[], wantsAll: boolean): {
 } {
   const details = ['Not covered by Pay, item view, or wallet activity']
   if (wantsAll && tickers.length === 0) {
-    details.push('All BSV-21 tokens')
+    details.push('All tokens')
   }
   for (const ticker of tickers.slice(0, 24)) details.push(`Token: ${ticker}`)
   if (tickers.length === 0) details.push('No tokens in this wallet')
@@ -1763,7 +1519,7 @@ function summarizeTokenView(tickers: string[], wantsAll: boolean): {
  * Gate listOutputs against item baskets. Pay does not include inventory access.
  * Returns allow/deny; caller should filter results when grant is filtered.
  * First Allow persists on the originator (creating the connected row if needed)
- * so catalog reloads, reconnect, and getTokenIcon do not re-prompt. Send/list/buy
+ * so catalog reloads and reconnects do not re-prompt. Send/list/buy
  * still prompt. Market catalog Allow is durable view=all.
  */
 export async function requestItemViewApproval(
@@ -1912,19 +1668,7 @@ export async function requestTokenViewApproval(
 }
 
 /**
- * A token an app deployed itself joins the app's filtered token view. It never
- * creates a view grant the user did not give.
- */
-export function grantDeployedTokensToCreator(origin: string | undefined, tokenIds: readonly string[]): void {
-  if (!isThirdPartyOriginator(origin) || tokenIds.length === 0) return
-  if (getTokenAccess(origin).view !== 'filtered') return
-  patchTokenAccess(origin, (cur) =>
-    mergeTokenViewGrant(cur, { scope: 'token', ids: [...tokenIds], keys: [], wantsAll: false }, { allowAll: false }),
-  )
-}
-
-/**
- * `p csft …` / `p csnft …` inventory view. One grant per profile covers
+ * `p iptft …` / `p iptnft …` inventory view. One grant per profile covers
  * every scope; `id` is a narrow row lookup and, as for items and tokens, never prompts.
  */
 export async function requestCountersignedViewApproval(
@@ -1935,7 +1679,7 @@ export async function requestCountersignedViewApproval(
   if (idx >= 0 && apps[idx]?.countersignedViews?.includes(request.scheme)) return 'allow'
   if (request.scope === 'id' || !isThirdPartyOriginator(origin)) return 'allow'
   const key = normalizeOrigin(origin)
-  const what = request.scheme === 'csft' ? 'tokens' : 'items'
+  const what = request.scheme === 'iptft' ? 'tokens' : 'items'
   return enqueuePrompt({
     id: idCounter++,
     kind: 'action',

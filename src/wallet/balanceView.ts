@@ -14,11 +14,11 @@ import { getActiveWallet } from './session'
  *   + change of a live local transaction that nobody has spent yet
  *
  * Payment outputs are not ours. Inputs of a live local send are not ours.
- * 1-sat items and BSV-21 stay out of Pay.
+ * 1-sat items and tokens stay out of Pay.
  */
 
 import { hasLockingScript, type ChangeRow } from './changeScriptFate'
-import { isAssetFilingBasket, isTokenFilingBasket } from './token/filing'
+import { isAssetFilingBasket, isTokenFilingBasket } from './assetBaskets'
 import { outpointFromOutput } from './txOutpoints'
 import { withStorageLockLabel } from './storageLockTrace'
 import { getUtxoLock, isUtxoBlockedFromRestore } from './utxoLockManager'
@@ -50,7 +50,7 @@ export type OwnedCashFate =
   | { kind: 'count'; as: 'spendable' | 'unconfirmedChange'; satoshis: number }
   | {
       kind: 'exclude'
-      reason: 'noValue' | 'item' | 'bsv21' | 'spentLive' | 'notOurs'
+      reason: 'noValue' | 'item' | 'token' | 'spentLive' | 'notOurs'
     }
 
 const PAGE = 200
@@ -72,7 +72,7 @@ export function classifyOwnedCash(
 
   const basket = String(row.basket ?? '').toLowerCase()
   if (basket === '1sat') return { kind: 'exclude', reason: 'item' }
-  if (isTokenFilingBasket(basket)) return { kind: 'exclude', reason: 'bsv21' }
+  if (isTokenFilingBasket(basket)) return { kind: 'exclude', reason: 'token' }
   if (isAssetFilingBasket(basket)) return { kind: 'exclude', reason: 'item' }
 
   if (spender === 'pending' || spender === 'settled') {

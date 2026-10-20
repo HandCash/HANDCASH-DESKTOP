@@ -5,9 +5,8 @@ import { appMachine } from './appMachine'
 import { sendMachine } from './sendMachine'
 import { unlockMachine } from './unlockMachine'
 import { offerMachine } from './offerMachine'
-import { countersignMachine } from './countersignMachine'
-import { hctMachine } from './hctMachine'
-import { hctHoldingsMachine } from './hctHoldingsMachine'
+import { bntMachine } from './bntMachine'
+import { bntHoldingsMachine } from './bntHoldingsMachine'
 import { coinMachine } from './coinMachine'
 import { swapMachine } from './swapMachine'
 import { swapOffersMachine } from './swapOffersMachine'
@@ -18,7 +17,6 @@ import { appBrowserMachine } from './appBrowserMachine'
 import { appBrowserPageMachine } from './appBrowserPageMachine'
 import { assetBurnUiMachine } from './assetBurnUiMachine'
 import { deviceBackupMachine } from './deviceBackupMachine'
-import { fungibleDetailsMachine } from './fungibleDetailsMachine'
 import { historyRecoveryMachine } from './historyRecoveryMachine'
 import { modelViewerMachine } from './modelViewerMachine'
 import { permissionDecisionMachine } from './permissionDecisionMachine'
@@ -45,7 +43,6 @@ import { serverWalletRecoverMachine } from '../wallet/serverWalletRecoverMachine
 import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
-import { bsv21SendMachine } from '../wallet/token/sendMachine'
 import { emailRecoveryMachine } from './emailRecoveryMachine'
 
 /**
@@ -60,8 +57,7 @@ export const machineManifest = Object.freeze({
   send: sendMachine,
   unlock: unlockMachine,
   offer: offerMachine,
-  countersign: countersignMachine,
-  hct: hctMachine,
+  bnt: bntMachine,
   coin: coinMachine,
   swap: swapMachine,
   swapOffers: swapOffersMachine,
@@ -72,8 +68,7 @@ export const machineManifest = Object.freeze({
   appBrowserPage: appBrowserPageMachine,
   assetBurnUi: assetBurnUiMachine,
   deviceBackup: deviceBackupMachine,
-  fungibleDetails: fungibleDetailsMachine,
-  hctHoldings: hctHoldingsMachine,
+  bntHoldings: bntHoldingsMachine,
   historyRecovery: historyRecoveryMachine,
   modelViewer: modelViewerMachine,
   permissionDecision: permissionDecisionMachine,
@@ -95,7 +90,6 @@ export const machineManifest = Object.freeze({
   itemSend: itemSendMachine,
   brc29Send: brc29SendMachine,
   bsvSend: bsvSendMachine,
-  bsv21Send: bsv21SendMachine,
   burn: burnMachine,
   serverWalletRecover: serverWalletRecoverMachine,
   txLifecycle: txLifecycleMachine,

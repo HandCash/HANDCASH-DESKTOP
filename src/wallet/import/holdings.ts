@@ -3,31 +3,15 @@ import { appendAppLog } from '../appLog'
 import { chooseLegacySweepPath } from '../legacySweepPath'
 import { countOrdinalsAtLeast, scanAddressAny } from '../phraseSweep'
 import { yieldToUi } from '../yieldToUi'
-import { gorillaBase, type DiscoveredAddress } from './discovery'
+import type { DiscoveredAddress } from './discovery'
 
 /**
  * What a discovered address holds right now, and which of it is compatible.
  *
  * Compatible = this wallet can take custody without changing what the asset
- * is: plain cash, 1-sat collectables, and valid BSV-21 tokens. Everything else
+ * is: plain cash and 1-sat collectables. Everything else, tokens included,
  * stays at the source with a named reason. Nothing here spends.
  */
-
-export type TokenStandard = 'bsv21' | 'bsv20'
-
-export type TokenHolding = {
-  /** BSV-21 id (`txid_vout`); null for a BSV-20 v1 tick. */
-  id: string | null
-  tick: string | null
-  sym: string
-  dec: number
-  icon: string | null
-  /** Confirmed + pending, base units, decimal string. */
-  amount: string
-  /** Part of `amount` locked in a market listing — not P2PKH, not sweepable. */
-  listed: string
-  standard: TokenStandard
-}
 
 export type AddressHoldings = {
   address: string
@@ -43,7 +27,6 @@ export type AddressHoldings = {
   dustSats?: number
   itemCount: number
   itemCountCapped: boolean
-  tokens: TokenHolding[]
   /** Set when a provider could not answer; counts are then a floor. */
   error: string | null
 }
@@ -52,12 +35,6 @@ export type AddressHoldings = {
 export type ImportHoldReason =
   | 'uncompressed'
   | 'dust'
-  | 'bsv20v1'
-  | 'listed'
-  | 'cosigned'
-  | 'tokenPending'
-  | 'tokenInvalid'
-  | 'tokenUnreadable'
   | 'runJig'
   | 'covenant'
   | 'foreign'
@@ -66,24 +43,13 @@ export type ImportHoldReason =
   | 'notCollectable'
   | 'unreadable'
 
-export function describeImportHold(reason: ImportHoldReason): string {
+/** Null for a reason older saves recorded that no longer applies. */
+export function describeImportHold(reason: string): string | null {
   switch (reason) {
     case 'uncompressed':
       return 'Held by the uncompressed form of the key — this wallet signs compressed, so it stays put.'
     case 'dust':
       return 'Worth less than the fee to move it.'
-    case 'bsv20v1':
-      return 'BSV-20 tick token — this wallet holds BSV-21 only.'
-    case 'listed':
-      return 'Listed for sale in a market contract — cancel the listing at the source first.'
-    case 'cosigned':
-      return 'Needs a cosigner this wallet does not support — stays at the source.'
-    case 'tokenPending':
-      return 'The token indexer has not validated it yet — rescan later.'
-    case 'tokenInvalid':
-      return 'Not a valid token output — moving it would burn the tokens beside it.'
-    case 'tokenUnreadable':
-      return 'Its script does not match what the indexer reported — left untouched.'
     case 'runJig':
       return 'RUN jig — moving it as a plain output destroys it.'
     case 'covenant':
@@ -91,13 +57,15 @@ export function describeImportHold(reason: ImportHoldReason): string {
     case 'foreign':
       return 'Locked to another key.'
     case 'token':
-      return 'Token output — moved by the token sweep, not as an item.'
+      return 'Token output — this wallet does not import tokens, so it stays at the source.'
     case 'notOneSat':
       return 'Not a 1-sat output.'
     case 'notCollectable':
       return 'Not a plain collectable (RUN jig, contract, token or cash) — left at the source.'
     case 'unreadable':
       return 'Its source transaction could not be fetched.'
+    default:
+      return null
   }
 }
 
@@ -113,58 +81,12 @@ export type HoldingsTotals = {
   cashCount: number
   itemCount: number
   itemCountCapped: boolean
-  /** Compatible BSV-21 balances, summed per id across addresses. */
-  tokens: TokenHolding[]
   held: HeldTally
   /** Addresses whose numbers are a floor because a provider failed. */
   partial: number
 }
 
 const PREVIEW_ITEM_CAP = 5_000
-
-function digits(value: unknown): string {
-  const s = typeof value === 'number' ? String(Math.trunc(value)) : String(value ?? '')
-  return /^\d+$/.test(s) ? s : '0'
-}
-
-function addAmounts(a: string, b: string): string {
-  return (BigInt(digits(a)) + BigInt(digits(b))).toString()
-}
-
-/** Token balances from the 1Sat index. Never rejects — tokens are an enrichment. */
-export async function fetchTokenBalances(
-  address: string,
-  chain: Chain,
-  fetchImpl: typeof fetch = fetch,
-): Promise<TokenHolding[]> {
-  const res = await fetchImpl(
-    `${gorillaBase(chain)}/api/bsv20/${encodeURIComponent(address)}/balance`,
-    { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) },
-  )
-  if (!res.ok) throw new Error(`Token index ${res.status}`)
-  const body = (await res.json()) as unknown
-  if (!Array.isArray(body)) return []
-  return body.flatMap((row: Record<string, unknown>): TokenHolding[] => {
-    const all = (row.all ?? {}) as { confirmed?: unknown; pending?: unknown }
-    const listed = (row.listed ?? {}) as { confirmed?: unknown; pending?: unknown }
-    const amount = addAmounts(digits(all.confirmed), digits(all.pending))
-    if (amount === '0') return []
-    const id = typeof row.id === 'string' && row.id ? row.id : null
-    const tick = typeof row.tick === 'string' && row.tick ? row.tick : null
-    return [
-      {
-        id,
-        tick,
-        sym: String(row.sym ?? tick ?? id?.slice(0, 8) ?? 'token'),
-        dec: Number.isInteger(row.dec) ? Number(row.dec) : 0,
-        icon: typeof row.icon === 'string' && row.icon ? row.icon : null,
-        amount,
-        listed: addAmounts(digits(listed.confirmed), digits(listed.pending)),
-        standard: id ? 'bsv21' : 'bsv20',
-      },
-    ]
-  })
-}
 
 /** A used address with nothing on it — what a fully spent address reads as. */
 export function emptyHoldings(discovered: DiscoveredAddress): AddressHoldings {
@@ -180,7 +102,6 @@ export function emptyHoldings(discovered: DiscoveredAddress): AddressHoldings {
     dustSats: 0,
     itemCount: 0,
     itemCountCapped: false,
-    tokens: [],
     error: null,
   }
 }
@@ -210,11 +131,6 @@ export async function inspectAddressHoldings(
     const items = await countOrdinalsAtLeast(discovered.address, chain, PREVIEW_ITEM_CAP)
     out.itemCount = items.count
     out.itemCountCapped = items.capped
-  } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err))
-  }
-  try {
-    out.tokens = await fetchTokenBalances(discovered.address, chain)
   } catch (err) {
     errors.push(err instanceof Error ? err.message : String(err))
   }
@@ -272,52 +188,24 @@ export function totalHoldings(holdings: readonly AddressHoldings[]): HoldingsTot
   let itemCount = 0
   let itemCountCapped = false
   let partial = 0
-  const tokens = new Map<string, TokenHolding>()
   for (const h of holdings) {
     if (h.error) partial += 1
     held = addHeld(held, 'dust', h.dustCount)
     if (h.uncompressed) {
-      held = addHeld(held, 'uncompressed', h.cashCount + h.itemCount + h.tokens.length)
+      held = addHeld(held, 'uncompressed', h.cashCount + h.itemCount)
       continue
     }
     cashSats += h.cashSats
     cashCount += h.cashCount
     itemCount += h.itemCount
     itemCountCapped ||= h.itemCountCapped
-    for (const token of h.tokens) {
-      if (token.standard === 'bsv20' || !token.id) {
-        held = addHeld(held, 'bsv20v1')
-        continue
-      }
-      if (token.listed !== '0') held = addHeld(held, 'listed')
-      const free = (BigInt(token.amount) - BigInt(token.listed)).toString()
-      if (BigInt(free) <= 0n) continue
-      const prior = tokens.get(token.id)
-      tokens.set(
-        token.id,
-        prior
-          ? { ...prior, amount: addAmounts(prior.amount, free) }
-          : { ...token, amount: free, listed: '0' },
-      )
-    }
   }
   return {
     cashSats,
     cashCount,
     itemCount,
     itemCountCapped,
-    tokens: [...tokens.values()],
     held,
     partial,
   }
-}
-
-/** `1234500` with 2 decimals → `12345`. Trailing zeros trimmed. */
-export function formatTokenAmount(amount: string, dec: number): string {
-  const raw = digits(amount).replace(/^0+(?=\d)/, '')
-  if (dec <= 0) return BigInt(raw).toLocaleString()
-  const padded = raw.padStart(dec + 1, '0')
-  const whole = BigInt(padded.slice(0, -dec)).toLocaleString()
-  const frac = padded.slice(-dec).replace(/0+$/, '')
-  return frac ? `${whole}.${frac}` : whole
 }

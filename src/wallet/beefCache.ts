@@ -455,7 +455,7 @@ async function resolveLocalBeef(
 /**
  * Local raw transaction, no proof, no network.
  *
- * Callers that only decode a script — inscription sniffing, BSV-21 transfer
+ * Callers that only decode a script — inscription sniffing, token transfer
  * probes, ticker-icon checks — used to ask {@link getLocalBeefForTxid}, which
  * asks toolbox storage to *assemble a BEEF*: every ancestor plus its BUMP,
  * loaded synchronously on the renderer thread. Once per legacy-scan UTXO that
@@ -1024,7 +1024,7 @@ export type BeefAncestryGap = 'none' | 'unconfirmed-parents' | 'missing-bodies'
  * - `none` — every parent has a body and proofs; post it as-is.
  * - `unconfirmed-parents` — the only gap is a merkle proof for a tx whose body
  *   the BEEF already carries (typically a parent we broadcast seconds ago, e.g. a
- *   BSV-21 cover split). No indexer can supply that proof until the parent is
+ *   token cover split). No indexer can supply that proof until the parent is
  *   mined, so hydrating is futile — it only costs the fetch timeouts.
  * - `missing-bodies` — a parent body is absent or a txidOnly stub, which a fetch
  *   can still supply.
@@ -1381,7 +1381,7 @@ export async function cacheCreateActionBeef(
  * `mergeLocalUnconfirmedAncestry` can pull in unrelated ghost txs (NFT mints,
  * prior Arcade-acked spends). That package misses the 11k sendMessage cap, the
  * BEEF is dropped, and the payee is forced onto an indexer that never saw the
- * tx. BSV-21 settle only needs the subject lock + the tips it spends.
+ * tx. A token settle only needs the subject lock + the tips it spends.
  */
 export function inboxSubjectBeef(
   binary: number[] | undefined,
@@ -1498,7 +1498,7 @@ export function asTrustSelfInputBeef(beef: Beef): number[] | undefined {
  * Merge BEEFs for every unique spend txid, fetching in parallel and sharing the
  * session cache with provenance / hardened settle / origin script lookups.
  *
- * Token sends of a freshly minted (still-unmined) 162 genesis must not demand
+ * Sends of a freshly minted (still-unmined) asset must not demand
  * merkle proofs — those do not exist yet. `trustSelf: 'known'` + local bodies
  * are enough to sign.
  */

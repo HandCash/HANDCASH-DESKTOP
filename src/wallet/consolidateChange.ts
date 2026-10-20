@@ -1,5 +1,5 @@
 import { getActiveWallet } from './session'
-import { isAssetFilingBasket } from './token/filing'
+import { isAssetFilingBasket } from './assetBaskets'
 
 /**
  * Background change consolidation.
@@ -15,7 +15,7 @@ import { isAssetFilingBasket } from './token/filing'
  * Safety (mirrors `.cursor/rules/explicit-wallet-paths.mdc`):
  * - The decision is a tagged union ({@link planChangeConsolidation}) — never a
  *   bare `count > N`.
- * - Only spendable managed change is selected. Assets (`1sat`, `bsv21`) live in
+ * - Only spendable managed change is selected. Assets (items and tokens) live in
  *   their own baskets and the toolbox change allocator never touches them, so a
  *   consolidation can never sweep an ordinal or a token.
  * - It runs in the exclusive spend region ({@link runExclusiveSpend}), so it can
@@ -100,7 +100,7 @@ type TxRow = { transactionId?: number }
 /**
  * Count spendable managed-change outputs in a single storage session.
  *
- * Assets are excluded twice over: the loop skips the `1sat` / `bsv21` baskets,
+ * Assets are excluded twice over: the loop skips the item and token baskets,
  * and only outputs flagged `change: true` (managed change) are counted. A
  * received 1-sat tip is neither.
  *

@@ -9,27 +9,14 @@ import { Beef, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { extractTxid } from './txExplorer'
 import {
-  isBsv21Basket,
   isItemBasket,
   isItemIssuanceArgs,
   isItemReceiveArgs,
 } from './itemAccess'
-import {
-  cacheTokenIconFromBeef,
-  fungibleFromImport,
-  hydrateCachedTokenIcons,
-  isBsv21IdentityMintArgs,
-  normalizeTokenId,
-  parseBsv21CustomInstructions,
-  rememberFungibleToken,
-  shortTokenLabel,
-  tokenIdFromBsv21Tags,
-} from './token'
-import { scriptPaysAddress } from './ordinalOwnership'
+import { isTokenScript, scriptPaysAddress } from './ordinalOwnership'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
 import {
   hasSettledActivityItemOutpoint,
-  noteInboundReceiveComplete,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
@@ -39,27 +26,6 @@ import { rememberResolvedInscription } from './inscriptionCache'
 import { rememberItemArtFromScript, getItemArtDataUrl } from './localItemArt'
 import { proveHeldOutputFromBeef } from './oneSatProvenance'
 import { clearAwaitingVerification } from './verificationProgress'
-import { recordProvenTokenTips } from './token/lineage'
-import {
-  classifyOneSatAsBsv21,
-  isBsv21OneSatLock,
-  isNonCollectableOneSatLock,
-  type OneSatAsBsv21,
-} from './oneSatAsBsv21'
-
-/**
- * Carry the wire format only when the locking script proved it. Remittance-only
- * evidence (`unproven`) leaves the card unclassified so the live basket read
- * names it, instead of pinning a fresh BRC-162 mint as burn-only legacy.
- */
-function bsv21EncodingOf(
-  classified: OneSatAsBsv21,
-): { encoding?: 'brc162' | 'legacy-json' } {
-  if (classified.kind !== 'bsv21') return {}
-  if (classified.encoding === 'binary') return { encoding: 'brc162' }
-  if (classified.encoding === 'json') return { encoding: 'legacy-json' }
-  return {}
-}
 
 export type InternalizedItemTip = {
   outpoint: string
@@ -115,6 +81,18 @@ function parseCustomInstructions(raw: unknown): {
   }
 }
 
+/** Rows that carry a token amount are tokens, never items. */
+function carriesTokenAmount(tags: unknown[], customInstructions: unknown): boolean {
+  if (tags.some((t) => typeof t === 'string' && /^amt:/i.test(t))) return true
+  if (typeof customInstructions !== 'string') return false
+  try {
+    const amt = asRecord(JSON.parse(customInstructions))?.amt
+    return typeof amt === 'string' || typeof amt === 'number'
+  } catch {
+    return false
+  }
+}
+
 function tipsFromInsertionOutputs(
   txid: string,
   outputs: unknown[],
@@ -134,19 +112,7 @@ function tipsFromInsertionOutputs(
     ) {
       continue
     }
-    if (
-      tags.some(
-        (t) =>
-          typeof t === 'string' &&
-          (/^bsv21/i.test(t) || /^amt:/i.test(t)),
-      )
-    ) {
-      continue
-    }
-    const bsv21Ci = parseBsv21CustomInstructions(
-      typeof rem.customInstructions === 'string' ? rem.customInstructions : undefined,
-    )
-    if (bsv21Ci?.id && bsv21Ci.amt) continue
+    if (carriesTokenAmount(tags, rem.customInstructions)) continue
     const outputIndex =
       typeof out.outputIndex === 'number' && Number.isInteger(out.outputIndex)
         ? out.outputIndex
@@ -189,7 +155,7 @@ function tipsFromAtomicBeef(
       const sats = out?.satoshis
       const hex = out?.lockingScript?.toHex()
       if (sats !== 1 || !hex || !scriptPaysAddress(hex, active.address)) continue
-      if (isNonCollectableOneSatLock(hex)) continue
+      if (isTokenScript(hex) || looksLikeRetiredFungibleTip({ lockingScriptHex: hex })) continue
       tips.push({
         outpoint: `${txid}.${i}`,
         origin: `${txid}_${i}`,
@@ -222,84 +188,6 @@ export function parseInternalizedItemTips(
       : null
   if (atomic?.length) return tipsFromAtomicBeef(active, txid, atomic)
   return []
-}
-
-function tokenSym(raw: string | undefined, tokenId: string): string {
-  const s = raw?.trim()
-  if (s && s !== 'Collectable' && s !== 'Token') return s
-  return shortTokenLabel(tokenId)
-}
-
-function paintFungibleTip(opts: {
-  active: ActiveWallet
-  originator: string
-  txid: string
-  vout: number
-  hex: string
-  method: 'mint-token' | 'receive-token'
-}): boolean {
-  const outpoint = `${opts.txid}.${opts.vout}`
-  const classified = classifyOneSatAsBsv21({
-    satoshis: 1,
-    outpoint,
-    lockingScriptHex: opts.hex,
-  })
-  let tokenId: string | null = null
-  let amt: string | null = null
-  let sym: string | undefined
-  let dec = 0
-  if (classified.kind === 'bsv21') {
-    tokenId = classified.tokenId
-    amt = classified.payload.amt ?? null
-    sym = classified.payload.sym
-    dec = classified.payload.dec ?? 0
-  }
-  if (!tokenId || !amt || !/^\d+$/.test(amt) || BigInt(amt) <= 0n) return false
-  const name = tokenSym(sym, tokenId)
-  const token = fungibleFromImport({
-    outpoint,
-    txid: opts.txid,
-    vout: opts.vout,
-    tokenId,
-    amt,
-    op: classified.kind === 'bsv21' ? classified.payload.op : 'transfer',
-    sym: name,
-    dec,
-    ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
-      ? { binarySupply: 'locked' as const }
-      : {}),
-    ...bsv21EncodingOf(classified),
-  })
-  rememberFungibleToken(token)
-  void hydrateCachedTokenIcons(opts.active, [token]).catch(() => {})
-  if (opts.method === 'mint-token') {
-    upsertAppActivity({
-      origin: opts.originator || WALLET_ACTIVITY_ORIGIN,
-      kind: 'earned',
-      sats: 1,
-      method: 'mint-token',
-      note: `Minted ${amt} ${name}`,
-      txid: opts.txid,
-      item: {
-        name,
-        origin: tokenId,
-        outpoint,
-        tokenId,
-        amt,
-        dec,
-      },
-    })
-  } else {
-    noteInboundReceiveComplete({
-      txid: opts.txid,
-      item: true,
-      itemName: name,
-      itemOrigin: tokenId,
-      outpoint,
-      token: { tokenId, amount: amt, sym: name, dec },
-    })
-  }
-  return true
 }
 
 /** The signed package a createAction returned (or was handed), as a Beef. */
@@ -382,115 +270,6 @@ function lockingScriptsFromCreateAction(
   return found
 }
 
-function paintFungiblesFromScripts(
-  active: ActiveWallet,
-  originator: string,
-  txid: string,
-  scripts: Array<{ vout: number; satoshis: number; hex: string }>,
-  method: 'mint-token' | 'receive-token',
-): number {
-  let painted = 0
-  for (const out of scripts) {
-    if (out.satoshis !== 1) continue
-    if (!scriptPaysAddress(out.hex, active.address)) continue
-    if (!isBsv21OneSatLock(out.hex)) continue
-    if (paintFungibleTip({ active, originator, txid, vout: out.vout, hex: out.hex, method })) {
-      painted += 1
-    }
-  }
-  return painted
-}
-
-/** Seed Tokens immediately after an app inserts a BSV-21 basket output. */
-export function paintAfterInternalizeBsv21(
-  active: ActiveWallet,
-  args: unknown,
-  result: unknown,
-): number {
-  const txid = extractTxid(result) ?? extractTxid(args)
-  const body = asRecord(args)
-  const outputs = Array.isArray(body?.outputs) ? body.outputs : []
-  if (!txid || outputs.length === 0) return 0
-
-  const atomic = Array.isArray(body?.tx) ? (body.tx as number[]) : null
-  let beef: Beef | null = null
-  if (atomic?.length) {
-    try {
-      beef = Beef.fromBinary(atomic)
-    } catch {
-      // The wallet already validated the transaction; metadata remains usable.
-    }
-  }
-
-  let painted = 0
-  for (const raw of outputs) {
-    const out = asRecord(raw)
-    if (!out || out.protocol !== 'basket insertion') continue
-    const rem = asRecord(out.insertionRemittance)
-    if (!rem || !isBsv21Basket(rem.basket)) continue
-    const outputIndex = Number(out.outputIndex)
-    if (!Number.isInteger(outputIndex) || outputIndex < 0) continue
-    const tags = Array.isArray(rem.tags)
-      ? rem.tags.filter((tag): tag is string => typeof tag === 'string')
-      : []
-    const ci = parseBsv21CustomInstructions(
-      typeof rem.customInstructions === 'string'
-        ? rem.customInstructions
-        : undefined,
-    )
-    const tokenId =
-      normalizeTokenId(ci?.id ?? '') ?? tokenIdFromBsv21Tags(tags)
-    const amount = ci?.amt ?? tagValue(tags, 'amt:')
-    if (!tokenId || !amount || !/^\d+$/.test(amount) || BigInt(amount) <= 0n) {
-      continue
-    }
-    const sym = ci?.sym ?? tagValue(tags, 'sym:') ?? shortTokenLabel(tokenId)
-    const icon =
-      normalizeTokenId(ci?.icon ?? '') ??
-      normalizeTokenId(tagValue(tags, 'icon:') ?? '') ??
-      undefined
-    const issuer = ci?.issuer ?? tagValue(tags, 'issuer:') ?? undefined
-    if (icon && beef) cacheTokenIconFromBeef(icon, beef)
-    // Remittance tags are metadata; only the lock proves BRC-162. Read it from
-    // the supplied BEEF so a binary tip is not painted as burn-only legacy.
-    const lockHex = beef
-      ? (beef.findTxid(txid)?.tx ?? beef.findAtomicTransaction(txid))?.outputs[
-          outputIndex
-        ]?.lockingScript?.toHex()
-      : undefined
-    const classified = classifyOneSatAsBsv21({
-      satoshis: 1,
-      outpoint: `${txid}.${outputIndex}`,
-      lockingScriptHex: lockHex,
-      customInstructions: rem.customInstructions,
-      tags,
-    })
-    const token = fungibleFromImport({
-      outpoint: `${txid}.${outputIndex}`,
-      txid,
-      vout: outputIndex,
-      tokenId,
-      amt: amount,
-      op: 'transfer',
-      sym,
-      icon,
-      dec: ci?.dec ?? 0,
-      issuer,
-      ...(classified.kind === 'bsv21' && classified.encoding === 'binary'
-        ? { binarySupply: 'locked' as const }
-        : {}),
-      ...bsv21EncodingOf(classified),
-    })
-    rememberFungibleToken(token)
-    void hydrateCachedTokenIcons(active, [token]).catch(() => {})
-    painted += 1
-  }
-  if (painted > 0) {
-    console.info(`[brc100] painted ${painted} BSV-21 tip(s) after internalizeAction`)
-  }
-  return painted
-}
-
 /** Seed Collect + Activity after a successful app `internalizeAction` for items. */
 export function paintAfterInternalizeItem(
   active: ActiveWallet,
@@ -501,20 +280,17 @@ export function paintAfterInternalizeItem(
   if (!isItemReceiveArgs('internalizeAction', args)) return 0
   const txid = extractTxid(result) ?? extractTxid(args)
   const scripts = txid ? lockingScriptsFromCreateAction(txid, args, result) : []
-  const tokenPainted = txid
-    ? paintFungiblesFromScripts(active, originator, txid, scripts, 'receive-token')
-    : 0
   const tokenOps = new Set(
     scripts
-      .filter((s) => s.satoshis === 1 && isBsv21OneSatLock(s.hex))
+      .filter((s) => s.satoshis === 1 && isTokenScript(s.hex))
       .map((s) => `${txid}.${s.vout}`),
   )
   const tips = parseInternalizedItemTips(active, args, result).filter(
     (tip) => !tokenOps.has(tip.outpoint.trim().toLowerCase()),
   )
-  if (tips.length === 0) return tokenPainted
+  if (tips.length === 0) return 0
 
-  let painted = tokenPainted
+  let painted = 0
   for (const tip of tips) {
     const op = tip.outpoint.trim().toLowerCase()
     if (!op.includes('.')) continue
@@ -579,77 +355,7 @@ export function paintAfterInternalizeItem(
 }
 
 /**
- * Seed Tokens immediately after a BSV-21 identity mint `createAction`.
- *
- * Activity used to record the mint while Tokens waited on a later `listOutputs`
- * (often deferred while spend/seal was still busy). Local AtomicBEEF already
- * has the tip — paint from it, no indexer.
- */
-export function paintAfterCreateActionBsv21Mint(
-  active: ActiveWallet,
-  originator: string,
-  args: unknown,
-  result: unknown,
-): number {
-  if (!isBsv21IdentityMintArgs('createAction', args)) return 0
-  void originator
-  const txid = extractTxid(result) ?? extractTxid(args)
-  if (!txid) return 0
-  const signedBeef = beefFromCreateAction(result, args)
-  const scripts = lockingScriptsFromCreateAction(txid, args, result)
-  let painted = 0
-  for (const out of scripts) {
-    if (out.satoshis !== 1) continue
-    if (!scriptPaysAddress(out.hex, active.address)) continue
-    const outpoint = `${txid}.${out.vout}`
-    const classified = classifyOneSatAsBsv21({
-      satoshis: 1,
-      outpoint,
-      lockingScriptHex: out.hex,
-    })
-    if (classified.kind !== 'bsv21') continue
-    const amt = classified.payload.amt
-    if (!amt || !/^\d+$/.test(amt) || BigInt(amt) <= 0n) continue
-    const op = classified.payload.op
-    if (op !== 'deploy+mint' && op !== 'mint' && op !== 'transfer') continue
-    const token = fungibleFromImport({
-      outpoint,
-      txid,
-      vout: out.vout,
-      tokenId: classified.tokenId,
-      amt,
-      op,
-      sym: classified.payload.sym || shortTokenLabel(classified.tokenId),
-      dec: classified.payload.dec ?? 0,
-      ...(classified.payload.icon
-        ? { icon: normalizeTokenId(classified.payload.icon) ?? classified.payload.icon }
-        : {}),
-      ...(classified.payload.issuer ? { issuer: classified.payload.issuer } : {}),
-      ...(classified.encoding === 'binary'
-        ? { binarySupply: 'locked' as const }
-        : {}),
-      ...bsv21EncodingOf(classified),
-    })
-    // A self-mint already returned its complete signed lineage. File that proof
-    // before painting so the amount is spendable immediately instead of
-    // waiting for an indexer-backed lineage heal.
-    if (signedBeef) {
-      recordProvenTokenTips(signedBeef, [outpoint], classified.tokenId)
-    }
-    rememberFungibleToken(token)
-    void hydrateCachedTokenIcons(active, [token]).catch(() => {})
-    painted += 1
-  }
-  if (painted > 0) {
-    console.info(
-      `[brc100] painted ${painted} BSV-21 mint tip(s) after createAction`,
-    )
-  }
-  return painted
-}
-
-/**
- * Seed Collect / Tokens after a mint-studio (or any app) `createAction` that
+ * Seed Collect after a mint-studio (or any app) `createAction` that
  * issues a fresh 1sat output. Without this, Collect stays on the last list
  * while auto heal holds the ingest lock — the tip is in the basket, never painted.
  */
@@ -663,16 +369,9 @@ export function paintAfterCreateActionIssuance(
   const txid = extractTxid(result) ?? extractTxid(args)
   if (!txid) return 0
   const scripts = lockingScriptsFromCreateAction(txid, args, result)
-  const tokenPainted = paintFungiblesFromScripts(
-    active,
-    originator || WALLET_ACTIVITY_ORIGIN,
-    txid,
-    scripts,
-    'mint-token',
-  )
   const tokenOps = new Set(
     scripts
-      .filter((s) => s.satoshis === 1 && isBsv21OneSatLock(s.hex))
+      .filter((s) => s.satoshis === 1 && isTokenScript(s.hex))
       .map((s) => `${txid}.${s.vout}`),
   )
   const itemTips: InternalizedItemTip[] = []
@@ -693,13 +392,13 @@ export function paintAfterCreateActionIssuance(
       imageUrl: getItemArtDataUrl(origin),
     })
   }
-  if (itemTips.length === 0) return tokenPainted
+  if (itemTips.length === 0) return 0
 
   // The package we just signed is the whole lineage of a fresh mint. Prove it
   // here, so the card is verified when it appears instead of waiting on an
   // indexer that has not seen the transaction.
   const signedBeef = beefFromCreateAction(result, args)
-  let painted = tokenPainted
+  let painted = 0
   for (const tip of itemTips) {
     const op = tip.outpoint
     const origin = tip.origin ?? op.replace(/\.(\d+)$/, '_$1')

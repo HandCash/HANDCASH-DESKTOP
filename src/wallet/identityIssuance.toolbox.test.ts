@@ -92,20 +92,7 @@ import { identityPackagesForDelivery, rememberDeliveredIdentities } from './issu
 import { PNG_1PX } from './issuerIdentity.fixture'
 import { approveWalletPayment } from './permissions'
 import { registerSignedSend } from './signedSendLifecycle'
-import { encodeBsv21Binary } from './token/decode162'
-import { resetTokenGenesisForTests, retainTokenGenesis } from './token/genesisStore'
-import { sigmaSignDeployLockingScript, verifySigmaIssuer } from './token/issuer'
-import {
-  proveHeldTokenTip,
-  recordProvenTokenTips,
-  resetTokenLineageForTests,
-  tokenAttestationGap,
-  tokenIssuerAttested,
-  tokenLineageFromBeef,
-  withTokenLineage,
-} from './token/lineage'
-import { decodeTokenOutput } from './token/prove176'
-import type { FungibleToken } from './token/types'
+import { sigmaSignLockingScript, verifySigmaIssuer } from './sigmaIssuer'
 
 const FUNDING = 100_000
 const BRC29: [2, string] = [2, '3241645161d8']
@@ -194,17 +181,6 @@ function itemOutput(lock: string) {
   }
 }
 
-function tokenOutput(lock: string) {
-  return {
-    satoshis: 1,
-    basket: 'bsv21',
-    outputDescription: 'Deploy TEST',
-    tags: ['op:deploy+mint', 'sym:TEST'],
-    customInstructions: JSON.stringify({ op: 'deploy+mint', amt: '1000', sym: 'TEST' }),
-    lockingScript: encodeBsv21Binary({ amount: 1000n, payload: { sym: 'TEST' }, rest: lock }).toHex(),
-  }
-}
-
 function appCreateAction(active: ActiveWallet, args: unknown) {
   return active.wallet.createAction(withImmediateAppBroadcast(args) as Parameters<ActiveWallet['wallet']['createAction']>[0])
 }
@@ -229,19 +205,6 @@ function shelfItem(outpoint: string, script: string): Collectable {
     extras: [],
     proven: false,
     authenticity: 'unproven',
-    ...attribution(outpoint, script),
-  }
-}
-
-function shelfToken(outpoint: string, script: string): FungibleToken {
-  return {
-    tokenId: outpoint,
-    sym: 'TEST',
-    amt: '1000',
-    dec: 0,
-    utxoCount: 1,
-    outpoint,
-    spendKind: 'plain',
     ...attribution(outpoint, script),
   }
 }
@@ -279,7 +242,7 @@ function earlierBapStamp(h: Harness, seq: number, bapId: string): { outpoint: st
     appendIssuerMetadata(itemOutput(walletLock(h)).lockingScript, signer.toPublicKey().toString()) +
     new Script().writeBin(Utils.toArray('bapId', 'utf8')).writeBin(Utils.toArray(bapId, 'utf8')).toHex()
   const fundTxid = '44'.repeat(32)
-  const script = sigmaSignDeployLockingScript({ lockingScriptHex: tape, fundTxid, fundVout: 0, identityKeyHex: signer.toHex() })
+  const script = sigmaSignLockingScript({ lockingScriptHex: tape, fundTxid, fundVout: 0, identityKeyHex: signer.toHex() })
   const tx = new Transaction()
   tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
   tx.addOutput({ satoshis: 1, lockingScript: Script.fromHex(script) })
@@ -289,7 +252,7 @@ function earlierBapStamp(h: Harness, seq: number, bapId: string): { outpoint: st
   return { outpoint: `${tx.id('hex')}.0`, script }
 }
 
-async function mint(h: Harness, outputs: ReturnType<typeof itemOutput | typeof tokenOutput>[], expected = h.active.identityKey) {
+async function mint(h: Harness, outputs: ReturnType<typeof itemOutput>[], expected = h.active.identityKey) {
   const enriched = await enrichIdentityIssuance(h.runtime, { description: 'Issue', outputs }, expected)
   const created = await appCreateAction(h.active, enriched)
   const done = (await finishIdentityIssuance(h.runtime, enriched, created)) as { txid: string; tx: number[] }
@@ -312,8 +275,6 @@ beforeEach(() => {
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
   resetIdentityProfilesForTests()
-  resetTokenGenesisForTests()
-  resetTokenLineageForTests()
   vi.mocked(registerSignedSend).mockClear()
 })
 
@@ -323,35 +284,8 @@ function forgetSenderDevice() {
   state.retained.clear()
   resetIssuerAttributionForTests()
   resetIssuerIdentitiesForTests()
-  resetTokenGenesisForTests()
-  resetTokenLineageForTests()
 }
 
-async function mintAndTransferToken(h: Harness) {
-  const minted = await mint(h, [tokenOutput(walletLock(h))])
-  const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
-  const tokenId = `${minted.done.txid}_${vout}`
-  const transfer = new Transaction()
-  transfer.addInput({
-    sourceTransaction: minted.tx,
-    sourceOutputIndex: vout,
-    unlockingScriptTemplate: new P2PKH().unlock(master(h)),
-  })
-  transfer.addOutput({
-    satoshis: 1,
-    lockingScript: encodeBsv21Binary({
-      amount: 1000n,
-      tokenId,
-      rest: new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex(),
-    }),
-  })
-  await transfer.sign()
-  const senderBeef = minted.beef.clone()
-  senderBeef.mergeTransaction(transfer)
-  const subject = new Beef()
-  subject.mergeRawTx(transfer.toBinary())
-  return { tokenId, tip: `${transfer.id('hex')}_0`, transferTxid: transfer.id('hex'), senderBeef, subject }
-}
 
 describe('identity issuance against a real toolbox wallet', () => {
   it('publishes a BAP profile as 0-sat records: a B:// image, the root-declared key and its profile, then the link to the identity key', async () => {
@@ -508,31 +442,25 @@ describe('identity issuance against a real toolbox wallet', () => {
     expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(true)
   })
 
-  it('mints an item and a token signed by the identity key, never a BAP key, and sends the anchor with them', async () => {
+  it('mints an item signed by the identity key, never a BAP key, and sends the anchor with it', async () => {
     const h = await fundedWallet()
     await publish(h)
     await h.sendWaiting()
     h.posted.length = 0
-    const { enriched, done, beef, tx } = await mint(h, [tokenOutput(walletLock(h)), itemOutput(walletLock(h))])
+    const { enriched, done, beef, tx } = await mint(h, [itemOutput(walletLock(h))])
     const anchorTxid = enriched.inputs![0]!.outpoint.split('.')[0]!
     expect(tx.inputs[0]!.sourceTXID).toBe(anchorTxid)
     expect(beef.findTxid(anchorTxid)?.tx).toBeTruthy()
-    // The BRC-162 deploy stays plain custody; its stamp is the trailing output.
-    expect(tx.outputs).toHaveLength(4)
-    expect(tx.outputs[2]!.satoshis).toBe(0)
-    expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(false)
-    for (const vout of [1, 2]) {
-      expect(verifySigmaIssuer(tx, vout, h.active.identityKey)).toBe(true)
-      expect(verifySigmaIssuer(tx, vout, signingKey(h))).toBe(false)
-      expect(issuerMetadataFromScript(tx.outputs[vout]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
-    }
+    expect(verifySigmaIssuer(tx, 0, h.active.identityKey)).toBe(true)
+    expect(verifySigmaIssuer(tx, 0, signingKey(h))).toBe(false)
+    expect(issuerMetadataFromScript(tx.outputs[0]!.lockingScript.toHex())).toEqual({ issuer: h.active.identityKey })
     expect(h.posted).toEqual([])
     await h.sendWaiting()
     expect(h.posted.flat()).toEqual(expect.arrayContaining([anchorTxid, done.txid]))
     expect(await statusOf(h, anchorTxid)).toMatch(BROADCAST)
     expect(await statusOf(h, done.txid)).toMatch(BROADCAST)
     const items = await h.active.wallet.listOutputs({ basket: '1sat' })
-    expect(items.outputs.map((o) => o.outpoint)).toEqual([`${done.txid}.1`])
+    expect(items.outputs.map((o) => o.outpoint)).toEqual([`${done.txid}.0`])
   })
 
   it('signs with an imported identity key while the wallet funds the mint', async () => {
@@ -580,7 +508,7 @@ describe('identity issuance against a real toolbox wallet', () => {
   it('one shelf per identity key: mints across a rotation and an earlier-draft BAP stamp sit together, a copied claim apart', async () => {
     const h = await fundedWallet()
     const identity = await publish(h)
-    const before = await mint(h, [tokenOutput(walletLock(h)), itemOutput(walletLock(h))])
+    const before = await mint(h, [itemOutput(walletLock(h))])
     const earlier = earlierBapStamp(h, 1, identity.bapId)
     vi.mocked(registerSignedSend).mockClear()
     const rotated = await rotate(h)
@@ -592,8 +520,7 @@ describe('identity issuance against a real toolbox wallet', () => {
     const after = await mint(h, [itemOutput(walletLock(h))])
     expect(verifySigmaIssuer(after.tx, 0, h.active.identityKey)).toBe(true)
 
-    const itemScript = before.tx.outputs[1]!.lockingScript.toHex()
-    const tokenScript = before.tx.outputs[0]!.lockingScript.toHex()
+    const itemScript = before.tx.outputs[0]!.lockingScript.toHex()
     const laterScript = after.tx.outputs[0]!.lockingScript.toHex()
     const copy = new Transaction()
     copy.addInput({ sourceTXID: '22'.repeat(32), sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
@@ -605,12 +532,11 @@ describe('identity issuance against a real toolbox wallet', () => {
 
     const shelves = groupCollectables(
       [
-        shelfItem(`${before.done.txid}.1`, itemScript),
+        shelfItem(`${before.done.txid}.0`, itemScript),
         shelfItem(`${after.done.txid}.0`, laterScript),
         shelfItem(earlier.outpoint, earlier.script),
         shelfItem(`${copy.id('hex')}.0`, claimScript),
       ],
-      [shelfToken(`${before.done.txid}.0`, tokenScript)],
       (asset) => displayIssuerAttribution(h.runtime, asset),
     ).issuers
     const verified = shelves.find((s) => s.key === `issuer:pubkey:${h.active.identityKey}`)
@@ -623,9 +549,8 @@ describe('identity issuance against a real toolbox wallet', () => {
       profile: { id: identity.bapId, state: 'verified' },
     })
     expect(verified?.items.map((i) => i.outpoint).sort()).toEqual(
-      [`${before.done.txid}.1`, `${after.done.txid}.0`, earlier.outpoint].sort(),
+      [`${before.done.txid}.0`, `${after.done.txid}.0`, earlier.outpoint].sort(),
     )
-    expect(verified?.tokens.map((t) => t.outpoint)).toEqual([`${before.done.txid}.0`])
     expect(claim?.issuerAttested).toBe(false)
     expect(claim?.icon).toBeUndefined()
     expect(claim?.label).not.toBe('Studio')
@@ -809,161 +734,9 @@ describe('identity issuance against a real toolbox wallet', () => {
     state.values.clear()
     resetIssuerIdentitiesForTests()
     expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
-    const shelves = groupCollectables([shelfItem(earlier.outpoint, earlier.script)], [], (asset) =>
+    const shelves = groupCollectables([shelfItem(earlier.outpoint, earlier.script)], (asset) =>
       displayIssuerAttribution(h.runtime, asset),
     ).issuers
     expect(shelves.map((s) => [s.key, s.label])).toEqual([[`issuer:pubkey:${h.active.identityKey}`, 'Studio']])
-  })
-
-  it('attests a received token from the lineage it arrived with and shelves it under the identity key', async () => {
-    const h = await fundedWallet()
-    await publish(h)
-    const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
-    const lineage = tokenLineageFromBeef(senderBeef, transferTxid, tokenId)
-    expect(lineage).not.toBeNull()
-    expect(Beef.fromBinary(lineage!).findTxid(transferTxid)).toBeUndefined()
-    const packages = identityPackagesForDelivery('main', { tokenId })
-    expect(packages.map((pkg) => 'identityKey' in pkg && pkg.identityKey)).toEqual([h.active.identityKey])
-
-    forgetSenderDevice()
-    const issuer = h.active.identityKey
-    expect(recordProvenTokenTips(subject, [tip], tokenId)).toBeNull()
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(false)
-
-    const proof = withTokenLineage(subject, lineage)
-    expect(recordProvenTokenTips(proof, [tip], tokenId)).toBe(tokenId)
-    expect(await retainTokenGenesis(proof, tokenId.split('_')[0]!, null)).toBe(true)
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer })).toBe(true)
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: signingKey(h) })).toBe(false)
-    expect(tokenIssuerAttested({ outpoint: `${'33'.repeat(32)}_0`, tokenId, issuer })).toBe(false)
-
-    expect(await rememberDeliveredIdentities('main', packages, null)).toBe(1)
-    const token: FungibleToken = {
-      tokenId,
-      sym: 'TEST',
-      amt: '1000',
-      dec: 0,
-      utxoCount: 1,
-      outpoint: tip,
-      spendKind: 'plain',
-      issuer,
-      issuerAttested: tokenIssuerAttested({ outpoint: tip, tokenId, issuer }),
-    }
-    const shelves = groupCollectables([], [token], (asset) => displayIssuerAttribution(h.runtime, asset)).issuers
-    expect(shelves).toHaveLength(1)
-    expect(shelves[0]).toMatchObject({ key: `issuer:pubkey:${issuer}`, label: 'Studio', issuerAttested: true })
-    expect(shelves[0]!.tokens.map((t) => t.outpoint)).toEqual([tip])
-  })
-
-  it('keeps a self-minted token attested after its mint ages out of the BEEF cache', async () => {
-    const h = await fundedWallet()
-    await publish(h)
-    const minted = await mint(h, [tokenOutput(walletLock(h))])
-    const vout = minted.tx.outputs.findIndex((o) => decodeTokenOutput(o.lockingScript)?.role === 'deploy')
-    const tokenId = `${minted.done.txid}_${vout}`
-    const issuer = h.active.identityKey
-    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
-
-    state.retained.clear()
-    resetIssuerAttributionForTests()
-    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(false)
-    expect(await proveHeldTokenTip(h.active, tokenId, tokenId)).toEqual({ kind: 'refused', reason: 'no-genesis' })
-
-    state.toolbox.set(minted.done.txid, minted.beef)
-    expect(await proveHeldTokenTip(h.active, tokenId, tokenId)).toEqual({ kind: 'bound', source: 'verdict' })
-    state.toolbox.clear()
-    resetIssuerAttributionForTests()
-    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer })).toBe(true)
-    expect(retainedIssuerMetadata(tokenId)).toEqual({ issuer })
-    const otherScript = tokenOutput(new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex()).lockingScript
-    expect(tokenIssuerAttested({ outpoint: tokenId, tokenId, issuer, lockingScript: otherScript })).toBe(false)
-  })
-
-  it('binds a tip filed before lineage was recorded from local bytes alone', async () => {
-    const h = await fundedWallet()
-    await publish(h)
-    const { tokenId, tip, transferTxid, senderBeef } = await mintAndTransferToken(h)
-    forgetSenderDevice()
-    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'refused', reason: 'no-tip-body' })
-    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'refused', reason: 'retry-later' })
-    resetTokenLineageForTests()
-    state.retained.set(transferTxid, senderBeef)
-    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'bound', source: 'local' })
-    state.retained.clear()
-    resetIssuerAttributionForTests()
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(true)
-  })
-
-  it('binds a tip received before lineage existed from bodies fetched by txid, then names its issuer', async () => {
-    const h = await fundedWallet()
-    await publish(h)
-    const { tokenId, tip, transferTxid, senderBeef, subject } = await mintAndTransferToken(h)
-    forgetSenderDevice()
-    state.retained.set(transferTxid, subject)
-    const tips = [tip]
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: tips })).toBe('no-genesis')
-
-    for (const entry of senderBeef.txs) {
-      if (!entry.tx || entry.txid === transferTxid) continue
-      const body = new Beef()
-      body.mergeRawTx(entry.tx.toBinary())
-      state.provider.set(entry.txid, body)
-    }
-    expect(await proveHeldTokenTip(h.active, tip, tokenId)).toEqual({ kind: 'bound', source: 'fetched' })
-    state.retained.clear()
-    state.provider.clear()
-    resetIssuerAttributionForTests()
-
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: tips })).toBe('attested')
-    expect(retainedIssuerMetadata(tokenId)).toEqual({ issuer: h.active.identityKey })
-    expect(tokenIssuerAttested({ outpoint: tip, tokenId, issuer: h.active.identityKey })).toBe(true)
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: [`${'33'.repeat(32)}_0`] })).toBe('unbound')
-  })
-})
-
-describe('token attestation gap names the step a held deploy lacks', () => {
-  const claimed = PrivateKey.fromRandom().toPublicKey().toString()
-  const fundTxid = '22'.repeat(32)
-  const deployScript = () => tokenOutput(new P2PKH().lock(PrivateKey.fromRandom().toAddress()).toHex()).lockingScript
-
-  function retainDeploy(lockingScript: string): string {
-    const tx = new Transaction()
-    tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
-    tx.addOutput({ satoshis: 1, lockingScript: Script.fromHex(lockingScript) })
-    const beef = new Beef()
-    beef.mergeRawTx(tx.toBinary())
-    state.retained.set(tx.id('hex'), beef)
-    return `${tx.id('hex')}_0`
-  }
-
-  it('a deploy with neither issuer tape nor Sigma stands on a remittance claim only', () => {
-    const tokenId = retainDeploy(deployScript())
-    expect(tokenAttestationGap({ tokenId, issuer: claimed, tipOutpoints: [tokenId] })).toBe('remittance-only')
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('unsigned-mint')
-  })
-
-  it('a deploy whose tape names an issuer it carries no Sigma for is unsigned', () => {
-    const tokenId = retainDeploy(appendIssuerMetadata(deployScript(), claimed))
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('unsigned')
-  })
-
-  it('a deploy Sigma-signed by another key does not attest the claimed issuer', () => {
-    const signer = PrivateKey.fromRandom()
-    const tokenId = retainDeploy(
-      sigmaSignDeployLockingScript({ lockingScriptHex: deployScript(), fundTxid, fundVout: 0, identityKeyHex: signer.toHex() }),
-    )
-    expect(tokenAttestationGap({ tokenId, issuer: claimed, tipOutpoints: [tokenId] })).toBe('unsigned')
-    expect(
-      tokenAttestationGap({ tokenId, issuer: signer.toPublicKey().toString(), tipOutpoints: [tokenId] }),
-    ).toBe('attested')
-  })
-
-  it('a deploy with a valid Sigma and no issuer tape, as 1sat-sdk writes it, is signer-only, not unsigned', () => {
-    const signer = PrivateKey.fromRandom()
-    const tokenId = retainDeploy(
-      sigmaSignDeployLockingScript({ lockingScriptHex: deployScript(), fundTxid, fundVout: 0, identityKeyHex: signer.toHex() }),
-    )
-    expect(retainedIssuerMetadata(tokenId)).toEqual({})
-    expect(tokenAttestationGap({ tokenId, tipOutpoints: [tokenId] })).toBe('signer-only')
   })
 })

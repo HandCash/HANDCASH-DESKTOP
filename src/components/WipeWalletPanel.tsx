@@ -1,6 +1,7 @@
 import { Button, Field } from '@aeon-ui/react'
 import { Checkbox } from "@aeon-ui/ui";
 import { useMachine } from "@xstate/react";
+import { useEffect, useState } from "react";
 import { stateToAttr } from "@aeon-ui/core";
 import { wipeMachine } from "../machines/wipeMachine";
 import { StatusBanner } from "@aeon-ui/react";
@@ -12,7 +13,7 @@ import {
   wipeRefusalMessage,
   type WipeHistoryGate,
 } from "../wallet/wipeHistoryGate";
-import { getCachedFungibles } from "../wallet/token/list";
+import { listBntAssets } from "../wallet/bnt/wallet";
 import { playWalletSound } from "../wallet/soundService";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { AsyncActionPrompt } from "./AsyncActionPrompt";
@@ -31,7 +32,18 @@ export function WipeWalletPanel() {
     snapshot.context.confirmText.trim().toUpperCase() === CONFIRM_WORD;
 
   const busy = snapshot.matches("syncing") || snapshot.matches("wiping");
-  const tokensHeld = getCachedFungibles().length;
+  const [tokensHeld, setTokensHeld] = useState(0);
+  useEffect(() => {
+    let live = true;
+    listBntAssets()
+      .then(({ assets }) => {
+        if (live) setTokensHeld(assets.filter((asset) => asset.kind === "token").length);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const wipeWith = async (gate: WipeHistoryGate) => {
     try {

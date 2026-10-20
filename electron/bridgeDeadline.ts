@@ -26,10 +26,6 @@ const SPEND_METHODS = new Set([
   'createmarketpurchaseintent',
   'purchasemarketlisting',
   'createcancelmarketlistingadvert',
-  'createdirectoffer',
-  'buydirectoffer',
-  'collectdirectofferproceeds',
-  'canceldirectoffer',
 ])
 
 function methodOf(path: string): string {

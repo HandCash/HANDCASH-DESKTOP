@@ -38,7 +38,7 @@ import {
 } from './publicIdentities'
 import type { ActiveWallet } from './session'
 import { runExclusiveSpend } from './spendGuard'
-import { completeBsv21SignableWithRootP2pkh } from './token/issuer'
+import { completeSignableWithTipKeys } from './signableCompletion'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 /**
@@ -340,7 +340,7 @@ async function sendIdentityLink(
     await abortQuietly(active, anchorTxid)
     throw error
   }
-  const signed = await completeBsv21SignableWithRootP2pkh(active, { reference: staged.reference, tx: staged.tx }, [
+  const signed = await completeSignableWithTipKeys(active, { reference: staged.reference, tx: staged.tx }, [
     anchorOutpoint,
   ])
   try {

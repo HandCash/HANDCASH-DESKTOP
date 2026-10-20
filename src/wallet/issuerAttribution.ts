@@ -1,9 +1,7 @@
-import { Hash, Utils, type Transaction } from '@bsv/sdk'
+import { Hash, Utils } from '@bsv/sdk'
 import { peekSessionBeef } from './beefCache'
-import { brc162StampFromScript, brc162StampNames, issuerMetadataFromScript } from './issuerMetadata'
-import { decodeBsv21Binary } from './token/decode162'
-import { retainedTokenGenesis } from './token/genesisStore'
-import { sigmaSignerIs, verifiedSigmaSigner, type SigmaSigner } from './token/issuer'
+import { issuerMetadataFromScript } from './issuerMetadata'
+import { sigmaSignerIs, verifiedSigmaSigner, type SigmaSigner } from './sigmaIssuer'
 
 export type RetainedIssuer = { issuer?: string; bapId?: string }
 
@@ -45,8 +43,7 @@ function outpointKey(outpoint: string): { key: string; txid: string; vout: numbe
 
 function retainedEntry(txid: string) {
   try {
-    const session = peekSessionBeef(txid)
-    const beef = session?.findTxid(txid)?.tx ? session : retainedTokenGenesis(txid)
+    const beef = peekSessionBeef(txid)
     const entry = beef?.findTxid(txid)
     if (!beef || !entry?.tx) return null
     const minedHeight =
@@ -76,10 +73,8 @@ function entryFor(outpoint: string): Entry | null {
   const retained = retainedEntry(at.txid)
   const script = retained?.tx.outputs[at.vout]?.lockingScript.toHex()
   if (!retained || !script) return null
-  const stampAt = at.vout === 0 ? brc162StampIndex(retained.tx, script) : null
-  const tapeScript = stampAt === null ? script : retained.tx.outputs[stampAt]!.lockingScript.toHex()
-  const metadata = issuerMetadataFromScript(tapeScript)
-  const sigma = tapeScript.toLowerCase().includes(SIGMA_MARKER)
+  const metadata = issuerMetadataFromScript(script)
+  const sigma = script.toLowerCase().includes(SIGMA_MARKER)
   return remember(at.key, {
     ...(metadata.issuer ? { issuer: metadata.issuer } : {}),
     ...(metadata.bapId ? { bapId: metadata.bapId } : {}),
@@ -89,23 +84,8 @@ function entryFor(outpoint: string): Entry | null {
     scriptHash: hashScript(script),
     scriptLength: script.length,
     sigma,
-    signer: sigma ? verifiedSigmaSigner(retained.tx, stampAt ?? at.vout) : null,
+    signer: sigma ? verifiedSigmaSigner(retained.tx, at.vout) : null,
   })
-}
-
-/**
- * BRC-247: the stamp output of a BRC-162 deploy at output 0. Two stamps, or
- * one naming a different lock, assert nothing.
- */
-function brc162StampIndex(tx: Transaction, deployScript: string): number | null {
-  const binary = decodeBsv21Binary(deployScript)
-  if (binary?.layout !== 'brc162' || binary.role !== 'deploy') return null
-  const stamps = tx.outputs.flatMap((out, i) => {
-    const stamp = brc162StampFromScript(out.lockingScript.toHex())
-    return stamp ? [{ i, stamp }] : []
-  })
-  if (stamps.length !== 1 || !brc162StampNames(stamps[0]!.stamp, deployScript)) return null
-  return stamps[0]!.i
 }
 
 /** Issuer tape on a retained output; null until its transaction is held. */

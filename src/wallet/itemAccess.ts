@@ -10,29 +10,28 @@
  */
 
 import { normalizeAppHost } from './appIdentity'
-import { decodeBsv21Binary, isBsv21BinaryScript } from './token'
 import {
-  LEGACY_TOKEN_BASKET,
-  P2PFT_BASKET,
+  COMPACT_ITEM_BASKET,
+  ITEM_STORAGE_BASKET,
+  TOKEN_BASKET,
   isFilingTag,
   isTokenFilingBasket,
   isTokenPermissionScheme,
   tokenIdFromFilingTags,
-} from './token/filing'
+} from './assetBaskets'
 import { looksLikeRetiredFungibleTip } from './retiredFungible'
-import { hctAssetId, isHctAssetId, looksLikeHct, readHct } from './hct/script'
+import { bntAssetId, isBntAssetId, looksLikeBnt, readBnt } from './bnt/script'
 
-/** Storage basket that holds collectables — not spendable under normal pay. */
-export const ITEM_STORAGE_BASKET = '1sat'
+export { ITEM_STORAGE_BASKET }
 
 /**
  * Open BRC-255 items. Filed apart from 1Sat, viewed under the same item grant
- * (`p p2pnft …` takes `p 1sat` scopes), and written only by the wallet.
+ * (`p bntnft …` takes `p 1sat` scopes), and written only by the wallet.
  */
-export const P2PNFT_BASKET = 'p2pnft'
+export const BNTNFT_BASKET = COMPACT_ITEM_BASKET
 
-/** Storage basket for new P2P-FT outputs. Legacy rows still live under `bsv21`. */
-export const FUNGIBLE_STORAGE_BASKET = P2PFT_BASKET
+/** Storage basket for compact token outputs. */
+export const FUNGIBLE_STORAGE_BASKET = TOKEN_BASKET
 
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
@@ -40,17 +39,13 @@ export const ITEM_SCHEME = '1sat'
 /** Baskets that hold collectables / tokens — not spendable under normal pay.
  * Recursive inscription content (HTML/JS that references other inscriptions)
  * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
- * P2P-FT tips live in `p2pft` (legacy `bsv21` until moved). They are not Pay / balanceView.
+ * Compact token tips live in `bntft`. They are not Pay / balanceView.
  */
 export const ITEM_BASKETS = new Set<string>([
   ITEM_STORAGE_BASKET,
-  P2PNFT_BASKET,
+  BNTNFT_BASKET,
   FUNGIBLE_STORAGE_BASKET,
-  LEGACY_TOKEN_BASKET,
 ])
-
-/** BRC-99 permission scheme ID for BSV-21 tokens. */
-export const TOKEN_SCHEME = 'bsv21'
 
 export type ItemAccess = {
   /** Inventory visibility for this app. */
@@ -76,10 +71,10 @@ export const DEFAULT_ITEM_ACCESS: ItemAccess = {
   canReceive: false,
 }
 
-/** Inventory visibility for BSV-21 tokens — never implied by item view. */
+/** Inventory visibility for tokens — never implied by item view. */
 export type TokenAccess = {
   view: 'none' | 'all' | 'filtered'
-  /** Allowed token ids (deploy outpoints) when view === 'filtered'. */
+  /** Allowed 40-hex asset ids when view === 'filtered'. */
   ids: string[]
   /** Allowed BRC-164 held-row keys when view === 'filtered'. */
   keys: string[]
@@ -92,18 +87,18 @@ export const DEFAULT_TOKEN_ACCESS: TokenAccess = {
 }
 
 /**
- * `token` filters by token id (`p2pft:<tokenId>` tags). `id` is the BRC-165
+ * `token` filters by token id (`bntft:<tokenId>` tags). `id` is the BRC-165
  * held-row lookup (`id:<key>` tags), the same axis as `p 1sat id`.
  */
 export type TokenViewScope = 'plain' | 'all' | 'token' | 'id'
 
 export type TokenViewRequest = {
   scope: TokenViewScope
-  /** Token ids (deploy outpoints) for scope `token`. */
+  /** 40-hex asset ids for scope `token`. */
   ids: string[]
   /** BRC-164 held-row keys for scope `id`. */
   keys: string[]
-  /** True for plain `p2pft` or `p p2pft all`. */
+  /** True for plain `bntft` or `p bntft all`. */
   wantsAll: boolean
 }
 
@@ -156,18 +151,6 @@ export function p1SatSpendIds(args: unknown): string[] {
   return [...new Set(ids)]
 }
 
-/** BRC-165-shaped held-row keys named by `p p2pft input id <key>` spend labels. */
-export function p2pftSpendIds(args: unknown): string[] {
-  const labels = asRecord(args).labels
-  if (!Array.isArray(labels)) return []
-  const ids = labels.flatMap((label) => {
-    if (typeof label !== 'string') return []
-    const match = /^p p2pft input id ([^\s]+)$/.exec(label)
-    return match?.[1] ? [match[1].toLowerCase()] : []
-  })
-  return [...new Set(ids)]
-}
-
 function tagValues(tags: string[], prefixes: string[]): string[] {
   const out: string[] = []
   for (const tag of tags) {
@@ -214,69 +197,71 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
 }
 
 /** Item permission schemes and their storage baskets: one grant covers both. */
-function itemScheme(name: unknown): typeof ITEM_STORAGE_BASKET | typeof P2PNFT_BASKET | null {
+function itemScheme(name: unknown): typeof ITEM_STORAGE_BASKET | typeof BNTNFT_BASKET | null {
   const n = typeof name === 'string' ? name.trim().toLowerCase() : ''
-  return n === ITEM_SCHEME ? ITEM_STORAGE_BASKET : n === P2PNFT_BASKET ? P2PNFT_BASKET : null
+  return n === ITEM_SCHEME ? ITEM_STORAGE_BASKET : n === BNTNFT_BASKET ? BNTNFT_BASKET : null
 }
 
-/** An asset id as views compare it: a BRC-162 deploy outpoint, or a BRC-255 40-hex id. */
+/** A 40-hex compact asset id (draft BRC-255), or null. */
 function assetIdOf(value: string): string | null {
-  const outpoint = normalizeOutpointId(value)
-  if (outpoint) return outpoint
   const lower = value.trim().toLowerCase()
-  return isHctAssetId(lower) ? lower : null
+  return isBntAssetId(lower) ? lower : null
 }
 
 /** Filings only the wallet writes or forgets: a lost row takes its holder key's remittance with it. */
 function namesWalletOnlyFiling(basket: unknown): boolean {
   const p = parsePBasket(basket)
   const name = (p ? p.scheme : typeof basket === 'string' ? basket : '').trim().toLowerCase()
-  return name === P2PNFT_BASKET || countersignedScheme(name) != null
+  return name === BNTNFT_BASKET || name === TOKEN_BASKET || countersignedScheme(name) != null
 }
 
 /**
- * Apps never write HCT (BRC-255 §12): no HCT script in an output, nothing
- * filed into `p2pnft`, no `p p2pnft input id` spend, and no relinquishing a
- * wallet-only row. HCT moves through `transferHctAsset` alone.
+ * Apps never write BNT (BRC-255 §12): no BNT script in an output, nothing
+ * filed into `bntft` or `bntnft`, no `p bntft|bntnft input id` spend, and no
+ * relinquishing a wallet-only row. BNT moves through `transferBntAsset` alone.
  */
-export function hctWriteRefusal(args: unknown): string | null {
+export function bntWriteRefusal(args: unknown): string | null {
   const body = asRecord(args)
   if (typeof body.output === 'string' && namesWalletOnlyFiling(body.basket)) {
     return 'Wallet-only assets are never relinquished by an app.'
   }
   const labels = Array.isArray(body.labels) ? body.labels : []
-  if (labels.some((l) => typeof l === 'string' && /^p p2pnft input id /i.test(l))) {
-    return 'HCT items move only through transferHctAsset.'
+  if (labels.some((l) => typeof l === 'string' && /^p bntn?ft input id /i.test(l))) {
+    return 'BNT assets move only through transferBntAsset.'
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
   for (const raw of outputs) {
     const out = asRecord(raw)
     const rem = asRecord(out.insertionRemittance)
-    const filesP2pnft = (basket: unknown) =>
-      itemScheme(parsePBasket(basket)?.scheme ?? basket) === P2PNFT_BASKET
-    if (filesP2pnft(out.basket) || filesP2pnft(rem.basket)) {
-      return 'Only the wallet files HCT items; apps cannot write basket "p2pnft".'
+    const filesBntnft = (basket: unknown) =>
+      itemScheme(parsePBasket(basket)?.scheme ?? basket) === BNTNFT_BASKET
+    if (filesBntnft(out.basket) || filesBntnft(rem.basket)) {
+      return 'Only the wallet files BNT items; apps cannot write basket "bntnft".'
     }
-    if (typeof out.lockingScript === 'string' && looksLikeHct(out.lockingScript)) {
-      return 'HCT outputs are written only by the wallet (issueHctAsset / mintHctAsset / transferHctAsset).'
+    const filesBntft = (basket: unknown) => isTokenFilingBasket(parsePBasket(basket)?.scheme ?? basket)
+    if (filesBntft(out.basket) || filesBntft(rem.basket)) {
+      return 'Only the wallet files BNT tokens; apps cannot write basket "bntft".'
+    }
+    if (typeof out.lockingScript === 'string' && looksLikeBnt(out.lockingScript)) {
+      return 'BNT outputs are written only by the wallet (issueBntAsset / mintBntAsset / transferBntAsset).'
     }
   }
   return null
 }
 
 /**
- * Countersigned (issuer-accepted) profiles: `csft` fungible tokens, `csnft`
+ * Countersigned (issuer-accepted) profiles: `iptft` fungible tokens, `iptnft`
  * items. Each has its own filing basket and BRC-99 permission scheme, beside
- * `p2pft` and `1sat`.
+ * `bntft` and `1sat`.
  */
-export const CSFT = 'csft'
-export const CSNFT = 'csnft'
-export type CountersignedScheme = typeof CSFT | typeof CSNFT
-export const COUNTERSIGNED_SCHEMES: readonly CountersignedScheme[] = [CSFT, CSNFT]
+export const IPTFT = 'iptft'
+export const IPTNFT = 'iptnft'
+export type CountersignedScheme = typeof IPTFT | typeof IPTNFT
+export const COUNTERSIGNED_SCHEMES: readonly CountersignedScheme[] = [IPTFT, IPTNFT]
 
 /** The profile for a deploy's kind. */
 export function countersignedSchemeFor(kind: 'token' | 'item'): CountersignedScheme {
-  return kind === 'item' ? CSNFT : CSFT
+  return kind === 'item' ? IPTNFT : IPTFT
 }
 
 function countersignedScheme(name: unknown): CountersignedScheme | null {
@@ -294,11 +279,11 @@ export type CountersignedViewRequest = {
 }
 
 const COUNTERSIGNED_SCOPES: Record<CountersignedScheme, CountersignedViewScope[]> = {
-  [CSFT]: ['all', 'asset', 'id'],
-  [CSNFT]: ['all', 'asset', 'collection', 'id'],
+  [IPTFT]: ['all', 'asset', 'id'],
+  [IPTNFT]: ['all', 'asset', 'collection', 'id'],
 }
 
-/** `p csft …` / `p csnft …` view basket (never the bare filing name). */
+/** `p iptft …` / `p iptnft …` view basket (never the bare filing name). */
 export function countersignedViewScheme(basket: unknown): CountersignedScheme | null {
   const p = parsePBasket(basket)
   return p ? countersignedScheme(p.scheme) : null
@@ -310,21 +295,20 @@ function namesCountersignedFiling(basket: unknown): boolean {
 
 /**
  * Apps never write into a countersigned filing or spend from it with a label:
- * outputs land there only after the wallet resolves an issuer-accepted
- * transfer, and transfers go through `transferCountersignedAsset`.
+ * only the wallet files there, after it resolves an issuer-accepted transfer.
  */
 export function countersignedWriteRefusal(args: unknown): string | null {
   const body = asRecord(args)
   const labels = Array.isArray(body.labels) ? body.labels : []
-  if (labels.some((l) => typeof l === 'string' && /^p (csft|csnft) input id /i.test(l))) {
-    return 'Issuer-accepted assets move only through transferCountersignedAsset.'
+  if (labels.some((l) => typeof l === 'string' && /^p (iptft|iptnft) input id /i.test(l))) {
+    return 'Issuer-accepted assets are moved only by the wallet.'
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
   for (const raw of outputs) {
     const out = asRecord(raw)
     const rem = asRecord(out.insertionRemittance)
     if (namesCountersignedFiling(out.basket) || namesCountersignedFiling(rem.basket)) {
-      return 'Only the wallet files issuer-accepted outputs; apps cannot write baskets "csft" or "csnft".'
+      return 'Only the wallet files issuer-accepted outputs; apps cannot write baskets "iptft" or "iptnft".'
     }
   }
   return null
@@ -337,11 +321,13 @@ export function countersignedAssetOfRow(
 ): string | null {
   const tags = Array.isArray(row.tags) ? row.tags.filter((t): t is string => typeof t === 'string') : []
   for (const value of tagValues(tags, [`${scheme}:`])) {
-    const id = normalizeOutpointId(value)
-    if (id) return id.replace('.', '_')
+    const id = assetIdOf(value)
+    if (id) return id
   }
   if (tags.includes(`${scheme}:deploy`) && typeof row.outpoint === 'string') {
-    return normalizeOutpointId(row.outpoint)?.replace('.', '_') ?? null
+    const at = normalizeOutpointId(row.outpoint)
+    const vout = at ? Number(at.slice(65)) : -1
+    return at && vout <= 255 ? bntAssetId(at.slice(0, 64), vout) : null
   }
   return null
 }
@@ -408,7 +394,7 @@ function prepareCountersignedView(body: Record<string, unknown>, scheme: Counter
     const raw = tagValues(tags, [prefix])
     values =
       scope === 'asset'
-        ? raw.flatMap((v) => normalizeOutpointId(v)?.replace('.', '_') ?? [])
+        ? raw.flatMap((v) => assetIdOf(v) ?? [])
         : raw.map((v) => v.toLowerCase())
     if (values.length === 0) {
       return {
@@ -424,18 +410,18 @@ function prepareCountersignedView(body: Record<string, unknown>, scheme: Counter
 
 /**
  * Collectable view / spend basket: plain `1sat` or BRC-99 `p 1sat <scope>`.
- * `bsv21` is not an item view; it has its own token gate.
+ * `bntft` is not an item view; it has its own token gate.
  */
 export function isItemBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim()
   const lower = t.toLowerCase()
-  if (lower === ITEM_STORAGE_BASKET || lower === P2PNFT_BASKET) return true
+  if (lower === ITEM_STORAGE_BASKET || lower === BNTNFT_BASKET) return true
   const p = parsePBasket(t)
   return !!p && itemScheme(p.scheme) != null
 }
 
-/** Token view basket: `p2pft`, legacy `bsv21`, or `p bsv21` / `p p2pft`. */
+/** Token view basket: `bntft` or `p bntft …`. */
 export function isTokenViewBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim()
@@ -448,7 +434,7 @@ export function isTokenViewBasket(basket: unknown): boolean {
 export function isBareStorageInventoryBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim().toLowerCase()
-  return t === ITEM_STORAGE_BASKET || t === P2PNFT_BASKET || isTokenFilingBasket(t)
+  return t === ITEM_STORAGE_BASKET || t === BNTNFT_BASKET || isTokenFilingBasket(t)
 }
 
 /**
@@ -495,19 +481,10 @@ export function parseTokenViewRequest(args: unknown): TokenViewRequest {
   const p = parsePBasket(body.basket)
   if (p && isTokenPermissionScheme(p.scheme)) {
     const rest = p.rest.toLowerCase()
-    const filed = tagValues(tags, ['p2pft:', 'bsv21:']).flatMap((v) => assetIdOf(v) ?? [])
-    const idValues = tagValues(tags, ['id:'])
-    // Before row keys, `p p2pft id` took token ids (`p2pft:<tokenId>`, or an
-    // outpoint in `id:`). Those requests still filter by token.
-    const legacyTokenIds = idValues.filter((v) => normalizeOutpointId(v))
-    const keys = idValues.filter((v) => !normalizeOutpointId(v)).map((v) => v.toLowerCase())
-    if (rest === 'token' || (rest === 'id' && keys.length === 0)) {
-      return {
-        scope: 'token',
-        ids: [...new Set([...filed, ...legacyTokenIds])],
-        keys: [],
-        wantsAll: false,
-      }
+    const filed = tagValues(tags, [`${TOKEN_BASKET}:`]).flatMap((v) => assetIdOf(v) ?? [])
+    const keys = tagValues(tags, ['id:']).map((v) => v.toLowerCase())
+    if (rest === 'token') {
+      return { scope: 'token', ids: [...new Set(filed)], keys: [], wantsAll: false }
     }
     if (rest === 'id') {
       return { scope: 'id', ids: [], keys: [...new Set(keys)], wantsAll: false }
@@ -557,9 +534,9 @@ export function prepareItemBasketArgs(args: unknown): {
   if (countersignedWrite) {
     return { args, error: { code: 'COUNTERSIGNED_WALLET_ONLY', description: countersignedWrite } }
   }
-  const hctWrite = hctWriteRefusal(body)
-  if (hctWrite) {
-    return { args, error: { code: 'HCT_WALLET_ONLY', description: hctWrite } }
+  const bntWrite = bntWriteRefusal(body)
+  if (bntWrite) {
+    return { args, error: { code: 'BNT_WALLET_ONLY', description: bntWrite } }
   }
   const bareCountersigned = countersignedScheme(body.basket)
   if (bareCountersigned) {
@@ -590,12 +567,12 @@ export function prepareItemBasketArgs(args: unknown): {
         error: {
           code: 'USE_P1SAT_SCOPE',
           description:
-            'Use BRC-165 basket "p 1sat all|collection|app|creator|id" or "p p2pnft …" with the same scopes (filter values in tags). Storage baskets "1sat" and "p2pnft" are wallet-internal.',
+            'Use BRC-165 basket "p 1sat all|collection|app|creator|id" or "p bntnft …" with the same scopes (filter values in tags). Storage baskets "1sat" and "bntnft" are wallet-internal.',
         },
       }
     }
     const storage = itemScheme(p.scheme)!
-    const scheme = storage === P2PNFT_BASKET ? P2PNFT_BASKET : ITEM_SCHEME
+    const scheme = storage === BNTNFT_BASKET ? BNTNFT_BASKET : ITEM_SCHEME
     const scope = p.rest.toLowerCase()
     const allowedScopes = new Set(['all', 'collection', 'app', 'creator', 'id'])
     if (!allowedScopes.has(scope) || p.rest !== scope) {
@@ -632,9 +609,9 @@ export function prepareItemBasketArgs(args: unknown): {
       return {
         args,
         error: {
-          code: 'USE_PBSV21_SCOPE',
+          code: 'USE_TOKEN_SCOPE',
           description:
-            'Use BRC-99 basket "p p2pft all|token|id" (filter values in tags). Storage baskets "p2pft" and "bsv21" are wallet-internal.',
+            'Use BRC-99 basket "p bntft all|token|id" (filter values in tags). Storage basket "bntft" is wallet-internal.',
         },
       }
     }
@@ -644,8 +621,8 @@ export function prepareItemBasketArgs(args: unknown): {
       return {
         args,
         error: {
-          code: 'INVALID_PBSV21_SCOPE',
-          description: 'Use exactly "p p2pft all|token|id"; filter values belong in tags.',
+          code: 'INVALID_TOKEN_SCOPE',
+          description: 'Use exactly "p bntft all|token|id"; filter values belong in tags.',
         },
       }
     }
@@ -656,11 +633,11 @@ export function prepareItemBasketArgs(args: unknown): {
       return {
         args,
         error: {
-          code: 'MISSING_PBSV21_SCOPE_TAG',
+          code: 'MISSING_TOKEN_SCOPE_TAG',
           description:
             scope === 'id'
-              ? 'Basket "p p2pft id" requires at least one "id:<key>" tag.'
-              : 'Basket "p p2pft token" requires at least one "p2pft:<tokenId>" tag.',
+              ? 'Basket "p bntft id" requires at least one "id:<key>" tag.'
+              : 'Basket "p bntft token" requires at least one "bntft:<assetId>" tag.',
         },
       }
     }
@@ -677,9 +654,6 @@ export function prepareItemBasketArgs(args: unknown): {
         if (parsePBasket(out.basket)) out.basket = ITEM_STORAGE_BASKET
         out.tags = stampBrc164Id(out.tags)
         changed = true
-      } else if (typeof out.basket === 'string' && isTokenFilingBasket(out.basket)) {
-        out.tags = stampBrc164Id(out.tags)
-        changed = true
       }
       if (out.protocol === 'basket insertion') {
         const rem =
@@ -688,10 +662,6 @@ export function prepareItemBasketArgs(args: unknown): {
             : null
         if (rem && typeof rem.basket === 'string' && isItemBasket(rem.basket)) {
           if (parsePBasket(rem.basket)) rem.basket = ITEM_STORAGE_BASKET
-          rem.tags = stampBrc164Id(rem.tags)
-          out.insertionRemittance = rem
-          changed = true
-        } else if (rem && typeof rem.basket === 'string' && isTokenFilingBasket(rem.basket)) {
           rem.tags = stampBrc164Id(rem.tags)
           out.insertionRemittance = rem
           changed = true
@@ -708,7 +678,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat", "p2pnft", "bsv21", "p2pft", "csft" and "csnft" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bntnft", "bntft", "iptft" and "iptnft" are implemented.`
     }
     return null
   }
@@ -722,7 +692,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only schemes "1sat", "p2pnft", "bsv21", "p2pft", "csft" and "csnft" are implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat", "bntnft", "bntft", "iptft" and "iptnft" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err
@@ -731,18 +701,13 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   return null
 }
 
-/** True when the basket is the BSV-21 fungible storage basket. */
-export function isBsv21Basket(value: unknown): boolean {
-  return isTokenFilingBasket(value)
-}
-
 /**
- * True when createAction / labels / outputs look like a BSV-21 fungible transfer.
+ * True when createAction / labels / outputs look like a token transfer.
  * Checked before {@link isItemSpendArgs} so permission copy says "Send token".
  */
-export function isBsv21SpendArgs(method: string, args: unknown): boolean {
+export function isTokenSpendArgs(method: string, args: unknown): boolean {
   if (method === 'relinquishOutput') {
-    return isBsv21Basket(asRecord(args).basket)
+    return isTokenFilingBasket(asRecord(args).basket)
   }
   if (method !== 'createAction' && method !== 'signAction') return false
 
@@ -750,7 +715,6 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
-  if (p2pftSpendIds(args).length > 0) return true
   if (
     labels.some(
       (l) =>
@@ -765,7 +729,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   for (const raw of outputs) {
     if (!raw || typeof raw !== 'object') continue
     const out = raw as Record<string, unknown>
-    if (isBsv21Basket(out.basket)) return true
+    if (isTokenFilingBasket(out.basket)) return true
     const tags = Array.isArray(out.tags)
       ? out.tags.filter((t): t is string => typeof t === 'string')
       : []
@@ -775,7 +739,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
     if (
       out.satoshis === 1 &&
       typeof out.outputDescription === 'string' &&
-      /bsv-?21|fungible|token transfer/i.test(out.outputDescription)
+      /fungible|token transfer/i.test(out.outputDescription)
     ) {
       return true
     }
@@ -785,7 +749,7 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   for (const raw of inputs) {
     if (!raw || typeof raw !== 'object') continue
     const desc = (raw as { inputDescription?: unknown }).inputDescription
-    if (typeof desc === 'string' && /bsv-?21|fungible|token tip/i.test(desc)) {
+    if (typeof desc === 'string' && /fungible|token tip/i.test(desc)) {
       return true
     }
   }
@@ -793,8 +757,8 @@ export function isBsv21SpendArgs(method: string, args: unknown): boolean {
   return false
 }
 
-/** Basket insertion of BSV-21 fungibles (receive / import). */
-export function isBsv21ReceiveArgs(method: string, args: unknown): boolean {
+/** Basket insertion of tokens (receive / import). */
+export function isTokenReceiveArgs(method: string, args: unknown): boolean {
   if (method !== 'internalizeAction') return false
   const body = asRecord(args)
   const labels = Array.isArray(body.labels)
@@ -812,7 +776,7 @@ export function isBsv21ReceiveArgs(method: string, args: unknown): boolean {
         out.insertionRemittance && typeof out.insertionRemittance === 'object'
           ? (out.insertionRemittance as Record<string, unknown>)
           : null
-      if (rem && isBsv21Basket(rem.basket)) return true
+      if (rem && isTokenFilingBasket(rem.basket)) return true
     }
   }
   return false
@@ -1137,12 +1101,12 @@ export function tokenViewGranted(access: TokenAccess, request: TokenViewRequest)
   return false
 }
 
-/** BRC-164 held-row key of a token output. Outpoint-shaped `id:` tags are legacy token ids. */
+/** BRC-164 held-row key of a token output. */
 function tokenRowKey(tags: string[] | undefined): string | undefined {
   for (const t of tags ?? []) {
     if (!t.toLowerCase().startsWith('id:') || t.length <= 3) continue
     const value = t.slice(3).trim()
-    if (value && !normalizeOutpointId(value)) return value.toLowerCase()
+    if (value) return value.toLowerCase()
   }
   return undefined
 }
@@ -1158,32 +1122,19 @@ function tokenIdFromOutput(
   lockingScript?: unknown,
   outpoint?: string,
 ): string | undefined {
-  const hct = typeof lockingScript === 'string' ? readHct(lockingScript) : null
-  if (hct?.form === 'held' || hct?.form === 'authority') return hct.assetId
-  if (hct?.form === 'deploy' && outpoint) {
+  const bnt = typeof lockingScript === 'string' ? readBnt(lockingScript) : null
+  if (bnt?.form === 'held' || bnt?.form === 'authority') return bnt.assetId
+  if (bnt?.form === 'deploy' && outpoint) {
     const at = normalizeOutpointId(outpoint)
     const vout = at ? Number(at.slice(65)) : -1
-    if (at && vout <= 255) return hctAssetId(at.slice(0, 64), vout)
+    if (at && vout <= 255) return bntAssetId(at.slice(0, 64), vout)
   }
-  const tagList = tags ?? []
-  for (const t of tagList) {
-    const filed = tokenIdFromFilingTags([t])
-    if (filed) {
-      const id = assetIdOf(filed)
-      if (id) return id
-    }
-    if (t.toLowerCase().startsWith('id:') && t.length > 3) {
-      const id = normalizeOutpointId(t.slice(3))
-      if (id) return id
-    }
-  }
+  const filed = tokenIdFromFilingTags(tags)
+  const filedId = filed ? assetIdOf(filed) : null
+  if (filedId) return filedId
   if (customInstructions) {
     try {
       const o = JSON.parse(customInstructions) as Record<string, unknown>
-      if (typeof o.id === 'string' && o.id.trim()) {
-        const id = normalizeOutpointId(o.id)
-        if (id) return id
-      }
       if (typeof o.asset === 'string') {
         const id = assetIdOf(o.asset)
         if (id) return id
@@ -1192,9 +1143,6 @@ function tokenIdFromOutput(
       // ignore
     }
   }
-  const decoded = typeof lockingScript === 'string' ? decodeBsv21Binary(lockingScript) : null
-  if (decoded?.tokenId) return decoded.tokenId
-  if (decoded?.role === 'deploy' && outpoint) return normalizeOutpointId(outpoint)
   return undefined
 }
 
@@ -1376,7 +1324,7 @@ export function grantableCollectionIdsFromOutputs(outputs: unknown[]): {
   return { collections, apps }
 }
 
-/** Live BRC-162 tips only. */
+/** Live compact token tips only. */
 export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: string; ticker: string }> {
   const byId = new Map<string, string>()
   for (const raw of outputs) {
@@ -1395,20 +1343,18 @@ export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: stri
     ) {
       continue
     }
-    let proto = ''
     let sym: string | undefined
     if (custom) {
       try {
         const parsed = JSON.parse(custom) as Record<string, unknown>
-        proto = String(parsed.p ?? '').toLowerCase()
         if (typeof parsed.sym === 'string' && parsed.sym.trim()) sym = parsed.sym.trim()
       } catch {
         // ignore
       }
     }
     const tagged = tags.some((t) => isFilingTag(t))
-    const lockLooks = isBsv21BinaryScript(lockingScriptHexOf(o.lockingScript))
-    if (proto !== 'bsv-20' && proto !== 'bsv21' && !tagged && !lockLooks) continue
+    const lock = lockingScriptHexOf(o.lockingScript)
+    if (!tagged && !(lock && looksLikeBnt(lock))) continue
     const outpoint = typeof (o as { outpoint?: unknown }).outpoint === 'string'
       ? (o as { outpoint: string }).outpoint
       : undefined

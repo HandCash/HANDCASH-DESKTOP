@@ -35,12 +35,9 @@ import {
   MARKET_FEE_IDENTITY_KEY,
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
-import { decodeBsv21Binary } from './token'
-import { buildBsv21ValueLock } from './token'
 
-const TOKEN_ID = `${'ab'.repeat(32)}_0`
-
-function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: string) {
+function fixture(walletAddress?: string) {
+  const assetType = 'ordinal' as const
   const shape = marketSettlementShape(assetType)
   const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
   const seller = sellerKey.toPublicKey()
@@ -70,12 +67,7 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
   const listingTx = new Transaction()
   listingTx.addOutput({
     satoshis: 1,
-    lockingScript:
-      assetType === 'bsv21'
-        ? LockingScript.fromHex(
-            buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN_ID, amount: 60n, address: seller.toAddress() }),
-          )
-        : new P2PKH().lock(seller.toAddress()),
+    lockingScript: new P2PKH().lock(seller.toAddress()),
   })
   listingTx.addOutput({
     satoshis: 1,
@@ -98,12 +90,7 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
   for (const [sourceTransaction, sourceOutputIndex] of sources) {
     tx.addInput({ sourceTransaction, sourceOutputIndex, unlockingScript: new UnlockingScript() })
   }
-  const buyerItemLock =
-    assetType === 'bsv21'
-      ? LockingScript.fromHex(
-          buildBsv21ValueLock({ layout: 'brc162', tokenId: TOKEN_ID, amount: 60n, address: buyerAddress }),
-        )
-      : new P2PKH().lock(buyerAddress)
+  const buyerItemLock = new P2PKH().lock(buyerAddress)
   const outputs: Array<{ satoshis: number; lockingScript: LockingScript }> = []
   if (shape.padReturnOutputIndex != null) {
     outputs[shape.padReturnOutputIndex] = { satoshis: 2, lockingScript: new P2PKH().lock(buyerAddress) }
@@ -126,7 +113,6 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
     offerOutpoint: `${listingTx.id('hex')}_1`,
     offerLockingScript,
     assetType,
-    ...(assetType === 'bsv21' ? { amt: 60 } : {}),
     seller: fields.sellerIdentityKey,
     payTo: fields.payTo,
     priceSats: fields.grossPriceSats,
@@ -136,7 +122,7 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
     exactFeeSats: fields.exactFeeSats,
     depositSats: 1,
     messagebox: fields.messagebox,
-    origin: assetType === 'bsv21' ? TOKEN_ID : `${'cd'.repeat(32)}_0`,
+    origin: `${'cd'.repeat(32)}_0`,
     provenanceHash: fields.provenanceHash,
     provenanceSize: fields.provenanceSize,
     provenanceVersion: 2,
@@ -162,36 +148,30 @@ function fixture(assetType: 'ordinal' | 'bsv21' = 'ordinal', walletAddress?: str
 }
 
 describe('market exact settlement contract', () => {
-  it.each(['ordinal', 'bsv21'] as const)(
-    'accepts the %s layout with exact seller, fee, and buyer-only change',
-    (assetType) => {
-      const { tx, validate } = fixture(assetType)
-      expect(validate).not.toThrow()
-      expect(marketSettlementCommitment(tx)).toHaveLength(64)
-    },
-  )
+  it('accepts the ordinal layout with exact seller, fee, and buyer-only change', () => {
+    const { tx, validate } = fixture()
+    expect(validate).not.toThrow()
+    expect(marketSettlementCommitment(tx)).toHaveLength(64)
+  })
 
   it.each([
-    ['ordinal', 'buyer item', 'buyerOutputIndex', 2],
-    ['ordinal', 'seller proceeds/deposit', 'sellerOutputIndex', 96],
-    ['ordinal', 'exact fee', 'feeOutputIndex', 4],
-    ['bsv21', 'buyer item', 'buyerOutputIndex', 2],
-    ['bsv21', 'seller proceeds/deposit', 'sellerOutputIndex', 96],
-    ['bsv21', 'exact fee', 'feeOutputIndex', 4],
-  ] as const)('%s: rejects %s amount tampering', (assetType, _name, slot, sats) => {
-    const { tx, validate, shape } = fixture(assetType)
+    ['buyer item', 'buyerOutputIndex', 2],
+    ['seller proceeds/deposit', 'sellerOutputIndex', 96],
+    ['exact fee', 'feeOutputIndex', 4],
+  ] as const)('rejects %s amount tampering', (_name, slot, sats) => {
+    const { tx, validate, shape } = fixture()
     tx.outputs[shape[slot]]!.satoshis = sats
     expect(validate).toThrow(/outputs do not match/i)
   })
 
   it('rejects an ordinal pad return that would shift the item satoshi', () => {
-    const { tx, validate, shape } = fixture('ordinal')
+    const { tx, validate, shape } = fixture()
     tx.outputs[shape.padReturnOutputIndex!]!.satoshis = 1
     expect(validate).toThrow(/pad return/i)
   })
 
   it('rejects ordinal pads the buyer does not own', () => {
-    const { tx, validate, shape } = fixture('ordinal')
+    const { tx, validate, shape } = fixture()
     const stranger = new Transaction()
     stranger.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()) })
     tx.inputs[shape.padVins[0]!]!.sourceTransaction = stranger
@@ -201,7 +181,7 @@ describe('market exact settlement contract', () => {
   })
 
   it('a seller, who cannot derive the buyer pad children, accepts any P2PKH pad but nothing else', () => {
-    const { tx, validateAs, shape } = fixture('ordinal')
+    const { tx, validateAs, shape } = fixture()
     const child = new Transaction()
     child.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()) })
     child.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('006a') })
@@ -232,19 +212,17 @@ describe('market exact settlement contract', () => {
     duplicate.tx.inputs[funding]!.sourceOutputIndex = 0
     expect(duplicate.validate).toThrow(/duplicate/i)
 
-    for (const assetType of ['ordinal', 'bsv21'] as const) {
-      const swapped = fixture(assetType)
-      const { itemVin, offerVin } = swapped.shape
-      ;[swapped.tx.inputs[itemVin], swapped.tx.inputs[offerVin]] = [
-        swapped.tx.inputs[offerVin]!,
-        swapped.tx.inputs[itemVin]!,
-      ]
-      expect(swapped.validate).toThrow(/ordering/i)
-    }
+    const swapped = fixture()
+    const { itemVin, offerVin } = swapped.shape
+    ;[swapped.tx.inputs[itemVin], swapped.tx.inputs[offerVin]] = [
+      swapped.tx.inputs[offerVin]!,
+      swapped.tx.inputs[itemVin]!,
+    ]
+    expect(swapped.validate).toThrow(/ordering/i)
   })
 
   it('refuses a layout that does not match the listed asset', () => {
-    const { tx, listing, buyer } = fixture('ordinal')
+    const { tx, listing, buyer } = fixture()
     expect(() =>
       validateMarketSettlementOutputs({
         tx,
@@ -252,7 +230,7 @@ describe('market exact settlement contract', () => {
         listing,
         buyerIdentityKey: buyer.toString(),
         chain: 'main',
-        shape: marketSettlementShape('bsv21'),
+        shape: { ...marketSettlementShape('ordinal'), layout: 'token-v2' as never },
       }),
     ).toThrow(/layout/i)
   })
@@ -268,34 +246,6 @@ describe('market exact settlement contract', () => {
     const bareP2pkh = new P2PKH().lock(buyer.toAddress('mainnet')).toHex().toLowerCase()
     tx.outputs[shape.firstChangeIndex]!.lockingScript = LockingScript.fromHex(`0063036f7264${bareP2pkh}`)
     expect(validate).not.toThrow()
-  })
-
-  it('accepts 162 leftover token-change after the market fee', () => {
-    const { tx, validate, buyer } = fixture('bsv21')
-    tx.addOutput({
-      satoshis: 1,
-      lockingScript: LockingScript.fromHex(
-        buildBsv21ValueLock({ layout: 'brc162',
-          tokenId: TOKEN_ID,
-          amount: 7n,
-          address: buyer.toAddress('mainnet'),
-        }),
-      ),
-    })
-    expect(validate).not.toThrow()
-  })
-
-  it('rejects leftover 162 token-change that does not pay the buyer', () => {
-    const { tx, validate, shape } = fixture('bsv21')
-    tx.outputs[shape.firstChangeIndex]!.satoshis = 1
-    tx.outputs[shape.firstChangeIndex]!.lockingScript = LockingScript.fromHex(
-      buildBsv21ValueLock({ layout: 'brc162',
-        tokenId: TOKEN_ID,
-        amount: 7n,
-        address: PrivateKey.fromRandom().toPublicKey().toAddress('mainnet'),
-      }),
-    )
-    expect(validate).toThrow(/non-buyer change/i)
   })
 
   it('never drops a signed txid or AtomicBEEF when entering recovery', () => {
@@ -342,26 +292,12 @@ describe('market exact settlement contract', () => {
 })
 
 
-describe('bsv21 market settlement buyer lock', () => {
-  it('requires a 162 buyer item lock, not P2PKH', () => {
-    const { tx, validate, buyer, shape } = fixture('bsv21')
-    expect(validate).not.toThrow()
-    expect(decodeBsv21Binary(tx.outputs[shape.buyerOutputIndex]!.lockingScript.toHex())).toMatchObject({
-      role: 'value',
-      tokenId: TOKEN_ID,
-      amount: 60n,
-    })
-    tx.outputs[shape.buyerOutputIndex]!.lockingScript = new P2PKH().lock(buyer.toAddress('mainnet'))
-    expect(validate).toThrow(/outputs do not match/i)
-  })
-
+describe('market settlement buyer address', () => {
   it('accepts buyer wallet addresses that differ from the identity-derived address', () => {
     const wallet = PrivateKey.fromRandom().toPublicKey().toAddress('mainnet')
-    for (const assetType of ['ordinal', 'bsv21'] as const) {
-      const { validate, validateAs, buyer } = fixture(assetType, wallet)
-      expect(validate).not.toThrow()
-      expect(() => validateAs({ buyerAddress: buyer.toAddress('mainnet') })).toThrow()
-    }
+    const { validate, validateAs, buyer } = fixture(wallet)
+    expect(validate).not.toThrow()
+    expect(() => validateAs({ buyerAddress: buyer.toAddress('mainnet') })).toThrow()
   })
 })
 
@@ -406,7 +342,7 @@ describe('listingHasBuyerCompletableSettlement', () => {
       listingHasBuyerCompletableSettlement({ settlementUnlocks: null, assetType: 'ordinal' }),
     ).toBe(false)
     expect(
-      listingHasBuyerCompletableSettlement({ settlementUnlocks: unlocks, assetType: 'bsv21' }),
+      listingHasBuyerCompletableSettlement({ settlementUnlocks: unlocks, assetType: 'bsv21' as never }),
     ).toBe(false)
     for (const patch of [{ sellerSats: 1 }, { sellerSats: 96 }, { feeSats: 0 }, { itemUnlockingScript: '' }]) {
       expect(

@@ -10,7 +10,7 @@
  */
 import { ownershipFate } from './collectableOwnershipFate'
 import { classifyTipKind } from './collectableTipKind'
-import type { LockHolder } from './token/tipKeys'
+import type { LockHolder } from './tipKeys'
 
 /**
  * How long a tip missing from the address scan stays unjudged.

@@ -2,11 +2,13 @@ import 'fake-indexeddb/auto'
 import { MerklePath, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
 import { SetupClient, type Wallet } from '@handcash/wallet-engine'
 import { describe, expect, it } from 'vitest'
-import { decodeBsv21Binary, encodeBsv21Binary } from './token/decode162'
+import { TOKEN_BASKET } from './assetBaskets'
+import { bntHeldLock, readBnt } from './bnt/script'
 import { persistNoSendActions } from './toolboxActionBatch'
 
 const BRC29: [2, string] = [2, '3241645161d8']
-const TOKEN_ID = `${'ab'.repeat(32)}_0`
+const ASSET_ID = 'ab'.repeat(20)
+const LABEL = 'token transfer'
 
 async function fundedWallet(): Promise<{ wallet: Wallet; root: PrivateKey }> {
   const root = PrivateKey.fromRandom()
@@ -51,24 +53,24 @@ async function fundedWallet(): Promise<{ wallet: Wallet; root: PrivateKey }> {
   return { wallet: setup.wallet, root }
 }
 
-/** The shape of `sendBsv21Tokens`: a signed `noSend` action with token change in `bsv21`. */
+/** A signed `noSend` token send with its change filed in the token basket. */
 async function signedTokenSend(
   wallet: Wallet,
   root: PrivateKey,
 ): Promise<{ txid: string; tx: number[]; noSendChange: string[] }> {
   const created = await wallet.createAction({
     description: 'token transfer',
-    labels: ['bsv21'],
+    labels: [LABEL],
     outputs: [
       {
         satoshis: 1,
-        basket: 'bsv21',
+        basket: TOKEN_BASKET,
         outputDescription: 'token change',
-        tags: ['bsv21', `bsv21:${TOKEN_ID}`],
-        lockingScript: encodeBsv21Binary({
-          tokenId: TOKEN_ID,
+        tags: [TOKEN_BASKET, `${TOKEN_BASKET}:${ASSET_ID}`],
+        lockingScript: bntHeldLock({
+          assetId: ASSET_ID,
           amount: 3_000n,
-          rest: new P2PKH().lock(root.toAddress()).toHex(),
+          clause: { mode: 'open', holder: root.toPublicKey().toString() },
         }).toHex(),
       },
     ],
@@ -81,7 +83,7 @@ async function signedTokenSend(
 
 async function tokenChange(wallet: Wallet) {
   const listed = await wallet.listOutputs({
-    basket: 'bsv21',
+    basket: TOKEN_BASKET,
     include: 'locking scripts',
     limit: 100,
   })
@@ -112,12 +114,12 @@ describe('toolbox action batch', () => {
     const sent = await signedTokenSend(wallet, root)
     const { txid } = sent
 
-    const actions = await wallet.listActions({ labels: ['bsv21'], limit: 10 })
+    const actions = await wallet.listActions({ labels: [LABEL], limit: 10 })
     expect(actions.actions.map((a) => [a.txid, a.status])).toEqual([[txid, 'nosend']])
     const change = await tokenChange(wallet)
     expect(change.map((o) => o.outpoint)).toEqual([`${txid}.0`])
     expect(change[0]!.spendable).toBe(true)
-    expect(decodeBsv21Binary(change[0]!.lockingScript ?? '')).toMatchObject({ layout: 'brc162', tokenId: TOKEN_ID })
+    expect(readBnt(change[0]!.lockingScript ?? '')).toMatchObject({ form: 'held', assetId: ASSET_ID, amount: 3_000n })
 
     expect(sent.noSendChange.length).toBeGreaterThan(0)
     const next = await spendTokenChange(wallet, sent)
@@ -130,7 +132,7 @@ describe('toolbox action batch', () => {
     const sent = await signedTokenSend(wallet, root)
 
     expect(await tokenChange(wallet)).toEqual([])
-    expect((await wallet.listActions({ labels: ['bsv21'], limit: 10 })).actions).toEqual([])
+    expect((await wallet.listActions({ labels: [LABEL], limit: 10 })).actions).toEqual([])
     await expect(spendTokenChange(wallet, sent)).rejects.toThrow(/must be spendable wallet-managed output/)
   })
 
@@ -148,7 +150,7 @@ describe('toolbox action batch', () => {
       outputs: [
         {
           satoshis: 1,
-          basket: 'bsv21',
+          basket: TOKEN_BASKET,
           outputDescription: 'token change',
           lockingScript: new P2PKH().lock(root.toAddress()).toHex(),
         },

@@ -1,6 +1,6 @@
 /**
  * Latch 1sat collectables so Refresh / heal / reimport cannot refile them as
- * BSV-21 tokens or generic NFT cards.
+ * tokens or generic NFT cards.
  *
  * Once an outpoint is a collectable (importedOneSat mark, basket `1sat`,
  * remittance, or BRC-150 origin) it stays basket `1sat`. Token import and
@@ -65,93 +65,4 @@ export function applyCollectableRemittance<T extends CollectableRemittance>(
     ...(app ? { app } : {}),
     ...(collectionId ? { collectionId } : {}),
   }
-}
-
-export type TokenRoutedTip = {
-  outpoint: string
-  /**
-   * Wire format proven by decoding this tip's own locking script. Present only
-   * when the script itself is a BSV-21 holding (BRC-162 lock or bsv-20
-   * inscription) — never inferred from an indexer or a cache row.
-   */
-  encoding?: 'brc162' | 'legacy-json'
-}
-
-/**
- * After classify: pull known collectables out of the BSV-21 / NFT bucket.
- * Same outpoint must not be both a collectable and a token.
- */
-export function keepCollectablesOutOfTokenRoute<
-  T extends CollectableRemittance,
-  U extends TokenRoutedTip,
->(
-  oneSats: T[],
-  tokenTips: U[],
-  knownCollectableKeys: Iterable<string>,
-  remittanceByOutpoint?: ReadonlyMap<string, Partial<CollectableRemittance>>,
-): { oneSats: T[]; tokenTips: U[]; rescued: string[] } {
-  const known = collectableKeySet(knownCollectableKeys)
-  if (known.size === 0 || tokenTips.length === 0) {
-    return { oneSats, tokenTips, rescued: [] }
-  }
-
-  const already = collectableKeySet(oneSats.map((item) => item.outpoint))
-  const kept: U[] = []
-  const rescued: string[] = []
-  const extra: T[] = []
-
-  for (const tip of tokenTips) {
-    const op = wireCollectableOutpoint(tip.outpoint)
-    if (!op || !known.has(op)) {
-      kept.push(tip)
-      continue
-    }
-    // A decoded BSV-21 lock outranks a collectable mark. The mark can be stale
-    // (an earlier pass held the same outpoint as an unnamed one-sat); the
-    // script cannot. Filing a fungible as an NFT hides it from Tokens and
-    // corrupts the balance it belongs to.
-    if (tip.encoding) {
-      kept.push(tip)
-      continue
-    }
-    rescued.push(op)
-    if (already.has(op)) continue
-    already.add(op)
-    const rem = remittanceByOutpoint?.get(op)
-    extra.push(
-      applyCollectableRemittance(
-        { outpoint: op, ...(rem ?? {}) } as T,
-        rem,
-      ),
-    )
-  }
-
-  if (rescued.length === 0) {
-    return { oneSats, tokenTips, rescued }
-  }
-  return {
-    oneSats: extra.length > 0 ? [...oneSats, ...extra] : oneSats,
-    tokenTips: kept,
-    rescued,
-  }
-}
-
-/** Drop token-import candidates that are already in basket `1sat`. */
-export function skipTokenImportForBasketHeld<U extends TokenRoutedTip>(
-  tokenTips: U[],
-  basketKeys: Iterable<string>,
-): { tokenTips: U[]; skipped: string[] } {
-  const held = collectableKeySet(basketKeys)
-  if (held.size === 0) return { tokenTips, skipped: [] }
-  const skipped: string[] = []
-  const next: U[] = []
-  for (const tip of tokenTips) {
-    const op = wireCollectableOutpoint(tip.outpoint)
-    if (op && held.has(op)) {
-      skipped.push(op)
-      continue
-    }
-    next.push(tip)
-  }
-  return { tokenTips: next, skipped }
 }

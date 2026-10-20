@@ -47,7 +47,7 @@ function only(): ActivityEntry {
   return rows[0]!;
 }
 
-describe("wLTC and HCT activity rows follow the token row standard", () => {
+describe("wLTC and BNT activity rows follow the token row standard", () => {
   beforeEach(() => {
     store.clear();
     clearAppActivity();
@@ -88,7 +88,7 @@ describe("wLTC and HCT activity rows follow the token row standard", () => {
     expect(listRecentActivity()).toEqual([]);
   });
 
-  it("reads HCT sends, receives, mints and burns in whole units with the symbol", () => {
+  it("reads BNT sends, receives, mints and burns in whole units with the symbol", () => {
     const item = wltc("100000");
     expect(activityEntryTitle(row({ kind: "spent", method: "send-token", item }))).toBe("Sent 0.001 wLTC");
     expect(activityEntryTitle(row({ method: "receive-token", item }))).toBe("Received 0.001 wLTC");
@@ -149,11 +149,11 @@ describe("wLTC and HCT activity rows follow the token row standard", () => {
   });
 
   it("upgrades a stored legacy row in place: same id, same time, now a token row", () => {
-    recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: "event", sats: 0, method: "hct-transfer", note: "Sent 100000 wLTC (HCT)", txid: TX });
+    recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: "event", sats: 0, method: "bnt-transfer", note: "Sent 100000 wLTC (BNT)", txid: TX });
     const before = only();
     const changed = upgradeActivityRows((entry) =>
-      entry.method === "hct-transfer"
-        ? { origin: entry.origin, kind: "spent", sats: 0, method: "send-token", txid: entry.txid, note: "Sent 100000 wLTC", item: { name: "wLTC", origin: `hct:${TX}`, amt: "100000", dec: 8 } }
+      entry.method === "bnt-transfer"
+        ? { origin: entry.origin, kind: "spent", sats: 0, method: "send-token", txid: entry.txid, note: "Sent 100000 wLTC", item: { name: "wLTC", origin: `bnt:${TX}`, amt: "100000", dec: 8 } }
         : null
     );
     expect(changed).toBe(1);
@@ -165,7 +165,7 @@ describe("wLTC and HCT activity rows follow the token row standard", () => {
     expect(upgradeActivityRows(() => null)).toBe(0);
   });
 
-  it("keeps an HCT item a named collectable row, not a token", () => {
+  it("keeps a BNT item a named collectable row, not a token", () => {
     const robot = row({ method: "receive-collectable", item: { name: "Robot", origin: ASSET } });
     expect(isTokenActivity(robot)).toBe(false);
     expect(activityEntryTitle(robot)).toBe("Received Robot");

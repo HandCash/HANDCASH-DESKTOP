@@ -39,7 +39,6 @@ import {
   type MessageKind,
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
-import { noteInboundTokenLineage } from './token/inboundLineage'
 import { noteInboundReceivePending } from './appActivity'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
 import type {
@@ -78,7 +77,7 @@ export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
 /**
  * BRC-CLOUD sendMessage cap is 262_144 — stay under it for remittance ± inline BEEF.
  *
- * This was 16_000/11_000, which no BSV-21 hop could clear once the Atomic BEEF
+ * This was 16_000/11_000, which no token hop could clear once the Atomic BEEF
  * was base64'd in: the sender shipped `beefInBox: false` and the payee had no
  * way to settle except an indexer that had not seen the tx.
  */
@@ -389,8 +388,6 @@ type WireMessage = {
     provenance?: ProvenanceV2
     /** BAP identity packages for the issuers the asset's signed tape names. */
     identities?: DeliveredIdentityPackage[]
-    /** BRC-176 token-parent bodies back to the deploy — BSV-21 payee proves offline. */
-    tokenLineage?: string
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }
@@ -464,27 +461,6 @@ export function withOptionalIdentities(
     return { body: fitted, identitiesInBox: carried.length > 0 }
   } catch {
     return { body, identitiesInBox: false }
-  }
-}
-
-/** Attach BSV-21 lineage after custody and item proof, when it fits. */
-export function withOptionalTokenLineage(
-  body: string,
-  lineage: number[] | null | undefined,
-): { body: string; lineageInBox: boolean } {
-  if (!lineage?.length || !body.startsWith(WIRE_PREFIX)) {
-    return { body, lineageInBox: false }
-  }
-  try {
-    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
-    const encoded = `${WIRE_PREFIX}${JSON.stringify({
-      ...parsed,
-      meta: { ...parsed.meta, tokenLineage: bytesToBase64(Uint8Array.from(lineage)) },
-    } satisfies WireMessage)}`
-    if (encoded.length > MESSAGEBOX_INNER_MAX) return { body, lineageInBox: false }
-    return { body: encoded, lineageInBox: true }
-  } catch {
-    return { body, lineageInBox: false }
   }
 }
 
@@ -614,22 +590,7 @@ function validAttachment(value: unknown): value is ChatAttachment {
 
 function validItemTransferAsset(value: unknown): value is ItemTransferAsset {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
-  const asset = value as Partial<ItemTransferAsset>
-  if (asset.kind === 'collectable') return true
-  if (asset.kind !== 'fungible') return false
-  return (
-    typeof asset.tokenId === 'string' &&
-    /^[0-9a-f]{64}[._]\d+$/i.test(asset.tokenId.trim()) &&
-    typeof asset.amount === 'string' &&
-    /^\d+$/.test(asset.amount.trim()) &&
-    BigInt(asset.amount.trim()) > 0n &&
-    typeof asset.sym === 'string' &&
-    asset.sym.trim().length > 0 &&
-    typeof asset.dec === 'number' &&
-    Number.isInteger(asset.dec) &&
-    asset.dec >= 0 &&
-    asset.dec <= 18
-  )
+  return (value as Partial<ItemTransferAsset>).kind === 'collectable'
 }
 
 function validItemTransferMembers(value: unknown): ItemTransferMember[] | undefined {
@@ -683,10 +644,9 @@ function wireJsonOf(body: string): string | null {
 export function decodeMessageBody(body: string): {
   kind: WireMessage['kind']
   text: string
-  /** Chat-safe card fields; identity packages and token lineage stay out of the thread store. */
-  meta?: Omit<NonNullable<WireMessage['meta']>, 'identities' | 'tokenLineage'>
+  /** Chat-safe card fields; identity packages stay out of the thread store. */
+  meta?: Omit<NonNullable<WireMessage['meta']>, 'identities'>
   identities?: unknown[]
-  tokenLineage?: string
 } {
   const json = wireJsonOf(body)
   if (json == null) return { kind: 'text', text: body }
@@ -764,9 +724,6 @@ export function decodeMessageBody(body: string): {
       },
       ...(Array.isArray(parsed.meta?.identities) && parsed.meta.identities.length
         ? { identities: parsed.meta.identities }
-        : {}),
-      ...(typeof parsed.meta?.tokenLineage === 'string' && parsed.meta.tokenLineage.trim()
-        ? { tokenLineage: parsed.meta.tokenLineage.trim() }
         : {}),
     }
   } catch {
@@ -1040,7 +997,7 @@ export async function deliverOutbound(
     let beefStripped = false
     // The peer's box may cap below ours (any BRC-33 host, not just BRC-CLOUD).
     // Shed the inline BEEF rather than lose the card — but say so, because a
-    // BSV-21 payee cannot settle from remittance alone.
+    // A token payee cannot settle from remittance alone.
     if (res.status === 413 && env.body) {
       const lean = dropInnerBeef(env.body)
       if (lean !== env.body) {
@@ -1236,9 +1193,6 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
   if (inlineBeef && typeof decoded.meta?.txid === 'string') {
     rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
   }
-  if (typeof decoded.meta?.txid === 'string') {
-    noteInboundTokenLineage(decoded.meta.txid, decoded.tokenLineage)
-  }
   if (peerId) {
     appendMessage(peerId, {
       direction: 'in',
@@ -1265,7 +1219,6 @@ function acceptDirectBody(sender: string, body: string, rootKeyHex: string): voi
       sats: decoded.meta?.sats,
       item: decoded.meta?.item === true || undefined,
       itemName: decoded.meta?.memo?.trim() || undefined,
-      token: decoded.meta?.asset?.kind === 'fungible' ? decoded.meta.asset : undefined,
     })
     noteDeliveredIdentities(decoded.identities)
     if (typeof document !== 'undefined') {
@@ -1419,12 +1372,9 @@ export async function pollInboundTipHints(args: {
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
     scheduleMarketRecovery()
-    void import('./countersign/wallet')
-      .then(({ serveCountersignBox }) => serveCountersignBox())
-      .catch((err) => console.warn('[countersign] box serve failed', err instanceof Error ? err.message : String(err)))
-    void import('./hct/wallet')
-      .then(({ serveHctBox }) => serveHctBox())
-      .catch((err) => console.warn('[hct] box serve failed', err instanceof Error ? err.message : String(err)))
+    void import('./bnt/wallet')
+      .then(({ serveBntBox }) => serveBntBox())
+      .catch((err) => console.warn('[bnt] box serve failed', err instanceof Error ? err.message : String(err)))
     void import('./coins/coinPaymentBox')
       .then(({ serveCoinPaymentBox }) => serveCoinPaymentBox())
       .catch((err) => console.warn('[coin-payment] box serve failed', err instanceof Error ? err.message : String(err)))
@@ -1490,9 +1440,6 @@ export async function pollInboundTipHints(args: {
       if (inlineBeef && typeof decoded.meta?.txid === 'string') {
         rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
       }
-      if (typeof decoded.meta?.txid === 'string') {
-        noteInboundTokenLineage(decoded.meta.txid, decoded.tokenLineage)
-      }
       if (peerId) {
         const { beefB64: _omitBeef, ...chatMeta } = decoded.meta ?? {}
         appendMessage(peerId, {
@@ -1531,10 +1478,6 @@ export async function pollInboundTipHints(args: {
           sats: decoded.meta?.sats,
           item,
           itemName,
-          token:
-            decoded.meta?.asset?.kind === 'fungible'
-              ? decoded.meta.asset
-              : undefined,
         })
         paymentTxids.push(txid)
         paymentHints.push({
@@ -1578,7 +1521,7 @@ export async function pollInboundTipHints(args: {
 }
 
 /**
- * Deliver a signed collectable or fungible tip with its Atomic BEEF.
+ * Deliver a signed collectable tip with its Atomic BEEF.
  * Small proofs ride inline; larger proofs use the messagebox file store as a
  * Blob and the inbox card carries the authenticated URL. Never silently drop a
  * supplied proof and force the receiver back onto indexer discovery.
@@ -1599,11 +1542,6 @@ export async function notifyPeerItemIncoming(args: {
   /** The caller already merged local unconfirmed ancestry into `atomicBeef`. */
   ancestryComplete?: boolean
   provenance?: unknown
-  /**
-   * BRC-176 lineage for a fungible. Omitted: derive it from `atomicBeef`.
-   * Null: the sender already cut it (nothing past the recipient's frontier).
-   */
-  tokenLineage?: number[] | null
 }): Promise<PeerBeefNotifyResult> {
   const none: PeerBeefNotifyResult = {
     delivered: 'local',
@@ -1652,7 +1590,7 @@ export async function notifyPeerItemIncoming(args: {
     })
   const base = itemMessage()
   let provenance = args.provenance
-  if (provenance && itemOrigin && args.asset?.kind !== 'fungible') {
+  if (provenance && itemOrigin) {
     const { provenanceForRecipient } = await import('./oneSatProvenance')
     const { itemFrontierAsset, proofFrontier } = await import('./proofFrontier')
     provenance = provenanceForRecipient(
@@ -1666,7 +1604,7 @@ export async function notifyPeerItemIncoming(args: {
     provenanceInBox: withProof.provenanceInBox,
   }
   // Fat merged ancestry blows the 11k cap. Ship this hop (+ direct parents)
-  // so BSV-21 settle does not fall back to WhatsOnChain.
+  // so settle does not fall back to WhatsOnChain.
   if (!packed.beefInBox && atomicBeef?.length) {
     const { inboxSubjectBeef } = await import('./beefCache')
     const lean = inboxSubjectBeef(atomicBeef, txid)
@@ -1678,13 +1616,9 @@ export async function notifyPeerItemIncoming(args: {
     }
   }
   // Identity before a second indexer walk. If both proofs cannot share the cap,
-  // keep remittance and let this hop SPV-fetch the way omitted-beef already does.
-  // Fungible custody *is* the Atomic BEEF: a BSV-21 payee with provenance but no
-  // BEEF cannot settle at all, so that trade is only ever made for collectables,
-  // whose identity is the BRC-150 proof and whose tip can be SPV-fetched.
-  const mayTradeBeefForProvenance =
-    args.asset?.kind !== 'fungible' || !packed.beefInBox
-  if (args.provenance && !packed.provenanceInBox && mayTradeBeefForProvenance) {
+  // keep remittance and let this hop SPV-fetch the way omitted-beef already does:
+  // an item's identity is the BRC-150 proof and its tip can be SPV-fetched.
+  if (args.provenance && !packed.provenanceInBox) {
     const proofOnly = withOptionalProvenance(base, args.provenance)
     if (proofOnly.provenanceInBox) {
       packed = {
@@ -1698,33 +1632,12 @@ export async function notifyPeerItemIncoming(args: {
       )
     }
   }
-  if (args.asset?.kind === 'fungible' && !packed.beefInBox) {
-    console.warn(
-      `[messagebox] BSV-21 AtomicBEEF omitted txid=${txid.slice(0, 12)} — payee cannot settle without an indexer`,
-    )
-  }
-  if (args.asset?.kind === 'fungible' && args.tokenLineage !== null) {
-    try {
-      let lineage = args.tokenLineage ?? null
-      if (!lineage && atomicBeef?.length) {
-        const { tokenLineageFromBeef } = await import('./token/lineage')
-        lineage = tokenLineageFromBeef(atomicBeef, txid, args.asset.tokenId)
-      }
-      const withLineage = withOptionalTokenLineage(packed.body, lineage)
-      if (withLineage.lineageInBox) packed = { ...packed, body: withLineage.body }
-      else if (lineage)
-        console.warn(`[messagebox] BSV-21 lineage omitted txid=${txid.slice(0, 12)} — box cap; payee walks token parents`)
-    } catch (error) {
-      console.warn('[messagebox] BSV-21 lineage attach skipped', error)
-    }
-  }
   try {
     const chain = getWalletRuntime()?.instance.chain
     if (chain) {
       const { identityPackagesForDelivery } = await import('./issuerIdentityDelivery')
       const identities = identityPackagesForDelivery(chain, {
         itemOrigin,
-        tokenId: args.asset?.kind === 'fungible' ? args.asset.tokenId : undefined,
         provenance: args.provenance,
       })
       const withIdentities = withOptionalIdentities(packed.body, identities)
@@ -1753,7 +1666,7 @@ export async function notifyPeerItemIncoming(args: {
         beefInBox: packed.beefInBox && delivered.beefStripped !== true,
         provenanceInBox: packed.provenanceInBox,
       }
-      if (result.provenanceInBox && itemOrigin && args.asset?.kind !== 'fungible') {
+      if (result.provenanceInBox && itemOrigin) {
         const { itemFrontierAsset, rememberProofFrontier } = await import('./proofFrontier')
         const vout =
           Number.isInteger(args.itemOutputIndex) && args.itemOutputIndex! >= 0

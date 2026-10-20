@@ -88,10 +88,9 @@ vi.mock('./oneSatImportGuard', () => ({
   isOneSatOutpointKnown: vi.fn(() => false),
 }))
 
-vi.mock('./tokenAddressScan', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./tokenAddressScan')>()),
+vi.mock('./tipAddressScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./tipAddressScan')>()),
   scanAddressOrdinalTxos: vi.fn(async () => []),
-  scanAddressTokenTxos: vi.fn(async () => []),
 }))
 
 vi.mock('./dependencyHealth', () => ({
@@ -121,10 +120,6 @@ vi.mock('./collectables', () => ({
   listOneSatBasketOutpointKeys: vi.fn(async () => ({ keys: new Set<string>(), fullyListed: true })),
   setCollectableVerifyWalkDeferred: vi.fn(),
   resumeCollectableVerifyWalk: vi.fn(),
-}))
-
-vi.mock('./token/list', () => ({
-  listFungibles: vi.fn(async () => []),
 }))
 
 vi.mock('./pendingSend', () => ({
@@ -209,7 +204,6 @@ describe('refreshFromChain pre-scan maintenance', { timeout: 30_000 }, () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],
@@ -408,7 +402,6 @@ describe('refreshFromChain spendable review', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],
@@ -568,7 +561,6 @@ describe('refreshFromChain spendable review', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],
@@ -625,7 +617,6 @@ describe('refreshFromChain receive announcement', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],
@@ -663,7 +654,6 @@ describe('refreshFromChain receive announcement', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
       oneSats: [],
-      bsv21: [],
       heldOneSats: [],
       heldUneconomical: [],
       pendingTips: [],

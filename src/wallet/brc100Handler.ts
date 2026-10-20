@@ -26,7 +26,6 @@ import {
   normalizeOrigin,
   noteInboundWalletRequest,
   requestActionApproval,
-  getTokenAccess,
   requestItemViewApproval,
   requestTokenViewApproval,
   requestCountersignedViewApproval,
@@ -41,13 +40,12 @@ import {
 } from './bridgeOrigin'
 import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
-  isBsv21ReceiveArgs,
+  isTokenReceiveArgs,
   isItemBasket,
   isItemReceiveArgs,
   isThirdPartyOriginator,
   isTokenViewBasket,
   p1SatSpendIds,
-  p2pftSpendIds,
   prepareItemBasketArgs,
   withCountersignedAssetTags,
   type CountersignedViewRequest,
@@ -74,11 +72,6 @@ import {
   withdrawLtcAsSendCoins,
   type CoinChain,
 } from './coinMethods'
-import {
-  isBsv21IdentityMintArgs,
-  resolveBsv21IconDataUrl,
-  stampBsv21IconOnListedOutputs,
-} from './token'
 import { cacheCreateActionBeef } from './beefCache'
 import {
   bounceDepositFromCreateAction,
@@ -117,7 +110,6 @@ import {
   verifyMarketListingProvenance,
   type CreateMarketListingArgs,
 } from './marketListing'
-import { DirectOfferError } from './directOfferPath'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { internalizeActionWithBroadcast } from './internalizeBroadcast'
@@ -154,13 +146,11 @@ import {
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { reservedKeyRefusal, type ReservedKeyRefusal } from './vaultAccounts'
-import { looksLikeHct } from './hct/script'
-import { isTokenFilingBasket } from './token/filing'
+import { looksLikeBnt } from './bnt/script'
+import { isTokenFilingBasket } from './assetBaskets'
 import { logBrc100Response, isQuietBrc100Success } from './diagnosticLog'
 import {
-  paintAfterCreateActionBsv21Mint,
   paintAfterCreateActionIssuance,
-  paintAfterInternalizeBsv21,
   paintAfterInternalizeItem,
 } from './internalizeItemPaint'
 import { flattenJsonError } from './errorText'
@@ -169,11 +159,6 @@ import {
   containsRetiredFungibleRequest,
   isRetiredFungibleBasket,
 } from './retiredFungible'
-import {
-  cacheImageIconsFromCreateAction,
-  recordBsv21TransferSends,
-  recordIdentityMintActivity,
-} from './brc100ActivitySideEffects'
 
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
@@ -339,7 +324,7 @@ function normalizeOutpoint(value: unknown): string | null {
 }
 
 /**
- * Bind every BRC-165-shaped id label (`p 1sat input id`, `p p2pft input id`)
+ * Bind every BRC-165-shaped id label (`p 1sat input id`)
  * to exactly one held row of its storage basket and to an input in this
  * action. This prevents a label approval from authorizing a different spend
  * set than the row the user saw.
@@ -348,7 +333,7 @@ async function verifyHeldRowSpendLabels(
   wallet: WalletInterface,
   args: unknown,
   ids: string[],
-  basket: '1sat' | 'p2pft',
+  basket: '1sat',
 ): Promise<void> {
   if (ids.length === 0) return
   const body = args && typeof args === 'object' && !Array.isArray(args)
@@ -375,8 +360,8 @@ async function verifyHeldRowSpendLabels(
       throw new Error(`Held-row id "${id}" does not resolve to exactly one ${basket} row`)
     }
     const row = listed.outputs[0]!
-    if ((row.tags ?? []).includes('hct') || (row.lockingScript && looksLikeHct(row.lockingScript))) {
-      throw new Error(`Held-row id "${id}" is an HCT output; HCT moves only through transferHctAsset`)
+    if ((row.tags ?? []).includes('bnt') || (row.lockingScript && looksLikeBnt(row.lockingScript))) {
+      throw new Error(`Held-row id "${id}" is a BNT output; BNT moves only through transferBntAsset`)
     }
     const heldOutpoint = normalizeOutpoint(listed.outputs[0]?.outpoint)
     if (!heldOutpoint || !actionInputs.has(heldOutpoint)) {
@@ -385,15 +370,15 @@ async function verifyHeldRowSpendLabels(
   }
 }
 
-const HCT_TOKEN_FILING = 'p2pft'
-const HCT_ITEM_FILING = 'p2pnft'
-const HCT_INPUT_PAGE = 1000
+const BNT_TOKEN_FILING = 'bntft'
+const BNT_ITEM_FILING = 'bntnft'
+const BNT_INPUT_PAGE = 1000
 
 /**
- * The first app input that is a wallet HCT row, or null. An app cannot sign
+ * The first app input that is a wallet BNT row, or null. An app cannot sign
  * for one, but naming it would still reserve the holder's output.
  */
-async function hctInputOf(wallet: WalletInterface, args: unknown): Promise<string | null> {
+async function bntInputOf(wallet: WalletInterface, args: unknown): Promise<string | null> {
   const inputs = args && typeof args === 'object' && !Array.isArray(args)
     ? ((args as { inputs?: unknown[] }).inputs ?? [])
     : []
@@ -405,42 +390,17 @@ async function hctInputOf(wallet: WalletInterface, args: unknown): Promise<strin
     }),
   )
   if (wanted.size === 0) return null
-  for (const basket of [HCT_TOKEN_FILING, HCT_ITEM_FILING]) {
-    for (let offset = 0; ; offset += HCT_INPUT_PAGE) {
-      const page = await wallet.listOutputs({ basket, tags: ['hct'], limit: HCT_INPUT_PAGE, offset, seekPermission: false })
+  for (const basket of [BNT_TOKEN_FILING, BNT_ITEM_FILING]) {
+    for (let offset = 0; ; offset += BNT_INPUT_PAGE) {
+      const page = await wallet.listOutputs({ basket, tags: ['bnt'], limit: BNT_INPUT_PAGE, offset, seekPermission: false })
       for (const row of page.outputs ?? []) {
         const outpoint = normalizeOutpoint(row.outpoint)
         if (outpoint && wanted.has(outpoint)) return outpoint
       }
-      if ((page.outputs ?? []).length < HCT_INPUT_PAGE) break
+      if ((page.outputs ?? []).length < BNT_INPUT_PAGE) break
     }
   }
   return null
-}
-
-/** Token deploys in the signed transaction join the deploying app's filtered token view. */
-async function grantDeployedTokensFromAction(
-  originator: string | undefined,
-  txid: string,
-  atomic: unknown,
-): Promise<void> {
-  try {
-    const bytes = Array.isArray(atomic) ? (atomic as number[]) : atomic instanceof Uint8Array ? Array.from(atomic) : []
-    if (bytes.length === 0) return
-    const [{ Beef }, { decodeBsv21Binary }, { grantDeployedTokensToCreator }] = await Promise.all([
-      import('@bsv/sdk'),
-      import('./token/decode162'),
-      import('./permissions'),
-    ])
-    const tx = Beef.fromBinary(bytes).findTxid(txid)?.tx
-    if (!tx) return
-    const ids = tx.outputs.flatMap((out, vout) =>
-      decodeBsv21Binary(out.lockingScript)?.role === 'deploy' ? [`${txid.toLowerCase()}_${vout}`] : [],
-    )
-    grantDeployedTokensToCreator(originator, ids)
-  } catch (err) {
-    console.warn('[brc100] deployed token grant skipped', txid.slice(0, 12), err)
-  }
 }
 
 /**
@@ -594,26 +554,6 @@ export async function dispatchWalletMethod(
       )
     case 'createMarketListingAdvert':
       return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
-    case 'getTokenIcon': {
-      const body =
-        args && typeof args === 'object' && !Array.isArray(args)
-          ? (args as { icon?: unknown; origin?: unknown; outpoint?: unknown })
-          : {}
-      const icon = typeof body.icon === 'string' ? body.icon.trim() : ''
-      const origin = typeof body.origin === 'string' ? body.origin.trim() : ''
-      // Same originator as listOutputs bsv21 — if View tokens was already
-      // Allowed, do not prompt again. First Allow persists on the originator.
-      if (getTokenAccess(originator).view === 'none') {
-        const decision = await requestTokenViewApproval(originator, { basket: 'bsv21' })
-        if (decision !== 'allow') return { dataUrl: null }
-      }
-      const dataUrl = await resolveBsv21IconDataUrl({
-        icon: icon || undefined,
-        origin: origin || (typeof body.outpoint === 'string' ? body.outpoint : undefined),
-        wallet: (getWalletRuntime()?.instance ?? null),
-      })
-      return { dataUrl: dataUrl ?? null }
-    }
     case 'createMarketPurchaseIntent':
       return createMarketPurchaseIntent(
         (args ?? {}) as Parameters<typeof createMarketPurchaseIntent>[0]
@@ -645,65 +585,21 @@ export async function dispatchWalletMethod(
       return { ok: true }
     case 'markMarketListingPublished':
       return markMarketListingPublished((args ?? {}) as { txid?: string })
-    case 'createDirectOffer':
-      return (await import('./directOffer')).createDirectOffer(
-        (args ?? {}) as Parameters<typeof import('./directOffer').createDirectOffer>[0],
+    case 'issueBntAsset':
+      return (await import('./bnt/wallet')).issueBntAsset(
+        (args ?? {}) as Parameters<typeof import('./bnt/wallet').issueBntAsset>[0],
       )
-    case 'buyDirectOffer':
-      return (await import('./directOffer')).buyDirectOffer(
-        (args ?? {}) as Parameters<typeof import('./directOffer').buyDirectOffer>[0],
+    case 'mintBntAsset':
+      return (await import('./bnt/wallet')).mintBntAsset(
+        (args ?? {}) as Parameters<typeof import('./bnt/wallet').mintBntAsset>[0],
       )
-    case 'collectDirectOfferProceeds':
-      return (await import('./directOffer')).collectDirectOfferProceeds(
-        (args ?? {}) as Parameters<typeof import('./directOffer').collectDirectOfferProceeds>[0],
+    case 'transferBntAsset':
+      return (await import('./bnt/wallet')).transferBntAsset(
+        (args ?? {}) as Parameters<typeof import('./bnt/wallet').transferBntAsset>[0],
       )
-    case 'cancelDirectOffer':
-      return (await import('./directOffer')).cancelDirectOffer(
-        (args ?? {}) as Parameters<typeof import('./directOffer').cancelDirectOffer>[0],
-      )
-    case 'listDirectOffers':
-      return (await import('./directOffer')).listDirectOffers()
-    case 'issueCountersignedAsset':
-      return (await import('./countersign/wallet')).issueCountersignedAsset(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').issueCountersignedAsset>[0],
-      )
-    case 'transferCountersignedAsset':
-      return (await import('./countersign/wallet')).transferCountersignedAsset(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').transferCountersignedAsset>[0],
-      )
-    case 'retireCountersignedAsset':
-      return (await import('./countersign/wallet')).retireCountersignedAsset(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').retireCountersignedAsset>[0],
-      )
-    case 'setCountersignedAssetPolicy':
-      return (await import('./countersign/wallet')).setCountersignedAssetPolicy(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').setCountersignedAssetPolicy>[0],
-      )
-    case 'releaseCountersignedAsset':
-      return (await import('./countersign/wallet')).releaseCountersignedAsset(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').releaseCountersignedAsset>[0],
-      )
-    case 'joinCountersignedAsset':
-      return (await import('./countersign/wallet')).joinCountersignedAsset(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').joinCountersignedAsset>[0],
-      )
-    case 'listCountersignedAssets':
-      return (await import('./countersign/wallet')).listCountersignedAssets()
-    case 'issueHctAsset':
-      return (await import('./hct/wallet')).issueHctAsset(
-        (args ?? {}) as Parameters<typeof import('./hct/wallet').issueHctAsset>[0],
-      )
-    case 'mintHctAsset':
-      return (await import('./hct/wallet')).mintHctAsset(
-        (args ?? {}) as Parameters<typeof import('./hct/wallet').mintHctAsset>[0],
-      )
-    case 'transferHctAsset':
-      return (await import('./hct/wallet')).transferHctAsset(
-        (args ?? {}) as Parameters<typeof import('./hct/wallet').transferHctAsset>[0],
-      )
-    case 'listHctAssets': {
+    case 'listBntAssets': {
       // A backed token never leaves its issuer and Litecoin is held natively, so a backed one is a retired wLTC record, not value.
-      const { assets } = await (await import('./hct/wallet')).listHctAssets()
+      const { assets } = await (await import('./bnt/wallet')).listBntAssets()
       return { assets: assets.filter((a) => !a.backedBy) }
     }
     case 'getLtcDepositAddress':
@@ -765,8 +661,8 @@ export async function dispatchWalletMethod(
         const outpoint = normalizeOutpoint(body.output)
         const page = await wallet.listOutputs({ basket: String(body.basket), include: 'locking scripts', includeTags: true, limit: 10000, seekPermission: false })
         const row = page.outputs.find((o) => normalizeOutpoint(o.outpoint) === outpoint)
-        if (row && ((row.tags ?? []).includes('hct') || (row.lockingScript && looksLikeHct(row.lockingScript)))) {
-          throw new Error('HCT outputs are never relinquished by an app; the row holds its holder key remittance')
+        if (row && ((row.tags ?? []).includes('bnt') || (row.lockingScript && looksLikeBnt(row.lockingScript)))) {
+          throw new Error('BNT outputs are never relinquished by an app; the row holds its holder key remittance')
         }
       }
       return wallet.relinquishOutput(body as never, originator)
@@ -1199,7 +1095,6 @@ async function handleBrc100RequestInner(
       'getMarketListingStatus',
       'markMarketListingPublishFailed',
       'markMarketListingPublished',
-      'getTokenIcon',
     ].includes(method) &&
     !isMarketListingOrigin(originator)
   ) {
@@ -1259,20 +1154,19 @@ async function handleBrc100RequestInner(
   if (isActionMethod(method)) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction') {
-      const hctInput = await hctInputOf(active.wallet, args)
-      if (hctInput) {
+      const bntInput = await bntInputOf(active.wallet, args)
+      if (bntInput) {
         return {
           status: 400,
           body: JSON.stringify({
             status: 'error',
-            code: 'HCT_WALLET_ONLY',
-            description: `Input ${hctInput} is an HCT output; HCT moves only through transferHctAsset.`,
+            code: 'BNT_WALLET_ONLY',
+            description: `Input ${bntInput} is a BNT output; BNT moves only through transferBntAsset.`,
           }),
         }
       }
       for (const [ids, basket, code] of [
         [p1SatSpendIds(args), '1sat', 'INVALID_P1SAT_SPEND'],
-        [p2pftSpendIds(args), 'p2pft', 'INVALID_P2PFT_SPEND'],
       ] as const) {
         try {
           await verifyHeldRowSpendLabels(active.wallet, args, ids, basket)
@@ -1288,32 +1182,17 @@ async function handleBrc100RequestInner(
         }
       }
     }
-    if (method === 'issueCountersignedAsset') {
-      const refusal = (await import('./countersign/wallet')).issueRefusal(
-        (args ?? {}) as Parameters<typeof import('./countersign/wallet').issueRefusal>[0],
-      )
-      if (refusal) {
-        return {
-          status: 400,
-          body: JSON.stringify({
-            status: 'error',
-            code: `COUNTERSIGN_${refusal.reason.toUpperCase().replace(/-/g, '_')}`,
-            description: refusal.message,
-          }),
-        }
-      }
-    }
-    if (method === 'issueHctAsset') {
-      const hct = await import('./hct/wallet')
+    if (method === 'issueBntAsset') {
+      const bnt = await import('./bnt/wallet')
       try {
-        hct.hctIssueFields((args ?? {}) as Parameters<typeof hct.hctIssueFields>[0], runtime?.instance?.identityKey ?? '02'.padEnd(66, '0'))
+        bnt.bntIssueFields((args ?? {}) as Parameters<typeof bnt.bntIssueFields>[0], runtime?.instance?.identityKey ?? '02'.padEnd(66, '0'))
       } catch (err) {
-        if (!(err instanceof hct.HctRefusal)) throw err
+        if (!(err instanceof bnt.BntRefusal)) throw err
         return {
           status: 400,
           body: JSON.stringify({
             status: 'error',
-            code: `HCT_${err.reason.toUpperCase().replace(/-/g, '_')}`,
+            code: `BNT_${err.reason.toUpperCase().replace(/-/g, '_')}`,
             description: err.message,
           }),
         }
@@ -1336,15 +1215,15 @@ async function handleBrc100RequestInner(
         }
       }
     }
-    if (method === 'transferHctAsset' || method === 'mintHctAsset' || coinChain) {
-      const [hct, { CoinRefusalError }] = await Promise.all([import('./hct/wallet'), import('./coins/coinWallet')])
+    if (method === 'transferBntAsset' || method === 'mintBntAsset' || coinChain) {
+      const [bnt, { CoinRefusalError }] = await Promise.all([import('./bnt/wallet'), import('./coins/coinWallet')])
       try {
-        if (method === 'transferHctAsset') await hct.preflightHctTransfer((args ?? {}) as Parameters<typeof hct.preflightHctTransfer>[0])
-        else if (method === 'mintHctAsset') await hct.preflightHctMint((args ?? {}) as Parameters<typeof hct.preflightHctMint>[0])
+        if (method === 'transferBntAsset') await bnt.preflightBntTransfer((args ?? {}) as Parameters<typeof bnt.preflightBntTransfer>[0])
+        else if (method === 'mintBntAsset') await bnt.preflightBntMint((args ?? {}) as Parameters<typeof bnt.preflightBntMint>[0])
         else if (coinChain) await (await coinWalletOf(coinChain)).preflightRecipient(coinPaymentArgs(args))
       } catch (err) {
-        if (!(err instanceof hct.HctRefusal) && !(err instanceof CoinRefusalError)) throw err
-        const prefix = err instanceof hct.HctRefusal ? 'HCT' : 'COIN'
+        if (!(err instanceof bnt.BntRefusal) && !(err instanceof CoinRefusalError)) throw err
+        const prefix = err instanceof bnt.BntRefusal ? 'BNT' : 'COIN'
         return {
           status: 400,
           body: JSON.stringify({
@@ -1365,7 +1244,7 @@ async function handleBrc100RequestInner(
             ? { kind: 'unsigned', reason: 'opted-out' }
             : { kind: 'signed', identityKey, ...(profile ? { displayName: profile.name } : {}) }
           if (attestation.kind === 'unsigned')
-            console.info(`[bsv21-issuer] issuing unsigned — ${attestation.reason}`)
+            console.info(`[issuer] issuing unsigned — ${attestation.reason}`)
         }
         // Local toolbox / history backup is authoritative — no chain heal before pay.
         const amountSats = extractSatsFromArgs(method, args)
@@ -1460,10 +1339,6 @@ async function handleBrc100RequestInner(
         }
       }
     } else if (isTokenViewBasket(basket)) {
-      if (active) {
-        const { moveLegacyTokenFiling } = await import('./token/filingStore')
-        await moveLegacyTokenFiling(active)
-      }
       const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest).finally(
         () => clearTimeout(slowGate),
       )
@@ -1518,7 +1393,7 @@ async function handleBrc100RequestInner(
                     ? await prepareUnsignedIssuance(runtime!, issuanceArgs)
                     : await enrichIdentityIssuance(runtime!, issuanceArgs, attestation?.identityKey)
               } catch (err) {
-                console.warn('[bsv21-issuer] enrich createAction failed', err)
+                console.warn('[issuer] enrich createAction failed', err)
                 // Identity mints with tip spends need inputBEEF — do not fall
                 // through to createAction or the toolbox error is opaque.
                 if (isIdentityIssuanceArgs('createAction', args)) throw err
@@ -1547,7 +1422,7 @@ async function handleBrc100RequestInner(
                 created,
               )
             } catch (err) {
-              if (attestation) console.warn('[bsv21-issuer] signable mint failed', err)
+              if (attestation) console.warn('[issuer] signable mint failed', err)
               if (issuance) await releaseIdentityIssuance(runtime!, issuance, created)
               throw err
             }
@@ -1626,8 +1501,8 @@ async function handleBrc100RequestInner(
         result = await dispatchWalletMethod(active.wallet, method, args, originator)
         setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
       } catch (err) {
-        const [hct, { CoinRefusalError }] = await Promise.all([import('./hct/wallet'), import('./coins/coinWallet')])
-        const prefix = err instanceof hct.HctRefusal ? 'HCT' : err instanceof CoinRefusalError ? 'COIN' : null
+        const [bnt, { CoinRefusalError }] = await Promise.all([import('./bnt/wallet'), import('./coins/coinWallet')])
+        const prefix = err instanceof bnt.BntRefusal ? 'BNT' : err instanceof CoinRefusalError ? 'COIN' : null
         if (!prefix) throw err
         return {
           status: 400,
@@ -1669,9 +1544,7 @@ async function handleBrc100RequestInner(
       if (countersignedViewRequest) {
         result = withCountersignedAssetTags(result, countersignedViewRequest)
       } else if (isTokenViewBasket(basket)) {
-        result = stampBsv21IconOnListedOutputs(
-          filterTokenOutputsForOrigin(originator, result, tokenViewRequest),
-        )
+        result = filterTokenOutputsForOrigin(originator, result, tokenViewRequest)
       } else if (isItemBasket(basket)) {
         result = filterItemOutputsForOrigin(originator, result, itemViewRequest)
         if (isMarketListingOrigin(originator)) {
@@ -1743,30 +1616,10 @@ async function handleBrc100RequestInner(
             )
           }
         })()
-        if (method === 'createAction') {
-          if (isThirdPartyOriginator(originator)) {
-            void grantDeployedTokensFromAction(originator, txid, (result as { tx?: unknown } | null)?.tx)
-          }
-          cacheImageIconsFromCreateAction(txid, args, result)
-          void import('./token/list').then(({ proveCachedFungibleEncodings }) =>
-            proveCachedFungibleEncodings(active),
-          )
-        }
       }
       if (method === 'signAction') {
         playWalletSound('soft')
         scheduleHistoryBackupPush('signAction')
-      } else if (isBsv21IdentityMintArgs(method, args) && txid) {
-        recordIdentityMintActivity(txid, args, originator)
-        paintAfterCreateActionBsv21Mint(
-          active,
-          originator ?? WALLET_ACTIVITY_ORIGIN,
-          args,
-          result,
-        )
-        playWalletSound('success')
-      } else if (txid && recordBsv21TransferSends(txid, args, originator)) {
-        playWalletSound('success')
       } else if (
         txid &&
         paintAfterCreateActionIssuance(
@@ -1804,8 +1657,7 @@ async function handleBrc100RequestInner(
       const receivedTxid = extractTxid(result) ?? extractTxid(args)
       if (receivedTxid) await keepChangeOfSignedTx(receivedTxid)
       lapActionPhase(event.request_id, 'seal')
-      if (isBsv21ReceiveArgs(method, args)) {
-        paintAfterInternalizeBsv21(active, args, result)
+      if (isTokenReceiveArgs(method, args)) {
         playWalletSound('receive')
       } else if (isItemReceiveArgs(method, args)) {
         paintAfterInternalizeItem(
@@ -1858,7 +1710,7 @@ async function handleBrc100RequestInner(
     if (isActionMethod(method)) playWalletSound('error')
     const flat = flattenJsonError(error)
     const code =
-      error instanceof MarketListingError || error instanceof DirectOfferError
+      error instanceof MarketListingError
         ? error.code
         : flat.code
     return {

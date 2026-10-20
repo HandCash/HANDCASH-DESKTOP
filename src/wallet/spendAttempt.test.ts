@@ -20,8 +20,6 @@ const mocks = vi.hoisted(() => ({
   getTxByTxid: vi.fn(),
   keepChangeOfSignedTx: vi.fn(),
   hideSpentOutpoints: vi.fn(),
-  getFungible: vi.fn(),
-  sendFungible: vi.fn(),
   releaseSealedInputsOfUnsentTx: vi.fn(),
   forgetItemsSent: vi.fn(),
   failUnsentLocalTx: vi.fn(),
@@ -50,16 +48,6 @@ vi.mock("./collectables", () => ({
   isCollectableOutpointSpendable: mocks.isCollectableOutpointSpendable,
   sendCollectable: mocks.sendCollectable,
 }));
-
-vi.mock("./token", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./token")>();
-  return {
-    ...actual,
-    getFungible: mocks.getFungible,
-    getCachedFungibles: () => [],
-    sendFungible: mocks.sendFungible,
-  };
-});
 
 vi.mock("./beefCache", () => ({
   getBeefForTxidCached: mocks.getBeefForTxidCached,
@@ -176,7 +164,7 @@ function paymentAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
 }
 
 function tokenAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
-  const tokenId = `${"c".repeat(64)}_0`;
+  const tokenId = "c".repeat(40);
   return {
     id: "token-attempt",
     origin: "handcash",
@@ -193,12 +181,6 @@ function tokenAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
       amt: "25",
       dec: 0,
       outpoint: OUTPOINT,
-    },
-    retry: {
-      kind: "send-token",
-      tokenId,
-      amount: "25",
-      toAddress: "1recipient",
     },
     ...partial,
   };
@@ -222,16 +204,6 @@ beforeEach(() => {
   mocks.isCollectableOutpointSpendable.mockResolvedValue(true);
   mocks.keepChangeOfSignedTx.mockResolvedValue(0);
   mocks.hideSpentOutpoints.mockResolvedValue(0);
-  mocks.getFungible.mockReturnValue({
-    tokenId: `${"c".repeat(64)}_0`,
-    sym: "TST",
-    amt: "100",
-    dec: 0,
-    utxoCount: 1,
-    outpoint: OUTPOINT,
-    spendKind: "plain",
-  });
-  mocks.sendFungible.mockResolvedValue({ txid: TX });
   mocks.releaseSealedInputsOfUnsentTx.mockResolvedValue(2);
   mocks.arcadePinStillBinds.mockResolvedValue(false);
   mocks.txIsArcadeRejected.mockReturnValue(false);
@@ -310,26 +282,14 @@ describe("resolveSpendAttemptFate — tokens", () => {
     );
   });
 
-  it("recreates only an unsigned token attempt with enough live balance", async () => {
+  it("refuses to recreate an unsigned token attempt", async () => {
     const entry = tokenAttempt({ txid: undefined });
     await expect(resolveSpendAttemptFate(entry, "main")).resolves.toMatchObject(
-      {
-        kind: "retry",
-        action: "recreateItem",
-        retry: { kind: "send-token" },
-      }
+      { kind: "refuse", reason: "missingRetryDetails" }
     );
-    await expect(retrySpendAttempt(entry, "main")).resolves.toEqual({
-      kind: "recreated",
-      txid: TX,
-    });
-    expect(mocks.sendFungible).toHaveBeenCalledWith({
-      tokenId: `${"c".repeat(64)}_0`,
-      amount: "25",
-      toAddress: "1recipient",
-      recipientIdentityKey: undefined,
-      friendLabel: undefined,
-    });
+    await expect(retrySpendAttempt(entry, "main")).rejects.toThrow(
+      /cannot be retried/
+    );
   });
 });
 

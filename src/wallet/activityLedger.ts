@@ -15,7 +15,7 @@ import { isGhostTxSuppressed } from './ghostTxSuppress'
 import { withStorageLockLabel } from './storageLockTrace'
 import { foregroundSpendWaiting } from './walletCoordinator'
 import { getWalletRuntime, runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
-import { isTokenFilingBasket } from './token/filing'
+import { isTokenFilingBasket } from './assetBaskets'
 import { isP2pkhSweepDescription } from './p2pkhSweepDescription'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 

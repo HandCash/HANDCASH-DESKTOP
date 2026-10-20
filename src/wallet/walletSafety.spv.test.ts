@@ -144,7 +144,7 @@ describe('4 Ancestry integrity — refuse a spend whose parent body is missing',
 })
 
 describe('5 Finder vs Judge — inbound index rows are candidates', () => {
-  it('does not count 1sat / bsv21 indexer tips as Pay cash', () => {
+  it('does not count item or token tips as Pay cash', () => {
     expect(
       classifyOwnedCash(
         { satoshis: 1, basket: '1sat', spendable: true },
@@ -154,11 +154,11 @@ describe('5 Finder vs Judge — inbound index rows are candidates', () => {
     ).toEqual({ kind: 'exclude', reason: 'item' })
     expect(
       classifyOwnedCash(
-        { satoshis: 50_000, basket: 'bsv21', spendable: true },
+        { satoshis: 50_000, basket: 'bntft', spendable: true },
         'none',
         'none',
       ),
-    ).toEqual({ kind: 'exclude', reason: 'bsv21' })
+    ).toEqual({ kind: 'exclude', reason: 'token' })
   })
 
   it('does not credit payment outputs going to someone else', () => {

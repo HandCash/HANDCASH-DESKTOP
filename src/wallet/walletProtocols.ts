@@ -6,7 +6,6 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { signedIdentityFetch } from './identityRequestAuth'
 import type { ActiveWallet } from './session'
 import { signIdentityText, verifyIdentityText } from './messageboxAuth'
-import { BSV21_PROTOCOL_ID, parseWalletProtocols } from './peerTokenCapability'
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 
 /**
@@ -25,8 +24,15 @@ import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 /** A coin on `chain` sent to this identity is received (BRC-213 §7). */
 export const coinProtocolId = (chain: CoinChain): string => `coin:${chain}`
 
-/** What this wallet receives: BSV-21 tips into its token basket and coins of every chain it holds. */
-export const WALLET_PROTOCOLS: readonly string[] = [BSV21_PROTOCOL_ID, ...COIN_CHAINS.map(coinProtocolId)]
+/** What this wallet receives: coins of every chain it holds. */
+export const WALLET_PROTOCOLS: readonly string[] = COIN_CHAINS.map(coinProtocolId)
+
+/** Protocol tags from a record, resolve host or friend row: trimmed, lowercase, unique. */
+export function parseWalletProtocols(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out = raw.flatMap((row) => (typeof row === 'string' && row.trim() ? [row.trim().toLowerCase()] : []))
+  return [...new Set(out)]
+}
 
 export type WalletProtocolsRecord = {
   v: 1

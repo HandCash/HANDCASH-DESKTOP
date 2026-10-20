@@ -3,16 +3,11 @@ import { rememberProvenVerdict } from './provenCache'
 import { addMarketOriginVerdicts, listMarketBasketOutputs } from './marketInventory'
 
 const getCachedCollectables = vi.fn()
-const getCachedFungibles = vi.fn()
 const getWalletCoordinatorSnapshot = vi.fn()
 const shouldYieldChainIngestToSpend = vi.fn()
 
 vi.mock('./collectables', () => ({
   getCachedCollectables: () => getCachedCollectables(),
-}))
-
-vi.mock('./token/list', () => ({
-  getCachedFungibles: () => getCachedFungibles(),
 }))
 
 vi.mock('./walletCoordinator', () => ({
@@ -23,7 +18,6 @@ vi.mock('./walletCoordinator', () => ({
 describe('market inventory listOutputs fast path', () => {
   beforeEach(() => {
     getCachedCollectables.mockReset()
-    getCachedFungibles.mockReset()
     getWalletCoordinatorSnapshot.mockReturnValue({
       chainIngest: 'idle',
       spend: 'idle',
@@ -180,36 +174,6 @@ describe('market inventory listOutputs fast path', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('falls back to cached bsv21 rows after a live read times out', async () => {
-    getCachedFungibles.mockReturnValue([
-      {
-        tokenId: `${'c'.repeat(64)}.0`,
-        sym: 'KING',
-        amt: '60',
-        dec: 0,
-        utxoCount: 1,
-        outpoint: `${'d'.repeat(64)}.2`,
-        spendKind: 'plain',
-      },
-    ])
-
-    const wallet = { listOutputs: vi.fn().mockRejectedValue(new Error('listOutputs timed out')) }
-    const result = await listMarketBasketOutputs(wallet as never, { basket: 'bsv21' })
-    expect(result.outputs).toHaveLength(1)
-    expect((result.outputs?.[0] as { tags?: string[] }).tags).toContain('p2pft')
-  })
-
-  it('reads an idle token basket live, not the paint a spend just made stale', async () => {
-    getCachedFungibles.mockReturnValue([
-      { tokenId: `${'c'.repeat(64)}.0`, sym: 'DEMO', amt: '0', dec: 0, utxoCount: 1, outpoint: `${'d'.repeat(64)}.2`, spendKind: 'plain' },
-    ])
-    const live = { totalOutputs: 1, outputs: [{ outpoint: `${'e'.repeat(64)}.0`, satoshis: 1, tags: ['amt:10000'] }] }
-    const wallet = { listOutputs: vi.fn().mockResolvedValue(live) }
-    const result = await listMarketBasketOutputs(wallet as never, { basket: 'p2pft' })
-    expect(wallet.listOutputs).toHaveBeenCalledTimes(1)
-    expect(result).toBe(live)
   })
 })
 

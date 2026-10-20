@@ -148,7 +148,7 @@ import {
 import { approveWalletPayment } from './permissions'
 import type { ActiveWallet } from './session'
 import type { WalletRuntime } from './walletRuntime'
-import { BSV21_BASKET } from './token/types'
+import { TOKEN_BASKET } from './assetBaskets'
 
 const BRC29: [2, string] = [2, '3241645161d8']
 const root = PrivateKey.fromRandom()
@@ -373,9 +373,9 @@ describe('summary', () => {
       { basket: 'default', satoshis: 300, tags: [] },
       { basket: '1sat', satoshis: 1, tags: [] },
       { basket: '1sat', satoshis: 1, tags: [] },
-      { basket: BSV21_BASKET, satoshis: 1, tags: ['bsv21', `bsv21:${'a'.repeat(64)}_0`, 'amt:5'] },
-      { basket: BSV21_BASKET, satoshis: 1, tags: ['bsv21', `bsv21:${'a'.repeat(64)}_0`, 'amt:2'] },
-      { basket: BSV21_BASKET, satoshis: 1, tags: ['bsv21', `bsv21:${'b'.repeat(64)}_1`, 'amt:9'] },
+      { basket: TOKEN_BASKET, satoshis: 1, tags: [TOKEN_BASKET, `${TOKEN_BASKET}:${'a'.repeat(40)}`] },
+      { basket: TOKEN_BASKET, satoshis: 1, tags: [TOKEN_BASKET, `${TOKEN_BASKET}:${'a'.repeat(40)}`] },
+      { basket: TOKEN_BASKET, satoshis: 1, tags: [TOKEN_BASKET, `${TOKEN_BASKET}:${'b'.repeat(40)}`] },
     )
     expect(await refreshDevWallet(runtime, n)).toEqual({ money: 1000, moneyOutputs: 2, items: 2, tokens: 2 })
   })

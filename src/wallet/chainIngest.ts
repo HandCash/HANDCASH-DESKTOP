@@ -616,16 +616,11 @@ export async function refreshFromChainExclusive(
             },
           )
         } else {
-          // Defer BRC-150 verify walk while the fungibles and collectables lists run.
+          // Defer BRC-150 verify walk while the collectables list runs.
           void import('./collectables')
             .then(({ setCollectableVerifyWalkDeferred }) => {
               setCollectableVerifyWalkDeferred(true)
             })
-            .then(() =>
-              inUiPhase('fungibles-list', () =>
-                import('./token/list').then(({ listFungibles }) => listFungibles(active)),
-              ),
-            )
             .then(() => inUiPhase('collectables-list', () => listCollectables(active)))
             .finally(() => {
               void import('./collectables').then(

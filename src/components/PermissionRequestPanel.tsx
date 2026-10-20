@@ -240,7 +240,6 @@ export function PermissionRequestPanel({
           tokenId={pending.tokenId}
           itemName={pending.itemName}
           itemImageUrl={pending.itemImageUrl}
-          itemIcon={pending.itemIcon}
           previewKind={pending.previewKind}
         />
       ) : null}

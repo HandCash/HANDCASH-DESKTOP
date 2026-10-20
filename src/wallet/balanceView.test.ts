@@ -98,11 +98,18 @@ describe('classifyOwnedCash', () => {
     ).toEqual({ kind: 'exclude', reason: 'item' })
     expect(
       classifyOwnedCash(
-        { satoshis: 100, spendable: true, basket: 'bsv21' },
+        { satoshis: 100, spendable: true, basket: 'bntft' },
         'pending',
         'none',
       ),
-    ).toEqual({ kind: 'exclude', reason: 'bsv21' })
+    ).toEqual({ kind: 'exclude', reason: 'token' })
+    expect(
+      classifyOwnedCash(
+        { satoshis: 100, spendable: true, basket: 'bsv21' },
+        'pending',
+        'none',
+      ).kind,
+    ).toBe('exclude')
   })
 
   it('does not credit written-off change of a failed send', () => {

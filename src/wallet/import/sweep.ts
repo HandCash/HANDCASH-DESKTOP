@@ -23,18 +23,16 @@ import {
 import { keyDeriverFor } from './importSource'
 import { listedImportOutpoints } from './itemStore'
 import { clearImportItems, importItems, syncImportItems } from './items'
-import { sweepTokensFromAddress } from './tokenSweep'
 import { loadImportedSources, updateImportedSource, type ImportedSource, type SweepSummary } from './store'
 
 /**
  * Explicit, compatible-only sweep of a saved source.
  *
  * Never automatic: it runs from the user's confirm on a preview. Cash, 1-sat
- * collectables and valid BSV-21 tokens move into this wallet; everything else
- * stays at the source and is reported with its reason. Each asset class uses
- * the path this wallet already trusts for it — legacy cash sweep, the item
- * migrate (BRC-150 remittance, bundled across addresses from the saved list),
- * and the token sweep.
+ * collectables move into this wallet; everything else, tokens included, stays
+ * at the source and is reported with its reason. Each asset class uses the
+ * path this wallet already trusts for it — legacy cash sweep, and the item
+ * migrate (BRC-150 remittance, bundled across addresses from the saved list).
  * The whole sweep is one wallet job: one Activity row with a bar, and its item
  * rows fold into one record.
  */
@@ -47,7 +45,6 @@ const CASH_SCAN_CONCURRENCY = 4
 export type SweepPlan = {
   cash: AddressHoldings[]
   items: AddressHoldings[]
-  tokens: AddressHoldings[]
   totals: HoldingsTotals
 }
 
@@ -57,13 +54,12 @@ export function planSweep(source: Pick<ImportedSource, 'scan'>): SweepPlan {
   return {
     cash: holdings.filter((h) => h.cashCount > 0),
     items: holdings.filter((h) => h.itemCount > 0),
-    tokens: holdings.filter((h) => h.tokens.some((t) => t.standard === 'bsv21' && t.id)),
     totals: totalHoldings(source.scan?.holdings ?? []),
   }
 }
 
 export type SweepProgress = {
-  phase: 'cash' | 'items' | 'tokens' | 'refresh'
+  phase: 'cash' | 'items' | 'refresh'
   message: string
   /** Items moved so far, counted as each transaction broadcasts. */
   done: number
@@ -92,7 +88,7 @@ export async function sweepImportedSource(args: {
     appendAppLog(
       'info',
       `[import] sweep done ${Date.now() - startedAt}ms kind=${source.kind} cash=${summary.cashSats}sats items=${summary.items}` +
-        ` tokens=${summary.tokens.length} failed=${summary.failed}${paused ? ' paused' : ''}`,
+        ` failed=${summary.failed}${paused ? ' paused' : ''}`,
     )
     return summary
   } catch (err) {
@@ -118,15 +114,12 @@ async function runSweep(
   }
   const stop = () => args.shouldStop?.() === true
   const notes: string[] = []
-  // Listed tips are counted per output by the token sweep itself.
-  const { listed: _listed, ...preHeld } = plan.totals.held
-  let held: HeldTally = preHeld
+  let held: HeldTally = plan.totals.held
   let cashSats = 0
   let items = 0
   let failed = 0
   /** Why the sweep stopped short and resumes on the next one; null when it ran out of work. */
   let paused: string | null = null
-  const tokens: SweepSummary['tokens'] = []
 
   const candidateFor = (h: AddressHoldings): PhraseCandidate | null => {
     const key = deriver.privateKeyAt(h.path)
@@ -232,33 +225,7 @@ async function runSweep(
     report('items', `Moved ${items.toLocaleString()} collectable(s)`, items)
   }
 
-  for (const h of plan.tokens) {
-    if (stop() || paused) break
-    const candidate = candidateFor(h)
-    if (!candidate) continue
-    report('tokens', `Moving tokens from ${h.label}…`, items)
-    const result = await sweepTokensFromAddress({
-      active,
-      spendKey: deriver.privateKeyAt(h.path),
-      address: h.address,
-      tokens: h.tokens.filter((t) => t.standard === 'bsv21' && t.id),
-    })
-    for (const moved of result.moved) {
-      const sym = h.tokens.find((t) => t.id === moved.tokenId)?.sym ?? 'token'
-      tokens.push({ tokenId: moved.tokenId, sym, amount: moved.amount })
-    }
-    for (const [reason, count] of Object.entries(result.held)) {
-      held = addHeld(held, reason as keyof HeldTally, count ?? 0)
-    }
-    failed += result.failed
-    notes.push(...result.errors.slice(0, 2))
-    if (result.stopped === 'funds') {
-      paused = 'This wallet ran low on BSV for token fees. Add funds and sweep again.'
-      notes.push(paused)
-    }
-  }
-
-  if (cashSats > 0 || items > 0 || tokens.length > 0) {
+  if (cashSats > 0 || items > 0) {
     report('refresh', 'Checking the chain…', items)
     await refreshAfterPhraseItemMigrate()
   }
@@ -271,7 +238,6 @@ async function runSweep(
     at: Date.now(),
     cashSats,
     items,
-    tokens,
     held,
     failed,
     notes: [...new Set(notes)].slice(0, 8),

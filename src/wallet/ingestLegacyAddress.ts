@@ -12,11 +12,7 @@ import {
   type LegacyScanResult,
   type LegacyUtxo,
 } from './legacyScan'
-import {
-  mergeTokenTxos,
-  scanAddressOrdinalTxos,
-  scanAddressTokenTxos,
-} from './tokenAddressScan'
+import { mergeIndexedTips, scanAddressOrdinalTxos } from './tipAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
@@ -40,8 +36,6 @@ import {
 import {
   applyCollectableRemittance,
   collectableKeySet,
-  keepCollectablesOutOfTokenRoute,
-  skipTokenImportForBasketHeld,
   wireCollectableOutpoint,
   type CollectableRemittance,
 } from './oneSatCollectableGuard'
@@ -372,19 +366,13 @@ export async function ingestLegacyAddressUtxos(
     })
   }
 
-  // Inscribed 1Sat NFTs and some BSV-21 tips are absent from a plain P2PKH
-  // address scan. Ordinal index covers NFT + JSON BSV-21. BRC-162 value locks
-  // that explorers still list as 1-sat P2PKH are classified below and imported
-  // into basket `bsv21` — that is how a token sent to this wallet's address
-  // lands in Tokens when peer remittance never arrived.
-  const [addressScan, ordinalTxos, tokenTxos, basketListed] = await Promise.all([
+  // Inscribed 1Sat items are absent from a plain P2PKH address scan; the
+  // ordinal index lists them.
+  const [addressScan, ordinalTxos, basketListed] = await Promise.all([
     scanLegacyAddress(active),
     fundingOnly
       ? Promise.resolve<LegacyUtxo[]>([])
       : scanAddressOrdinalTxos(active.address, active.chain),
-    fundingOnly
-      ? Promise.resolve<LegacyUtxo[]>([])
-      : scanAddressTokenTxos(active.address, active.chain),
     fundingOnly
       ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
       : listOneSatBasketOutpointKeys(active).catch((err) => {
@@ -394,7 +382,7 @@ export async function ingestLegacyAddressUtxos(
   ])
   guard()
 
-  const scan = mergeTokenTxos(mergeTokenTxos(addressScan, ordinalTxos), tokenTxos)
+  const scan = mergeIndexedTips(addressScan, ordinalTxos)
   if (scan.utxos.length > 0) {
     console.info(
       `[chain-ingest] legacy address scan: ${scan.utxos.length} UTXO(s), ${scan.sats} sats via ${scan.source}`,
@@ -440,7 +428,7 @@ export async function ingestLegacyAddressUtxos(
   ])
 
   const classifyStarted = Date.now()
-  let { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips } =
+  const { funding, oneSats, heldOneSats, heldUneconomical, pendingTips } =
     await classifyLegacyUtxos(scan.utxos, active.chain, opts.knownItems ?? [], {
       fundingOnly,
       knownCollectableOutpoints,
@@ -452,30 +440,6 @@ export async function ingestLegacyAddressUtxos(
     console.info(
       `[chain-ingest] classify done ${classifyMs}ms — ${scan.utxos.length} utxos`,
     )
-  }
-
-  const latched = keepCollectablesOutOfTokenRoute(
-    oneSats,
-    bsv21,
-    knownCollectableOutpoints,
-    remittanceByOutpoint,
-  )
-  oneSats = latched.oneSats
-  bsv21 = latched.tokenTips
-  if (latched.rescued.length > 0) {
-    console.info(
-      `[chain-ingest] kept ${latched.rescued.length} 1sat collectable(s) out of BSV-21 / NFT: ` +
-        latched.rescued.map((op) => op.slice(0, 14)).join(', '),
-    )
-  }
-  if (basketListed?.keys) {
-    const skipped = skipTokenImportForBasketHeld(bsv21, basketListed.keys)
-    bsv21 = skipped.tokenTips
-    if (skipped.skipped.length > 0) {
-      console.info(
-        `[chain-ingest] skipped token import for ${skipped.skipped.length} tip(s) already in basket 1sat`,
-      )
-    }
   }
 
   // Clear durable import marks for tips still live on our address but gone from
@@ -503,26 +467,6 @@ export async function ingestLegacyAddressUtxos(
   let newOneSatOutpoints: string[] = []
   let partialWarn: string | null = null
 
-  if (bsv21.length > 0 && !fundingOnly && !skipCollectableImport) {
-    yieldToSpendIfNeeded()
-    await yieldToUi()
-    guard()
-    const { importBsv21Tokens } = await import('./token/list')
-    const tokenResult = await importBsv21Tokens(bsv21, active)
-    guard()
-    if (tokenResult.imported > 0) {
-      console.info(
-        `[chain-ingest] imported ${tokenResult.imported} BSV-21 tip(s) from address scan`,
-      )
-    }
-    if (tokenResult.failed > 0) {
-      console.warn('[chain-ingest] BSV-21 import partial', tokenResult)
-      partialWarn =
-        partialWarn ??
-        `Some tokens didn’t import (${tokenResult.failed}). Retrying automatically.`
-    }
-  }
-
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.
   if (heldOneSats.length > 0 && !fundingOnly) {
     console.info(
@@ -543,7 +487,6 @@ export async function ingestLegacyAddressUtxos(
   const accounted = new Set<string>([
     ...funding.map((u) => outpointKey(u.outpoint)),
     ...oneSats.map((i) => outpointKey(i.outpoint)),
-    ...bsv21.map((i) => outpointKey(i.outpoint)),
     ...heldOneSats.map((u) => outpointKey(u.outpoint)),
     ...heldUneconomical.map((u) => outpointKey(u.outpoint)),
   ])

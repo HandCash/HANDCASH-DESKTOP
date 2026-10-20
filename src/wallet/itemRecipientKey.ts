@@ -10,7 +10,7 @@ import {
   type DeliveryRemittance,
   type Remittance,
 } from './brc29Keys'
-import { rememberTipKey } from './token/tipKeys'
+import { rememberTipKey } from './tipKeys'
 
 /**
  * Where one item output is locked. This wallet and an identity key get a

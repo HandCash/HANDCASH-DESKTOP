@@ -28,7 +28,6 @@ vi.mock('./items', () => ({
   importItems,
   syncImportItems: vi.fn(async () => ({ complete: true })),
 }))
-vi.mock('./tokenSweep', () => ({ sweepTokensFromAddress: vi.fn() }))
 vi.mock('./store', () => ({
   loadImportedSources: vi.fn(async () => [
     {
@@ -47,7 +46,6 @@ vi.mock('./store', () => ({
             cashCount: 0,
             dustCount: 0,
             itemCount: 150,
-            tokens: [],
           },
         ],
       },

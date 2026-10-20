@@ -64,8 +64,8 @@ const TOKEN_VIEW_SCOPE: AppPermissionScope = {
   id: 'tokens-view',
   label: 'View tokens',
   description:
-    'List only the BSV-21 tokens covered by the inventory grant you approved for this app.',
-  allows: ['Approved BSV-21 inventory', 'Approved token filters'],
+    'List only the tokens covered by the inventory grant you approved for this app.',
+  allows: ['Approved token inventory', 'Approved token filters'],
   methods: ['listOutputs'],
 }
 
@@ -73,8 +73,8 @@ const ITEM_RECEIVE_SCOPE: AppPermissionScope = {
   id: 'items-receive',
   label: 'Receive items & tokens',
   description:
-    'Accept collectables and BSV-21 tokens into your inventory without another receive prompt.',
-  allows: ['Receive 1Sat collectables', 'Receive BSV-21 tokens', 'No permission to send them'],
+    'Accept collectables and tokens into your inventory without another receive prompt.',
+  allows: ['Receive 1Sat collectables', 'Receive tokens', 'No permission to send them'],
   methods: ['internalizeAction'],
 }
 

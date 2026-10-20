@@ -14,13 +14,12 @@ vi.mock('./session', () => ({
 
 vi.mock('./inventoryProjection', () => ({
   heldInventoryOutputs: (basket: unknown) =>
-    basket === 'p2pft'
+    basket === 'bntft'
       ? {
           outputs: [
             {
-              outpoint: `${'f'.repeat(64)}.0`,
-              satoshis: 1,
-              tags: [`bsv21:${'f'.repeat(64)}_0`, 'sym:HNDC', 'op:transfer'],
+              tags: ['bntft', `bntft:${'f'.repeat(40)}`],
+              customInstructions: JSON.stringify({ sym: 'HNDC' }),
             },
           ],
           totalOutputs: 1,
@@ -48,7 +47,7 @@ describe('listOutputs view gate never waits on the toolbox', () => {
       prompt = next as typeof prompt
     })
 
-    const decision = requestTokenViewApproval(ORIGIN, { basket: 'bsv21' })
+    const decision = requestTokenViewApproval(ORIGIN, { basket: 'p bntft all' })
     await vi.advanceTimersByTimeAsync(0)
     expect(listOutputs).not.toHaveBeenCalled()
     expect(prompt).not.toBeNull()
@@ -68,13 +67,13 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     const unsubscribe = subscribePermissionRequests((next) => {
       prompt = next as typeof prompt
     })
-    const first = requestTokenViewApproval(origin, { basket: 'bsv21' })
+    const first = requestTokenViewApproval(origin, { basket: 'p bntft all' })
     await vi.advanceTimersByTimeAsync(0)
     resolvePermission(prompt!.id, 'allow')
     await expect(first).resolves.toBe('allow')
     listOutputs.mockClear()
 
-    const second = requestTokenViewApproval(origin, { basket: 'bsv21' })
+    const second = requestTokenViewApproval(origin, { basket: 'p bntft all' })
     await expect(second).resolves.toBe('allow')
     expect(listOutputs).not.toHaveBeenCalled()
     unsubscribe()
@@ -88,33 +87,13 @@ describe('listOutputs view gate never waits on the toolbox', () => {
     const unsubscribe = subscribePermissionRequests((next) => {
       prompt = next as typeof prompt
     })
-    const decision = requestTokenViewApproval(origin, { basket: 'p p2pft all' })
+    const decision = requestTokenViewApproval(origin, { basket: 'p bntft all' })
     await vi.advanceTimersByTimeAsync(0)
     resolvePermission(prompt!.id, 'allow')
     await expect(decision).resolves.toBe('allow')
     const access = getTokenAccess(origin)
     expect(access.view).toBe('filtered')
-    expect(access.ids).toContain(`${'f'.repeat(64)}_0`)
-    unsubscribe()
-  })
-
-  it('adds a token the app deploys to its filtered grant', async () => {
-    const { requestTokenViewApproval, subscribePermissionRequests, resolvePermission, getTokenAccess, grantDeployedTokensToCreator } =
-      await import('./permissions')
-    const origin = 'https://deployer.example'
-    let prompt: { id: number } | null = null
-    const unsubscribe = subscribePermissionRequests((next) => {
-      prompt = next as typeof prompt
-    })
-    const decision = requestTokenViewApproval(origin, { basket: 'p p2pft all' })
-    await vi.advanceTimersByTimeAsync(0)
-    resolvePermission(prompt!.id, 'allow')
-    await decision
-    const deployed = `${'e'.repeat(64)}_0`
-    grantDeployedTokensToCreator(origin, [deployed])
-    expect(getTokenAccess(origin).ids).toContain(deployed)
-    grantDeployedTokensToCreator('https://never-asked.example', [deployed])
-    expect(getTokenAccess('https://never-asked.example').view).not.toBe('filtered')
+    expect(access.ids).toContain('f'.repeat(40))
     unsubscribe()
   })
 })

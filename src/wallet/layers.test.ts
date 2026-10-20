@@ -107,7 +107,7 @@ describe('localToolboxStateLooksEmpty', () => {
     const baskets = listOutputs.mock.calls.map(([args]) => (args as { basket?: string }).basket)
     expect(baskets).not.toContain('1sat')
     expect(baskets).not.toContain('bsv21')
-    expect(baskets).not.toContain('p2pft')
+    expect(baskets).not.toContain('bntft')
   })
 
   it('stops at the first change output without reading actions or balance', async () => {
@@ -135,7 +135,7 @@ describe('localToolboxStateLooksEmpty', () => {
 describe('WALLET_FEATURE_MODULES', () => {
   it('names the public surfaces beside layers', async () => {
     const { WALLET_FEATURE_MODULES } = await import('./layers')
-    expect(WALLET_FEATURE_MODULES.tokens).toBe('token/index.ts')
+    expect(WALLET_FEATURE_MODULES.tokens).toBe('bnt/wallet.ts')
     expect(WALLET_FEATURE_MODULES.spendVerdict).toBe('spendVerdict/index.ts')
     expect(WALLET_FEATURE_MODULES.chainProbe).toBe('chainProbe/index.ts')
     expect(WALLET_FEATURE_MODULES.marketOffer).toBe('marketOffer/index.ts')

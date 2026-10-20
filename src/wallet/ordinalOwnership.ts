@@ -9,7 +9,9 @@
  */
 
 import { P2PKH } from '@bsv/sdk'
-import { decodeBsv21Binary } from './token/decode162'
+import { looksLikeBnt } from './bnt/script'
+
+const FUNGIBLE_INSCRIPTION_MIME = 'application/bsv-20'
 
 /** Opcode values used by the 1Sat `ord` envelope. */
 const OP_FALSE = 0x00
@@ -276,8 +278,8 @@ function hexToUint8(hex: string): Uint8Array {
  * True when `scriptHex` is a key spend to `address`: exactly one P2PKH lock,
  * read opcode by opcode, beside only what that spend ignores — skipped
  * `OP_FALSE OP_IF … OP_ENDIF` branches (the `ord` envelope) on either side,
- * a BRC-162 token prefix, and trailing `OP_RETURN` data. The template inside
- * push data, an `ord` listing, or any other contract is not ownership.
+ * and trailing `OP_RETURN` data. The template inside push data, a token
+ * prefix, an `ord` listing, or any other contract is not ownership.
  */
 export function scriptPaysAddress(
   scriptHex: string | undefined,
@@ -294,9 +296,6 @@ export function scriptPaysAddress(
     return false
   }
   if (!script.includes(expected)) return false
-
-  const binary = decodeBsv21Binary(script)
-  if (binary) return scriptPaysAddress(binary.restScriptHex, address)
 
   const bytes = hexToUint8(script)
   const lock = hexToUint8(expected)
@@ -316,4 +315,18 @@ export function scriptPaysAddress(
     return paid && bytes[at] === OP_RETURN
   }
   return paid
+}
+
+/**
+ * A token, never an item: a compact token script, or a fungible inscription.
+ * Item paths skip these 1-sat outputs instead of filing them as collectables.
+ */
+export function isTokenScript(lockingScriptHex: string): boolean {
+  if (looksLikeBnt(lockingScriptHex)) return true
+  return isTokenMime(parseOrdEnvelope(lockingScriptHex)?.contentType)
+}
+
+/** Fungible inscriptions are tokens, never items. */
+export function isTokenMime(contentType: string | null | undefined): boolean {
+  return (contentType ?? '').trim().toLowerCase().startsWith(FUNGIBLE_INSCRIPTION_MIME)
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  isBsv21SpendArgs,
+  isTokenSpendArgs,
   isBareStorageInventoryBasket,
   isItemBasket,
   isItemIssuanceArgs,
@@ -18,7 +18,6 @@ import {
   parsePBasket,
   parseTokenViewRequest,
   p1SatSpendIds,
-  p2pftSpendIds,
   prepareItemBasketArgs,
   stampBrc164Id,
   tokenViewGranted,
@@ -132,9 +131,9 @@ describe('BRC-99 p 1sat baskets', () => {
     expect(prepareItemBasketArgs({ basket: '1sat' }).error?.code).toBe('USE_P1SAT_SCOPE')
   })
 
-  it('refuses bare storage bsv21 — apps must use p bsv21 scopes', () => {
-    expect(isBareStorageInventoryBasket('bsv21')).toBe(true)
-    expect(prepareItemBasketArgs({ basket: 'bsv21' }).error?.code).toBe('USE_PBSV21_SCOPE')
+  it('refuses bare storage bntft — apps must use p bntft scopes', () => {
+    expect(isBareStorageInventoryBasket('bntft')).toBe(true)
+    expect(prepareItemBasketArgs({ basket: 'bntft' }).error?.code).toBe('USE_TOKEN_SCOPE')
   })
 
   it('still accepts scoped full view p 1sat all', () => {
@@ -292,7 +291,7 @@ describe('telling an item mint from an item send', () => {
         },
       ],
     }
-    expect(isBsv21SpendArgs('createAction', send)).toBe(true)
+    expect(isTokenSpendArgs('createAction', send)).toBe(true)
     expect(isItemSpendArgs('createAction', send)).toBe(true)
   })
 
@@ -310,17 +309,22 @@ describe('telling an item mint from an item send', () => {
 describe('third-party item and token view', () => {
   const allRequest = parseItemViewRequest({ basket: 'p 1sat all' })
 
-  it('does not treat bsv21 as an item basket covered by 1sat all', () => {
-    expect(isItemBasket('bsv21')).toBe(false)
-    expect(isItemBasket('p bsv21 all')).toBe(false)
-    expect(isTokenViewBasket('bsv21')).toBe(true)
-    expect(isTokenViewBasket('p bsv21 all')).toBe(true)
-    expect(isUnsupportedPBasket('p bsv21 all')).toBe(false)
+  it('does not treat bntft as an item basket covered by 1sat all', () => {
+    expect(isItemBasket('bntft')).toBe(false)
+    expect(isItemBasket('p bntft all')).toBe(false)
+    expect(isTokenViewBasket('bntft')).toBe(true)
+    expect(isTokenViewBasket('p bntft all')).toBe(true)
+    expect(isUnsupportedPBasket('p bntft all')).toBe(false)
     const itemAll = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, allRequest)
     expect(itemAll.view).toBe('all')
     expect(
-      tokenViewGranted(DEFAULT_TOKEN_ACCESS, parseTokenViewRequest({ basket: 'bsv21' })),
+      tokenViewGranted(DEFAULT_TOKEN_ACCESS, parseTokenViewRequest({ basket: 'p bntft all' })),
     ).toBe(false)
+  })
+
+  it('never offers a BSV-21 basket as a token view', () => {
+    expect(isTokenViewBasket('bsv21')).toBe(false)
+    expect(isTokenViewBasket('p bsv21 all')).toBe(false)
   })
 
   it('refuses view=all for third-party grants and keeps a filtered ceiling', () => {
@@ -381,12 +385,12 @@ describe('third-party item and token view', () => {
     expect(outputMatchesItemAccess(access, ['origin:aa.0'])).toBe(false)
   })
 
-  it('grants only live 162 token ids, not leftover FOX', () => {
-    const origin = `${'ab'.repeat(32)}_0`
+  it('grants only filed token ids, not leftover FOX', () => {
+    const origin = 'ab'.repeat(20)
     const tokens = grantableTokensFromOutputs([
       {
-        tags: ['bsv21', `bsv21:${origin}`, 'sym:KING'],
-        customInstructions: JSON.stringify({ p: 'bsv-20', id: origin, sym: 'KING', amt: '40' }),
+        tags: ['bntft', `bntft:${origin}`],
+        customInstructions: JSON.stringify({ sym: 'KING' }),
       },
       {
         tags: ['1sat-ft', 'name:FOX'],
@@ -400,28 +404,28 @@ describe('third-party item and token view', () => {
       { allowAll: false },
     )
     expect(access.view).toBe('filtered')
-    const allTokens = parseTokenViewRequest({ basket: 'p bsv21 all' })
+    const allTokens = parseTokenViewRequest({ basket: 'p bntft all' })
     expect(tokenViewGranted(access, allTokens)).toBe(true)
     expect(
-      outputMatchesTokenAccess(access, ['bsv21', `bsv21:${origin}`], undefined, allTokens),
+      outputMatchesTokenAccess(access, ['bntft', `bntft:${origin}`], undefined, allTokens),
     ).toBe(true)
     expect(
-      outputMatchesTokenAccess(access, ['bsv21', `bsv21:${'cd'.repeat(32)}_0`], undefined, allTokens),
+      outputMatchesTokenAccess(access, ['bntft', `bntft:${'cd'.repeat(20)}`], undefined, allTokens),
     ).toBe(false)
   })
 })
 
 describe('P2P-FT permissions follow the BRC-165 1Sat model', () => {
-  const tokenA = `${'ab'.repeat(32)}_0`
-  const tokenB = `${'cd'.repeat(32)}_0`
+  const tokenA = 'ab'.repeat(20)
+  const tokenB = 'cd'.repeat(20)
 
   it('filters by token id under scope token', () => {
-    const request = parseTokenViewRequest({ basket: 'p p2pft token', tags: [`p2pft:${tokenA}`] })
+    const request = parseTokenViewRequest({ basket: 'p bntft token', tags: [`bntft:${tokenA}`] })
     expect(request).toEqual({ scope: 'token', ids: [tokenA], keys: [], wantsAll: false })
     const access = mergeTokenViewGrant(DEFAULT_TOKEN_ACCESS, request, { allowAll: false })
     expect(tokenViewGranted(access, request)).toBe(true)
-    expect(outputMatchesTokenAccess(access, ['p2pft', `p2pft:${tokenA}`], undefined, request)).toBe(true)
-    expect(outputMatchesTokenAccess(access, ['p2pft', `p2pft:${tokenB}`], undefined, request)).toBe(false)
+    expect(outputMatchesTokenAccess(access, ['bntft', `bntft:${tokenA}`], undefined, request)).toBe(true)
+    expect(outputMatchesTokenAccess(access, ['bntft', `bntft:${tokenB}`], undefined, request)).toBe(false)
   })
 
   it('asks again when a filtered grant names no token', () => {
@@ -430,101 +434,88 @@ describe('P2P-FT permissions follow the BRC-165 1Sat model', () => {
       { scope: 'token', ids: [], keys: [], wantsAll: false },
       { allowAll: false },
     )
-    expect(tokenViewGranted(empty, parseTokenViewRequest({ basket: 'p p2pft all' }))).toBe(false)
+    expect(tokenViewGranted(empty, parseTokenViewRequest({ basket: 'p bntft all' }))).toBe(false)
   })
 
   it('looks up one held row under scope id, like p 1sat id', () => {
-    const request = parseTokenViewRequest({ basket: 'p p2pft id', tags: ['id:row-1'] })
+    const request = parseTokenViewRequest({ basket: 'p bntft id', tags: ['id:row-1'] })
     expect(request).toEqual({ scope: 'id', ids: [], keys: ['row-1'], wantsAll: false })
     const access = mergeTokenViewGrant(DEFAULT_TOKEN_ACCESS, request, { allowAll: false })
     expect(tokenViewGranted(access, request)).toBe(true)
-    const row = (key: string) => ['p2pft', `p2pft:${tokenA}`, `id:${key}`]
+    const row = (key: string) => ['bntft', `bntft:${tokenA}`, `id:${key}`]
     expect(outputMatchesTokenAccess(access, row('row-1'), undefined, request)).toBe(true)
     expect(outputMatchesTokenAccess(access, row('row-2'), undefined, request)).toBe(false)
     // A row-key grant never widens to the token's other rows.
-    const all = parseTokenViewRequest({ basket: 'p p2pft all' })
+    const all = parseTokenViewRequest({ basket: 'p bntft all' })
     expect(outputMatchesTokenAccess(access, row('row-2'), undefined, all)).toBe(false)
   })
 
-  it('keeps the earlier p p2pft id + token id form working as a token filter', () => {
-    expect(parseTokenViewRequest({ basket: 'p p2pft id', tags: [`p2pft:${tokenA}`] })).toEqual({
-      scope: 'token',
-      ids: [tokenA],
-      keys: [],
-      wantsAll: false,
-    })
-    expect(parseTokenViewRequest({ basket: 'p bsv21 id', tags: [`id:${tokenA}`] }).scope).toBe('token')
-  })
-
   it.each([
-    ['p p2pft', [], 'INVALID_PBSV21_SCOPE'],
-    ['p p2pft unknown', [], 'INVALID_PBSV21_SCOPE'],
-    ['p p2pft token', [], 'MISSING_PBSV21_SCOPE_TAG'],
-    ['p p2pft id', [], 'MISSING_PBSV21_SCOPE_TAG'],
+    ['p bntft', [], 'INVALID_TOKEN_SCOPE'],
+    ['p bntft unknown', [], 'INVALID_TOKEN_SCOPE'],
+    ['p bntft token', [], 'MISSING_TOKEN_SCOPE_TAG'],
+    ['p bntft id', [], 'MISSING_TOKEN_SCOPE_TAG'],
   ])('refuses %s with %s', (basket, tags, code) => {
     expect(prepareItemBasketArgs({ basket, tags }).error?.code).toBe(code)
   })
 
-  it('treats p p2pft input id as a token send, never a payment', () => {
-    const args = {
-      labels: ['p p2pft input id row-1'],
-      inputs: [{ outpoint: `${'ab'.repeat(32)}.0` }],
+  it('refuses app spends and writes of the token filing', () => {
+    expect(
+      prepareItemBasketArgs({
+        labels: ['p bntft input id row-1'],
+        inputs: [{ outpoint: `${'ab'.repeat(32)}.0` }],
+      }).error?.code,
+    ).toBe('BNT_WALLET_ONLY')
+    for (const basket of ['bntft', 'p bntft all']) {
+      expect(
+        prepareItemBasketArgs({ outputs: [{ basket, tags: ['bntft', `bntft:${tokenA}`] }] }).error?.code,
+      ).toBe('BNT_WALLET_ONLY')
     }
-    expect(p2pftSpendIds(args)).toEqual(['row-1'])
-    expect(isBsv21SpendArgs('createAction', args)).toBe(true)
-  })
-
-  it('stamps a BRC-164 key on token outputs an app files', () => {
-    const prepared = prepareItemBasketArgs({
-      outputs: [{ basket: 'p2pft', tags: ['p2pft', `p2pft:${tokenA}`] }],
-    })
-    const tags = (prepared.args as { outputs: Array<{ tags: string[] }> }).outputs[0]?.tags
-    expect(tags).toEqual(['p2pft', `p2pft:${tokenA}`, expect.stringMatching(/^id:[0-9a-f]{32}$/)])
   })
 })
 
-describe('HCT items share the item grant; HCT is wallet-only', () => {
+describe('BNT items share the item grant; BNT is wallet-only', () => {
   const assetId = 'ab'.repeat(20)
 
-  it('maps p p2pnft scopes to the p2pnft filing under the item gate', () => {
-    expect(isItemBasket('p p2pnft all')).toBe(true)
-    expect(isUnsupportedPBasket('p p2pnft all')).toBe(false)
-    const all = prepareItemBasketArgs({ basket: 'p p2pnft all' })
+  it('maps p bntnft scopes to the bntnft filing under the item gate', () => {
+    expect(isItemBasket('p bntnft all')).toBe(true)
+    expect(isUnsupportedPBasket('p bntnft all')).toBe(false)
+    const all = prepareItemBasketArgs({ basket: 'p bntnft all' })
     expect(all.error).toBeUndefined()
-    expect((all.args as { basket: string }).basket).toBe('p2pnft')
+    expect((all.args as { basket: string }).basket).toBe('bntnft')
     expect(all.itemViewRequest?.wantsAll).toBe(true)
-    const col = prepareItemBasketArgs({ basket: 'p p2pnft collection', tags: [`collection:${assetId}`] })
-    expect((col.args as { basket: string }).basket).toBe('p2pnft')
+    const col = prepareItemBasketArgs({ basket: 'p bntnft collection', tags: [`collection:${assetId}`] })
+    expect((col.args as { basket: string }).basket).toBe('bntnft')
     expect(col.itemViewRequest?.collections).toEqual([assetId])
     expect((prepareItemBasketArgs({ basket: 'p 1sat all' }).args as { basket: string }).basket).toBe('1sat')
   })
 
   it('refuses the bare filing, a missing tag and a bad scope', () => {
-    expect(prepareItemBasketArgs({ basket: 'p2pnft' }).error?.code).toBe('USE_P1SAT_SCOPE')
-    expect(prepareItemBasketArgs({ basket: 'p p2pnft collection' }).error?.code).toBe('MISSING_P1SAT_SCOPE_TAG')
-    expect(prepareItemBasketArgs({ basket: 'p p2pnft asset' }).error?.code).toBe('INVALID_P1SAT_SCOPE')
+    expect(prepareItemBasketArgs({ basket: 'bntnft' }).error?.code).toBe('USE_P1SAT_SCOPE')
+    expect(prepareItemBasketArgs({ basket: 'p bntnft collection' }).error?.code).toBe('MISSING_P1SAT_SCOPE_TAG')
+    expect(prepareItemBasketArgs({ basket: 'p bntnft asset' }).error?.code).toBe('INVALID_P1SAT_SCOPE')
   })
 
-  it('refuses every app write of HCT', () => {
-    const hctLock = `17686374${assetId}5175` + '21' + '02'.padEnd(66, '1') + 'ac'
+  it('refuses every app write of BNT', () => {
+    const bntLock = `17626e74${assetId}5175` + '21' + '02'.padEnd(66, '1') + 'ac'
     const refusals = [
-      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'p2pnft' }] },
-      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'p p2pnft all' }] },
-      { outputs: [{ protocol: 'basket insertion', insertionRemittance: { basket: 'p2pnft' } }] },
-      { outputs: [{ lockingScript: hctLock, satoshis: 1 }] },
-      { outputs: [{ lockingScript: `03686374`, satoshis: 1, basket: 'p2pft' }] },
-      { labels: ['p p2pnft input id abc'] },
-      { basket: 'p2pnft', output: `${'11'.repeat(32)}.0` },
-      { basket: 'csft', output: `${'11'.repeat(32)}.0` },
+      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'bntnft' }] },
+      { outputs: [{ lockingScript: '00', satoshis: 1, basket: 'p bntnft all' }] },
+      { outputs: [{ protocol: 'basket insertion', insertionRemittance: { basket: 'bntnft' } }] },
+      { outputs: [{ lockingScript: bntLock, satoshis: 1 }] },
+      { outputs: [{ lockingScript: `03626e74`, satoshis: 1, basket: 'bntft' }] },
+      { labels: ['p bntnft input id abc'] },
+      { basket: 'bntnft', output: `${'11'.repeat(32)}.0` },
+      { basket: 'iptft', output: `${'11'.repeat(32)}.0` },
     ]
     for (const args of refusals) expect(prepareItemBasketArgs(args).error?.code, JSON.stringify(args)).toMatch(/WALLET_ONLY/)
   })
 
-  it('filters token views by a 40-hex HCT asset id', () => {
-    const request = parseTokenViewRequest({ basket: 'p p2pft token', tags: [`p2pft:${assetId.toUpperCase()}`] })
+  it('filters token views by a 40-hex BNT asset id', () => {
+    const request = parseTokenViewRequest({ basket: 'p bntft token', tags: [`bntft:${assetId.toUpperCase()}`] })
     expect(request.ids).toEqual([assetId])
     const access = { view: 'filtered' as const, ids: [assetId], keys: [] }
-    expect(outputMatchesTokenAccess(access, [`p2pft:${assetId}`, 'hct'], undefined, request)).toBe(true)
-    expect(outputMatchesTokenAccess(access, [`p2pft:${'cd'.repeat(20)}`, 'hct'], undefined, request)).toBe(false)
+    expect(outputMatchesTokenAccess(access, [`bntft:${assetId}`, 'bnt'], undefined, request)).toBe(true)
+    expect(outputMatchesTokenAccess(access, [`bntft:${'cd'.repeat(20)}`, 'bnt'], undefined, request)).toBe(false)
   })
 })

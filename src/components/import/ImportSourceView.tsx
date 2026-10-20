@@ -8,7 +8,6 @@ import {
   IMPORT_ITEMS_PER_TX,
   IMPORT_SOURCE_LABELS,
   describeImportHold,
-  formatTokenAmount,
   planSweep,
   type HeldTally,
   type ImportHoldReason,
@@ -31,7 +30,7 @@ export type SourceFace =
 
 function HeldList({ held }: { held: HeldTally }) {
   const rows = (Object.entries(held) as Array<[ImportHoldReason, number | undefined]>).filter(
-    ([, count]) => (count ?? 0) > 0,
+    ([reason, count]) => (count ?? 0) > 0 && describeImportHold(reason) != null,
   )
   if (rows.length === 0) return null
   return (
@@ -154,7 +153,7 @@ export function ImportSourceView(props: {
     itemCount: totals.itemCount,
     itemsPerTx: IMPORT_ITEMS_PER_TX,
   })
-  const movable = totals.cashCount > 0 || totals.itemCount > 0 || totals.tokens.length > 0
+  const movable = totals.cashCount > 0 || totals.itemCount > 0
   const offer = scan?.via === 'handcash-utxo-set' ? null : props.hintsOffer
 
   if (face === 'browsing') {
@@ -203,10 +202,6 @@ export function ImportSourceView(props: {
             </MetricStrip.Value>
             <MetricStrip.Label>Items</MetricStrip.Label>
           </MetricStrip.Chip>
-          <MetricStrip.Chip>
-            <MetricStrip.Value>{totals.tokens.length}</MetricStrip.Value>
-            <MetricStrip.Label>Tokens</MetricStrip.Label>
-          </MetricStrip.Chip>
         </MetricStrip.Root>
       ) : null}
 
@@ -219,21 +214,6 @@ export function ImportSourceView(props: {
             </StatusBanner.Body>
           </StatusBanner.Copy>
         </StatusBanner.Root>
-      ) : null}
-
-      {totals.tokens.length > 0 && face !== 'reviewing' ? (
-        <SettingsSection title="Tokens" part="tokens">
-          <ul className="settings-list">
-            {totals.tokens.map((token) => (
-              <li key={token.id ?? token.tick ?? token.sym}>
-                <ListRow.Root as="div">
-                  <ListRow.Label>{token.sym}</ListRow.Label>
-                  <ListRow.Trailing className="mono">{formatTokenAmount(token.amount, token.dec)}</ListRow.Trailing>
-                </ListRow.Root>
-              </li>
-            ))}
-          </ul>
-        </SettingsSection>
       ) : null}
 
       {working ? (
@@ -287,14 +267,6 @@ export function ImportSourceView(props: {
                   </ListRow.Root>
                 </li>
               ) : null}
-              {totals.tokens.map((token) => (
-                <li key={token.id ?? token.sym}>
-                  <ListRow.Root as="div">
-                    <ListRow.Label>{token.sym}</ListRow.Label>
-                    <ListRow.Trailing className="mono">{formatTokenAmount(token.amount, token.dec)}</ListRow.Trailing>
-                  </ListRow.Root>
-                </li>
-              ))}
             </ul>
           </SettingsSection>
           {Object.keys(totals.held).length > 0 ? (
@@ -351,9 +323,6 @@ export function ImportSourceView(props: {
         <p className="settings-row-desc" data-aeon-part="last-sweep">
           Last import {new Date(source.lastSweep.at).toLocaleDateString()} ·{' '}
           {formatBsv(source.lastSweep.cashSats)} BSV · {source.lastSweep.items.toLocaleString()} items
-          {source.lastSweep.tokens.length > 0
-            ? ` · ${source.lastSweep.tokens.map((t) => t.sym).join(', ')}`
-            : ''}
           {source.lastSweep.failed > 0 ? ` · ${source.lastSweep.failed} failed` : ''}
           {source.lastSweep.notes.length > 0 ? ` — ${source.lastSweep.notes.join(' ')}` : ''}
         </p>

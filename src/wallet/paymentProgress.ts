@@ -297,51 +297,15 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Buying…',
     detail: 'Settling the purchase',
   },
-  createDirectOffer: {
-    label: 'Listing…',
-    detail: 'Creating the direct offer',
-  },
-  buyDirectOffer: {
-    label: 'Buying…',
-    detail: 'Settling the direct offer',
-  },
-  collectDirectOfferProceeds: {
-    label: 'Collecting…',
-    detail: 'Filing the sale proceeds',
-  },
-  cancelDirectOffer: {
-    label: 'Cancelling…',
-    detail: 'Returning the listed lot',
-  },
-  issueCountersignedAsset: {
-    label: 'Issuing…',
-    detail: 'Deploying the issuer-accepted asset',
-  },
-  transferCountersignedAsset: {
-    label: 'Sending…',
-    detail: 'Waiting for the issuer or its cosigners to accept',
-  },
-  joinCountersignedAsset: {
-    label: 'Joining…',
-    detail: 'Becoming a cosigner of the issuer-accepted asset',
-  },
-  retireCountersignedAsset: {
-    label: 'Retiring…',
-    detail: 'Ending the beacon of the issuer-accepted asset',
-  },
-  releaseCountersignedAsset: {
-    label: 'Releasing…',
-    detail: 'Publishing the release keys on chain',
-  },
-  issueHctAsset: {
+  issueBntAsset: {
     label: 'Issuing…',
     detail: 'Deploying the asset',
   },
-  mintHctAsset: {
+  mintBntAsset: {
     label: 'Minting…',
     detail: 'Spending the mint authority and handing it back',
   },
-  transferHctAsset: {
+  transferBntAsset: {
     label: 'Sending…',
     detail: 'Signing the transfer and delivering its proof',
   },

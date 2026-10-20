@@ -124,7 +124,7 @@ function dropExpiredSpendPriority(now = Date.now()): void {
 
 export type SpendPriorityLease = {
   /**
-   * Prove the work is still alive. A BSV-21 mint that waits on proofs for an
+   * Prove the work is still alive. A mint that waits on proofs for an
    * unmined genesis can legitimately run past the expiry, and letting the hold
    * lapse under it invited chain ingest and history backup back on top of the
    * spend it was meant to protect. Expiry now catches abandoned holds only.

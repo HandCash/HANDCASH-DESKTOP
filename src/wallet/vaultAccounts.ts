@@ -36,7 +36,7 @@ export type ReservedKeyRefusal =
   | 'self-linkage'
 
 /**
- * Keys only wallet code signs with: HCT holder, issuer and fee keys (BRC-255
+ * Keys only wallet code signs with: BNT holder, issuer and fee keys (BRC-255
  * moves only through the wallet), countersign decision and release keys, and
  * the keys that hold this wallet's coins on other chains, its own and those
  * derived for each sender paying its identity (BRC-213 §2, §7), and the key
@@ -44,9 +44,9 @@ export type ReservedKeyRefusal =
  * accepts or offers an asset the app never had.
  */
 const WALLET_ASSET_PROTOCOLS = new Set([
-  'hct holder',
-  'hct issuer',
-  'hct fee',
+  'bnt holder',
+  'bnt issuer',
+  'bnt fee',
   'countersign decision',
   'countersign release',
   'wltc reserve',

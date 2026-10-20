@@ -89,7 +89,6 @@ vi.mock('./session', () => ({
   }),
 }))
 vi.mock('./collectables', () => ({ listCollectables: async () => [] }))
-vi.mock('./token/list', () => ({ listFungibles: async () => [] }))
 
 const A = `${'aa'.repeat(32)}.0`
 const B = `${'bb'.repeat(32)}.1`

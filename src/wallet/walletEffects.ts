@@ -14,7 +14,6 @@ import { cancelPendingPermissions } from './permissions'
 import { clearPaymentProgress } from './paymentProgress'
 import { rebindOneSatImportGuardForAccount } from './oneSatImportGuard'
 import { rebindSentItemGuardForAccount } from './sentItemGuard'
-import { rebindFungiblesForAccount } from './token/list'
 import { rebindHoldingsReconcileForAccount } from './holdingsReconcile'
 import { assertNeverOutcome, type WalletOutcome } from './kernel/outcomes'
 import { rebindTxStoreForAccount } from './txStore'
@@ -61,7 +60,6 @@ export function applyWalletOutcome(outcome: WalletOutcome): void {
       rebindSentItemGuardForAccount()
       rebindOneSatImportGuardForAccount()
       rebindCollectablesForAccount()
-      rebindFungiblesForAccount()
       rebindHoldingsReconcileForAccount()
       clearPaymentProgress()
       return

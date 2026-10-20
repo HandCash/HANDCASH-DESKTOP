@@ -32,10 +32,10 @@ export const ASSET_PROFILES: readonly AssetProfile[] = Object.freeze([
     methods: ['getCoinAddress', 'listCoins', 'sendCoins'],
   })),
   { id: '1sat', scope: 'per-action', spec: ['BRC-147', 'BRC-150', 'BRC-165'], basket: 'p 1sat', spendLabel: 'p 1sat input id' },
-  { id: 'p2pft', scope: 'per-action', spec: ['BRC-162', 'BRC-176', 'BRC-251', 'BRC-255'], basket: 'p p2pft', spendLabel: 'p p2pft input id', bnt: true },
-  { id: 'p2pnft', scope: 'per-action', spec: ['BRC-255'], basket: 'p p2pnft', bnt: true },
-  { id: 'csft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csft', bnt: false },
-  { id: 'csnft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csnft', bnt: false },
+  { id: 'bntft', scope: 'per-action', spec: ['BRC-251', 'BRC-255'], basket: 'p bntft', bnt: true },
+  { id: 'bntnft', scope: 'per-action', spec: ['BRC-255'], basket: 'p bntnft', bnt: true },
+  { id: 'iptft', scope: 'per-action', spec: ['BRC-253'], basket: 'p iptft', bnt: false },
+  { id: 'iptnft', scope: 'per-action', spec: ['BRC-253'], basket: 'p iptnft', bnt: false },
 ])
 
 export function listAssetProfiles(): { profiles: AssetProfile[] } {

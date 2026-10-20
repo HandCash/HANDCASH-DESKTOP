@@ -7,10 +7,9 @@ const walletRoot = resolve(import.meta.dirname)
 const outboundModules = [
   'sendPayment.ts',
   'sendBrc29Payment.ts',
-  'token/send.ts',
+  'bnt/wallet.ts',
   'collectables.ts',
   'burn.ts',
-  'token/burn.ts',
   'marketListing.ts',
   'marketSettlement.ts',
   'appSignedCheque.ts',

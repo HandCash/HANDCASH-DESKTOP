@@ -121,11 +121,10 @@ function SourceKindList({ onPick }: { onPick: (kind: ImportSourceKind) => void }
 function sourceSummary(source: ImportedSource): string {
   const kind = IMPORT_SOURCE_LABELS[source.kind]
   if (!source.scan) return `${kind} · not scanned yet`
-  const { cashSats, itemCount, itemCountCapped, tokens } = planSweep(source).totals
+  const { cashSats, itemCount, itemCountCapped } = planSweep(source).totals
   const held = [
     cashSats > 0 ? `${formatBsv(cashSats)} BSV` : null,
     itemCount > 0 ? `${itemCount.toLocaleString()}${itemCountCapped ? '+' : ''} item${itemCount === 1 ? '' : 's'}` : null,
-    tokens.length > 0 ? `${tokens.length} token${tokens.length === 1 ? '' : 's'}` : null,
   ].filter(Boolean)
   return `${kind} · ${held.length > 0 ? held.join(' · ') : 'nothing left to import'}`
 }
@@ -265,7 +264,6 @@ export function ImportPanel() {
       const parts = [
         summary.cashSats > 0 ? `${formatBsv(summary.cashSats)} BSV` : null,
         summary.items > 0 ? `${summary.items.toLocaleString()} items` : null,
-        summary.tokens.length > 0 ? summary.tokens.map((t) => t.sym).join(', ') : null,
       ].filter(Boolean)
       toastSuccess('Sweep finished', parts.length > 0 ? `Moved ${parts.join(' · ')}` : 'Nothing compatible moved.')
     } catch (err) {

@@ -5,7 +5,7 @@ import { assign, setup } from 'xstate'
  * See `layers.ts` + `walletCoordinator.ts`.
  *
  * Parallel regions (all idle when depth === 0):
- * - chainIngest — Refresh / legacy import / 1sat + bsv21 import
+ * - chainIngest — Refresh / legacy import / 1sat import
  * - spend — send, BRC createAction, collectable transfer
  * - historyReplica — BRC-39 push/pull/restore
  * - recompose — unlock restore (history then chain)

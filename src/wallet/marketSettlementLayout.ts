@@ -4,20 +4,19 @@
  * table.
  *
  * Both seller inputs are signed SIGHASH_SINGLE|ANYONECANPAY, which commits to
- * the output at the signer's own index: the listed asset to the seller payment,
- * the offer token to the market fee. The asset cannot move without paying the
+ * the output at the signer's own index: the listed item to the seller payment,
+ * the offer token to the market fee. The item cannot move without paying the
  * seller, and withdrawing the advert costs the fee.
  *
- * BRC-162 tokens and countersigned assets travel in the script, so the buyer
- * output follows the two bound outputs. An ordinal follows its satoshi: two buyer pads come first and
- * output 0 returns exactly their satoshis, so the item's satoshi lands in
- * output 1 while the item's signature binds output 2.
+ * An ordinal follows its satoshi: two buyer pads come first and output 0
+ * returns exactly their satoshis, so the item's satoshi lands in output 1
+ * while the item's signature binds output 2.
  */
 import type { MarketAssetType } from './marketListing'
 import { unlockSighashByte } from './offerSeal'
 import { SELLER_SIGHASH, SELLER_SIGHASH_BYTE } from './offerTerms'
 
-export type MarketSettlementLayout = 'token-v2' | 'ordinal-v2'
+export type MarketSettlementLayout = 'ordinal-v2'
 
 export type MarketSettlementShape = {
   layout: MarketSettlementLayout
@@ -40,18 +39,6 @@ export const MARKET_SETTLEMENT_VERSION = 2 as const
 export const MARKET_PAD_BASKET = 'market-pads'
 export const MARKET_PAD_COUNT = 2
 
-const TOKEN: MarketSettlementShape = {
-  layout: 'token-v2',
-  padVins: [],
-  itemVin: 0,
-  offerVin: 1,
-  padReturnOutputIndex: null,
-  sellerOutputIndex: 0,
-  feeOutputIndex: 1,
-  buyerOutputIndex: 2,
-  firstChangeIndex: 3,
-}
-
 const ORDINAL: MarketSettlementShape = {
   layout: 'ordinal-v2',
   padVins: [0, 1],
@@ -64,25 +51,13 @@ const ORDINAL: MarketSettlementShape = {
   firstChangeIndex: 4,
 }
 
-/** Tokens and countersigned assets travel in the script; only an ordinal follows its satoshi. */
-export function marketSettlementShape(assetType: MarketAssetType): MarketSettlementShape {
-  return assetType === 'ordinal' ? ORDINAL : TOKEN
+export function marketSettlementShape(_assetType: MarketAssetType): MarketSettlementShape {
+  return ORDINAL
 }
 
-export function marketSettlementShapeForLayout(
-  layout: unknown,
-): MarketSettlementShape | null {
-  if (layout === 'token-v2') return TOKEN
-  if (layout === 'ordinal-v2') return ORDINAL
-  return null
-}
-
-/** True when (seller, fee) are the payment outputs of a v2 layout. */
+/** True when (seller, fee) are the payment outputs of the v2 layout. */
 export function isMarketPayoutIndexPair(sellerOutputIndex: number, feeOutputIndex: number): boolean {
-  return [TOKEN, ORDINAL].some(
-    (shape) =>
-      shape.sellerOutputIndex === sellerOutputIndex && shape.feeOutputIndex === feeOutputIndex,
-  )
+  return ORDINAL.sellerOutputIndex === sellerOutputIndex && ORDINAL.feeOutputIndex === feeOutputIndex
 }
 
 export type MarketSettlementUnlocksV2 = {

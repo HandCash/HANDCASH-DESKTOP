@@ -5,7 +5,6 @@ const WRONG_ORIGIN = `${'ab'.repeat(32)}_0`
 const TRUE_ORIGIN = `${'cd'.repeat(32)}_1`
 
 const held = vi.fn(() => [] as Array<Record<string, unknown>>)
-const heldTokens = vi.fn(() => [] as Array<Record<string, unknown>>)
 const resolved = vi.fn(() => null as Record<string, unknown> | null)
 const verdict = vi.fn(() => null as Record<string, unknown> | null)
 const localArt = vi.fn(() => undefined as string | undefined)
@@ -14,15 +13,6 @@ vi.mock('./collectables', () => ({ getCachedCollectables: () => held() }))
 vi.mock('./localItemArt', () => ({
   getItemArtDataUrl: (origin: string) => localArt(origin),
 }))
-vi.mock('./token', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./token')>()
-  return {
-    ...actual,
-    getCachedFungibles: () => heldTokens(),
-    getTokenIconDataUrl: (op: string | undefined | null) =>
-      op ? `data:image/png;base64,${op}` : undefined,
-  }
-})
 vi.mock('./inscriptionCache', () => ({
   getResolvedInscription: () => resolved(),
   getResolvedInscriptionByOrigin: () => resolved(),
@@ -47,25 +37,14 @@ const frozen = {
 describe('viewActivityItem', () => {
   beforeEach(() => {
     held.mockReturnValue([])
-    heldTokens.mockReturnValue([])
     resolved.mockReturnValue(null)
     verdict.mockReturnValue(null)
     localArt.mockReturnValue(undefined)
   })
 
-  it('resolves token icons from the icon outpoint — not the token id', () => {
-    const icon = `${'ef'.repeat(32)}_0`
-    const tokenId = `${'aa'.repeat(32)}_0`
-    expect(
-      viewActivityItem({
-        name: 'DEMO',
-        origin: tokenId,
-        tokenId,
-        icon,
-      }),
-    ).toMatchObject({
-      imageUrl: `data:image/png;base64,${icon}`,
-    })
+  it('leaves a token row alone', () => {
+    const token = { name: 'DEMO', tokenId: 'ab'.repeat(20) }
+    expect(viewActivityItem(token)).toBe(token)
   })
 
   it('paints a held tip from the inventory', () => {

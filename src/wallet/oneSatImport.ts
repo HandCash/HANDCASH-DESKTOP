@@ -46,16 +46,6 @@ import {
 } from './inscriptionCache'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
-  decodeBsv21Binary,
-  isBsv21Mime,
-  normalizeTokenId,
-  parseBsv21Json,
-  tokenIdForPayload,
-  type Bsv21ImportItem,
-  type Bsv21Op,
-  type Bsv21Payload,
-} from './token'
-import {
   isRetiredFungibleAmountHop,
   isRetiredFungibleMime,
   looksLikeRetiredFungibleTip,
@@ -63,7 +53,7 @@ import {
 } from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
 import { parseContentReference } from './derivativeContent'
-import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
+import { hasOrdEnvelope, isTokenMime, isTokenScript, parseOrdEnvelope } from './ordinalOwnership'
 import {
   applyCollectableRemittance,
   collectableKeySet,
@@ -95,13 +85,11 @@ export type OneSatImportResult = {
 export type ClassifiedLegacyUtxos = {
   /**
    * Sweepable cash only — {@link chooseLegacySweepPath} returned `sweep`.
-   * Never includes 1-sat tips, BSV-21, or sub-fee companion dust.
+   * Never includes 1-sat tips, tokens, or sub-fee companion dust.
    */
   funding: LegacyUtxo[]
   /** Confirmed ordinals — internalize to basket `1sat` */
   oneSats: MigrationItem[]
-  /** Confirmed BSV-21 tips — internalize to basket `bsv21` (Collect fungibles) */
-  bsv21: Bsv21ImportItem[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
   /**
@@ -749,114 +737,11 @@ export async function resolveInscriptionAtOrigin(
 }
 
 
-/**
- * Pull a balance-bearing BSV-21 holding from a GorillaPool / 1sat txo payload.
- * Auth-only outputs return null (not Collect fungible balances).
- */
-export function extractBsv21FromGp(
-  meta: GpTxo,
-  tipOutpoint: string,
-): Omit<Bsv21ImportItem, 'txid' | 'vout'> | null {
-  const tip = tipOutpoint.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+/** The index names this output, or the inscription it descends from, as a token. */
+function gpTxoIsToken(meta: GpTxo): boolean {
   const originData = typeof meta.origin === 'object' ? meta.origin?.data : undefined
-  const tipData = meta.data
-  const insc = tipData?.insc ?? originData?.insc
-  const bsv20 = tipData?.bsv20 ?? originData?.bsv20
-  const mime = asString(insc?.file?.type)
-  // The origin is the mint, or an earlier hop of the same token, and states the
-  // balance held *there* — reading `amt` from it credits the sender's prior
-  // total instead of what they transferred. Only this output can say what it
-  // holds, so the tip is asked first and the origin is a last resort.
-  const tipPayload = bsv21PayloadFromGpData(tipData)
-  const originPayload = bsv21PayloadFromGpData(originData)
-  const payload = tipPayload ?? originPayload
-  if (!payload) {
-    // Indexer marked application/bsv-20 but JSON was incomplete — still divert
-    // away from the NFT basket so we do not paint fungibles as collectables.
-    if (isBsv21Mime(mime) && bsv20?.id && bsv20.amt != null) {
-      const tokenId = normalizeTokenId(String(bsv20.id))
-      const amt =
-        typeof bsv20.amt === 'number' ? String(Math.trunc(bsv20.amt)) : String(bsv20.amt)
-      if (tokenId && /^\d+$/.test(amt)) {
-        return {
-          outpoint: tipOutpoint.includes('_')
-            ? tipOutpoint.replace(/_(\d+)$/, '.$1')
-            : tipOutpoint,
-          tokenId,
-          amt,
-          op: (asString(bsv20.op) as Bsv21Op) || 'transfer',
-          ...(asString(bsv20.sym) ? { sym: asString(bsv20.sym) } : {}),
-          ...(normalizeTokenId(String(bsv20.icon ?? ''))
-            ? { icon: normalizeTokenId(String(bsv20.icon))! }
-            : {}),
-          dec: typeof bsv20.dec === 'number' ? bsv20.dec : Number(bsv20.dec) || 0,
-        }
-      }
-    }
-    return null
-  }
-  const tokenId = tokenIdForPayload(payload, tip)
-  if (!tokenId || !payload.amt) return null
-  // Ticker, icon and decimals are declared once at the deploy, so a transfer
-  // body legitimately omits them — unlike the balance, these are the origin's
-  // to answer. `dec` parses to 0 when absent, which reads the same as a token
-  // deployed with no decimals; either way the origin's value is correct.
-  const sym = payload.sym ?? originPayload?.sym
-  const icon = payload.icon ?? originPayload?.icon
-  const dec = payload.dec || originPayload?.dec || 0
-  return {
-    outpoint: tipOutpoint.includes('_')
-      ? tipOutpoint.replace(/_(\d+)$/, '.$1')
-      : tipOutpoint,
-    tokenId,
-    amt: payload.amt,
-    op: payload.op,
-    ...(sym ? { sym } : {}),
-    ...(icon ? { icon } : {}),
-    dec,
-  }
-}
-
-/** Parse the BSV-21 body of one side of a txo payload (tip or origin). */
-function bsv21PayloadFromGpData(
-  data: GpTxo['data'] | undefined,
-): Bsv21Payload | null {
-  if (!data) return null
-  const fromJson = parseBsv21Json(data.insc?.json)
-  if (fromJson) return fromJson
-  const bsv20 = data.bsv20
-  if (!bsv20) return null
-  return parseBsv21Json({
-    p: 'bsv-20',
-    op: bsv20.op,
-    id: bsv20.id,
-    amt: bsv20.amt,
-    sym: bsv20.sym,
-    icon: bsv20.icon,
-    dec: bsv20.dec,
-  })
-}
-
-/**
- * Resolve a BSV-21 fungible tip from the ordinal indexer.
- * Returns null for NFT inscriptions and auth-only outputs.
- */
-export async function resolveBsv21Holding(
-  txid: string,
-  vout: number,
-  chain: Chain,
-): Promise<Bsv21ImportItem | null> {
-  const tip = toDotOutpoint(txid, vout)
-  const meta = await fetchGpTxo(txidVoutUnderscore(txid, vout), chain)
-  if (!meta) return null
-  // Import credits a balance, so only this output's own body may set it. Until
-  // the index has parsed the tip its `origin` still answers — with the mint's
-  // amount — and banking that would corrupt token accounting. Hold instead;
-  // the next pass re-asks and imports once the real body is there.
-  if (!meta.data?.insc?.json && !meta.data?.bsv20) return null
-  const holding = extractBsv21FromGp(meta, tip)
-  if (!holding) return null
-  return { ...holding, txid, vout }
+  if (meta.data?.bsv20 || originData?.bsv20) return true
+  return isTokenMime(asString(meta.data?.insc?.file?.type ?? originData?.insc?.file?.type))
 }
 
 /**
@@ -864,7 +749,7 @@ export async function resolveBsv21Holding(
  * metadata). Ownership and identity must not depend on this — the BRC-150
  * tip→origin proof + SPV BEEF remain grade A. GorillaPool `/content` is pictures
  * after origin is known.
- * BSV-21 fungibles are intentionally excluded — use {@link resolveBsv21Holding}.
+ * Token inscriptions are never named here.
  */
 export async function resolveOneSatInscription(
   txid: string,
@@ -884,9 +769,9 @@ export async function resolveOneSatInscription(
     const meta = await fetchGpTxo(key, chain)
     if (meta) {
       // Do not paint fungible tips as NFT collectables.
-      if (extractBsv21FromGp(meta, toDotOutpoint(curTxid, curVout))) return null
+      if (gpTxoIsToken(meta)) return null
       const resolved = extractResolved(meta, key)
-      if (resolved && !isBsv21Mime(resolved.mimeType)) return resolved
+      if (resolved && !isTokenMime(resolved.mimeType)) return resolved
     }
 
     if (depth === maxDepth) break
@@ -906,12 +791,10 @@ export async function resolveOneSatInscription(
       if (seen.has(prevKey)) continue
       const prevMeta = await fetchGpTxo(prevKey, chain)
       if (prevMeta) {
-        if (extractBsv21FromGp(prevMeta, toDotOutpoint(vin.txid, vin.vout!))) {
-          // Parent is a fungible transfer — not an NFT origin walk.
-          continue
-        }
+        // Parent is a fungible transfer — not an NFT origin walk.
+        if (gpTxoIsToken(prevMeta)) continue
         const resolved = extractResolved(prevMeta, prevKey)
-        if (resolved && !isBsv21Mime(resolved.mimeType)) return resolved
+        if (resolved && !isTokenMime(resolved.mimeType)) return resolved
       }
       if (!next) next = { txid: vin.txid, vout: vin.vout! }
     }
@@ -1018,7 +901,7 @@ async function rebuildBrc150Identity(
 /** Per-pass ceiling on transfer-shape probes (a couple of cached rawtx fetches each). */
 export const MAX_TRANSFER_PROBES_PER_PASS = 12
 
-type OrdinalTransferProbe = 'item' | 'bsv21' | 'retired' | 'icon' | 'unknown'
+type OrdinalTransferProbe = 'item' | 'token' | 'retired' | 'icon' | 'unknown'
 
 /** Inscribed parent tip shape — bare needs a further hop. */
 type OnesatParentShape = 'nft' | 'retired' | 'retiredHop' | 'bare' | 'other'
@@ -1031,7 +914,7 @@ function shapeOfOnesatLock(
   satoshis: number | undefined,
 ): OnesatParentShape {
   if (satoshis !== 1) return 'other'
-  if (scriptHex && decodeBsv21Binary(scriptHex)) return 'other'
+  if (scriptHex && isTokenScript(scriptHex)) return 'other'
   if (scriptHex && decodeBProtocol(scriptHex)) return 'other'
   if (isRetiredFungibleAmountHop(scriptHex)) return 'retiredHop'
   if (looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })) return 'retired'
@@ -1040,7 +923,7 @@ function shapeOfOnesatLock(
     if (isRetiredFungibleMime(envelope.contentType)) {
       return isRetiredFungibleAmountHop(scriptHex) ? 'retiredHop' : 'retired'
     }
-    if (isBsv21Mime(envelope.contentType)) return 'other'
+    if (isTokenMime(envelope.contentType)) return 'other'
     return 'nft'
   }
   if (hasOrdEnvelope(scriptHex)) return 'other'
@@ -1137,28 +1020,11 @@ function isRetiredFungibleTickerIcon(tx: Transaction, vout: number): boolean {
   return false
 }
 
-/** Inscription body as JSON, for envelopes that carry a bsv-20 payload. */
-function jsonBody(body: Uint8Array | undefined): unknown {
-  if (!body || body.length === 0) return null
-  try {
-    return JSON.parse(new TextDecoder().decode(body))
-  } catch {
-    return null
-  }
-}
-
 async function probeOrdinalTransfer(
   txid: string,
   vout: number,
   chain: Chain,
-): Promise<{
-  kind: OrdinalTransferProbe
-  origin?: string
-  tokenId?: string
-  amt?: string
-  /** Wire format proven by the script we just decoded. */
-  encoding?: 'brc162' | 'legacy-json'
-}> {
+): Promise<{ kind: OrdinalTransferProbe; origin?: string }> {
   const hex = await fetchRawTxHex(txid, chain)
   if (!hex) return { kind: 'unknown' }
   let tx: Transaction
@@ -1171,41 +1037,10 @@ async function probeOrdinalTransfer(
   if (!out || out.satoshis !== 1) return { kind: 'unknown' }
 
   const scriptHex = out.lockingScript?.toHex()
-  const binary = scriptHex ? decodeBsv21Binary(scriptHex) : null
-  if (binary && binary.amount > 0n && binary.role !== 'authority') {
-    const tokenId =
-      binary.tokenId ??
-      (binary.role === 'deploy' ? txidVoutUnderscore(txid, vout) : undefined)
-    return {
-      kind: 'bsv21',
-      origin: tokenId,
-      tokenId,
-      amt: binary.amount.toString(),
-      encoding: 'brc162',
-    }
-  }
+  // A token is never an item; it stays held on the address.
+  if (scriptHex && isTokenScript(scriptHex)) return { kind: 'token' }
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
-    // BSV-21 enters its token basket; removed protocols are quarantined.
-    if (isBsv21Mime(envelope.contentType)) {
-      // Name it from the inscription we already hold. Returning a bare verdict
-      // left the caller with no id or amount, so our own legacy JSON mints were
-      // filed as unrecognized one-sats and never reached basket `bsv21`.
-      const payload = parseBsv21Json(jsonBody(envelope.body))
-      const tokenId = payload
-        ? tokenIdForPayload(payload, txidVoutUnderscore(txid, vout))
-        : null
-      if (payload?.amt && tokenId) {
-        return {
-          kind: 'bsv21',
-          origin: tokenId,
-          tokenId,
-          amt: payload.amt,
-          encoding: 'legacy-json',
-        }
-      }
-      return { kind: 'bsv21' }
-    }
     if (
       isRetiredFungibleMime(envelope.contentType) ||
       looksLikeRetiredFungibleTip({ lockingScriptHex: scriptHex })
@@ -1252,8 +1087,7 @@ async function probeOrdinalTransfer(
  * never a bare `satoshis > 1` test.
  * - funding: sweep path — safe to `importLegacyUtxos`
  * - oneSats: cloud-known or GorillaPool-confirmed NFT inscriptions (exactly 1 sat)
- * - bsv21: confirmed BSV-21 fungible tips — basket `bsv21` under Collect
- * - heldOneSats: every other 1-sat — MUST NOT be swept
+ * - heldOneSats: every other 1-sat, tokens included — MUST NOT be swept
  * - heldUneconomical: >1 sat but below the sweep floor — MUST NOT be swept
  */
 export async function classifyLegacyUtxos(
@@ -1301,7 +1135,6 @@ export async function classifyLegacyUtxos(
   }
 
   const oneSats: MigrationItem[] = []
-  const bsv21: Bsv21ImportItem[] = []
   const claimed = new Set<string>()
 
   for (const [key, item] of knownByOutpoint) {
@@ -1420,27 +1253,11 @@ export async function classifyLegacyUtxos(
         if (mayResolve && probeBudget > 0) {
           probeBudget--
           const probe = await probeOrdinalTransfer(u.txid, u.vout, chain)
-          if (probe.kind === 'bsv21') {
-            const tokenId =
-              probe.tokenId ??
-              probe.origin ??
-              txidVoutUnderscore(u.txid, u.vout)
-            const amt = probe.amt
-            if (tokenId && amt) {
-              bsv21.push({
-                outpoint: u.outpoint,
-                txid: u.txid,
-                vout: u.vout,
-                tokenId,
-                amt,
-                op: tokenId === txidVoutUnderscore(u.txid, u.vout)
-                  ? 'deploy+mint'
-                  : 'transfer',
-                ...(probe.encoding ? { encoding: probe.encoding } : {}),
-              })
-              claimed.add(liveKey)
-              continue
-            }
+          if (probe.kind === 'token') {
+            rememberUnresolved(cacheKey)
+            heldOneSats.push(u)
+            claimed.add(liveKey)
+            continue
           } else if (probe.kind === 'item') {
             resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
             named += 1
@@ -1462,30 +1279,14 @@ export async function classifyLegacyUtxos(
 
         if (!resolved && mayResolve && resolveBudget > 0) {
           resolveBudget--
-          // Fungibles first — same indexer hit, divert before NFT identity.
-          const ft = await resolveBsv21Holding(u.txid, u.vout, chain)
-          if (ft) {
-            bsv21.push(ft)
-            claimed.add(outpointKey(u.outpoint))
-            continue
-          }
-
           // Unverified dust: remittance rebuild + indexer. Misses back off.
           const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
           const fetched =
             brc150 ?? (await resolveOneSatInscription(u.txid, u.vout, chain))
-          if (fetched && !isBsv21Mime(fetched.mimeType)) {
+          if (fetched && !isTokenMime(fetched.mimeType)) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
             named += 1
-          } else if (fetched && isBsv21Mime(fetched.mimeType)) {
-            const again = await resolveBsv21Holding(u.txid, u.vout, chain)
-            if (again) {
-              bsv21.push(again)
-              claimed.add(outpointKey(u.outpoint))
-              continue
-            }
-            rememberUnresolved(cacheKey)
           } else {
             rememberUnresolved(cacheKey)
           }
@@ -1569,7 +1370,7 @@ export async function classifyLegacyUtxos(
   // This pass's misses reach storage in one write, before the caller imports.
   flushInscriptionMisses()
 
-  return { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips }
+  return { funding, oneSats, heldOneSats, heldUneconomical, pendingTips }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */

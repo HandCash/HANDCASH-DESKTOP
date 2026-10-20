@@ -81,7 +81,7 @@ describe('BRC-213 coin methods', () => {
 describe('BRC-214 asset profiles', () => {
   it('lists every profile once, coins in the payment scope and assets per action', () => {
     const { profiles } = listAssetProfiles()
-    expect(profiles.map((p) => p.id)).toEqual(['bsv', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge', '1sat', 'p2pft', 'p2pnft', 'csft', 'csnft'])
+    expect(profiles.map((p) => p.id)).toEqual(['bsv', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge', '1sat', 'bntft', 'bntnft', 'iptft', 'iptnft'])
     expect(profiles.filter((p) => p.scope === 'payment').map((p) => p.id)).toEqual(['bsv', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge'])
     expect(profiles.find((p) => p.id === 'coin:bch')).toMatchObject({ chain: 'bch', decimals: 8, minConfirmations: 6 })
     expect(profiles.find((p) => p.id === 'coin:btc')).toMatchObject({ chain: 'btc', decimals: 8, minConfirmations: 3 })
@@ -90,7 +90,7 @@ describe('BRC-214 asset profiles', () => {
 
   it('marks only open token profiles as Bitcoin Native Tokens', () => {
     const { profiles } = listAssetProfiles()
-    expect(profiles.filter((p) => p.bnt).map((p) => p.id)).toEqual(['p2pft', 'p2pnft'])
-    expect(profiles.filter((p) => p.bnt === false).map((p) => p.id)).toEqual(['csft', 'csnft'])
+    expect(profiles.filter((p) => p.bnt).map((p) => p.id)).toEqual(['bntft', 'bntnft'])
+    expect(profiles.filter((p) => p.bnt === false).map((p) => p.id)).toEqual(['iptft', 'iptnft'])
   })
 })

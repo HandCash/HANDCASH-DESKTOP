@@ -10,9 +10,8 @@ import {
   type IssuerTrust,
   type VerifiedIssuer,
 } from './issuerTrust'
-import { normalizeIssuerPubKey, shortIssuerLabel } from './token/issuer'
-import type { FungibleToken } from './token/types'
-import type { HctAssetSummary } from './hct/wallet'
+import { normalizeIssuerPubKey, shortIssuerLabel } from './sigmaIssuer'
+import type { BntAssetSummary } from './bnt/wallet'
 
 /**
  * Collect hierarchy is issuer → collections → assets. A signed asset shelves
@@ -61,13 +60,11 @@ export type CollectableIssuer = {
   signer?: string
   /** Every item's signer verified on its held origin transaction. */
   signerVerified?: boolean
-  /** Fungibles this identity issued — one horizontal shelf. */
-  tokens: FungibleToken[]
-  /** HCT tokens and items this identity issued (BRC-255). */
-  hct: HctAssetSummary[]
+  /** Compact tokens and items this identity issued (BRC-255). */
+  bnt: BntAssetSummary[]
   collections: CollectableGroup[]
   loose: Collectable[]
-  /** One-sat items only; `tokens` are not repeated here. */
+  /** One-sat items only; `bnt` is not repeated here. */
   items: Collectable[]
   faces: CollectableFace[]
   overflow: number
@@ -78,12 +75,8 @@ export type CollectableIssuer = {
 export type GroupedCollectables = {
   issuers: CollectableIssuer[]
   ungrouped: Collectable[]
-  /** HCT assets whose deploy names no usable issuer key. */
-  ungroupedHct: HctAssetSummary[]
-  /** Fungibles whose issuer is unknown — shown on the last shelf. */
-  ungroupedTokens: FungibleToken[]
-  /** Fungibles whose issuer is still being read; never shown as issuer-less. */
-  pendingTokens: FungibleToken[]
+  /** BNT assets whose deploy names no usable issuer key. */
+  ungroupedBnt: BntAssetSummary[]
   /** Flattened collections (every size, including one). */
   groups: CollectableGroup[]
   /** Always empty — one-item collections stay under their issuer. */
@@ -273,77 +266,44 @@ function issuerKeyFor(
 }
 
 /**
- * A cached handle is not certified by the token, so it never labels a shelf;
- * the deploy outpoint is the origin whose height judges the signer.
- */
-/**
- * A held HCT asset's deploy is valid only when signed by the key its `iss`
+ * A held BNT asset's deploy is valid only when signed by the key its `iss`
  * identities derive (BRC-255 §3), so the first issuer is attested. The deploy
  * handle (`hdl`) is a claim and never labels a shelf.
  */
-export function hctIssuerViewFor(
-  asset: Pick<HctAssetSummary, 'issuers' | 'deploy'>,
+export function bntIssuerViewFor(
+  asset: Pick<BntAssetSummary, 'issuers' | 'deploy'>,
   identityFor: IssuerIdentityResolver,
   trust: IssuerTrust = NO_ISSUER_TRUST,
 ): IssuerView | null {
   return issuerViewFor({ issuer: asset.issuers[0], issuerAttested: true, origin: asset.deploy }, identityFor, trust)
 }
 
-export function tokenIssuerViewFor(
-  token: FungibleToken,
-  identityFor: IssuerIdentityResolver,
-  trust: IssuerTrust = NO_ISSUER_TRUST,
-): IssuerView | null {
-  return issuerViewFor({ ...token, origin: token.tokenId }, identityFor, trust)
-}
-
-function hctLabel(asset: HctAssetSummary): string {
+function bntLabel(asset: BntAssetSummary): string {
   return asset.sym || asset.name || asset.assetId
 }
 
-function hctFaces(assets: readonly HctAssetSummary[], seen: Set<string>): CollectableFace[] {
+function bntFaces(assets: readonly BntAssetSummary[], seen: Set<string>): CollectableFace[] {
   const faces: CollectableFace[] = []
   for (const asset of assets) {
     if (!asset.imageUrl || seen.has(asset.imageUrl)) continue
     seen.add(asset.imageUrl)
-    faces.push({ outpoint: asset.deploy, imageUrl: asset.imageUrl, name: hctLabel(asset) })
-  }
-  return faces
-}
-
-function tokenFaces(
-  tokens: readonly FungibleToken[],
-  seen: Set<string>,
-): CollectableFace[] {
-  const faces: CollectableFace[] = []
-  for (const token of tokens) {
-    if (!token.iconUrl || seen.has(token.iconUrl)) continue
-    seen.add(token.iconUrl)
-    faces.push({
-      outpoint: token.outpoint,
-      imageUrl: token.iconUrl,
-      name: token.sym,
-    })
+    faces.push({ outpoint: asset.deploy, imageUrl: asset.imageUrl, name: bntLabel(asset) })
   }
   return faces
 }
 
 export function groupCollectables(
   items: Collectable[],
-  tokens: readonly FungibleToken[] = [],
   identityFor: IssuerIdentityResolver = () => null,
   trust: IssuerTrust = NO_ISSUER_TRUST,
-  issuerPending: (token: FungibleToken) => boolean = () => false,
-  hct: readonly HctAssetSummary[] = [],
+  bnt: readonly BntAssetSummary[] = [],
 ): GroupedCollectables {
   const issuerBuckets = new Map<
     string,
-    { meta: IssuerMeta; items: Collectable[]; tokens: FungibleToken[]; hct: HctAssetSummary[] }
+    { meta: IssuerMeta; items: Collectable[]; bnt: BntAssetSummary[] }
   >()
   const ungrouped: Collectable[] = []
-  const ungroupedHct: HctAssetSummary[] = []
-  const ungroupedTokens: FungibleToken[] = []
-  const pendingTokens: FungibleToken[] = []
+  const ungroupedBnt: BntAssetSummary[] = []
 
   for (const item of items) {
     const meta = issuerKeyFor(item, identityFor, trust)
@@ -353,31 +313,18 @@ export function groupCollectables(
     }
     const bucket = issuerBuckets.get(meta.key)
     if (bucket) bucket.items.push(item)
-    else issuerBuckets.set(meta.key, { meta, items: [item], tokens: [], hct: [] })
+    else issuerBuckets.set(meta.key, { meta, items: [item], bnt: [] })
   }
 
-  for (const token of tokens) {
-    const meta = tokenIssuerViewFor(token, identityFor, trust)
+  for (const asset of bnt) {
+    const meta = bntIssuerViewFor(asset, identityFor, trust)
     if (!meta) {
-      if (issuerPending(token)) pendingTokens.push(token)
-      else ungroupedTokens.push(token)
+      ungroupedBnt.push(asset)
       continue
     }
     const bucket = issuerBuckets.get(meta.key)
-    if (bucket) {
-      bucket.tokens.push(token)
-    } else issuerBuckets.set(meta.key, { meta, items: [], tokens: [token], hct: [] })
-  }
-
-  for (const asset of hct) {
-    const meta = hctIssuerViewFor(asset, identityFor, trust)
-    if (!meta) {
-      ungroupedHct.push(asset)
-      continue
-    }
-    const bucket = issuerBuckets.get(meta.key)
-    if (bucket) bucket.hct.push(asset)
-    else issuerBuckets.set(meta.key, { meta, items: [], tokens: [], hct: [asset] })
+    if (bucket) bucket.bnt.push(asset)
+    else issuerBuckets.set(meta.key, { meta, items: [], bnt: [asset] })
   }
 
   const issuers: CollectableIssuer[] = []
@@ -416,24 +363,21 @@ export function groupCollectables(
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
     )
 
-    // Items lead the facepile; token icons fill the remaining slots so a
-    // tokens-only issuer still has a face.
+    // Items lead the facepile; compact asset images fill the remaining slots
+    // so a tokens-only issuer still has a face.
     const seenFaces = new Set(
       bucket.items.map((item) => item.imageUrl).filter(Boolean),
     )
     const { faces: itemFaces } = facesFor(bucket.items)
-    const faces = [...itemFaces, ...tokenFaces(bucket.tokens, seenFaces), ...hctFaces(bucket.hct, seenFaces)].slice(
+    const faces = [...itemFaces, ...bntFaces(bucket.bnt, seenFaces)].slice(
       0,
       FACE_LIMIT,
     )
     const overflow = Math.max(
       0,
-      bucket.items.length + bucket.tokens.length + bucket.hct.length - faces.length,
+      bucket.items.length + bucket.bnt.length - faces.length,
     )
-    bucket.hct.sort((a, b) => hctLabel(a).localeCompare(hctLabel(b), undefined, { sensitivity: 'base' }))
-    bucket.tokens.sort((a, b) =>
-      a.sym.localeCompare(b.sym, undefined, { sensitivity: 'base' }),
-    )
+    bucket.bnt.sort((a, b) => bntLabel(a).localeCompare(bntLabel(b), undefined, { sensitivity: 'base' }))
     const { profile } = bucket.meta
     issuers.push({
       key: bucket.meta.key,
@@ -455,8 +399,7 @@ export function groupCollectables(
             ...(bucket.items.every((item) => item.signerVerified) ? { signerVerified: true } : {}),
           }
         : {}),
-      tokens: bucket.tokens,
-      hct: bucket.hct,
+      bnt: bucket.bnt,
       collections,
       loose,
       items: bucket.items,
@@ -472,7 +415,7 @@ export function groupCollectables(
       issuerPublisherRank(a) - issuerPublisherRank(b) ||
       a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }),
   )
-  return { issuers, ungrouped, ungroupedHct, ungroupedTokens, pendingTokens, groups, singles: [] }
+  return { issuers, ungrouped, ungroupedBnt, groups, singles: [] }
 }
 
 /**
@@ -492,13 +435,12 @@ export function issuerPublisherRank(
 export function groupQuantityLabel(group: {
   quantity: number
   provenCount: number
-  tokens?: readonly unknown[]
-  hct?: readonly Pick<HctAssetSummary, 'kind'>[]
+  bnt?: readonly Pick<BntAssetSummary, 'kind'>[]
 }): string {
   const parts: string[] = []
-  const hctItems = group.hct?.filter((a) => a.kind === 'item').length ?? 0
-  const tokenCount = (group.tokens?.length ?? 0) + (group.hct?.length ?? 0) - hctItems
-  const quantity = group.quantity + hctItems
+  const bntItems = group.bnt?.filter((a) => a.kind === 'item').length ?? 0
+  const tokenCount = (group.bnt?.length ?? 0) - bntItems
+  const quantity = group.quantity + bntItems
   if (tokenCount > 0) {
     parts.push(
       `${tokenCount.toLocaleString()} ${tokenCount === 1 ? 'token' : 'tokens'}`,
@@ -509,8 +451,8 @@ export function groupQuantityLabel(group: {
       `${quantity.toLocaleString()} ${quantity === 1 ? 'item' : 'items'}`,
     )
   }
-  // A held HCT item was walked to its deploy, so it counts as verified.
-  const verified = group.provenCount + hctItems
+  // A held BNT item was walked to its deploy, so it counts as verified.
+  const verified = group.provenCount + bntItems
   if (verified > 0)
     parts.push(`${verified.toLocaleString()} verified`)
   return parts.join(' · ')

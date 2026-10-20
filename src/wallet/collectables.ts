@@ -6,8 +6,9 @@ import {
   retainedSignedBy,
 } from './issuerAttribution'
 import { holdIssuerIdentities } from './issuerIdentities'
-import { issuerFromRemittance } from './token/issuer'
-import { isFilingTag } from './token/filing'
+import { issuerFromRemittance } from './sigmaIssuer'
+import { isTokenMime, isTokenScript } from './ordinalOwnership'
+import { isFilingTag } from './assetBaskets'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -34,7 +35,7 @@ import {
   tipKeyFromInstructions,
   tipKeyFromTags,
   tipSigningKey,
-} from './token/tipKeys'
+} from './tipKeys'
 import {
   heldItemRow,
   heldRemittance,
@@ -68,17 +69,10 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import {
-  getCachedFungibles,
-  type FungibleToken,
-  isBsv21BinaryScript,
-  isBsv21Mime,
-} from './token'
-import {
   isRetiredFungibleMime,
   looksLikeRetiredFungibleTip,
 } from './retiredFungible'
 import { decodeBProtocol } from './bProtocol'
-import { isMneeItem } from './mneeTip'
 import { getWalletRuntime } from './walletRuntime'
 import {
   getItemArtDataUrl,
@@ -172,7 +166,7 @@ import {
   collectableSendBatchRefusal,
 } from './collectableBatch'
 import { spentStatusOfOutpoint } from './legacyScan'
-import { scanLiveTipUtxos } from './tokenAddressScan'
+import { scanLiveTipUtxos } from './tipAddressScan'
 import {
   isItemAbandoned,
   isItemSent,
@@ -881,37 +875,6 @@ export function shortOrigin(origin: string): string {
 }
 
 
-function underscoredKey(raw: string | undefined | null): string {
-  return (raw ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-}
-
-/**
- * Every outpoint / deploy id the Tokens shelf already accounts for. A fungible
- * card aggregates many one-sat tips; only indexing the representative tip
- * left the other tips painting as NFTs. Rebuilt when the fungibles cache
- * array is replaced (it is replaced, never mutated, on update).
- */
-let fungibleTipIndex: { source: readonly FungibleToken[]; keys: ReadonlySet<string> } | null =
-  null
-
-function fungibleTipKeys(): ReadonlySet<string> {
-  const source = getCachedFungibles()
-  if (fungibleTipIndex?.source === source) return fungibleTipIndex.keys
-  const keys = new Set<string>()
-  const add = (raw: string | undefined | null) => {
-    const key = underscoredKey(raw)
-    if (key) keys.add(key)
-  }
-  for (const tok of source) {
-    add(tok.tokenId)
-    add(tok.outpoint)
-    for (const tip of tok.tipOutpoints ?? []) add(tip)
-    for (const tip of tok.heldTips ?? []) add(tip.outpoint)
-  }
-  fungibleTipIndex = { source, keys }
-  return keys
-}
-
 export function collectableIsFungible(item: {
   outpoint: string
   origin?: string
@@ -920,21 +883,9 @@ export function collectableIsFungible(item: {
   collectionId?: string
   app?: string
 }): boolean {
-  // Protocol / mime / a matching Tokens tip or origin — not "no name yet".
-  // Transfer tips paint tip-as-origin until BRC-150 / indexer fills traits.
-  if (isMneeItem({ collectionId: item.collectionId })) return false
-  if (isRetiredFungibleMime(item.mimeType) || isBsv21Mime(item.mimeType)) return true
-  try {
-    const keys = fungibleTipKeys()
-    if (keys.size === 0) return false
-    const op = underscoredKey(item.outpoint)
-    if (op && keys.has(op)) return true
-    const origin = underscoredKey(item.origin)
-    return Boolean(origin && keys.has(origin))
-  } catch {
-    // Tokens cache not ready
-    return false
-  }
+  // Protocol / mime — not "no name yet". Transfer tips paint tip-as-origin
+  // until BRC-150 / indexer fills traits.
+  return isRetiredFungibleMime(item.mimeType) || isTokenMime(item.mimeType)
 }
 
 /** Hashed origin card with no collection/name — likely an NFT misfile. */
@@ -1133,7 +1084,7 @@ type ScriptFacts = {
   length: number
   covenantLocked: boolean
   issuer: ReturnType<typeof issuerMetadataFromScript>
-  /** A BRC-162 token, B:// file or retired fungible lock — never a card. */
+  /** A token, B:// file or retired fungible lock — never a card. */
   notAnItem: boolean
 }
 
@@ -1155,7 +1106,7 @@ function scriptFactsFor(outpoint: string, lockingScript: string | undefined): Sc
     issuer: issuerMetadataFromScript(lockingScript),
     notAnItem:
       !!lockingScript &&
-      (isBsv21BinaryScript(lockingScript) ||
+      (isTokenScript(lockingScript) ||
         !!decodeBProtocol(lockingScript) ||
         looksLikeRetiredFungibleTip({ lockingScriptHex: lockingScript })),
   }
@@ -1774,7 +1725,7 @@ function seedIngestedItem(
 
 function lockingScriptIsFungible(hex?: string): boolean {
   if (!hex) return false
-  if (isBsv21BinaryScript(hex)) return true
+  if (isTokenScript(hex)) return true
   return looksLikeRetiredFungibleTip({ lockingScriptHex: hex })
 }
 
@@ -1804,11 +1755,9 @@ function isListableItem(o: ItemOutput): boolean {
   if ((o.satoshis ?? 1) !== 1) return false
   // A tip we already spent lingers in the basket until a review runs.
   if (isItemSent(o.outpoint)) return false
-  // Accepted MNEE is a cosigned BSV-21 tip filed in Collect until a cosigned send path exists.
-  if (isMneeItem({ tags: o.tags })) return true
-  // BSV-21 fungibles belong under Collect → Tokens (basket bsv21), not NFT cards.
+  // Fungible inscriptions are tokens, never item cards.
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
-  if (isBsv21Mime(resolved?.mimeType)) return false
+  if (isTokenMime(resolved?.mimeType)) return false
   if (o.tags?.some((tag) => isFilingTag(tag))) return false
   if (scriptFactsFor(normalizeOutpoint(o.outpoint), o.lockingScript).notAnItem) return false
   // Quarantine outputs from the retired fungible experiment.

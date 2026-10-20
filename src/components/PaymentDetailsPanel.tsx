@@ -34,7 +34,6 @@ import {
 } from '../wallet/appActivity'
 import { inFlightSettlementLabel } from '../wallet/settlementCopy'
 import { getTxByTxid } from '../wallet/txStore'
-import { normalizeTokenId } from '../wallet/token/types'
 import { viewActivityItem } from '../wallet/activityItemView'
 import { activityContactLink } from '../wallet/itemHistory'
 import {
@@ -74,7 +73,6 @@ import {
   openAddFriend,
   openCollectableDetails,
   openFriendDetails,
-  openFungibleDetails,
   openSendFlow,
   setNavSection,
 } from '../wallet/navStore'
@@ -135,11 +133,6 @@ function itemLinkOutpoint(item: ActivityItem | undefined): string | null {
     )
   })
   return held?.outpoint ?? null
-}
-
-/** BSV-21 ids open the token's details; an HCT asset id (40 hex) has none to open. */
-function tokenLinkId(item: ActivityItem | undefined): string | null {
-  return item?.tokenId ? normalizeTokenId(item.tokenId) : null
 }
 
 function eventStatusLabel(recorded: string): string {
@@ -241,18 +234,12 @@ function PaymentBreakdownRow({
         : `${entry.kind === 'spent' ? '−' : '+'}${formatPrimaryFromSats(entry.sats, currency, usdPerBsv)}`
       : null
   const itemOutpoint = itemLinkOutpoint(shown)
-  const tokenId = tokenLinkId(shown ?? entry.item)
-  const openItem = tokenId
+  const openItem = itemOutpoint
     ? () => {
         playWalletSound('soft')
-        openFungibleDetails(tokenId)
+        openCollectableDetails(itemOutpoint)
       }
-    : itemOutpoint
-      ? () => {
-          playWalletSound('soft')
-          openCollectableDetails(itemOutpoint)
-        }
-      : null
+    : null
   const openPeer = contact?.friendId
     ? () => openFriendDetails(contact.friendId!)
     : contact
@@ -468,13 +455,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const recipientLabel =
     isWallet && !item && !token ? activityRecipientLabel(entry) : null
   const itemOutpoint = itemLinkOutpoint(shownItem)
-  const tokenId = tokenLinkId(shownItem ?? entry.item)
-  const openItem = tokenId
-    ? () => {
-        playWalletSound('soft')
-        openFungibleDetails(tokenId)
-      }
-    : itemOutpoint
+  const openItem = itemOutpoint
     ? () => {
         playWalletSound('soft')
         openCollectableDetails(itemOutpoint)
@@ -823,7 +804,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               {entry.burn.asset === '1sat' && batch
                 ? batch.count
                 : entry.burn.destroyedAmount}{' '}
-              {entry.burn.asset === 'bsv21' ? shownItem?.name ?? 'token units' : 'items'}
+              {entry.burn.asset === '1sat' ? 'items' : shownItem?.name ?? 'token units'}
             </dd>
             {entry.burn.recoveredSatoshis != null ? (
               <>

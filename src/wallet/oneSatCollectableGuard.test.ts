@@ -4,14 +4,11 @@ import {
   collectableKeySet,
   collectableLatchHolds,
   isLatchedCollectable,
-  keepCollectablesOutOfTokenRoute,
-  skipTokenImportForBasketHeld,
   wireCollectableOutpoint,
 } from './oneSatCollectableGuard'
 
 const ORIGIN = `${'aa'.repeat(32)}_0`
 const OP = `${'bb'.repeat(32)}.0`
-const OTHER = `${'cc'.repeat(32)}.0`
 
 describe('oneSatCollectableGuard', () => {
   it('normalizes underscore outpoints to dotted form', () => {
@@ -20,70 +17,6 @@ describe('oneSatCollectableGuard', () => {
     expect(isLatchedCollectable(OP, collectableKeySet([`${'bb'.repeat(32)}_0`]))).toBe(
       true,
     )
-  })
-
-  it('rescues a known collectable out of the BSV-21 / NFT bucket', () => {
-    const remittance = new Map([
-      [OP, { outpoint: OP, origin: ORIGIN, name: 'Pixel Fox' }],
-    ])
-    const result = keepCollectablesOutOfTokenRoute(
-      [],
-      [{ outpoint: OP, tokenId: ORIGIN, amt: '1' }],
-      [OP],
-      remittance,
-    )
-
-    expect(result.tokenTips).toEqual([])
-    expect(result.rescued).toEqual([OP])
-    expect(result.oneSats).toEqual([
-      expect.objectContaining({ outpoint: OP, origin: ORIGIN, name: 'Pixel Fox' }),
-    ])
-  })
-
-  it('does not duplicate a collectable already in oneSats', () => {
-    const result = keepCollectablesOutOfTokenRoute(
-      [{ outpoint: OP, origin: ORIGIN, name: 'Pixel Fox' }],
-      [{ outpoint: `${'bb'.repeat(32)}_0` }],
-      [OP],
-    )
-
-    expect(result.tokenTips).toEqual([])
-    expect(result.oneSats).toHaveLength(1)
-    expect(result.oneSats[0]!.name).toBe('Pixel Fox')
-  })
-
-  /**
-   * A legacy JSON mint is held as an unnamed one-sat on the pass before it can
-   * be read, and that mark must not outrank the inscription itself.
-   */
-  it('never rescues a tip whose own script proves it is BSV-21', () => {
-    const tip = { outpoint: OP, tokenId: ORIGIN, amt: '1', encoding: 'legacy-json' as const }
-    const result = keepCollectablesOutOfTokenRoute([], [tip], [OP])
-
-    expect(result.tokenTips).toEqual([tip])
-    expect(result.rescued).toEqual([])
-    expect(result.oneSats).toEqual([])
-  })
-
-  it('leaves unknown token tips alone', () => {
-    const tip = { outpoint: OTHER, tokenId: 'tok', amt: '10' }
-    const result = keepCollectablesOutOfTokenRoute(
-      [{ outpoint: OP, origin: ORIGIN }],
-      [tip],
-      [OP],
-    )
-    expect(result.tokenTips).toEqual([tip])
-    expect(result.rescued).toEqual([])
-    expect(result.oneSats).toHaveLength(1)
-  })
-
-  it('skips token import when the tip is already in basket 1sat', () => {
-    const result = skipTokenImportForBasketHeld(
-      [{ outpoint: OP }, { outpoint: OTHER }],
-      [`${'bb'.repeat(32)}_0`],
-    )
-    expect(result.skipped).toEqual([OP])
-    expect(result.tokenTips.map((t) => t.outpoint)).toEqual([OTHER])
   })
 
   it('preserves remittance so heal/reimport does not paint a generic NFT', () => {

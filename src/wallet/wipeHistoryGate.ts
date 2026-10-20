@@ -55,7 +55,7 @@ export function overrideWipeGate(refusal: WipeHistoryRefusal, tokens: number): W
 
 /**
  * What a wipe without a synced backup destroys. Tokens and peer-to-peer
- * payments are only in localState: no address scan can find a BRC-162 tip.
+ * payments are only in localState: no address scan can find a token tip.
  */
 export function wipeLossWarning(tokens: number): string {
   const held =

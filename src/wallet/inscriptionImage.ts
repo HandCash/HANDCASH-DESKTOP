@@ -3,7 +3,7 @@
  *
  * An inscription declares its own content type, but plenty declare
  * `application/octet-stream` (or nothing) while carrying a PNG, so the magic
- * bytes settle it. Shared by the BSV-21 icon cache and item art — both paint
+ * bytes settle it. Shared by token icons and item art — both paint
  * from transactions this device already holds, never a content indexer.
  */
 

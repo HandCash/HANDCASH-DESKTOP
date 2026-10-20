@@ -16,9 +16,8 @@ import {
   retainedScriptIs,
   retainedSignedBy,
 } from './issuerAttribution'
-import { appendIssuerMetadata, brc162StampScript } from './issuerMetadata'
-import { encodeBsv21Binary } from './token/decode162'
-import { sigmaSignDeployLockingScript } from './token/issuer'
+import { appendIssuerMetadata } from './issuerMetadata'
+import { sigmaSignLockingScript } from './sigmaIssuer'
 
 const issuer = PrivateKey.fromHex('03'.padStart(64, '0'))
 const issuerKey = issuer.toPublicKey().toString()
@@ -26,7 +25,7 @@ const fundTxid = 'cd'.repeat(32)
 
 function signedDeploy(): { txid: string; script: string } {
   const base = new P2PKH().lock(issuer.toPublicKey().toAddress()).toHex()
-  const script = sigmaSignDeployLockingScript({
+  const script = sigmaSignLockingScript({
     lockingScriptHex: appendIssuerMetadata(base, issuerKey),
     fundTxid,
     fundVout: 0,
@@ -99,43 +98,5 @@ describe('retained issuer attribution', () => {
     expect(retainedSignedBy(`${txid}.0`, PrivateKey.fromHex('04'.padStart(64, '0')).toPublicKey().toString())).toBe(false)
     expect(retainedSignedBy(`${txid}.1`, issuerKey)).toBe(false)
     expect(retainedIssuerMetadata('not-an-outpoint')).toBeNull()
-  })
-})
-
-describe('BRC-162 deploy stamp output (BRC-247)', () => {
-  const owner = new P2PKH().lock(issuer.toPublicKey().toAddress())
-  const deploy = (sym: string) => encodeBsv21Binary({ amount: 1000n, payload: { sym }, rest: owner }).toHex()
-  const stamp = (deployHex: string) =>
-    sigmaSignDeployLockingScript({
-      lockingScriptHex: brc162StampScript(issuerKey, deployHex),
-      fundTxid,
-      fundVout: 0,
-      identityKeyHex: issuer.toHex(),
-    })
-  function hold(outputs: string[]): string {
-    const tx = new Transaction()
-    tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 0, unlockingScript: Script.fromHex('') })
-    outputs.forEach((hex, i) => tx.addOutput({ satoshis: i === 0 ? 1 : 0, lockingScript: Script.fromHex(hex) }))
-    const beef = new Beef()
-    beef.mergeTransaction(tx)
-    const txid = tx.id('hex')
-    held.beefs.set(txid, beef)
-    return txid
-  }
-
-  it('attributes the deploy to the stamp that names it, leaving the lock plain', () => {
-    const lock = deploy('TEST')
-    const txid = hold([lock, stamp(lock)])
-    expect(retainedIssuerMetadata(`${txid}_0`)).toEqual({ issuer: issuerKey })
-    expect(retainedSignedBy(`${txid}_0`, issuerKey)).toBe(true)
-    expect(retainedScriptIs(`${txid}.0`, lock)).toBe(true)
-  })
-
-  it('ignores a stamp naming another deploy, a second stamp, or a stamp on a non-deploy', () => {
-    const lock = deploy('TEST')
-    expect(retainedSignedBy(`${hold([lock, stamp(deploy('FAKE'))])}_0`, issuerKey)).toBe(false)
-    expect(retainedSignedBy(`${hold([lock, stamp(lock), stamp(lock)])}_0`, issuerKey)).toBe(false)
-    const plain = owner.toHex()
-    expect(retainedSignedBy(`${hold([plain, stamp(plain)])}_0`, issuerKey)).toBe(false)
   })
 })

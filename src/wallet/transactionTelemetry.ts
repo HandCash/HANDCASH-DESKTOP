@@ -41,7 +41,7 @@ export type TransactionFlow =
   | 'brc100_action'
   | 'identity_publish'
   | 'countersign'
-  | 'hct'
+  | 'bnt'
   | 'swap'
   | 'payment'
 

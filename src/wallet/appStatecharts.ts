@@ -48,7 +48,6 @@ const MASTER = `stateDiagram-v2
   walletNav --> settingsFlow : Settings
 
   collectablesFlow --> sendCollectable : send item
-  collectablesFlow --> sendFungible : send token
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
@@ -68,7 +67,6 @@ const MASTER = `stateDiagram-v2
   friendsFlow : Friends
   collectablesFlow : Collectables
   sendCollectable : Send item
-  sendFungible : Send token
   connectedApps : Connected apps
   connectPermission : Connect prompt
   actionPermission : Action prompt
@@ -314,39 +312,30 @@ const COLLECTABLES = `stateDiagram-v2
   direction TB
   [*] --> grid
   grid --> details : open item
-  grid --> fungibleDetails : open token
   details --> grid : back
-  fungibleDetails --> grid : back
   details --> sendCollectable : Send
-  fungibleDetails --> sendFungible : Send
   details --> modelLoading : GLB / GLTF body
   modelLoading --> modelReady : READY
   modelLoading --> modelFailed : FAIL
   modelFailed --> modelLoading : RETRY
   details --> burnEditing : Burn item (side panel)
-  fungibleDetails --> burnEditing : Burn token (side panel)
   sendCollectable --> details : back / done
-  sendFungible --> fungibleDetails : back / done
   burnEditing --> burnConfirm : REVIEW
   burnConfirm --> burnEditing : BACK
   burnConfirm --> grid : FORGET / local relinquish + Activity
   burnEditing --> details : CANCEL item burn
-  burnEditing --> fungibleDetails : CANCEL token burn
   burnConfirm --> burning : CONFIRM / Activity pending before queue
   burning --> burnDone : SUCCESS
   burning --> burnFailed : FAIL
   burnFailed --> burnEditing : BACK
   burnDone --> grid : item inventory refresh
-  burnDone --> fungibleDetails : token inventory refresh
   grid : Grid
   details : Details
   modelLoading : 3D skeleton
   modelReady : Orbit / zoom / auto-rotate
   modelFailed : Named render failure
-  fungibleDetails : Token details
   sendCollectable : Send item
-  sendFungible : Send token
-  burnEditing : Burn panel — amount + economics
+  burnEditing : Burn panel — economics
   burnConfirm : Confirm fixed amount
   burning : Burn on chain
   burnFailed : Failure and named reason
@@ -392,38 +381,6 @@ const SEND_COLLECTABLE_RUN = `stateDiagram-v2
   halted --> idle : RESET
 `
 
-const SEND_FUNGIBLE = `stateDiagram-v2
-  direction LR
-  [*] --> idle
-  idle --> classifying : START with Bsv21SendPath
-  classifying --> plainSend : plain
-  classifying --> refusing : refuse / cosigned
-  refusing --> failed
-  plainSend --> proving : load complete BRC-176 ancestry
-  proving --> refusing : invalid token proof
-  proving --> ancestorCheck : token proof valid
-  ancestorCheck --> refusing : Arcade ancestor rejected / pending
-  ancestorCheck --> signing : no hard ancestor rejection
-  signing --> done : SUCCESS
-  signing --> failed : FAIL
-  plainSend --> failed : FAIL
-  done --> idle : RESET
-  failed --> idle : RESET
-`
-
-const BSV21_SEND_PATH = `stateDiagram-v2
-  direction TB
-  [*] --> classifySelectedTips
-  classifySelectedTips --> plain : every selected lock is device P2PKH
-  classifySelectedTips --> mixed : plain + cosigned
-  classifySelectedTips --> cosigned : every selected lock needs cosigner
-  classifySelectedTips --> unknown : missing / unrecognized / not ours
-  plain --> plainSend
-  mixed --> refuse : mixed_tips
-  cosigned --> refuse : cosigner_required
-  unknown --> refuse : unknown_lock
-`
-
 const ASSET_BURN_UI = `stateDiagram-v2
   direction LR
   [*] --> closed
@@ -438,7 +395,7 @@ const ASSET_BURN_UI = `stateDiagram-v2
   failure --> editing : BACK
   failure --> closed : CANCEL / RESET
   done --> closed : RESET
-  editing : Choose amount
+  editing : Review what is destroyed
   confirming : Confirm fixed amount
   burning : Handed to wallet
   failure : Nothing destroyed
@@ -448,7 +405,7 @@ const ASSET_BURN = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> planning : START with BurnPlan
-  planning --> building : burnBsv21 / burnOneSat
+  planning --> building : burnOneSat
   planning --> failed : named refuse
   building --> signing : BUILT
   signing --> broadcasting : SIGNED
@@ -593,33 +550,33 @@ const BRC29_SEND = `stateDiagram-v2
   signing --> failed : FAIL
 `
 
-const HCT = `stateDiagram-v2
+const BNT = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> building : ISSUE (issuer coin P2PK, ALL|FORKID)
   idle --> building : MINT (authority row; fixed supply refused, cap never passed)
-  idle --> building : TRANSFER (p2pft / p2pnft rows, wallet-only)
+  idle --> building : TRANSFER (bntft / bntnft rows, wallet-only)
   idle --> building : BURN (wallet-internal: units to an unspendable holder + OP_RETURN memo)
   building --> signing : BUILT
   building --> failed : FAIL (abortAction, outputs stay put)
   signing --> signed : SIGNED txid
   signing --> failed : FAIL (abortAction)
   signed --> delivering : BROADCASTED (signed-send lifecycle)
-  delivering --> committed : DELIVERED box hct
+  delivering --> committed : DELIVERED box bnt
   delivering --> committed : QUEUED outbox (retried each serve)
   note right of signing
     Open mode: holder signs ALL|ANYONECANPAY
-    with a fresh hct holder child per output.
+    with a fresh bnt holder child per output.
     The wallet re-checks conservation (§4)
     on the signed transaction before it is
     registered; a mismatch aborts.
   end note
   note right of delivering
-    Box hct carries remittance + the §6 proof
+    Box bnt carries remittance + the §6 proof
     package (Extended Format, hops the peer
     has not been sent). Receive walks §7 to
     the deploy, checks every claimed source
-    against its parent, files p2pft / p2pnft,
+    against its parent, files bntft / bntnft,
     and ACKs only once filed or invalid.
   end note
 `
@@ -827,10 +784,9 @@ const COUNTERSIGN = `stateDiagram-v2
 const OFFER = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> classifying : LIST / CANCEL (market | direct), BUY / COLLECT (direct)
+  idle --> classifying : LIST / CANCEL
   classifying --> failed : refuse / named reason
-  classifying --> staging : list / cancel / buy
-  classifying --> collecting : collect
+  classifying --> staging : list / cancel
   staging --> preSignAbortable : STAGED reference
   preSignAbortable --> signedUnknown : SIGNED_UNKNOWN
   preSignAbortable --> failed : ABORTED
@@ -840,17 +796,11 @@ const OFFER = `stateDiagram-v2
   recovery --> broadcast : BROADCASTED
   recovery --> failed : ABORTED when Arcade never accepted
   broadcast --> committed : COMMITTED
-  collecting --> committed : COLLECTED
-  collecting --> failed : FAIL
   note right of staging
     One mechanism (offerSeal): hold the exact lot,
     sign it SINGLE|ANYONECANPAY over what the seller
-    wants back. market: item binds the seller payment,
-    advert deposit binds the fee (BRC-48 overlay).
-    direct: lot binds output 0 (sats or a token),
-    basket direct-offers, no index, no fee.
-    direct buy: Spend-check the seller unlock and
-    prove the lot to its deploy before signing.
+    wants back: the item binds the seller payment,
+    the advert deposit binds the fee (BRC-48 overlay).
   end note
   note right of signedUnknown
     noSend: abort + restore the lot until the cheque
@@ -858,12 +808,6 @@ const OFFER = `stateDiagram-v2
     miners run in the background. Never abort after
     BROADCASTED. A late reject retires a market
     listing auth (never-sent): no Cancel.
-  end note
-  note right of collecting
-    DirectOfferCollectPath:
-    sats → P2PKH sweep of output 0
-    token → peer fungible ingest of output 0
-    then retire the listed lot.
   end note
 `
 
@@ -1156,12 +1100,12 @@ const LEGACY_IMPORT = `stateDiagram-v2
     confirmingRemove --> viewing : BACK
     removing --> viewing : FAIL
 
-    viewing : Read-only · totals, tokens, held reasons
+    viewing : Read-only · totals and held reasons
     awaitingHints : Sign in on /migrate · history, balance, items cross the bridge · moves nothing
-    scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for tokens or an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
+    scanning : HandCash export → its UTXO set by key proof (sealed answer) · rows kept only if the keys derive them · cash and items checked by outpoint in bulk (an address is read in full only for an unplaced output) · else HandCash hints → items located by origin + newest history (500 → 2,500 → all) · reads only addresses with unspent outputs · kept once it covers HandCash balance + items · else gap walk · PAUSE
     browsing : importItemBrowser · chosen items queue to importQueue · share transactions
     reviewing : Preview · compatible only
-    sweeping : Cash → items (BRC-150) → BSV-21 → MNEE (MNEE cosigner → Collect) · PAUSE
+    sweeping : Cash → items (BRC-150) · tokens stay at the source · PAUSE
   }
 
   source --> list : BACK (viewing) / REMOVED
@@ -1675,14 +1619,12 @@ const CHAIN_INGEST_CHART = `flowchart TB
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
   CLASS --> TIPS[1sat tips → importOneSatOrdinals]
-  CLASS --> FT[bsv21 tokens]
   CLASS --> HOLD[held unrecognized 1-sat\\nnever sweep]
   CLASS --> DUST[heldUneconomical\\nbelow sweep floor\\nnever sweep]
   TIPS --> PAINT[listCollectables paint]
   PAINT --> AUTH[authenticity / genesis\\nbudgeted background]
   FUND --> AUDIT[spendable audit report-only\\nunconfirmed cheque ≠ spent]
   TIPS --> AUDIT
-  FT --> AUDIT
   AUDIT --> BAL[balance refresh + toast]
   BAL --> END([ok])
   END -.-> CONS["maybeConsolidateChange\\n(off ingest lock)"]
@@ -1808,7 +1750,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'assetSend',
     label: 'Send item / token',
     caption:
-      'assetSendMachine — edit → confirm without a sat amount; collectableSendMachine / bsv21SendMachine own refuse',
+      'assetSendMachine — edit → confirm without a sat amount; collectableSendMachine owns refuse',
     source: ASSET_SEND,
   },
   {
@@ -1850,19 +1792,6 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: SEND_COLLECTABLE_RUN,
   },
   {
-    id: 'sendFungible',
-    label: 'Send token',
-    caption:
-      'bsv21SendMachine is the runtime verdict on every selected value tip; signedSendLifecycle owns the same miner + BUMP path as BSV',
-    source: SEND_FUNGIBLE,
-  },
-  {
-    id: 'bsv21SendPath',
-    label: 'Token send path',
-    caption: 'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
-    source: BSV21_SEND_PATH,
-  },
-  {
     id: 'assetBurnUi',
     label: 'Burn',
     caption:
@@ -1873,7 +1802,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'assetBurn',
     label: 'Asset burn',
     caption:
-      'burnMachine — inscribed + binary BSV-21 / 1Sat burn → managed Pay recovery | named refuse',
+      'burnMachine — 1Sat burn → managed Pay recovery | named refuse',
     source: ASSET_BURN,
   },
   {
@@ -1918,7 +1847,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'offer',
     label: 'Offer',
     caption:
-      'offerMachine — list / cancel on either venue, direct buy and collect; one SINGLE|ACP seller signature (offerSeal); abort+restore the lot until the cheque is registered',
+      'offerMachine — market list / cancel; one SINGLE|ACP seller signature (offerSeal); abort+restore the lot until the cheque is registered',
     source: OFFER,
   },
   {
@@ -1929,11 +1858,11 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: COUNTERSIGN,
   },
   {
-    id: 'hct',
-    label: 'HCT',
+    id: 'bnt',
+    label: 'BNT',
     caption:
-      'hctMachine — open BRC-255 tokens and items: wallet builds and signs, the §6 package rides box hct, receive walks to the deploy',
-    source: HCT,
+      'bntMachine — open BRC-255 tokens and items: wallet builds and signs, the §6 package rides box bnt, receive walks to the deploy',
+    source: BNT,
   },
   {
     id: 'coin',

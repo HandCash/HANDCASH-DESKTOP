@@ -213,7 +213,7 @@ function pluralOf(series: string): string {
   return `${series}s`
 }
 
-/** Collectables only: a BSV-21 row already states its own quantity. */
+/** Collectables only: a token row already states its own quantity. */
 function isCollectableAsset(entry: ActivityEntry): boolean {
   if (!entry.item || entry.item.tokenId) return false
   // `${txid}_pending` is the same receive/send as the settled inscription, not a

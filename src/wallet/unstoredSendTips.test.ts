@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const filed = vi.hoisted(() => vi.fn())
 vi.mock('./holdingsReconcile', () => ({ fileHoldingsDepartures: filed }))
 
-import { encodeBsv21Binary } from './token/decode162'
 import { fileUnstoredSendTips } from './unstoredSendTips'
 
-const TOKEN_ID = `${'cd'.repeat(32)}_0`
+/** `OP_FALSE OP_IF "ord" OP_1 <application/bsv-20> OP_0 <{}> OP_ENDIF` */
+const FUNGIBLE_ENVELOPE =
+  '0063036f726451' + '12' + Buffer.from('application/bsv-20').toString('hex') + '0002' + '7b7d' + '68'
 
 function signedSend(ours: string, payee: string): { txid: string; atomic: number[] } {
   const parent = new Transaction()
@@ -15,10 +16,9 @@ function signedSend(ours: string, payee: string): { txid: string; atomic: number
   parent.addOutput({ satoshis: 10_000, lockingScript: new P2PKH().lock(ours) })
   const tx = new Transaction()
   tx.addInput({ sourceTransaction: parent, sourceOutputIndex: 0, unlockingScript: new Script() })
-  const token = (to: string, amount: bigint) =>
-    encodeBsv21Binary({ tokenId: TOKEN_ID, amount, rest: new P2PKH().lock(to).toHex() })
-  tx.addOutput({ satoshis: 1, lockingScript: token(payee, 200n) })
-  tx.addOutput({ satoshis: 1, lockingScript: token(ours, 800n) })
+  const token = (to: string) => Script.fromHex(new P2PKH().lock(to).toHex() + FUNGIBLE_ENVELOPE)
+  tx.addOutput({ satoshis: 1, lockingScript: token(payee) })
+  tx.addOutput({ satoshis: 1, lockingScript: token(ours) })
   tx.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(ours) })
   tx.addOutput({ satoshis: 4_948, lockingScript: new P2PKH().lock(ours) })
   return { txid: tx.id('hex'), atomic: Array.from(tx.toAtomicBEEF()) }

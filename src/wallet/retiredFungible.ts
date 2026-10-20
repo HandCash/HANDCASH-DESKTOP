@@ -1,5 +1,5 @@
 /**
- * Quarantine for the removed pre-BSV-21 fungible experiment.
+ * Quarantine for the removed early fungible experiment.
  *
  * This is deliberately detection-only. It prevents historical outputs from
  * being reclassified as collectables during chain ingest. No wallet surface

@@ -40,7 +40,6 @@ export type SweepSummary = {
   at: number
   cashSats: number
   items: number
-  tokens: Array<{ tokenId: string; sym: string; amount: string }>
   held: HeldTally
   failed: number
   notes: string[]

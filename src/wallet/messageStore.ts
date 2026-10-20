@@ -51,17 +51,6 @@ export type ItemTransferAsset =
       /** How the recipient finds the BRC-29 key of each item output paying it. */
       remittance?: DeliveryRemittance
     }
-  | {
-      kind: 'fungible'
-      tokenId: string
-      amount: string
-      sym: string
-      dec: number
-      icon?: string
-      issuer?: string
-      /** BRC-251: how the recipient finds the BRC-29 key of each output paying it. */
-      remittance?: DeliveryRemittance
-    }
 
 /** One collectable output in a multi-item transaction. */
 export type ItemTransferMember = {

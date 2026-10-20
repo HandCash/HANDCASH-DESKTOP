@@ -21,7 +21,7 @@
  * row the chain shows landed is restored, and its change comes back
  * (hc-a580a 0.1.539: ~2.5M sats of phantom coins hidden, change not restored).
  */
-import { isAssetFilingBasket } from './token/filing'
+import { isAssetFilingBasket } from './assetBaskets'
 import type { Chain } from './vault'
 import type { ActiveWallet } from './session'
 import type { ConfirmedSpenderAdoption } from './staleOutputRelease'

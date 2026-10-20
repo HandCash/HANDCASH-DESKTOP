@@ -1,15 +1,11 @@
 /**
- * Recover from a transaction: claim the token and item tips in one txid that
- * pay this wallet's address.
+ * Recover from a transaction: claim the item tips in one txid that pay this
+ * wallet's address.
  *
- * No public index finds an unspent BRC-162 tip by owner — the value prefix
- * hides the P2PKH from WhatsOnChain, Bitails, JungleBus and the GorillaPool
- * ordinal index alike — so an install whose history backup never held a
- * received token cannot rediscover it from keys. The sender's txid can: every
- * 1-sat output of that transaction locked to `active.address` and proven
- * unspent goes through the same classification and import as chain ingest —
- * except that, with no index behind the claim, a token tip must walk BRC-176
- * to its deploy before it is filed.
+ * An install whose history backup never held a received item may not find it
+ * again from keys alone. The sender's txid can: every 1-sat output of that
+ * transaction locked to `active.address` and proven unspent goes through the
+ * same classification and import as chain ingest.
  */
 import { Transaction } from '@bsv/sdk'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -23,11 +19,10 @@ export type RecoverFromTxResult = Readonly<{
   ours: number
   /** Of those, not proven unspent — spent, or the explorers did not answer. */
   spent: number
-  tokens: number
   items: number
-  /** Ours, unspent, and neither a token nor an item this wallet can name. */
+  /** Ours, unspent, and not an item this wallet can name (tokens included). */
   unrecognized: number
-  /** Named tokens / items the import guard passed over: already imported, in flight, or backing off. */
+  /** Named items the import guard passed over: already imported, in flight, or backing off. */
   skipped: number
 }>
 
@@ -70,16 +65,8 @@ export async function recoverFromTx(
     }
   }
 
-  const { bsv21, oneSats, heldOneSats } = await classifyLegacyUtxos(live, active.chain)
-  let tokens = 0
+  const { oneSats, heldOneSats } = await classifyLegacyUtxos(live, active.chain)
   let items = 0
-  if (bsv21.length > 0) {
-    const { importBsv21Tokens, listFungibles } = await import('./token/list')
-    const result = await importBsv21Tokens(bsv21, active, { requireLineage: true })
-    if (result.failed > 0) throw new Error(result.errors[0] ?? 'Token import failed.')
-    tokens = result.imported
-    void listFungibles().catch(() => {})
-  }
   if (oneSats.length > 0) {
     const result = await importOneSatOrdinals(oneSats, active)
     if (result.failed > 0) throw new Error(result.errors[0] ?? 'Item import failed.')
@@ -89,13 +76,12 @@ export async function recoverFromTx(
   const outcome: RecoverFromTxResult = {
     ours: ours.length,
     spent: ours.length - live.length,
-    tokens,
     items,
     unrecognized: heldOneSats.length,
-    skipped: bsv21.length - tokens + (oneSats.length - items),
+    skipped: oneSats.length - items,
   }
   console.info(
-    `[recover-tx] ${txid.slice(0, 12)} ours=${outcome.ours} spent=${outcome.spent} tokens=${tokens} items=${items} unrecognized=${outcome.unrecognized} skipped=${outcome.skipped}`,
+    `[recover-tx] ${txid.slice(0, 12)} ours=${outcome.ours} spent=${outcome.spent} items=${items} unrecognized=${outcome.unrecognized} skipped=${outcome.skipped}`,
   )
   return outcome
 }

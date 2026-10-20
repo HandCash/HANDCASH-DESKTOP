@@ -2,7 +2,6 @@ import { getActiveWallet } from './session'
 
 import type { ActivityItem } from './appActivity'
 import { getCachedCollectables, type Collectable } from './collectables'
-import { getCachedFungibles, getTokenIconDataUrl } from './token'
 import {
   getResolvedInscription,
   getResolvedInscriptionByOrigin,
@@ -78,40 +77,8 @@ function resolvedInscriptionName(...keys: Array<string | null | undefined>): str
   return undefined
 }
 
-function tokenIconUrl(iconOutpoint: string | undefined | null): string | undefined {
-  if (!iconOutpoint?.trim()) return undefined
-  return getTokenIconDataUrl(iconOutpoint)
-}
-
 export function viewActivityItem(item: ActivityItem): ActivityItem {
-  if (item.tokenId?.trim()) {
-    const tokenId = item.tokenId.trim().toLowerCase()
-    const held = getCachedFungibles().find((t) => t.tokenId === tokenId)
-    if (held) {
-      const icon = held.icon || item.icon
-      return {
-        ...item,
-        name: held.sym || item.name,
-        origin: held.tokenId,
-        tokenId: held.tokenId,
-        ...(held.amt && !item.amt ? { amt: held.amt } : {}),
-        ...(held.dec != null && item.dec == null ? { dec: held.dec } : {}),
-        ...(icon ? { icon } : {}),
-        imageUrl:
-          held.iconUrl ||
-          tokenIconUrl(held.icon) ||
-          tokenIconUrl(item.icon) ||
-          item.imageUrl,
-      }
-    }
-    // Icons are keyed by the icon inscription outpoint — never by token id.
-    // Looking up `item.origin` (tokenId) was a no-op and left mint rows blank.
-    const imageUrl =
-      item.imageUrl || tokenIconUrl(item.icon) || undefined
-    return imageUrl || item.icon
-      ? { ...item, ...(item.icon ? { icon: item.icon } : {}), ...(imageUrl ? { imageUrl } : {}) }
-      : item
-  }
+  if (item.tokenId?.trim()) return item
 
   const outpoint = item.outpoint ? asOutpoint(item.outpoint) : null
   const originKey = item.origin ? asOrigin(item.origin) : null

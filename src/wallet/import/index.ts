@@ -17,13 +17,11 @@ export {
 } from './importSource'
 export {
   describeImportHold,
-  formatTokenAmount,
   totalHoldings,
   type AddressHoldings,
   type HeldTally,
   type HoldingsTotals,
   type ImportHoldReason,
-  type TokenHolding,
 } from './holdings'
 export { locateAddress, type DiscoveredAddress } from './discovery'
 export {

@@ -54,12 +54,8 @@ function agePastGrace(): number {
   return Date.now() + SELF_SEND_RECEIVE_GRACE_MS + 50
 }
 
-function pinTokenReceive(): void {
-  noteInboundReceivePending({
-    txid: TX,
-    item: true,
-    token: { tokenId: 'tid_0', amount: '5', sym: 'KING', dec: 0 },
-  })
+function pinItemReceive(): void {
+  noteInboundReceivePending({ txid: TX, item: true, itemName: 'King Card' })
 }
 
 describe('reconcileSelfSendReceive', () => {
@@ -79,7 +75,7 @@ describe('reconcileSelfSendReceive', () => {
   })
 
   it('leaves a peer receive alone when this wallet did not sign it', async () => {
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileSelfSendReceive({ txid: TX, now: agePastGrace() })).toBe('wait')
     expect(mocks.broadcast).not.toHaveBeenCalled()
     expect(listRecentActivity(10)).toHaveLength(1)
@@ -87,7 +83,7 @@ describe('reconcileSelfSendReceive', () => {
 
   it('waits out the original send before touching a fresh self-send echo', async () => {
     mocks.cheque.mockReturnValue([1, 2, 3])
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileSelfSendReceive({ txid: TX })).toBe('wait')
     expect(mocks.broadcast).not.toHaveBeenCalled()
   })
@@ -95,7 +91,7 @@ describe('reconcileSelfSendReceive', () => {
   it('hides an aged self-send receive whose inputs are already spent', async () => {
     mocks.cheque.mockReturnValue([9])
     mocks.conflict.mockResolvedValue(true)
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileStuckSelfSendReceives(agePastGrace())).toBe(1)
     expect(isGhostTxSuppressed(TX)).toBe(true)
     expect(mocks.broadcast).not.toHaveBeenCalled()
@@ -105,7 +101,7 @@ describe('reconcileSelfSendReceive', () => {
   it('hides an Arcade-rejected self-send without posting it again', async () => {
     mocks.cheque.mockReturnValue([9])
     mocks.rejected.mockReturnValue(true)
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileSelfSendReceive({ txid: TX, now: agePastGrace() })).toBe('hidden')
     expect(mocks.broadcast).not.toHaveBeenCalled()
     expect(listRecentActivity(10)).toHaveLength(0)
@@ -113,13 +109,12 @@ describe('reconcileSelfSendReceive', () => {
 
   it('broadcasts a live self-send and restores the missing send row', async () => {
     mocks.cheque.mockReturnValue([4, 5])
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileSelfSendReceive({ txid: TX, now: agePastGrace() })).toBe('broadcast')
     expect(mocks.broadcast).toHaveBeenCalledWith(TX, [4, 5])
     const rows = listRecentActivity(10)
     const sent = rows.find((row) => row.kind === 'spent')
-    expect(sent?.method).toBe('send-token')
-    expect(sent?.note).toMatch(/KING/)
+    expect(sent?.method).toBe('send-collectable')
     expect(sent?.note).toMatch(/myself/)
     const receiving = rows.find((row) => row.kind === 'earned')
     expect(receiving?.status).toBe('pending')
@@ -134,7 +129,7 @@ describe('reconcileSelfSendReceive', () => {
       rememberGhostTx(TX)
       return false
     })
-    pinTokenReceive()
+    pinItemReceive()
     expect(await reconcileSelfSendReceive({ txid: TX, now: agePastGrace() })).toBe('hidden')
     expect(listRecentActivity(10).some((row) => row.kind === 'earned')).toBe(false)
   })
