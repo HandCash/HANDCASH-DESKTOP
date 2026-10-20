@@ -10,10 +10,14 @@ import { decodeScriptNumber, encodeScriptNumber } from '../scriptNumber'
  *   held:       <"bnt" ‖ asset id> <amount> OP_2DROP <clause>
  *   authority:  <"bnt" ‖ asset id> OP_0     OP_2DROP <clause>
  *   capped:     <"bnt" ‖ asset id> OP_0 <units issued> <members issued> OP_2DROP OP_2DROP <clause>
+ *
+ * A countersigned clause is BRC-253 (IPT) and writes `"ipt"` in place of `"bnt"`.
  */
 
 export const BNT_MARKER = [0x62, 0x6e, 0x74] as const
-const MARKER_HEX = '626e74'
+/** Countersigned clauses are IPT (BRC-253) and carry their own marker, so no marker spans both classes. */
+export const IPT_MARKER = [0x69, 0x70, 0x74] as const
+const MARKER_HEXES = ['626e74', '697074']
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 const HASH20_RE = /^[0-9a-f]{40}$/
 const MAX_SET = 5
@@ -125,6 +129,10 @@ export function bntClause(clause: BntClause): Script {
   return script.writeOpCode(OP.OP_ENDIF)
 }
 
+export function markerFor(mode: BntMode): readonly number[] {
+  return mode === 'open' ? BNT_MARKER : IPT_MARKER
+}
+
 function writeAmount(script: Script, amount: bigint): void {
   const encoded = encodeScriptNumber(amount)
   if (encoded.data) script.writeBin(encoded.data)
@@ -134,7 +142,7 @@ function writeAmount(script: Script, amount: bigint): void {
 export function bntDeployLock(args: { supply: bigint; payload: number[] | Uint8Array; clause: BntClause }): LockingScript {
   if (args.supply <= 0n || args.supply > BNT_MAX_AMOUNT) throw new Error('Supply is 1 to 2^64-1')
   if (args.payload.length === 0) throw new Error('A deploy carries its payload')
-  const script = new LockingScript().writeBin([...BNT_MARKER])
+  const script = new LockingScript().writeBin([...markerFor(args.clause.mode)])
   writeAmount(script, args.supply)
   script.writeBin([...args.payload]).writeOpCode(OP.OP_2DROP).writeOpCode(OP.OP_DROP)
   return script.writeScript(bntClause(args.clause))
@@ -143,14 +151,16 @@ export function bntDeployLock(args: { supply: bigint; payload: number[] | Uint8A
 export function bntHeldLock(args: { assetId: string; amount: bigint; clause: BntClause }): LockingScript {
   if (!isBntAssetId(args.assetId)) throw new Error('An asset id is 20 bytes of hex')
   if (args.amount <= 0n || args.amount > BNT_MAX_AMOUNT) throw new Error('A held output carries 1 to 2^64-1 units')
-  const script = new LockingScript().writeBin([...BNT_MARKER, ...Utils.toArray(args.assetId, 'hex')])
+  const script = new LockingScript().writeBin([...markerFor(args.clause.mode), ...Utils.toArray(args.assetId, 'hex')])
   writeAmount(script, args.amount)
   return script.writeOpCode(OP.OP_2DROP).writeScript(bntClause(args.clause))
 }
 
 export function bntAuthorityLock(args: { assetId: string; clause: BntClause; issued?: BntIssued }): LockingScript {
   if (!isBntAssetId(args.assetId)) throw new Error('An asset id is 20 bytes of hex')
-  const script = new LockingScript().writeBin([...BNT_MARKER, ...Utils.toArray(args.assetId, 'hex')]).writeOpCode(OP.OP_0)
+  const script = new LockingScript()
+    .writeBin([...markerFor(args.clause.mode), ...Utils.toArray(args.assetId, 'hex')])
+    .writeOpCode(OP.OP_0)
   if (args.issued) {
     const { units, members } = args.issued
     if (units < 1n || units > BNT_MAX_AMOUNT || members < 0n || members > BNT_MAX_AMOUNT) {
@@ -250,7 +260,7 @@ function readClauseChunks(chunks: ScriptChunk[], at: number): BntClause | null {
 function chunksOf(script: Script | string): { chunks: ScriptChunk[]; hex: string } | null {
   try {
     const hex = typeof script === 'string' ? script.trim().toLowerCase() : script.toHex()
-    if (!hex.startsWith(`03${MARKER_HEX}`) && !hex.startsWith(`17${MARKER_HEX}`)) return null
+    if (!MARKER_HEXES.some((m) => hex.startsWith(`03${m}`) || hex.startsWith(`17${m}`))) return null
     return { chunks: Script.fromHex(hex).chunks, hex }
   } catch {
     return null
@@ -263,7 +273,7 @@ export function readBnt(script: Script | string): BntOutput | null {
   if (!parsed) return null
   const { chunks, hex } = parsed
   const head = chunks[0]?.data
-  if (!head || (head.length !== 3 && head.length !== 23) || Utils.toHex(head.slice(0, 3)) !== MARKER_HEX) return null
+  if (!head || (head.length !== 3 && head.length !== 23) || !MARKER_HEXES.includes(Utils.toHex(head.slice(0, 3)))) return null
   let out: BntOutput
   if (head.length === 3) {
     const supply = chunks[1] ? decodeScriptNumber(chunks[1]) : null
@@ -304,7 +314,7 @@ export function readBnt(script: Script | string): BntOutput | null {
   }
 }
 
-/** True when the first push is the BNT marker or the marker plus an asset id: never BRC-162. */
+/** True when the first push is the `bnt` or `ipt` marker, alone or plus an asset id: never BRC-162. */
 export function looksLikeBnt(script: Script | string): boolean {
   return chunksOf(script) != null
 }

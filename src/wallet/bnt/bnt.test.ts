@@ -105,6 +105,21 @@ function storeOf(...txs: Transaction[]) {
 }
 
 describe('bnt scripts', () => {
+  it('writes "bnt" for an open clause and "ipt" for a countersigned one, and refuses a swapped marker', () => {
+    const assetId = '11'.repeat(20)
+    const open = bntHeldLock({ assetId, amount: 5n, clause: { mode: 'open', holder: pub(alice) } })
+    const countersigned = bntHeldLock({
+      assetId,
+      amount: 5n,
+      clause: { mode: 'countersign', holder: pub(alice), issuer: { m: 1, keys: [pub(bob)] }, release: { kind: 'hash', rel: '00'.repeat(20) } },
+    })
+    expect(open.toHex().startsWith('17626e74')).toBe(true)
+    expect(countersigned.toHex().startsWith('17697074')).toBe(true)
+    expect(readBnt(countersigned)?.clause.mode).toBe('countersign')
+    expect(readBnt(open.toHex().replace(/^17626e74/, '17697074'))).toBeNull()
+    expect(readBnt(countersigned.toHex().replace(/^17697074/, '17626e74'))).toBeNull()
+  })
+
   const assetId = 'ab'.repeat(20)
 
   it('reads every form back exactly', () => {

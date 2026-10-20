@@ -214,7 +214,7 @@ export function checkBntTx(tx: Transaction, deploy: BntDeploy): TxCheck {
   for (let vout = 0; vout < tx.outputs.length; vout++) {
     const script = tx.outputs[vout]!.lockingScript
     const hex = script?.toHex() ?? ''
-    const marked = hex.startsWith(`17626e74${deploy.assetId}`)
+    const marked = hex.startsWith(`17626e74${deploy.assetId}`) || hex.startsWith(`17697074${deploy.assetId}`)
     const read = script ? readBnt(script) : null
     if (read?.form === 'deploy' || !marked) continue
     if (!read) return { ok: false, reason: 'output', detail: `output ${vout} names ${deploy.assetId} but is not canonical` }
