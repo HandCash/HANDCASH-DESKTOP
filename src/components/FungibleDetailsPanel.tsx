@@ -160,7 +160,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       <EmptyState
         icon={<CollectablesIcon size={28} />}
         title="Token not on this device"
-        body="Fungible balances live on the install that received them."
+        body="Tokens sent to this wallet show up here."
       />
     )
   }

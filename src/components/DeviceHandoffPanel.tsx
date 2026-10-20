@@ -1,7 +1,7 @@
 import { openSetting } from '../wallet/navStore'
-import { playWalletSound } from '../wallet/soundService'
 import { PairDevicePanel } from './PairDevicePanel'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
+import { SettingsNavRow, SettingsSection, settingIconFor } from './settings'
 
 /**
  * Multi-device: optional one-way key recovery between two separate wallets.
@@ -17,28 +17,22 @@ export function DeviceHandoffPanel() {
 
       <PairDevicePanel />
 
-      <div className="actions device-backup-more">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('backup')
-          }}
-        >
-          Key slices
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('history-backup')
-          }}
-        >
-          History backup
-        </button>
-      </div>
+      <SettingsSection title="Related" part="related">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="Key slices"
+            description="Split recovery across people and places"
+            icon={settingIconFor('backup').icon}
+            onClick={() => openSetting('backup')}
+          />
+          <SettingsNavRow
+            label="History backup"
+            description="Encrypted copy of payments and labels"
+            icon={settingIconFor('history-backup').icon}
+            onClick={() => openSetting('history-backup')}
+          />
+        </ul>
+      </SettingsSection>
 
       <SettingsFeatureAbout tags={['BRC-157', 'BRC-75', 'BRC-140', 'BRC-78']}>
         Each encrypted copy goes one way. It does not share identity, balance, history, or

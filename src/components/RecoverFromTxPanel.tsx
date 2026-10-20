@@ -1,3 +1,4 @@
+import { Button, Field } from '@aeon-ui/react'
 import { useState } from "react";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { recoverFromTx, type RecoverFromTxResult } from "../wallet/recoverFromTx";
@@ -84,9 +85,9 @@ export function RecoverFromTxPanel() {
             transaction id and paste it here.
           </p>
         </div>
-        <div className="field">
-          <label htmlFor="recover-txid">Transaction id</label>
-          <input
+        <Field.Root className="field">
+          <Field.Label htmlFor="recover-txid">Transaction id</Field.Label>
+          <Field.Control
             id="recover-txid"
             className="mono"
             value={txid}
@@ -97,16 +98,16 @@ export function RecoverFromTxPanel() {
             spellCheck={false}
             autoFocus
           />
-        </div>
+        </Field.Root>
         <div className="actions">
-          <button
+          <Button.Root variant="solid"
             type="submit"
             className="btn btn-primary"
             data-aeon-part="trigger"
             disabled={!ready || action.busy}
           >
-            {action.running("recover") ? "Recovering…" : "Recover"}
-          </button>
+            <Button.Label>{action.running("recover") ? "Recovering…" : "Recover"}</Button.Label>
+          </Button.Root>
         </div>
       </form>
       <AsyncActionPrompt action={action} />

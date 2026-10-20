@@ -5,7 +5,7 @@ export const executableWalletStatecharts = machineStateManifest()
 
 /**
  * HandCash Desktop — master + per-scope Mermaid statecharts.
- * Readable charts for Settings → About → HandCash → View statecharts.
+ * Readable charts for Settings → About HandCash → Statecharts.
  * Covers XState machines and major UI scopes (Aeon data-aeon-state).
  */
 

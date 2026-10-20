@@ -1,5 +1,5 @@
 import { COIN_INFO } from '../coins/coinChains'
-import { SWAP_ASSET_INFO, type SwapAsset } from './assets'
+import type { SwapAsset } from './assets'
 import { swapLegs } from './settle'
 import type { SettleRecord } from './settleStore'
 
@@ -14,14 +14,7 @@ export type SwapStanding = {
 
 export type LockConfirming = { chain: SwapAsset; counted: number; needed: number }
 
-const clock = (ms: number | undefined) => (ms ? new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'its deadline')
-const until = (ms: number | undefined) => (ms ? `, ${clock(ms)}` : '')
-
-/** How often `chain` makes a block, for telling someone how long a confirmation usually takes. */
-function blockEvery(chain: SwapAsset): string {
-  const minutes = chain === 'bsv' ? 10 : COIN_INFO[chain].blockMinutes
-  return minutes === 1 ? 'about every minute' : `about every ${String(minutes).replace('.5', '½')} minutes`
-}
+const clock = (ms: number | undefined) => (ms ? new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'later')
 
 /** A BSV lock is buried once a block holds it; a coin lock at its chain's depth. */
 const depthOf = (chain: SwapAsset) => (chain === 'bsv' ? 1 : COIN_INFO[chain].confirmations)
@@ -30,15 +23,10 @@ function lockConfirming(chain: SwapAsset, c: { have: number; need: number } | un
   return c ? { chain, counted: Math.min(c.have, c.need), needed: c.need } : { chain, counted: 0, needed: depthOf(chain) }
 }
 
-/** A lock waiting for its block, or counting toward the depth the other side needs once it is in one. */
-function confirmingText({ chain, counted, needed }: LockConfirming): string {
-  const { ticker } = SWAP_ASSET_INFO[chain]
-  return counted > 0 ? `has ${counted} of ${needed} ${ticker} confirmations` : `is waiting for a ${ticker} block (${blockEvery(chain)})`
-}
-
-/** Where one swap stands as this wallet sees it, in words. */
+/** Where one swap stands as this wallet sees it, in a few words; confirmation counts travel in `confirming`. */
 export function describeSwap(r: SettleRecord): SwapStanding {
   const peer = r.role === 'taker' ? 'the maker' : 'the taker'
+  const Peer = r.role === 'taker' ? 'The maker' : 'The taker'
   const row = (state: string, status: string, confirming?: LockConfirming): SwapStanding => ({
     state,
     status: r.lastError && !r.outcome ? `${status} · last try: ${r.lastError}` : status,
@@ -49,21 +37,23 @@ export function describeSwap(r: SettleRecord): SwapStanding {
     case 'swapped':
       return row('swapped', 'Swapped')
     case 'refunded':
-      return row('refunded', 'Refunded: your coins came back')
+      return row('refunded', 'Refunded')
     case 'declined':
-      return row('declined', `Declined by ${peer}${r.declined ? ` (${r.declined})` : ''}; nothing was locked`)
+      return row('declined', `Declined by ${peer}${r.declined ? ` (${r.declined})` : ''} · nothing locked`)
     case 'expired':
-      return row('expired', 'Expired before anything was locked')
+      return row('expired', 'Expired · nothing locked')
     case 'missed':
-      return row('missed', 'The taker refunded before this wallet claimed')
+      return row('missed', 'Missed: the taker refunded first')
     case 'unsent':
-      return row('unsent', 'Your lock never reached the chain; nothing was locked')
+      return row('unsent', 'Your lock never went out · nothing locked')
   }
-  if (r.declined && r.own.funding) return row('declined', `Declined by ${peer} (${r.declined}); your lock comes back at its lock time${until(r.waiting?.until)}`)
-  if (r.peer.refused) return row('refused', `${peer[0]!.toUpperCase()}${peer.slice(1)}'s lock does not match the terms; yours refunds at its lock time`)
+  // This wallet's claim is in, so the swap has happened; only the HandCash fee output on its own lock can still be open.
+  if (r.peer.claimed) return row('swapped', r.waiting?.for === 'locktime' ? `Swapped · unclaimed fee returns to you ${clock(r.waiting.until)}` : 'Swapped')
+  if (r.declined && r.own.funding) return row('declined', `Declined by ${peer} · refund opens ${clock(r.waiting?.until)}`)
+  if (r.peer.refused) return row('refused', `${Peer}'s lock is wrong · refund opens ${clock(r.waiting?.until)}`)
   switch (r.phase) {
     case 'locking':
-      return row('locking', 'Locking your side')
+      return row('locking', 'Locking')
     case 'claiming':
       return row('claiming', 'Claiming')
     case 'refunding':
@@ -80,25 +70,17 @@ export function describeSwap(r: SettleRecord): SwapStanding {
     case 'presign':
       return row('presign', 'Exchanging refund signatures')
     case 'peer-funding':
-      if (ownUnburied) {
-        const c = lockConfirming(ownChain, r.own.confirmations)
-        return row('peer-funding', `Your lock ${confirmingText(c)}; ${peer} locks once it confirms`, c)
-      }
-      return row('peer-funding', `Waiting for ${peer} to lock${r.terms.v === 2 && r.role === 'taker' ? `; it may be offline, and has until ${clock(r.waiting.until)}` : ''}`)
-    case 'peer-burial': {
-      const c = lockConfirming(peerChain, r.peer.confirmations)
-      return row('peer-burial', `${peer[0]!.toUpperCase()}${peer.slice(1)}'s lock ${confirmingText(c)}; you ${r.role === 'maker' ? 'lock' : 'claim'} once it confirms`, c)
-    }
+      if (ownUnburied) return row('peer-funding', 'Confirming your lock', lockConfirming(ownChain, r.own.confirmations))
+      return row('peer-funding', `Waiting for ${peer} to lock${r.terms.v === 2 && r.role === 'taker' ? ` · until ${clock(r.waiting.until)}` : ''}`)
+    case 'peer-burial':
+      return row('peer-burial', `Confirming ${peer}'s lock`, lockConfirming(peerChain, r.peer.confirmations))
     case 'chain-time':
-      return row('chain-time', `Reading the ${SWAP_ASSET_INFO[peerChain].ticker} chain's clock before claiming`)
+      return row('chain-time', 'Preparing your claim')
     case 'secret':
-      if (ownUnburied) {
-        const c = lockConfirming(ownChain, r.own.confirmations)
-        return row('secret', `Your lock ${confirmingText(c)}; ${peer} claims once it confirms`, c)
-      }
+      if (ownUnburied) return row('secret', 'Confirming your lock', lockConfirming(ownChain, r.own.confirmations))
       return row('secret', `Waiting for ${peer} to claim`)
     case 'locktime':
-      return row('locktime', 'Waiting for the lock time to take your coins back')
+      return row('locktime', `Refund opens ${clock(r.waiting.until)}`)
   }
   return row(r.phase ?? 'negotiating', 'Starting')
 }

@@ -1,4 +1,6 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState, type FormEvent } from 'react'
+import { Switch } from '@aeon-ui/ui'
 import {
   deviceAuthStatus,
   type DeviceAuthStatus,
@@ -24,6 +26,8 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { PasswordField } from './PasswordField'
+import { FingerprintIcon, LockIcon } from './icons'
+import { SettingsControlRow } from './settings/SettingsControlRow'
 
 type Mode =
   | 'overview'
@@ -212,12 +216,12 @@ export function UnlockSettingsPanel() {
             </p>
           ) : null}
           <div className="actions">
-            <button type="submit" className="btn btn-primary" disabled={busy || !newPassword}>
-              {busy ? 'Updating…' : 'Update password'}
-            </button>
-            <button type="button" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
-              Back
-            </button>
+            <Button.Root variant="solid" type="submit" className="btn btn-primary" disabled={busy || !newPassword}>
+              <Button.Label>{busy ? 'Updating…' : 'Update password'}</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
+              <Button.Label>Back</Button.Label>
+            </Button.Root>
           </div>
         </form>
       </div>
@@ -268,12 +272,12 @@ export function UnlockSettingsPanel() {
             </p>
           ) : null}
           <div className="actions">
-            <button type="submit" className="btn btn-primary" disabled={busy || !newPassword}>
-              {busy ? 'Saving…' : 'Save password'}
-            </button>
-            <button type="button" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
-              Back
-            </button>
+            <Button.Root variant="solid" type="submit" className="btn btn-primary" disabled={busy || !newPassword}>
+              <Button.Label>{busy ? 'Saving…' : 'Save password'}</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
+              <Button.Label>Back</Button.Label>
+            </Button.Root>
           </div>
         </form>
       </div>
@@ -295,8 +299,7 @@ export function UnlockSettingsPanel() {
           </p>
         ) : null}
         <div className="actions" data-aeon-part="factor-form" data-aeon-state={mutation.stateAttr}>
-          <button
-            type="button"
+          <Button.Root variant="solid"
             className="btn btn-primary"
             disabled={busy}
             onClick={() => {
@@ -313,11 +316,11 @@ export function UnlockSettingsPanel() {
               )
             }}
           >
-            {busy ? 'Saving…' : 'Enable'}
-          </button>
-          <button type="button" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
-            Back
-          </button>
+            <Button.Label>{busy ? 'Saving…' : 'Enable'}</Button.Label>
+          </Button.Root>
+          <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
+            <Button.Label>Back</Button.Label>
+          </Button.Root>
         </div>
       </div>
     )
@@ -367,7 +370,7 @@ export function UnlockSettingsPanel() {
         <ConfirmPasswordGate
           id="unlock-disable-password"
           title="Remove HandCash password"
-          lede="You’ll unlock with this device only. Save phrase or slices first — then confirm your HandCash password to remove it."
+          lede="Unlock will use this device only. Save your phrase or slices first."
           requirePassword
           actionLabel="Remove password"
           onVerified={async (password) => {
@@ -426,81 +429,64 @@ export function UnlockSettingsPanel() {
       </div>
 
       <ul className="settings-list">
-        <li className="settings-row settings-row-static">
-          <div className="settings-row-copy">
-            <span className="settings-row-label">{deviceLabel}</span>
-            <span className="settings-row-description">
-              {!deviceAvailable
-                ? 'Not available on this device'
-                : factors.device
-                  ? device?.strongBox
-                    ? 'On · hardware sealed'
-                    : 'On'
-                  : 'Off'}
-            </span>
-          </div>
+        <SettingsControlRow
+          label={deviceLabel}
+          icon={<FingerprintIcon size={20} />}
+          description={
+            !deviceAvailable
+              ? 'Not available on this device'
+              : factors.device
+                ? device?.strongBox
+                  ? 'On · hardware sealed'
+                  : 'On'
+                : 'Off'
+          }
+        >
           {deviceAvailable ? (
-            factors.device ? (
-              <button
-                type="button"
-                className="btn btn-ghost"
-                disabled={!factors.password}
-                onClick={() => setMode('disable-device')}
-              >
-                Turn off
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={!factors.password && !isNoDeviceLock()}
-                onClick={() => setMode('enable-device')}
-              >
-                Turn on
-              </button>
-            )
+            <Switch.Root
+              checked={factors.device}
+              aria-label={deviceLabel}
+              disabled={factors.device ? !factors.password : !factors.password && !isNoDeviceLock()}
+              onCheckedChange={(next) => setMode(next ? 'enable-device' : 'disable-device')}
+            />
           ) : null}
-        </li>
-        <li className="settings-row settings-row-static">
-          <div className="settings-row-copy">
-            <span className="settings-row-label">HandCash password</span>
-            <span className="settings-row-description">
-              {isNoDeviceLock()
-                ? 'Off · no prompt on this device'
-                : factors.password
-                  ? 'On · separate from device lock'
-                  : 'Off'}
-            </span>
-          </div>
-          {isNoDeviceLock() ? (
-            <button type="button" className="btn btn-primary" onClick={() => setMode('set-password')}>
-              Add
-            </button>
-          ) : factors.password ? (
-            <div className="actions" style={{ gap: 8 }}>
-              <button type="button" className="btn btn-ghost" onClick={() => setMode('change-password')}>
-                Change
-              </button>
-              <button
-                type="button"
+        </SettingsControlRow>
+        <SettingsControlRow
+          label="HandCash password"
+          icon={<LockIcon size={20} />}
+          description={
+            isNoDeviceLock()
+              ? 'Off · no prompt on this device'
+              : factors.password
+                ? 'On · separate from device lock'
+                : 'Off'
+          }
+        >
+          {factors.password && !isNoDeviceLock() ? (
+            <div className="actions">
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => setMode('change-password')}>
+                <Button.Label>Change</Button.Label>
+              </Button.Root>
+              <Button.Root
+                variant="ghost"
                 className="btn btn-ghost"
                 disabled={!factors.device}
                 onClick={() => setMode('disable-password')}
               >
-                Remove
-              </button>
+                <Button.Label>Remove</Button.Label>
+              </Button.Root>
             </div>
           ) : (
-            <button
-              type="button"
+            <Button.Root
+              variant="solid"
               className="btn btn-primary"
-              disabled={!factors.device}
+              disabled={!isNoDeviceLock() && !factors.device}
               onClick={() => setMode('set-password')}
             >
-              Add
-            </button>
+              <Button.Label>Add</Button.Label>
+            </Button.Root>
           )}
-        </li>
+        </SettingsControlRow>
       </ul>
     </div>
   )

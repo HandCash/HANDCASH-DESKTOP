@@ -3,6 +3,7 @@ import { tabsMachine } from '@aeon-ui/primitives'
 import {
   createContext,
   forwardRef,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -16,7 +17,7 @@ import { mergeProps } from '../utils/merge-props.js'
 
 interface TabsContextValue {
   value: string
-  send: ReturnType<typeof useAeonMachine<typeof tabsMachine>>[1]
+  selectValue: (value: string) => void
 }
 
 const TabsCtx = createContext<TabsContextValue | null>(null)
@@ -27,7 +28,8 @@ function useTabsCtx() {
   return ctx
 }
 
-export interface TabsRootProps {
+export interface TabsRootProps
+  extends Omit<HTMLAttributes<HTMLDivElement>, 'defaultValue' | 'onChange' | 'children'> {
   value?: string
   defaultValue?: string
   onValueChange?: (value: string) => void
@@ -43,17 +45,27 @@ const Root = forwardRef<HTMLDivElement, TabsRootProps>(function TabsRoot(
     input: { value: defaultValue, disabled: false },
   })
 
+  const controlled = value !== undefined
   const resolvedValue = value ?? snapshot.context.value
 
+  const selectValue = useCallback(
+    (next: string) => {
+      if (controlled) onValueChange?.(next)
+      else send({ type: 'SELECT', value: next })
+    },
+    [controlled, onValueChange, send],
+  )
+
   useEffect(() => {
-    onValueChange?.(resolvedValue)
-  }, [resolvedValue, onValueChange])
+    if (controlled) return
+    onValueChange?.(snapshot.context.value)
+  }, [snapshot.context.value, controlled, onValueChange])
 
   useEffect(() => {
     if (value !== undefined) send({ type: 'SET_VALUE', value })
   }, [value, send])
 
-  const ctx = useMemo(() => ({ value: resolvedValue, send }), [resolvedValue, send])
+  const ctx = useMemo(() => ({ value: resolvedValue, selectValue }), [resolvedValue, selectValue])
 
   return (
     <TabsCtx.Provider value={ctx}>
@@ -80,7 +92,7 @@ const Trigger = forwardRef<HTMLButtonElement, TabsTriggerProps>(function TabsTri
   { value: triggerValue, onClick, ...rest },
   ref,
 ) {
-  const { value, send } = useTabsCtx()
+  const { value, selectValue } = useTabsCtx()
   const selected = value === triggerValue
 
   return (
@@ -98,7 +110,7 @@ const Trigger = forwardRef<HTMLButtonElement, TabsTriggerProps>(function TabsTri
         {
           onClick: (e: MouseEvent<HTMLButtonElement>) => {
             onClick?.(e)
-            send({ type: 'SELECT', value: triggerValue })
+            if (!e.defaultPrevented && value !== triggerValue) selectValue(triggerValue)
           },
         },
         rest,

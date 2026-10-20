@@ -16,7 +16,7 @@ Aeon UI models interactive behavior as executable [statecharts](https://www.thes
 | `@aeon-ui/primitives` | XState machines (toggle, dialog, tabs, accordion, async, button lifecycle, field) |
 | `@aeon-ui/react` | React headless bindings |
 | `@aeon-ui/schemas` | JSON Schema catalog + agent system prompts |
-| `@aeon-ui/cli` | `npx aeon-ui init` — Cursor rules, schemas, starter |
+| `@aeon-ui/cli` | `npx aeon-ui init` · `link` · `migrate` — Cursor rules, scoped package link, migration checklist |
 | `@aeon-ui/panda` | Design tokens, `defineSlotRecipe` styles, generated `styled-system` |
 | `@aeon-ui/ui` | Styled components (`aeonButton`, `aeonAccordion`, …) |
 | `@aeon-ui/vue` | Vue 3 headless adapter (v0.1: Switch + `useAeonMachine`) |
@@ -33,13 +33,27 @@ Teach an AI agent first (optional but recommended):
 npx aeon-ui init
 ```
 
-The monorepo is published on npm as **`aeon-ui-engine`** (bundles all `@aeon-ui/*` workspace packages):
+Migrating an existing app? Scan for known workarounds and write a checklist:
+
+```bash
+npx aeon-ui migrate
+```
+
+The monorepo is published on npm as **`aeon-ui-engine`** (bundles all `@aeon-ui/*` workspace packages). Postinstall links `node_modules/@aeon-ui/*` so **Next.js and Vite** resolve imports without aliases:
 
 ```bash
 npm install aeon-ui-engine react react-dom xstate @xstate/react
+# re-link if needed: npx aeon-ui link
 ```
 
-Add the Vite plugin and import CSS:
+```tsx
+// app/layout.tsx or main.tsx
+import 'aeon-ui-engine/aeon.css'
+```
+
+**Next.js** — add `transpilePackages` for `@aeon-ui/ui`, `@aeon-ui/react`, `@aeon-ui/core`, `@aeon-ui/primitives`, `@aeon-ui/panda`, and use `"use client"` for interactive components.
+
+**Vite (optional)** — `aeonUiVitePlugin()` still helps with optimizeDeps; linking alone is enough for `@aeon-ui/*` resolution:
 
 ```ts
 // vite.config.ts
@@ -47,11 +61,6 @@ import { aeonUiVitePlugin } from 'aeon-ui-engine/vite'
 export default defineConfig({
   plugins: [react(), aeonUiVitePlugin()],
 })
-```
-
-```tsx
-// main.tsx
-import 'aeon-ui-engine/aeon.css'
 ```
 
 Full setup guide: **[CONSUMER.md](./CONSUMER.md)**.

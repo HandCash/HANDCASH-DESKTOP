@@ -16,22 +16,30 @@ import {
 import { useAeonMachine } from '../hooks/use-aeon-machine.js'
 import { mergeProps } from '../utils/merge-props.js'
 
-interface SliderContextValue {
+export interface SliderContextValue {
   value: number
   min: number
   max: number
   step: number
   disabled: boolean
   dragging: boolean
+  /** Nested region value from the machine: `interaction.idle` | `interaction.dragging`. */
+  interaction: 'idle' | 'dragging'
   send: ReturnType<typeof useAeonMachine<typeof sliderMachine>>[1]
   onValueChange?: (value: number) => void
+  /** Snap, store and report a user-intended value. */
+  commit: (value: number) => void
   setValueFromClientX: (clientX: number) => void
   trackRef: React.RefObject<HTMLDivElement | null>
 }
 
 const SliderCtx = createContext<SliderContextValue | null>(null)
 
-function useSliderCtx() {
+/**
+ * Read the slider's live machine state from inside `Slider.Root`.
+ * `interaction` is the nested region value — the same thing the snapshot holds.
+ */
+export function useSliderContext() {
   const ctx = useContext(SliderCtx)
   if (!ctx) throw new Error('Slider parts must be used within Slider.Root')
   return ctx
@@ -84,12 +92,31 @@ const Root = forwardRef<HTMLDivElement, SliderRootProps>(function SliderRoot(
   const dragging = snapshot.matches({ interaction: 'dragging' })
 
   useEffect(() => {
-    onValueChange?.(resolvedValue)
-  }, [resolvedValue, onValueChange])
-
-  useEffect(() => {
     if (value !== undefined) send({ type: 'SET_VALUE', value })
   }, [value, send])
+
+  useEffect(() => {
+    send({ type: 'SET_BOUNDS', min, max, step })
+  }, [min, max, step, send])
+
+  useEffect(() => {
+    send({ type: 'SET_DISABLED', disabled })
+  }, [disabled, send])
+
+  /**
+   * Interaction is emitted here, never echoed from the resolved value. A
+   * controlled slider therefore reports what the user did (Aeon ≤1.4.0 stayed
+   * silent while `value` was set) and never fires on mount.
+   */
+  const commit = useCallback(
+    (next: number) => {
+      if (disabled) return
+      const snapped = snapSliderValue(next, min, max, step)
+      send({ type: 'SET_VALUE', value: snapped })
+      onValueChange?.(snapped)
+    },
+    [disabled, min, max, step, send, onValueChange],
+  )
 
   const setValueFromClientX = useCallback(
     (clientX: number) => {
@@ -98,11 +125,9 @@ const Root = forwardRef<HTMLDivElement, SliderRootProps>(function SliderRoot(
       const rect = track.getBoundingClientRect()
       if (rect.width <= 0) return
       const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
-      const next = snapSliderValue(min + ratio * (max - min), min, max, step)
-      send({ type: 'SET_VALUE', value: next })
-      if (value === undefined) onValueChange?.(next)
+      commit(min + ratio * (max - min))
     },
-    [disabled, min, max, step, send, value, onValueChange],
+    [commit, disabled, min, max],
   )
 
   useEffect(() => {
@@ -125,12 +150,25 @@ const Root = forwardRef<HTMLDivElement, SliderRootProps>(function SliderRoot(
       step,
       disabled,
       dragging,
+      interaction: (dragging ? 'dragging' : 'idle') as 'idle' | 'dragging',
       send,
       onValueChange,
+      commit,
       setValueFromClientX,
       trackRef,
     }),
-    [resolvedValue, min, max, step, disabled, dragging, send, onValueChange, setValueFromClientX],
+    [
+      resolvedValue,
+      min,
+      max,
+      step,
+      disabled,
+      dragging,
+      send,
+      onValueChange,
+      commit,
+      setValueFromClientX,
+    ],
   )
 
   return (
@@ -156,7 +194,7 @@ const Track = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(functio
   { onPointerDown, ...rest },
   ref,
 ) {
-  const { disabled, send, setValueFromClientX, trackRef } = useSliderCtx()
+  const { disabled, send, setValueFromClientX, trackRef } = useSliderContext()
 
   return (
     <div
@@ -186,7 +224,7 @@ const Range = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(functio
   { style, ...rest },
   ref,
 ) {
-  const { value, min, max } = useSliderCtx()
+  const { value, min, max } = useSliderContext()
   return (
     <div
       ref={ref}
@@ -201,7 +239,8 @@ const Thumb = forwardRef<HTMLSpanElement, HTMLAttributes<HTMLSpanElement>>(funct
   { onKeyDown, onPointerDown, style, ...rest },
   ref,
 ) {
-  const { value, min, max, step, disabled, dragging, send, setValueFromClientX } = useSliderCtx()
+  const { value, min, max, step, disabled, dragging, send, commit, setValueFromClientX } =
+    useSliderContext()
 
   return (
     <span
@@ -229,19 +268,27 @@ const Thumb = forwardRef<HTMLSpanElement, HTMLAttributes<HTMLSpanElement>>(funct
             if (disabled || e.defaultPrevented) return
             if (e.key === 'ArrowRight' || e.key === 'ArrowUp') {
               e.preventDefault()
-              send({ type: 'STEP', delta: step })
+              commit(value + step)
             }
             if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') {
               e.preventDefault()
-              send({ type: 'STEP', delta: -step })
+              commit(value - step)
+            }
+            if (e.key === 'PageUp') {
+              e.preventDefault()
+              commit(value + (max - min) / 10)
+            }
+            if (e.key === 'PageDown') {
+              e.preventDefault()
+              commit(value - (max - min) / 10)
             }
             if (e.key === 'Home') {
               e.preventDefault()
-              send({ type: 'HOME' })
+              commit(min)
             }
             if (e.key === 'End') {
               e.preventDefault()
-              send({ type: 'END' })
+              commit(max)
             }
           },
         },
@@ -255,7 +302,7 @@ const ValueText = forwardRef<HTMLSpanElement, HTMLAttributes<HTMLSpanElement>>(f
   props,
   ref,
 ) {
-  const { value } = useSliderCtx()
+  const { value } = useSliderContext()
   return (
     <span ref={ref} {...mergeProps(partOnlyAttrs(sliderAnatomy.valueText), props)}>
       {props.children ?? value}

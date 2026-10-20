@@ -1,3 +1,4 @@
+import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
@@ -119,9 +120,9 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         </section>
 
         {handleFixed ? null : (
-          <div className="field">
-            <label htmlFor="friend-edit-label">Contact name</label>
-            <input
+          <Field.Root className="field">
+            <Field.Label htmlFor="friend-edit-label">Contact name</Field.Label>
+            <Field.Control
               id="friend-edit-label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
@@ -129,7 +130,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
               autoComplete="off"
               autoFocus
             />
-          </div>
+          </Field.Root>
         )}
 
         <section
@@ -216,8 +217,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
-          <button
-            type="button"
+          <Button.Root variant="solid"
             className="btn btn-primary"
             onClick={() => {
               playWalletSound('soft')
@@ -226,38 +226,36 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           >
             <MessagesIcon size={16} />
             Message
-          </button>
+          </Button.Root>
           {handleFixed ? null : (
-            <button
+            <Button.Root variant="ghost"
               type="submit"
               className="btn btn-ghost"
               disabled={!label.trim() || label.trim() === friend.label}
             >
-              Save
-            </button>
+              <Button.Label>Save</Button.Label>
+            </Button.Root>
           )}
           {confirmingRemove ? (
             <span className="friend-remove-confirm" role="group" aria-label="Confirm removal">
               <span>Remove contact?</span>
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 onClick={() => setConfirmingRemove(false)}
               >
-                Keep
-              </button>
-              <button type="button" className="btn btn-danger" onClick={onRemove}>
-                Remove
-              </button>
+                <Button.Label>Keep</Button.Label>
+              </Button.Root>
+              <Button.Root variant="solid" className="btn btn-danger" onClick={onRemove}>
+                <Button.Label>Remove</Button.Label>
+              </Button.Root>
             </span>
           ) : (
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-danger friend-remove-btn"
               onClick={() => setConfirmingRemove(true)}
             >
-              Remove
-            </button>
+              <Button.Label>Remove</Button.Label>
+            </Button.Root>
           )}
         </div>
       </form>

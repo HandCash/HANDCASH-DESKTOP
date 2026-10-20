@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   readVaultUnlockFactors,
@@ -132,28 +133,26 @@ export function ConfirmPasswordGate({
 
       {preferDevice && canDevice ? (
         <div className="actions">
-          <button
-            type="button"
+          <Button.Root variant="solid"
             className="btn btn-primary"
             disabled={busy}
             onClick={() => void verifyWithDevice()}
           >
-            {verify.running('device') ? 'Waiting…' : 'Use device unlock'}
-          </button>
+            <Button.Label>{verify.running('device') ? 'Waiting…' : 'Use device unlock'}</Button.Label>
+          </Button.Root>
           {canPassword ? (
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               disabled={busy}
               onClick={() => setPreferDevice(false)}
             >
-              Use HandCash password
-            </button>
+              <Button.Label>Use HandCash password</Button.Label>
+            </Button.Root>
           ) : null}
           {onCancel ? (
-            <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
-              Cancel
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+              <Button.Label>Cancel</Button.Label>
+            </Button.Root>
           ) : null}
         </div>
       ) : (
@@ -174,27 +173,26 @@ export function ConfirmPasswordGate({
             </p>
           ) : null}
           <div className="actions">
-            <button
+            <Button.Root variant="solid"
               type="submit"
               className="btn btn-primary"
               disabled={busy || !canPassword || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
             >
-              {verify.running('password') ? 'Checking…' : actionLabel}
-            </button>
+              <Button.Label>{verify.running('password') ? 'Checking…' : actionLabel}</Button.Label>
+            </Button.Root>
             {canDevice && !requirePassword ? (
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 disabled={busy}
                 onClick={() => setPreferDevice(true)}
               >
-                Use device unlock
-              </button>
+                <Button.Label>Use device unlock</Button.Label>
+              </Button.Root>
             ) : null}
             {onCancel ? (
-              <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
-                Cancel
-              </button>
+              <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+                <Button.Label>Cancel</Button.Label>
+              </Button.Root>
             ) : null}
           </div>
         </form>

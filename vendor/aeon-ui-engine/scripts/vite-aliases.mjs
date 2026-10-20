@@ -1,19 +1,17 @@
 /**
- * Vite + TypeScript wiring for apps that install `aeon-ui-engine` from npm.
+ * Vite helpers for apps that install `aeon-ui-engine` from npm.
+ *
+ * Scoped `@aeon-ui/*` imports resolve via postinstall linking
+ * (`aeon-ui-engine/link` / `npx aeon-ui link`). This plugin is optional —
+ * it still helps with optimizeDeps and monorepo `packagesRoot`.
  *
  * @example
- * // vite.config.ts — one call, done
+ * // vite.config.ts — optional
  * import { aeonUiVitePlugin } from 'aeon-ui-engine/vite'
  *
  * export default defineConfig({
  *   plugins: [react(), aeonUiVitePlugin()],
  * })
- *
- * // tsconfig.json — spread the base config
- * {
- *   "extends": "aeon-ui-engine/tsconfig",
- *   "compilerOptions": { "jsx": "react-jsx" }
- * }
  */
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -101,6 +99,7 @@ export function aeonUiViteAliases(opts = {}) {
     { find: '@aeon-ui/react', replacement: path.join(packages, 'react/src/index.ts') },
     { find: '@aeon-ui/ui', replacement: path.join(packages, 'ui/src/index.ts') },
     { find: '@aeon-ui/schemas', replacement: path.join(packages, 'schemas/src/index.ts') },
+    { find: '@aeon-ui/tree', replacement: path.join(packages, 'tree/src/index.ts') },
     { find: '@aeon-ui/panda', replacement: path.join(packages, 'panda') },
   ]
 }
@@ -122,6 +121,7 @@ export function aeonUiOptimizeDeps(opts = {}) {
           '@aeon-ui/primitives',
           '@aeon-ui/react',
           '@aeon-ui/ui',
+          '@aeon-ui/tree',
           '@aeon-ui/panda/styled-system/css',
           '@aeon-ui/panda/styled-system/recipes',
           ...(opts.exclude ?? []),
@@ -142,6 +142,7 @@ export function aeonUiTsconfigPaths(opts = {}) {
     '@aeon-ui/react': [`${prefix}/react/src/index.ts`],
     '@aeon-ui/ui': [`${prefix}/ui/src/index.ts`],
     '@aeon-ui/surface': [`${prefix}/surface/src/index.ts`],
+    '@aeon-ui/tree': [`${prefix}/tree/src/index.ts`],
     '@aeon-ui/panda/styled-system/css': [`${prefix}/panda/styled-system/css/index.d.ts`],
     '@aeon-ui/panda/styled-system/recipes': [`${prefix}/panda/styled-system/recipes/index.d.ts`],
   }

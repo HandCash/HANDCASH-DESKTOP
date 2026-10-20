@@ -11,6 +11,12 @@ import {
   resetAccountLocalKeyScopeForTests,
 } from './src/wallet/accountLocalKeys'
 
+// Node 25+ defines a global localStorage that is unusable without --localstorage-file;
+// CI runs Node 22, where it does not exist.
+if ('localStorage' in globalThis && typeof window === 'undefined') {
+  Object.defineProperty(globalThis, 'localStorage', { value: undefined, configurable: true, writable: true })
+}
+
 beforeEach(() => {
   resetAccountLocalKeyScopeForTests()
   bindAccountLocalKeyScope({

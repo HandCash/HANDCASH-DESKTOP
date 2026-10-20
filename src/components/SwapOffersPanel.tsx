@@ -79,7 +79,6 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
 
   return (
     <div className="nav-child-panel" data-aeon-scope="swap-offers" data-aeon-state={stateToAttr(snap.value)}>
-      <p data-aeon-part="lede">Standing prices other wallets signed. Taken wallet to wallet: both sides complete or both are refunded, and nobody holds the coins.</p>
 
       {failure ? (
         <StatusBanner.Root tone="danger" status="failed">

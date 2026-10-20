@@ -52,12 +52,20 @@ const Root = forwardRef<HTMLDivElement, DialogRootProps>(function DialogRoot(
     input: { open: defaultOpen },
   })
 
-  const resolvedOpen = open ?? snapshot.context.open
+  const machineOpen = snapshot.context.open
+  const resolvedOpen = open ?? machineOpen
   const contentRef = useRef<HTMLDivElement>(null)
 
+  /**
+   * Report the machine's intent, not the resolved value: a controlled owner
+   * holding `open` would otherwise never hear about its own trigger or escape.
+   */
+  const reportedOpen = useRef(machineOpen)
   useEffect(() => {
-    onOpenChange?.(resolvedOpen)
-  }, [resolvedOpen, onOpenChange])
+    if (reportedOpen.current === machineOpen) return
+    reportedOpen.current = machineOpen
+    onOpenChange?.(machineOpen)
+  }, [machineOpen, onOpenChange])
 
   useEffect(() => {
     if (open !== undefined) {

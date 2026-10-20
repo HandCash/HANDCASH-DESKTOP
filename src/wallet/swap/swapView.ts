@@ -1,6 +1,6 @@
 import { SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from './assets'
 import type { SwapRecord } from './exolixSwap'
-import { takerTotals } from './settle'
+import { takerTotals, type SwapRole } from './settle'
 import type { SettleRecord, SettleState } from './settleStore'
 import { describeSwap, type LockConfirming } from './settleView'
 
@@ -25,6 +25,8 @@ export type SwapView = {
   /** `direct:<swapId>` or `exolix:<exchange id>`. */
   id: string
   route: SwapRoute
+  /** Wallet to wallet: whether this wallet took the offer or made it, which orders the locks. */
+  role?: SwapRole
   /** The coin this wallet pays, and the one it receives. */
   from: SwapAsset
   to: SwapAsset
@@ -151,6 +153,7 @@ export function directSwapView(record: SettleRecord): SwapView {
   return {
     id: `direct:${record.terms.swapId}`,
     route: 'direct',
+    role: record.role,
     from,
     to,
     pay,

@@ -147,7 +147,8 @@ export function listCoinsFromReport(
         txid: c.txid,
         vout: c.vout,
         amount: c.litoshi,
-        source: c.source,
+        // BRC-213 knows two sources; a swap claim is spendable at broadcast, as change is.
+        source: c.source === 'claim' ? 'change' : c.source,
         state,
         ...(state !== 'spendable' && c.source === 'received' ? { confirmations: counted } : {}),
         needed,

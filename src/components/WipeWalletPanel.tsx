@@ -1,3 +1,5 @@
+import { Button, Field } from '@aeon-ui/react'
+import { Checkbox } from "@aeon-ui/ui";
 import { useMachine } from "@xstate/react";
 import { stateToAttr } from "@aeon-ui/core";
 import { wipeMachine } from "../machines/wipeMachine";
@@ -96,7 +98,7 @@ export function WipeWalletPanel() {
         <ConfirmPasswordGate
           id="wipe-password"
           title="Wipe this device"
-          lede="Removes the wallet from this device. You’ll need a backup to restore. Confirm with device unlock or your HandCash password."
+          lede="Removes the wallet from this device. Restoring needs a backup."
           actionLabel="Continue"
           onVerified={(password) => send({ type: "VERIFIED", password })}
         />
@@ -117,23 +119,28 @@ export function WipeWalletPanel() {
             </p>
           </div>
 
-          <label className="field settings-check-label">
-            <input
-              type="checkbox"
-              checked={snapshot.context.acknowledged}
-              disabled={busy}
-              onChange={(e) =>
-                send({ type: "TOGGLE_ACK", acknowledged: e.target.checked })
-              }
-            />
-            <span>I understand this cannot be undone without my backup.</span>
-          </label>
+          <Checkbox.Root
+            className="settings-check-label"
+            checked={snapshot.context.acknowledged}
+            disabled={busy}
+            onCheckedChange={(acknowledged) =>
+              send({ type: "TOGGLE_ACK", acknowledged })
+            }
+          >
+            <Checkbox.Control>
+              <Checkbox.Indicator />
+            </Checkbox.Control>
+            <Checkbox.Label>
+              I understand this cannot be undone without my backup.
+            </Checkbox.Label>
+            <Checkbox.HiddenInput />
+          </Checkbox.Root>
 
-          <div className="field">
-            <label htmlFor="wipe-confirm">
+          <Field.Root className="field">
+            <Field.Label htmlFor="wipe-confirm">
               Type <strong>{CONFIRM_WORD}</strong>
-            </label>
-            <input
+            </Field.Label>
+            <Field.Control
               id="wipe-confirm"
               type="text"
               autoComplete="off"
@@ -146,7 +153,7 @@ export function WipeWalletPanel() {
                 send({ type: "CHANGE_CONFIRM", confirmText: e.target.value })
               }
             />
-          </div>
+          </Field.Root>
 
           {snapshot.matches("blocked") ? (
             <StatusBanner.Root tone="danger" status="blocked">
@@ -167,8 +174,7 @@ export function WipeWalletPanel() {
 
           {snapshot.matches("blocked") ? (
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 disabled={override.busy}
                 onClick={() => {
@@ -176,43 +182,40 @@ export function WipeWalletPanel() {
                   void syncThenWipe();
                 }}
               >
-                Sync and wipe
-              </button>
-              <button
-                type="button"
+                <Button.Label>Sync and wipe</Button.Label>
+              </Button.Root>
+              <Button.Root variant="solid"
                 className="btn btn-danger"
                 data-aeon-part="override"
                 disabled={override.busy}
                 onClick={wipeAnyway}
               >
-                Wipe anyway
-              </button>
-              <button
-                type="button"
+                <Button.Label>Wipe anyway</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 disabled={override.busy}
                 onClick={() => send({ type: "BACK" })}
               >
-                Back
-              </button>
+                <Button.Label>Back</Button.Label>
+              </Button.Root>
             </div>
           ) : (
             <div className="actions">
-              <button
+              <Button.Root variant="solid"
                 type="submit"
                 className="btn btn-danger"
                 data-aeon-part="trigger"
                 data-aeon-state={stateAttr}
                 disabled={!canSubmit || busy}
               >
-                {snapshot.matches("syncing")
+                <Button.Label>{snapshot.matches("syncing")
                   ? "Syncing history…"
                   : snapshot.matches("wiping")
                   ? "Wiping…"
-                  : "Wipe wallet"}
-              </button>
-              <button
-                type="button"
+                  : "Wipe wallet"}</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 disabled={busy}
                 onClick={() => {
@@ -222,8 +225,8 @@ export function WipeWalletPanel() {
                   playWalletSound("soft");
                 }}
               >
-                Back
-              </button>
+                <Button.Label>Back</Button.Label>
+              </Button.Root>
             </div>
           )}
         </form>

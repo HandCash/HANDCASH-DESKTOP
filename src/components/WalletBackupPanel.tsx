@@ -1,3 +1,5 @@
+import { Button } from '@aeon-ui/react'
+import { Tabs } from '@aeon-ui/ui'
 import { useEffect, useState } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
@@ -126,7 +128,7 @@ export function WalletBackupPanel() {
       {
         confirm: {
           title: 'Rotate all slices?',
-          body: `This creates a brand-new ${BRC140_DEFAULT_THRESHOLD}-of-${BRC140_DEFAULT_TOTAL} set. The integrity tag stays the same — it names the wallet, not the set — but slices from the previous set will not combine with these. Save the new ones before discarding the old.`,
+          body: `Makes a new ${BRC140_DEFAULT_THRESHOLD}-of-${BRC140_DEFAULT_TOTAL} set. Old slices won’t combine with the new ones, so save the new set before discarding the old.`,
           confirmLabel: 'Rotate',
           cancelLabel: 'Keep current',
         },
@@ -224,30 +226,19 @@ export function WalletBackupPanel() {
         receive them.
       </p>
 
-      <div className="actions backup-alternate-actions" aria-label="Recovery formats">
-        <button
-          type="button"
-          className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={() => selectKind('split')}
-        >
-          Key slices
-        </button>
-        <button
-          type="button"
-          className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
-          disabled={!hasPhrase}
-          onClick={() => selectKind('phrase')}
-        >
-          Recovery phrase
-        </button>
-        <button
-          type="button"
-          className={kind === 'key' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={() => selectKind('key')}
-        >
-          Emergency key
-        </button>
-      </div>
+      <Tabs.Root
+        className="backup-format-tabs"
+        value={kind}
+        onValueChange={(next) => selectKind(next as BackupKind)}
+      >
+        <Tabs.List aria-label="Recovery formats">
+          <Tabs.Trigger value="split">Key slices</Tabs.Trigger>
+          <Tabs.Trigger value="phrase" disabled={!hasPhrase}>
+            Recovery phrase
+          </Tabs.Trigger>
+          <Tabs.Trigger value="key">Emergency key</Tabs.Trigger>
+        </Tabs.List>
+      </Tabs.Root>
 
       {!revealed ? (
         <div className="confirm-password-gate" data-aeon-scope="reveal-recovery">
@@ -258,20 +249,19 @@ export function WalletBackupPanel() {
             </p>
           </div>
           <div className="actions" data-aeon-part="reveal-actions" data-aeon-state={backup.stateAttr}>
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               disabled={backup.busy}
               onClick={() => void revealRecovery()}
             >
-              {backup.running('reveal')
+              <Button.Label>{backup.running('reveal')
                 ? 'Opening…'
                 : kind === 'split'
                   ? 'Show slices'
                   : kind === 'phrase'
                     ? 'Show phrase'
-                    : 'Show key'}
-            </button>
+                    : 'Show key'}</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}
@@ -292,32 +282,29 @@ export function WalletBackupPanel() {
               </li>
             ))}
           </ol>
-          <div className="actions" style={{ marginTop: 12 }}>
-            <button
-              type="button"
+          <div className="actions">
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => void copySingle(mnemonic, 'phrase')}
             >
-              Copy
-            </button>
-            <button
-              type="button"
+              <Button.Label>Copy</Button.Label>
+            </Button.Root>
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              I’ve saved my phrase
-            </button>
-            <button
-              type="button"
+              <Button.Label>I’ve saved my phrase</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => {
                 clearReveal()
                 playWalletSound('deny')
               }}
             >
-              Hide
-            </button>
+              <Button.Label>Hide</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}
@@ -325,35 +312,32 @@ export function WalletBackupPanel() {
       {rootKey ? (
         <div className="split-backup-shares">
           <p className="settings-hint">Keep this key private.</p>
-          <p className="mono" style={{ wordBreak: 'break-all' }}>
+          <p className="mono backup-root-key">
             {rootKey}
           </p>
-          <div className="actions" style={{ marginTop: 12 }}>
-            <button
-              type="button"
+          <div className="actions">
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => void copySingle(rootKey, 'key')}
             >
-              Copy
-            </button>
-            <button
-              type="button"
+              <Button.Label>Copy</Button.Label>
+            </Button.Root>
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              I’ve saved my key
-            </button>
-            <button
-              type="button"
+              <Button.Label>I’ve saved my key</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => {
                 clearReveal()
                 playWalletSound('deny')
               }}
             >
-              Hide
-            </button>
+              <Button.Label>Hide</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}
@@ -372,8 +356,7 @@ export function WalletBackupPanel() {
             rotateBusy={backup.busy}
           />
           <div className="actions">
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={confirmKeys}
               disabled={!canConfirm}
@@ -383,18 +366,17 @@ export function WalletBackupPanel() {
                   : `Hand off ${Math.max(0, splitProgress.need - splitProgress.saved)} more distinct slice(s) first`
               }
             >
-              Done — slices saved
-            </button>
-            <button
-              type="button"
+              <Button.Label>Done — slices saved</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => {
                 clearReveal()
                 playWalletSound('deny')
               }}
             >
-              Hide
-            </button>
+              <Button.Label>Hide</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}

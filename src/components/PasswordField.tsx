@@ -1,3 +1,4 @@
+import { Field } from '@aeon-ui/react'
 import { useId, useState, type InputHTMLAttributes } from 'react'
 import { EyeIcon, EyeOffIcon } from './icons'
 
@@ -13,10 +14,10 @@ export function PasswordField({ label, id, className, disabled, ...rest }: Props
   const [visible, setVisible] = useState(false)
 
   return (
-    <div className={`field${className ? ` ${className}` : ''}`} data-aeon-part="field">
-      <label htmlFor={fieldId}>{label}</label>
+    <Field.Root className={`field${className ? ` ${className}` : ''}`}>
+      <Field.Label htmlFor={fieldId}>{label}</Field.Label>
       <div className="password-field">
-        <input
+        <Field.Control
           id={fieldId}
           type={visible ? 'text' : 'password'}
           disabled={disabled}
@@ -34,6 +35,6 @@ export function PasswordField({ label, id, className, disabled, ...rest }: Props
           {visible ? <EyeOffIcon size={18} /> : <EyeIcon size={18} />}
         </button>
       </div>
-    </div>
+    </Field.Root>
   )
 }

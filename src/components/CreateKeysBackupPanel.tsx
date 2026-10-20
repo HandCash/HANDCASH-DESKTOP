@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useState } from 'react'
 import {
   canConfirmKeysBackup,
@@ -127,18 +128,16 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
       </p>
 
       <div className="actions" style={{ marginBottom: 12 }}>
-        <button
-          type="button"
+        <Button.Root variant="ghost"
           className={kind === 'google' ? 'btn btn-primary' : 'btn btn-ghost'}
           onClick={() => {
             setKind('google')
             setShareSet(null)
           }}
         >
-          Google + email
-        </button>
-        <button
-          type="button"
+          <Button.Label>Google + email</Button.Label>
+        </Button.Root>
+        <Button.Root variant="ghost"
           className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
           onClick={() => {
             setKind('phrase')
@@ -147,15 +146,14 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
             setTick((n) => n + 1)
           }}
         >
-          Recovery phrase
-        </button>
-        <button
-          type="button"
+          <Button.Label>Recovery phrase</Button.Label>
+        </Button.Root>
+        <Button.Root variant="ghost"
           className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
           onClick={() => void showSlices(false)}
         >
-          Key slices
-        </button>
+          <Button.Label>Key slices</Button.Label>
+        </Button.Root>
       </div>
 
       {kind === 'google' ? <GoogleRecoveryPanel onReady={onDone} /> : null}
@@ -173,8 +171,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
             ))}
           </ol>
           <div className="actions" style={{ marginTop: 12 }}>
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               onClick={() => {
                 void copyText(mnemonic, { label: 'phrase' }).then((ok) => {
@@ -184,8 +181,8 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
                 })
               }}
             >
-              Copy phrase
-            </button>
+              <Button.Label>Copy phrase</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}
@@ -211,11 +208,10 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
       ) : null}
 
       {kind !== 'google' ? <div className="actions" style={{ marginTop: 16 }}>
-        <button type="button" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
-          I’ve saved my backup — continue
-        </button>
-        <button
-          type="button"
+        <Button.Root variant="solid" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
+          <Button.Label>I’ve saved my backup — continue</Button.Label>
+        </Button.Root>
+        <Button.Root variant="ghost"
           className="btn btn-ghost"
           data-aeon-part="backup-later"
           onClick={() => {
@@ -224,8 +220,8 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
             onDone()
           }}
         >
-          I’ll do this later
-        </button>
+          <Button.Label>I’ll do this later</Button.Label>
+        </Button.Root>
       </div> : null}
       <p className="auth-lede" style={{ marginTop: 8 }}>
         Later is fine. Don’t skip forever — this is the only way back if the device is wiped.

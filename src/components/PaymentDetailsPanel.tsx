@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import { useActivityAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
@@ -875,13 +876,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             data-aeon-state={action.stateAttr}
           >
             {attemptFate.kind === 'retry' ? (
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 disabled={action.busy}
                 onClick={() => void retryAttempt()}
               >
-                {action.running('retry')
+                <Button.Label>{action.running('retry')
                   ? attemptFate.action === 'rebroadcast'
                     ? 'Resubmitting…'
                     : 'Retrying…'
@@ -889,47 +889,44 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   ? 'Send again'
                   : attemptFate.action === 'rebroadcast'
                   ? 'Resubmit'
-                  : 'Retry send'}
-              </button>
+                  : 'Retry send'}</Button.Label>
+              </Button.Root>
             ) : null}
             {((attemptFate.kind === 'retry' && attemptFate.mayClear) ||
               (attemptFate.kind === 'refuse' && attemptFate.mayClear)) && (
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-danger"
                 disabled={action.busy}
                 onClick={() => void clearAttempt()}
               >
-                {action.running('clear') ? 'Clearing…' : 'Clear from Activity'}
-              </button>
+                <Button.Label>{action.running('clear') ? 'Clearing…' : 'Clear from Activity'}</Button.Label>
+              </Button.Root>
             )}
             {(attemptFate.kind === 'refuse' ||
               attemptFate.kind === 'retry') &&
             attemptFate.mayReclaimInputs ? (
-              <button
-                type="button"
+              <Button.Root variant="outline"
                 className="btn btn-secondary"
                 disabled={action.busy}
                 onClick={() => void reclaimAttempt()}
                 title="Spend these coins again. Only possible while the transaction is absent from the chain, and it cancels the transfer."
               >
-                {action.running('reclaim') ? 'Taking back…' : 'Take the coins back'}
-              </button>
+                <Button.Label>{action.running('reclaim') ? 'Taking back…' : 'Take the coins back'}</Button.Label>
+              </Button.Root>
             ) : null}
             {attemptFate.kind === 'refuse' &&
             !attemptFate.mayClear &&
             attemptFate.mayReleaseFunds ? (
-              <button
-                type="button"
+              <Button.Root variant="outline"
                 className="btn btn-secondary"
                 disabled={action.busy}
                 onClick={() => void releaseFunds()}
                 title="Frees coins held by sends that were never signed. This transfer is not affected."
               >
-                {action.running('release')
+                <Button.Label>{action.running('release')
                   ? 'Unlocking…'
-                  : 'Unlock coins from unfinished sends'}
-              </button>
+                  : 'Unlock coins from unfinished sends'}</Button.Label>
+              </Button.Root>
             ) : null}
           </div>
         </section>
@@ -968,14 +965,13 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             data-aeon-part="payee-notice-actions"
             data-aeon-state={action.stateAttr}
           >
-            <button
-              type="button"
+            <Button.Root variant="outline"
               className="btn btn-secondary"
               disabled={action.busy}
               onClick={() => void notifyNow()}
             >
-              {action.running('notify') ? 'Notifying…' : 'Notify now'}
-            </button>
+              <Button.Label>{action.running('notify') ? 'Notifying…' : 'Notify now'}</Button.Label>
+            </Button.Root>
           </div>
         </section>
       ) : null}
@@ -1204,14 +1200,13 @@ function ListingActivityDetails({
             data-aeon-part="spend-attempt-actions"
             data-aeon-state={action.stateAttr}
           >
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-danger"
               disabled={action.busy}
               onClick={() => void cancelListing()}
             >
-              {action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}
-            </button>
+              <Button.Label>{action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}</Button.Label>
+            </Button.Root>
           </div>
         </section>
       ) : null}
@@ -1231,23 +1226,21 @@ function ListingActivityDetails({
             data-aeon-state={action.stateAttr}
           >
             {liveAuth && outpoint ? (
-              <button
-                type="button"
+              <Button.Root variant="outline"
                 className="btn btn-secondary"
                 disabled={action.busy}
                 onClick={() => void cancelListing()}
               >
-                {action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}
-              </button>
+                <Button.Label>{action.running('cancelListing') ? 'Cancelling…' : 'Cancel listing'}</Button.Label>
+              </Button.Root>
             ) : null}
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-danger"
               disabled={action.busy}
               onClick={() => void clearFailedListing()}
             >
-              {action.running('clear') ? 'Clearing…' : 'Clear from Activity'}
-            </button>
+              <Button.Label>{action.running('clear') ? 'Clearing…' : 'Clear from Activity'}</Button.Label>
+            </Button.Root>
           </div>
         </section>
       ) : null}

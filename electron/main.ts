@@ -453,7 +453,7 @@ function createWindow(): void {
     width: 1180,
     height: 760,
     // Tiled WMs (Omarchy/Hyprland) need to go narrow/short; the UI switches to
-    // compact/phone shell when height > width or width ≤ 720.
+    // compact/phone shell when height > width or width ≤ 900.
     minWidth: 360,
     minHeight: 420,
     backgroundColor: omarchyBg ?? (light ? '#fafbfa' : '#000000'),

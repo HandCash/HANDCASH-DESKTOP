@@ -86,6 +86,8 @@ import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { DevKeysPanel } from './DevKeysPanel'
 import { TickerCoinSelector } from './TickerCoinSelector'
 import { useTickerCoin } from '../features/tickerCoin'
+import type { MarketCoin } from '../wallet/bsvMarket'
+import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
@@ -174,6 +176,20 @@ function childPanelKey(state: NavState): string {
 }
 
 const MemoInventoryPanel = memo(InventoryPanel)
+
+/** The coin menu with the live BSV balance, kept out of WalletNav's own renders. */
+function NavTickerCoins({
+  profile,
+  selected,
+  onPick,
+}: {
+  profile: WalletProfile
+  selected: MarketCoin
+  onPick: (coin: MarketCoin) => void
+}) {
+  const heldBsvSats = useDisplayBalanceSats(profile)
+  return <TickerCoinSelector selected={selected} heldBsvSats={heldBsvSats} onPick={onPick} />
+}
 
 export const WalletNav = memo(function WalletNav({
   profile,
@@ -656,7 +672,8 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'dev-keys' && <DevKeysPanel />}
               {stageChild.type === 'ticker-coins' && (
                 <div className="nav-child-panel">
-                  <TickerCoinSelector
+                  <NavTickerCoins
+                    profile={profile}
                     selected={tickerCoin}
                     onPick={(coin) => {
                       setTickerCoin(coin)

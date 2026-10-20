@@ -1,9 +1,12 @@
+import { Button, Field, FileUpload } from '@aeon-ui/react'
 import { useState } from 'react'
 import {
   IMPORT_SOURCE_HINTS,
   IMPORT_SOURCE_LABELS,
   type ImportSourceKind,
 } from '../../wallet/import'
+import { FileIcon } from '../icons'
+import { ImportSourceIcon } from './importSourceIcons'
 
 export type SecretFields = {
   primary: string
@@ -48,16 +51,19 @@ export function ImportSecretForm(props: {
         if (ready && !saving) props.onSubmit(fields)
       }}
     >
-      <div className="confirm-password-copy">
-        <h3 className="confirm-password-title">{IMPORT_SOURCE_LABELS[kind]}</h3>
-        <p className="confirm-password-lede">{IMPORT_SOURCE_HINTS[kind]}</p>
-      </div>
+      <header className="import-source-head" data-aeon-part="head">
+        <ImportSourceIcon kind={kind} size="lg" />
+        <div>
+          <h3 className="confirm-password-title">{IMPORT_SOURCE_LABELS[kind]}</h3>
+          <p className="confirm-password-lede">{IMPORT_SOURCE_HINTS[kind]}</p>
+        </div>
+      </header>
 
       {kind === 'handcash' ? (
         <>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-hc-first">First key</label>
-            <textarea
+          <Field.Root className="field">
+            <Field.Label htmlFor="import-hc-first">First key</Field.Label>
+            <Field.Textarea
               id="import-hc-first"
               rows={3}
               value={fields.primary}
@@ -67,10 +73,10 @@ export function ImportSecretForm(props: {
               spellCheck={false}
               disabled={saving}
             />
-          </div>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-hc-second">Second key</label>
-            <textarea
+          </Field.Root>
+          <Field.Root className="field">
+            <Field.Label htmlFor="import-hc-second">Second key</Field.Label>
+            <Field.Textarea
               id="import-hc-second"
               rows={3}
               value={fields.secondary}
@@ -80,15 +86,15 @@ export function ImportSecretForm(props: {
               spellCheck={false}
               disabled={saving}
             />
-          </div>
+          </Field.Root>
         </>
       ) : null}
 
       {kind === 'phrase' || kind === 'twetch' ? (
         <>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-phrase-words">Recovery phrase</label>
-            <textarea
+          <Field.Root className="field">
+            <Field.Label htmlFor="import-phrase-words">Recovery phrase</Field.Label>
+            <Field.Textarea
               id="import-phrase-words"
               rows={3}
               value={fields.primary}
@@ -98,11 +104,11 @@ export function ImportSecretForm(props: {
               spellCheck={false}
               disabled={saving}
             />
-          </div>
+          </Field.Root>
           {kind === 'phrase' ? (
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="import-phrase-passphrase">BIP39 passphrase (optional)</label>
-              <input
+            <Field.Root className="field">
+              <Field.Label htmlFor="import-phrase-passphrase">BIP39 passphrase (optional)</Field.Label>
+              <Field.Control
                 id="import-phrase-passphrase"
                 type="password"
                 value={fields.passphrase}
@@ -110,26 +116,30 @@ export function ImportSecretForm(props: {
                 autoComplete="off"
                 disabled={saving}
               />
-            </div>
+            </Field.Root>
           ) : null}
         </>
       ) : null}
 
       {kind === 'yours' ? (
         <>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-yours-file">Export file</label>
-            <input
-              id="import-yours-file"
-              type="file"
-              accept="application/json,.json"
-              onChange={(e) => void readFile(e.target.files?.[0])}
-              disabled={saving}
-            />
-          </div>
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="import-yours-json">…or paste its contents</label>
-            <textarea
+          <FileUpload.Root
+            className="field import-file"
+            accept="application/json,.json"
+            disabled={saving}
+            onFileSelect={(file) => void readFile(file ?? undefined)}
+          >
+            <FileUpload.Label>Key file</FileUpload.Label>
+            <FileUpload.Dropzone className="import-file-drop">
+              <FileIcon size={20} />
+              <FileUpload.Preview className="import-file-name" />
+              <span className="import-file-prompt">Drop the .json file here, or click to choose it</span>
+            </FileUpload.Dropzone>
+            <FileUpload.Input hidden />
+          </FileUpload.Root>
+          <Field.Root className="field">
+            <Field.Label htmlFor="import-yours-json">Or paste what it holds</Field.Label>
+            <Field.Textarea
               id="import-yours-json"
               rows={4}
               value={fields.primary}
@@ -139,14 +149,14 @@ export function ImportSecretForm(props: {
               spellCheck={false}
               disabled={saving}
             />
-          </div>
+          </Field.Root>
         </>
       ) : null}
 
       {kind === 'wif' ? (
-        <div className="field" data-aeon-part="field">
-          <label htmlFor="import-wif">Private keys</label>
-          <textarea
+        <Field.Root className="field">
+          <Field.Label htmlFor="import-wif">Private keys</Field.Label>
+          <Field.Textarea
             id="import-wif"
             rows={3}
             value={fields.primary}
@@ -156,12 +166,12 @@ export function ImportSecretForm(props: {
             spellCheck={false}
             disabled={saving}
           />
-        </div>
+        </Field.Root>
       ) : null}
 
-      <div className="field" data-aeon-part="field">
-        <label htmlFor="import-label">Name (optional)</label>
-        <input
+      <Field.Root className="field">
+        <Field.Label htmlFor="import-label">Name (optional)</Field.Label>
+        <Field.Control
           id="import-label"
           value={fields.label}
           onChange={(e) => set({ label: e.target.value })}
@@ -169,11 +179,11 @@ export function ImportSecretForm(props: {
           autoComplete="off"
           disabled={saving}
         />
-      </div>
+      </Field.Root>
 
       <p className="settings-row-desc">
-        Saved encrypted on this device under this wallet’s key. It is never your HandCash
-        identity, never signs in to apps, and nothing moves until you choose Sweep.
+        Saved encrypted on this device. It never becomes your HandCash identity or signs in to
+        apps, and nothing moves until you choose Import.
       </p>
 
       {props.error ? (
@@ -183,12 +193,12 @@ export function ImportSecretForm(props: {
       ) : null}
 
       <div className="actions">
-        <button type="submit" className="btn btn-primary" disabled={!ready || saving}>
-          {saving ? 'Saving…' : 'Save and scan'}
-        </button>
-        <button type="button" className="btn btn-ghost" disabled={saving} onClick={props.onBack}>
-          Back
-        </button>
+        <Button.Root variant="solid" type="submit" className="btn btn-primary" disabled={!ready || saving}>
+          <Button.Label>{saving ? 'Saving…' : 'Save and scan'}</Button.Label>
+        </Button.Root>
+        <Button.Root variant="ghost" className="btn btn-ghost" disabled={saving} onClick={props.onBack}>
+          <Button.Label>Back</Button.Label>
+        </Button.Root>
       </div>
     </form>
   )

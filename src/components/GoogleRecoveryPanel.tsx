@@ -1,5 +1,5 @@
 import { stateToAttr } from '@aeon-ui/core'
-import { Button, StatusBanner } from '@aeon-ui/react'
+import { Button, Field, StatusBanner } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
 import { emailRecoveryMachine } from '../machines/emailRecoveryMachine'
@@ -128,8 +128,8 @@ export function GoogleRecoveryPanel({ onReady }: Props) {
             with the recovery host and one is emailed to yourself. Neither can open the vault
             alone.
           </p>
-          <Button.Root className="btn btn-primary" onClick={() => void start()}>
-            Continue with Google
+          <Button.Root variant="solid" className="btn btn-primary" onClick={() => void start()}>
+            <Button.Label>Continue with Google</Button.Label>
           </Button.Root>
         </>
       ) : null}
@@ -159,8 +159,8 @@ export function GoogleRecoveryPanel({ onReady }: Props) {
             Google confirmed {snapshot.context.email}. Your mail app will open already addressed
             to that account.
           </p>
-          <Button.Root className="btn btn-primary" onClick={() => void emailShare()}>
-            Open recovery email
+          <Button.Root variant="solid" className="btn btn-primary" onClick={() => void emailShare()}>
+            <Button.Label>Open recovery email</Button.Label>
           </Button.Root>
         </>
       ) : null}
@@ -172,22 +172,27 @@ export function GoogleRecoveryPanel({ onReady }: Props) {
             Open the email you sent, copy its recovery share, and paste it here. This proves the
             second share is retrievable before HandCash calls recovery ready.
           </p>
-          <textarea
-            className="input"
-            rows={4}
-            value={mailboxCopy}
-            onChange={(event) => setMailboxCopy(event.target.value)}
-            placeholder="Paste the share from your email"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          <div className="actions" style={{ marginTop: 12 }}>
+          <Field.Root className="field">
+            <Field.Label htmlFor="recovery-mailbox-share">Recovery share</Field.Label>
+            <Field.Textarea
+              id="recovery-mailbox-share"
+              className="mono"
+              rows={4}
+              value={mailboxCopy}
+              onChange={(event) => setMailboxCopy(event.target.value)}
+              placeholder="Paste the share from your email"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field.Root>
+          <div className="actions">
             <Button.Root
+              variant="solid"
               className="btn btn-primary"
               disabled={!mailboxCopy.trim()}
               onClick={() => void confirm()}
             >
-              Confirm recovery
+              <Button.Label>Confirm recovery</Button.Label>
             </Button.Root>
           </div>
         </>
@@ -206,7 +211,7 @@ export function GoogleRecoveryPanel({ onReady }: Props) {
             <StatusBanner.Body>{snapshot.context.error}</StatusBanner.Body>
           </StatusBanner.Copy>
           <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void start()}>
-            Try again
+            <Button.Label>Try again</Button.Label>
           </Button.Root>
         </StatusBanner.Root>
       ) : null}

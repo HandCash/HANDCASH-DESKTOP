@@ -37,6 +37,14 @@ export const coinChainOfApprovalTitle = (title: string | undefined): CoinChain |
   COIN_CHAINS.find((chain) => coinApprovalTitle(chain) === title) ?? null
 
 /** `units` of the smallest unit as a decimal string, trailing zeros dropped. */
+/** At most four significant digits, for summaries where exact units don't matter. */
+export function formatCoinShort(chain: CoinChain, units: bigint): string {
+  return (Number(units) / 10 ** COIN_INFO[chain].decimals).toLocaleString('en-US', {
+    maximumSignificantDigits: 4,
+    useGrouping: false,
+  })
+}
+
 export function formatCoin(chain: CoinChain, units: bigint): string {
   const scale = 10n ** BigInt(COIN_INFO[chain].decimals)
   const whole = units / scale

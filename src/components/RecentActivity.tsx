@@ -122,7 +122,7 @@ import {
 import { refreshMarketBoard } from "../wallet/bsvMarket";
 import { coinActivityUsdLabel, coinUsd } from "../wallet/heldValue";
 import { useCoinPrices } from "../features/heldCoins";
-import { COIN_CHAINS, COIN_INFO, formatCoin, type CoinChain } from "../wallet/coins/coinChains";
+import { COIN_CHAINS, COIN_INFO, formatCoinShort, type CoinChain } from "../wallet/coins/coinChains";
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -174,6 +174,9 @@ import { TickerCoinMark } from "./TickerCoinSelector";
 import { SwapActivityRow } from "./activity/SwapActivityRow";
 import { useSwapViews } from "../features/swap";
 import { foldSwapActivity } from "../wallet/swap/swapActivity";
+
+/** Rows summarise; exact amounts live in the payment details. */
+const ROW_FIGURES = { significant: 4 } as const;
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24;
@@ -495,9 +498,9 @@ function swapAmountLabel(
   coinPrices: Record<CoinChain, number | null>
 ): string {
   const units = BigInt(swap.receive);
-  if (swap.to === "bsv") return formatPrimaryFromSats(Number(units), currency, usdPerBsv);
+  if (swap.to === "bsv") return formatPrimaryFromSats(Number(units), currency, usdPerBsv, ROW_FIGURES);
   const usd = currency === "usd" ? coinUsd(swap.to, units, coinPrices[swap.to] ?? null) : null;
-  return usd == null ? `${formatCoin(swap.to, units)} ${COIN_INFO[swap.to].ticker}` : formatUsd(usd);
+  return usd == null ? `${formatCoinShort(swap.to, units)} ${COIN_INFO[swap.to].ticker}` : formatUsd(usd);
 }
 
 function HistoryRow({
@@ -580,7 +583,7 @@ function HistoryRow({
   // not know yet, rather than falling through to the no-rate dash.
   const approving = spent && showPending && entry.sats <= 0;
   const amountLabel = utxoHealDone
-    ? formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+    ? formatPrimaryFromSats(entry.sats, currency, usdPerBsv, ROW_FIGURES)
     : event
     ? eventAmountLabel(entry)
     : token
@@ -592,11 +595,11 @@ function HistoryRow({
     ? "…"
     : showPending && entry.sats <= 0
     ? "…"
-    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv);
+    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv, ROW_FIGURES);
   // A composed record prices itself from the money leg of the same transaction:
   // an item row alone would read "Item" where the user expects what it cost.
   const moneyLabel = amountEntry
-    ? formatPrimaryFromSats(amountEntry.sats, currency, usdPerBsv)
+    ? formatPrimaryFromSats(amountEntry.sats, currency, usdPerBsv, ROW_FIGURES)
     : null;
   const signed = moneyLabel
     ? currency === "usd" && usdPerBsv == null

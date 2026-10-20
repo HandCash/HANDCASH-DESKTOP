@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -265,9 +266,9 @@ export function QrScanner({
       <p className="qr-scanner-hint">{error ?? (paused ? 'Camera paused' : hint)}</p>
       {cancelVisible ? (
         <div className="actions">
-          <button type="button" className="btn btn-ghost" onClick={onCancel}>
-            Cancel
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={onCancel}>
+            <Button.Label>Cancel</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
     </div>

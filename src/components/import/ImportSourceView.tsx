@@ -1,5 +1,6 @@
 import { useMemo } from 'react'
-import { MetricStrip, Progress, StatusBanner } from '@aeon-ui/react'
+import { Button, MetricStrip, Progress, StatusBanner } from '@aeon-ui/react'
+import { Badge, ListRow, Separator } from '@aeon-ui/ui'
 import { formatBsv } from '../../wallet/session'
 import { estimateItemMigrateCost } from '../../wallet/phraseSweep'
 import { MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
@@ -15,6 +16,8 @@ import {
   type RecoveryHintsOffer,
 } from '../../wallet/import'
 import { ImportItemBrowser } from './ImportItemBrowser'
+import { SettingsSection } from '../settings/SettingsSection'
+import { ImportSourceIcon } from './importSourceIcons'
 
 export type SourceFace =
   | 'viewing'
@@ -32,10 +35,13 @@ function HeldList({ held }: { held: HeldTally }) {
   )
   if (rows.length === 0) return null
   return (
-    <ul className="settings-row-desc" data-aeon-part="held">
+    <ul className="settings-list" data-aeon-part="held">
       {rows.map(([reason, count]) => (
         <li key={reason}>
-          <strong>{count?.toLocaleString()}</strong> — {describeImportHold(reason)}
+          <ListRow.Root as="div">
+            <ListRow.Label>{describeImportHold(reason)}</ListRow.Label>
+            <ListRow.Trailing className="mono">{count?.toLocaleString()}</ListRow.Trailing>
+          </ListRow.Root>
         </li>
       ))}
     </ul>
@@ -66,16 +72,15 @@ function HandCashHistory(props: {
           </StatusBanner.Body>
         </StatusBanner.Copy>
         <div className="actions">
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
             onClick={() => void window.handcash?.openExternal?.(MIGRATE_HINTS_URL)}
           >
-            Open the page again
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={props.onCancel}>
-            Cancel
-          </button>
+            <Button.Label>Open the page again</Button.Label>
+          </Button.Root>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onCancel}>
+            <Button.Label>Cancel</Button.Label>
+          </Button.Root>
         </div>
       </StatusBanner.Root>
     )
@@ -93,9 +98,9 @@ function HandCashHistory(props: {
           </StatusBanner.Body>
         </StatusBanner.Copy>
         <div className="actions">
-          <button type="button" className="btn btn-primary" onClick={props.onRescan}>
-            Rescan with it
-          </button>
+          <Button.Root variant="solid" className="btn btn-primary" onClick={props.onRescan}>
+            <Button.Label>Rescan with it</Button.Label>
+          </Button.Root>
         </div>
       </StatusBanner.Root>
     )
@@ -111,9 +116,9 @@ function HandCashHistory(props: {
         </StatusBanner.Body>
       </StatusBanner.Copy>
       <div className="actions">
-        <button type="button" className="btn btn-ghost" onClick={props.onAsk}>
-          Sign in to HandCash
-        </button>
+        <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onAsk}>
+          <Button.Label>Sign in to HandCash</Button.Label>
+        </Button.Root>
       </div>
     </StatusBanner.Root>
   )
@@ -162,15 +167,20 @@ export function ImportSourceView(props: {
 
   return (
     <div data-aeon-part="source" data-aeon-state={face}>
-      <div className="confirm-password-copy">
-        <h3 className="confirm-password-title">{source.label}</h3>
-        <p className="confirm-password-lede">
-          {IMPORT_SOURCE_LABELS[source.kind]}
-          {scan
-            ? ` · scanned ${new Date(scan.at).toLocaleDateString()}${scan.complete ? '' : ' (incomplete)'}`
-            : ' · not scanned yet'}
-        </p>
-      </div>
+      <header className="import-source-head" data-aeon-part="head">
+        <ImportSourceIcon kind={source.kind} size="lg" />
+        <div>
+          <h3 className="confirm-password-title">{source.label}</h3>
+          <p className="confirm-password-lede">{IMPORT_SOURCE_LABELS[source.kind]}</p>
+        </div>
+        <Badge variant={!scan ? 'accent' : scan.complete ? 'default' : 'danger'} data-aeon-part="scan">
+          {!scan
+            ? 'Not scanned'
+            : scan.complete
+              ? `Scanned ${new Date(scan.at).toLocaleDateString()}`
+              : 'Scan incomplete'}
+        </Badge>
+      </header>
 
       <HandCashHistory
         offer={offer}
@@ -211,14 +221,19 @@ export function ImportSourceView(props: {
         </StatusBanner.Root>
       ) : null}
 
-      {totals.tokens.length > 0 ? (
-        <ul className="settings-row-desc" data-aeon-part="tokens">
-          {totals.tokens.map((token) => (
-            <li key={token.id ?? token.tick ?? token.sym}>
-              <strong>{formatTokenAmount(token.amount, token.dec)}</strong> {token.sym}
-            </li>
-          ))}
-        </ul>
+      {totals.tokens.length > 0 && face !== 'reviewing' ? (
+        <SettingsSection title="Tokens" part="tokens">
+          <ul className="settings-list">
+            {totals.tokens.map((token) => (
+              <li key={token.id ?? token.tick ?? token.sym}>
+                <ListRow.Root as="div">
+                  <ListRow.Label>{token.sym}</ListRow.Label>
+                  <ListRow.Trailing className="mono">{formatTokenAmount(token.amount, token.dec)}</ListRow.Trailing>
+                </ListRow.Root>
+              </li>
+            ))}
+          </ul>
+        </SettingsSection>
       ) : null}
 
       {working ? (
@@ -235,53 +250,67 @@ export function ImportSourceView(props: {
             </Progress.Track>
           </Progress.Root>
           <div className="actions">
-            <button type="button" className="btn btn-ghost" onClick={props.onPause}>
-              Pause after this step
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onPause}>
+              <Button.Label>Pause after this step</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}
 
       {face === 'reviewing' ? (
-        <div className="settings-row" data-aeon-part="review">
-          <h4 className="settings-row-label">Import everything compatible</h4>
-          <ul className="settings-row-desc">
-            {totals.cashCount > 0 ? (
-              <li>
-                {formatBsv(totals.cashSats)} BSV from {totals.cashCount} output
-                {totals.cashCount === 1 ? '' : 's'}
-              </li>
-            ) : null}
-            {totals.itemCount > 0 ? (
-              <li>
-                {totals.itemCount.toLocaleString()}
-                {totals.itemCountCapped ? '+' : ''} item
-                {totals.itemCount === 1 ? '' : 's'} — ~{itemCost.transactions.toLocaleString()}{' '}
-                transaction{itemCost.transactions === 1 ? '' : 's'}, ~{formatBsv(itemCost.feeSats)} BSV in
-                fees
-              </li>
-            ) : null}
-            {totals.tokens.map((token) => (
-              <li key={token.id ?? token.sym}>
-                {formatTokenAmount(token.amount, token.dec)} {token.sym}
-              </li>
-            ))}
-          </ul>
+        <section data-aeon-part="review">
+          <SettingsSection title="Moves into this wallet">
+            <ul className="settings-list">
+              {totals.cashCount > 0 ? (
+                <li>
+                  <ListRow.Root as="div">
+                    <ListRow.Label>BSV</ListRow.Label>
+                    <ListRow.Description>
+                      From {totals.cashCount.toLocaleString()} output{totals.cashCount === 1 ? '' : 's'}
+                    </ListRow.Description>
+                    <ListRow.Trailing className="mono">{formatBsv(totals.cashSats)}</ListRow.Trailing>
+                  </ListRow.Root>
+                </li>
+              ) : null}
+              {totals.itemCount > 0 ? (
+                <li>
+                  <ListRow.Root as="div">
+                    <ListRow.Label>Items</ListRow.Label>
+                    <ListRow.Description>
+                      ~{itemCost.transactions.toLocaleString()} transaction{itemCost.transactions === 1 ? '' : 's'}, ~
+                      {formatBsv(itemCost.feeSats)} BSV in fees
+                    </ListRow.Description>
+                    <ListRow.Trailing className="mono">
+                      {totals.itemCount.toLocaleString()}
+                      {totals.itemCountCapped ? '+' : ''}
+                    </ListRow.Trailing>
+                  </ListRow.Root>
+                </li>
+              ) : null}
+              {totals.tokens.map((token) => (
+                <li key={token.id ?? token.sym}>
+                  <ListRow.Root as="div">
+                    <ListRow.Label>{token.sym}</ListRow.Label>
+                    <ListRow.Trailing className="mono">{formatTokenAmount(token.amount, token.dec)}</ListRow.Trailing>
+                  </ListRow.Root>
+                </li>
+              ))}
+            </ul>
+          </SettingsSection>
           {Object.keys(totals.held).length > 0 ? (
-            <>
-              <p className="settings-row-desc">Stays at the source:</p>
+            <SettingsSection title="Stays where it is">
               <HeldList held={totals.held} />
-            </>
+            </SettingsSection>
           ) : null}
           <div className="actions">
-            <button type="button" className="btn btn-primary" onClick={props.onConfirm}>
-              Import all
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={props.onCancel}>
-              Back
-            </button>
+            <Button.Root variant="solid" className="btn btn-primary" onClick={props.onConfirm}>
+              <Button.Label>Import all</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onCancel}>
+              <Button.Label>Back</Button.Label>
+            </Button.Root>
           </div>
-        </div>
+        </section>
       ) : null}
 
       {face === 'confirmingRemove' || face === 'removing' ? (
@@ -294,22 +323,20 @@ export function ImportSourceView(props: {
             </StatusBanner.Body>
           </StatusBanner.Copy>
           <div className="actions">
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-danger"
               disabled={face === 'removing'}
               onClick={props.onConfirm}
             >
-              Remove
-            </button>
-            <button
-              type="button"
+              <Button.Label>Remove</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               disabled={face === 'removing'}
               onClick={props.onCancel}
             >
-              Keep
-            </button>
+              <Button.Label>Keep</Button.Label>
+            </Button.Root>
           </div>
         </StatusBanner.Root>
       ) : null}
@@ -332,33 +359,44 @@ export function ImportSourceView(props: {
         </p>
       ) : null}
 
-      {face === 'viewing' ? (
-        <div className="actions" data-aeon-part="actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={totals.itemCount === 0}
-            onClick={props.onBrowse}
-          >
-            Browse items
-          </button>
-          <button type="button" className="btn btn-ghost" disabled={!movable} onClick={props.onReview}>
-            Import all…
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={props.onRescan}>
-            Rescan
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={props.onBack}>
-            Back
-          </button>
-        </div>
+      {face === 'viewing' && scan && !movable ? (
+        <p className="settings-hint" data-aeon-part="empty">
+          Nothing here to import. Rescan if coins or items arrived since {new Date(scan.at).toLocaleDateString()}.
+        </p>
       ) : null}
 
       {face === 'viewing' ? (
+        <div className="actions" data-aeon-part="actions">
+          {movable ? (
+            <Button.Root variant="solid" className="btn btn-primary" onClick={props.onReview}>
+              <Button.Label>Import all…</Button.Label>
+            </Button.Root>
+          ) : null}
+          {totals.itemCount > 0 ? (
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onBrowse}>
+              <Button.Label>Choose items</Button.Label>
+            </Button.Root>
+          ) : null}
+          <Button.Root
+            variant={movable ? 'ghost' : 'solid'}
+            className={movable ? 'btn btn-ghost' : 'btn btn-primary'}
+            onClick={props.onRescan}
+          >
+            <Button.Label>{scan ? 'Rescan' : 'Scan'}</Button.Label>
+          </Button.Root>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onBack}>
+            <Button.Label>Back</Button.Label>
+          </Button.Root>
+        </div>
+      ) : null}
+
+      {face === 'viewing' ? <Separator.Root /> : null}
+
+      {face === 'viewing' ? (
         <div className="actions" data-aeon-part="danger">
-          <button type="button" className="btn btn-ghost" onClick={props.onRemove}>
-            Remove this wallet
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onRemove}>
+            <Button.Label>Remove this wallet</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
     </div>

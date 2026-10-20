@@ -14,7 +14,6 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
-  type RefObject,
 } from 'react'
 import { FloatingPositioner } from '../floating/FloatingPositioner.js'
 import { useAeonMachine } from '../hooks/use-aeon-machine.js'
@@ -54,16 +53,21 @@ const Root = forwardRef<HTMLDivElement, PopoverRootProps>(function PopoverRoot(
   const [snapshot, send] = useAeonMachine(popoverMachine, {
     input: { open: defaultOpen },
   })
-  const resolvedOpen = open ?? snapshot.context.open
+  const machineOpen = snapshot.context.open
+  const resolvedOpen = open ?? machineOpen
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const positionerRef = useRef<HTMLDivElement>(null)
   const triggerId = useId()
   const contentId = useId()
 
+  /** Machine intent, so a controlled owner still hears its own trigger. */
+  const reportedOpen = useRef(machineOpen)
   useEffect(() => {
-    onOpenChange?.(resolvedOpen)
-  }, [resolvedOpen, onOpenChange])
+    if (reportedOpen.current === machineOpen) return
+    reportedOpen.current = machineOpen
+    onOpenChange?.(machineOpen)
+  }, [machineOpen, onOpenChange])
 
   useEffect(() => {
     if (open !== undefined) send({ type: 'SET_OPEN', open })
@@ -134,9 +138,13 @@ export interface PopoverPositionerProps extends HTMLAttributes<HTMLDivElement> {
   portalled?: boolean
   placement?: AnchorPlacement
   /** Align to this region rather than the trigger. See `FloatingPositioner`. */
-  anchorRef?: RefObject<HTMLElement | null>
+  anchorRef?: React.RefObject<HTMLElement | null>
   /** Size the panel to the anchor, so it spans the region it belongs to. */
   matchAnchorWidth?: boolean
+  /** Gap between trigger and panel (default 4). */
+  gutter?: number
+  /** Stack level for the portalled surface (default 50). */
+  zIndex?: number
   children?: ReactNode
 }
 
@@ -146,6 +154,8 @@ const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function P
     placement = 'bottom-start',
     anchorRef,
     matchAnchorWidth = false,
+    gutter,
+    zIndex,
     children,
     className,
     ...rest
@@ -166,6 +176,8 @@ const Positioner = forwardRef<HTMLDivElement, PopoverPositionerProps>(function P
       matchAnchorWidth={matchAnchorWidth}
       portalled={portalled}
       placement={placement}
+      gutter={gutter}
+      zIndex={zIndex}
       className={className}
       {...rest}
     >

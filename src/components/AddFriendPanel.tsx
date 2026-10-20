@@ -1,3 +1,4 @@
+import { Field } from '@aeon-ui/react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { addFriendFromRecipient, createPinnedHandleResolveDebouncer } from '../wallet/friends'
 import { clearNavChild, getNavState } from '../wallet/navStore'
@@ -111,9 +112,9 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
             </div>
           </header>
 
-          <div className="field">
-            <label htmlFor="friend-key">Handle or wallet key</label>
-            <input
+          <Field.Root className="field">
+            <Field.Label htmlFor="friend-key">Handle or wallet key</Field.Label>
+            <Field.Control
               id="friend-key"
               className="mono"
               value={recipient}
@@ -148,11 +149,11 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
                 {resolveError}
               </p>
             ) : null}
-          </div>
+          </Field.Root>
           {canSetCustomLabel ? (
-            <div className="field">
-              <label htmlFor="friend-label">Label{needsLabel ? '' : ' (optional)'}</label>
-              <input
+            <Field.Root className="field">
+              <Field.Label htmlFor="friend-label">Label{needsLabel ? '' : ' (optional)'}</Field.Label>
+              <Field.Control
                 id="friend-label"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
@@ -160,7 +161,7 @@ export function AddFriendPanel({ chain }: { chain: Chain }) {
                 autoComplete="off"
                 disabled={add.busy}
               />
-            </div>
+            </Field.Root>
           ) : null}
         </div>
       </ExclusiveActionRegion>

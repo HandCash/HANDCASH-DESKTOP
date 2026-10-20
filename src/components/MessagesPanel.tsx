@@ -68,7 +68,7 @@ import {
   uploadChatFile,
 } from '../features/messages'
 import { stateToAttr } from '@aeon-ui/core'
-import { Composer, Thread } from '@aeon-ui/react'
+import { Button, Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { useAsyncAction } from '../hooks/useAsyncAction'
@@ -1204,15 +1204,14 @@ export function MessagesPanel({
               />
               <span>Unread</span>
             </label>
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost btn-icon"
               title="Add friend"
               aria-label="Add friend"
               onClick={() => openAddFriend()}
             >
               <PersonAddIcon size={18} />
-            </button>
+            </Button.Root>
           </div>
         </div>
         ) : (
@@ -1225,15 +1224,14 @@ export function MessagesPanel({
             />
             <span>Unread</span>
           </label>
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost btn-icon"
             title="Add friend"
             aria-label="Add friend"
             onClick={() => openAddFriend()}
           >
             <PersonAddIcon size={18} />
-          </button>
+          </Button.Root>
         </div>
         )}
         <div className="root-search chat-search" role="search">
@@ -1293,14 +1291,13 @@ export function MessagesPanel({
             {!nestedInNav ? (
             <header className="chat-thread-head panel-label-bar">
               {!threadOnly ? (
-                <button
-                  type="button"
+                <Button.Root variant="ghost"
                   className="chat-back-btn btn btn-ghost btn-icon"
                   aria-label="Back to conversations"
                   onClick={backToList}
                 >
-                  ←
-                </button>
+                  <Button.Label>←</Button.Label>
+                </Button.Root>
               ) : null}
               <ChatThreadPeer friend={activeFriend} chain={chain} />
             </header>
@@ -1577,9 +1574,9 @@ export function MessagesPanel({
               title="Messages"
               body="Pick a friend to open a thread."
               action={
-                <button type="button" className="btn btn-primary" onClick={() => openAddFriend()}>
-                  Add friend
-                </button>
+                <Button.Root variant="solid" className="btn btn-primary" onClick={() => openAddFriend()}>
+                  <Button.Label>Add friend</Button.Label>
+                </Button.Root>
               }
             />
           </div>

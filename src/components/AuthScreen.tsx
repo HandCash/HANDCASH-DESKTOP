@@ -1,3 +1,4 @@
+import { Button, Field } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useEffect, useRef, useState } from 'react'
@@ -894,9 +895,9 @@ export function AuthScreen({
 
         {formMode === 'phrase' ? (
           <>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="mnemonic">Recovery phrase</label>
-              <textarea
+            <Field.Root className="field">
+              <Field.Label htmlFor="mnemonic">Recovery phrase</Field.Label>
+              <Field.Textarea
                 id="mnemonic"
                 rows={3}
                 placeholder="12 or 24 words separated by spaces"
@@ -907,15 +908,15 @@ export function AuthScreen({
                 spellCheck={false}
                 autoFocus
               />
-            </div>
+            </Field.Root>
           </>
         ) : null}
 
         {formMode === 'shares' ? (
           <>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="shares">BRC-140 key slices</label>
-              <textarea
+            <Field.Root className="field">
+              <Field.Label htmlFor="shares">BRC-140 key slices</Field.Label>
+              <Field.Textarea
                 id="shares"
                 rows={5}
                 placeholder={'x.y.2.integrity\nx.y.2.integrity'}
@@ -935,7 +936,7 @@ export function AuthScreen({
                         : ''
                     }`}
               </p>
-            </div>
+            </Field.Root>
             <p className="auth-alt">
               <button
                 type="button"
@@ -957,9 +958,9 @@ export function AuthScreen({
         ) : null}
 
         {formMode === 'key' ? (
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="root-key">Emergency root key</label>
-            <textarea
+          <Field.Root className="field">
+            <Field.Label htmlFor="root-key">Emergency root key</Field.Label>
+            <Field.Textarea
               id="root-key"
               rows={2}
               placeholder="64 hex characters"
@@ -970,7 +971,7 @@ export function AuthScreen({
               spellCheck={false}
               autoFocus
             />
-          </div>
+          </Field.Root>
         ) : null}
 
         {isRestoreMethod(formMode) ? (
@@ -1035,15 +1036,15 @@ export function AuthScreen({
           </p>
         )}
 
-        <button
+        <Button.Root variant="solid"
           type="submit"
           className="btn btn-primary auth-submit"
           data-aeon-part="trigger"
           data-aeon-state={stateAttr}
           disabled={submitting}
         >
-          {submitting ? 'Working…' : primaryLabel}
-        </button>
+          <Button.Label>{submitting ? 'Working…' : primaryLabel}</Button.Label>
+        </Button.Root>
 
         {formMode === 'unlock' && readVaultUnlockFactors().device ? (
           <div className="auth-touchid">

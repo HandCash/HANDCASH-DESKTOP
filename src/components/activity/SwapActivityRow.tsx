@@ -30,7 +30,9 @@ export function SwapActivityRow({
   newest?: boolean
 }) {
   const moving = swap.tone === 'moving'
-  const ended = ENDED[swap.tone]
+  // Still moving, but only toward taking this wallet's lock back: the amount shown would never arrive.
+  const refunding = moving && (swap.state === 'locktime' || swap.state === 'refunding')
+  const ended = ENDED[swap.tone] ?? (refunding ? 'Refunding' : undefined)
   const subtitle = `${SWAP_ROUTE_LABEL[swap.route]} · ${swap.status}`
   return (
     <li
@@ -79,7 +81,7 @@ export function SwapActivityRow({
             </span>
           ) : when ? (
             <span className="history-when" data-aeon-part="row-state">
-              {moving ? 'Swapping…' : when}
+              {moving && !refunding ? 'Swapping…' : when}
             </span>
           ) : null}
         </div>

@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useRef, useState } from 'react'
 import { clearNavChild, closeSideScan, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
@@ -95,9 +96,9 @@ export function ScanPanel({ placement = 'nav' }: Props) {
         {side ? (
           <header className="scan-side-header">
             <h2 className="scan-side-title">Scan</h2>
-            <button type="button" className="btn btn-ghost scan-side-close" onClick={close}>
-              Close
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost scan-side-close" onClick={close}>
+              <Button.Label>Close</Button.Label>
+            </Button.Root>
           </header>
         ) : null}
         <div className="scan-choice-body">
@@ -106,8 +107,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
           </p>
           <div className="actions scan-choice-actions">
           {pending.identityKey ? (
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={() => {
                 playWalletSound('soft')
@@ -115,11 +115,10 @@ export function ScanPanel({ placement = 'nav' }: Props) {
                 openAddFriend({ identityKey: pending.identityKey! })
               }}
             >
-              Add as friend
-            </button>
+              <Button.Label>Add as friend</Button.Label>
+            </Button.Root>
           ) : null}
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className={pending.identityKey ? 'btn btn-ghost' : 'btn btn-primary'}
             onClick={() => {
               playWalletSound('soft')
@@ -127,10 +126,9 @@ export function ScanPanel({ placement = 'nav' }: Props) {
               openSendFlow(pending.sendValue)
             }}
           >
-            Send
-          </button>
-          <button
-            type="button"
+            <Button.Label>Send</Button.Label>
+          </Button.Root>
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
             onClick={() => {
               playWalletSound('soft')
@@ -138,12 +136,12 @@ export function ScanPanel({ placement = 'nav' }: Props) {
               setPending(null)
             }}
           >
-            Scan again
-          </button>
+            <Button.Label>Scan again</Button.Label>
+          </Button.Root>
           {!side ? (
-            <button type="button" className="btn btn-ghost" onClick={close}>
-              Cancel
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={close}>
+              <Button.Label>Cancel</Button.Label>
+            </Button.Root>
           ) : null}
           </div>
         </div>
@@ -160,9 +158,9 @@ export function ScanPanel({ placement = 'nav' }: Props) {
       {side ? (
         <header className="scan-side-header">
           <h2 className="scan-side-title">Scan</h2>
-          <button type="button" className="btn btn-ghost scan-side-close" onClick={close}>
-            Close
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost scan-side-close" onClick={close}>
+            <Button.Label>Close</Button.Label>
+          </Button.Root>
         </header>
       ) : null}
       <QrScanner

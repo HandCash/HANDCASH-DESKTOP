@@ -23,6 +23,8 @@ export * from './aeon-separator';
 export * from './aeon-progress';
 export * from './aeon-radio-group';
 export * from './aeon-slider';
+export * from './aeon-range-slider';
+export * from './aeon-file-upload';
 export * from './aeon-pin-input';
 export * from './aeon-switch';
 export * from './aeon-checkbox';

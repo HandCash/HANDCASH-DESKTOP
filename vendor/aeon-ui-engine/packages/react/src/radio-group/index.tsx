@@ -43,7 +43,8 @@ function useRadioGroupItemCtx() {
   return ctx
 }
 
-export interface RadioGroupRootProps {
+export interface RadioGroupRootProps
+  extends Omit<HTMLAttributes<HTMLDivElement>, 'defaultValue' | 'onChange' | 'children'> {
   value?: string
   defaultValue?: string
   onValueChange?: (value: string) => void

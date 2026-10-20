@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.623] - 2026-10-20
+
+### Added
+
+- Swaps keep the wallet unlocked while one of their steps is due, so both sides no longer need the app in front of them for a swap to finish. The title bar shows "Swap · unlocked until …" for as long as the hold lasts; once no swap needs the wallet, auto-lock resumes.
+- Swap details show the three steps (you lock, they lock, you receive) in the order your role takes them, each with its confirmations or transaction.
+- Send picks the coin first, at the top: BSV, LTC and the other held coins with their amounts, then coins reachable by swap.
+
+### Fixed
+
+- A swap's LTC claim waited for six confirmations a second time before it could be spent. A claim is now spendable as soon as it is recorded, like change.
+- Copying the balance gave jumbled text; it now copies as written. With another coin selected, the balance puts that coin first.
+- The ticker carousel moves one coin per scroll gesture, however hard it is flicked, and phone-width slides no longer squeeze side by side.
+- The balance sits centred again. Between 640 and 900 px wide it stacks above full-width buttons instead of being clipped, and windows up to 900 px wide use the phone layout instead of a collapsed Activity card.
+- A maker's finished swap showed as still swapping ("Refund opens …") while only HandCash's fee output on its lock was unclaimed. Once the wallet's claim is in, the swap reads "Swapped", noting when an unclaimed fee returns.
+- Swap, Send and Receive buttons share the row 35 / 30 / 35 with matching icons. Swap statuses, empty states and security screens use shorter wording, and a swap waiting to refund reads "Refunding" instead of "Swapping…".
+
 ## [1.3.622] - 2026-10-19
 
 ### Fixed

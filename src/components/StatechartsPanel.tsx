@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Accordion } from '@aeon-ui/react'
+import { Accordion, Tabs } from '@aeon-ui/react'
 import {
   APP_STATECHART_PAGES,
   STATECHART_NAVIGABLE_IDS,
@@ -110,24 +110,28 @@ export function StatechartsPanel() {
         </Accordion.Item>
       </Accordion.Root>
 
-      <nav className="statecharts-nav" aria-label="Statechart pages">
-        {APP_STATECHART_PAGES.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            ref={p.id === page.id ? activeChipRef : undefined}
-            className={`statecharts-nav-btn${p.id === page.id ? ' is-active' : ''}`}
-            aria-current={p.id === page.id ? 'page' : undefined}
-            title={p.caption}
-            onClick={() => {
-              if (p.id !== pageId) playWalletSound('soft')
-              setPageId(p.id)
-            }}
-          >
-            {p.label}
-          </button>
-        ))}
-      </nav>
+      <Tabs.Root
+        className="statecharts-tabs"
+        value={page.id}
+        onValueChange={(next) => {
+          if (next !== pageId) playWalletSound('soft')
+          setPageId(next)
+        }}
+      >
+        <Tabs.List className="statecharts-nav" aria-label="Statechart pages">
+          {APP_STATECHART_PAGES.map((p) => (
+            <Tabs.Trigger
+              key={p.id}
+              value={p.id}
+              ref={p.id === page.id ? activeChipRef : undefined}
+              className="statecharts-nav-btn"
+              title={p.caption}
+            >
+              {p.label}
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
+      </Tabs.Root>
 
       <div className="statecharts-viewport" data-aeon-part="chart">
         {/* Overlaid, not stacked: the caption explains the chart without

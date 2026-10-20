@@ -1,25 +1,104 @@
-import { useId, type RefObject } from 'react'
+import { useId, type ReactNode, type RefObject } from 'react'
 import { Select } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { TickerCoinMark } from './TickerCoinSelector'
+import { DeferredImage } from './DeferredImage'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import { COIN_CHAINS, COIN_INFO } from '../wallet/coins/coinChains'
+import type { MarketSwapCurrency } from '../wallet/marketSwap'
 
-const NETWORKS: readonly { coin: MarketCoin; name: string; sym: string }[] = [
-  { coin: 'bsv', name: 'Bitcoin SV', sym: 'BSV' },
-  ...COIN_CHAINS.map((chain) => ({ coin: chain, name: COIN_INFO[chain].label, sym: COIN_INFO[chain].ticker })),
+const MARK_SIZE = 22
+
+export type AssetOption = {
+  value: string
+  name: string
+  sym: string
+  mark: ReactNode
+  /** Shown beside the name in the open list, e.g. a balance or arrival time. */
+  detail?: string
+  disabled?: boolean
+}
+
+export const NETWORK_OPTIONS: readonly AssetOption[] = [
+  { value: 'bsv', name: 'Bitcoin SV', sym: 'BSV', mark: <TickerCoinMark coin="bsv" size={MARK_SIZE} /> },
+  ...COIN_CHAINS.map((chain) => ({
+    value: chain,
+    name: COIN_INFO[chain].label,
+    sym: COIN_INFO[chain].ticker,
+    mark: <TickerCoinMark coin={chain} size={MARK_SIZE} />,
+  })),
 ]
 
-function NetworkRow({ coin, name, sym, detail, nameId }: (typeof NETWORKS)[number] & { detail?: string; nameId?: string }) {
+/** A coin from the market swap catalog, by its own icon or its ticker's initial. */
+export function swapCoinOption(coin: MarketSwapCurrency, detail: string): AssetOption {
+  const initial = <span data-network-part="initial">{coin.code.slice(0, 1)}</span>
+  return {
+    value: coin.code,
+    name: coin.name,
+    sym: coin.code,
+    detail,
+    mark: coin.icon ? (
+      <DeferredImage
+        src={coin.icon}
+        alt=""
+        width={MARK_SIZE}
+        height={MARK_SIZE}
+        skeletonRadius={MARK_SIZE / 2}
+        fallback={initial}
+        draggable={false}
+      />
+    ) : (
+      initial
+    ),
+  }
+}
+
+function AssetRow({ option, nameId, withDetail }: { option: AssetOption; nameId?: string; withDetail: boolean }) {
   return (
     <>
-      <TickerCoinMark coin={coin} size={22} />
-      <span data-network-part="name" id={nameId}>
-        {name}
+      <span data-network-part="mark" aria-hidden>
+        {option.mark}
       </span>
-      {detail ? <span data-network-part="detail">{detail}</span> : null}
-      <span data-network-part="sym">{sym}</span>
+      <span data-network-part="name" id={nameId}>
+        {option.name}
+      </span>
+      {withDetail && option.detail ? <span data-network-part="detail">{option.detail}</span> : null}
+      <span data-network-part="sym">{option.sym}</span>
     </>
+  )
+}
+
+type AssetSelectProps = {
+  value: string
+  options: readonly AssetOption[]
+  onChange: (next: string) => void
+  labelledBy: string
+  disabled?: boolean
+  /** Open the list across this region instead of under the trigger alone. */
+  anchorRef?: RefObject<HTMLElement | null>
+}
+
+/** A dropdown of assets by logo, name and ticker — Swap's picker, shared with Send and Receive. */
+export function AssetSelect({ value, options, onChange, labelledBy, disabled, anchorRef }: AssetSelectProps) {
+  const current = options.find((o) => o.value === value) ?? options[0]!
+  const valueId = useId()
+  return (
+    <Select.Root value={value} disabled={disabled} onValueChange={(next) => next !== value && onChange(next)}>
+      <Select.Trigger aria-labelledby={`${labelledBy} ${valueId}`} disabled={disabled} data-network-picker="">
+        <Select.ValueText>
+          <AssetRow option={current} nameId={valueId} withDetail={false} />
+        </Select.ValueText>
+      </Select.Trigger>
+      <Select.Positioner anchorRef={anchorRef}>
+        <Select.Content aria-labelledby={labelledBy} data-network-picker="">
+          {options.map((option) => (
+            <Select.Item key={option.value} value={option.value} disabled={option.disabled ?? false}>
+              <AssetRow option={option} withDetail />
+            </Select.Item>
+          ))}
+        </Select.Content>
+      </Select.Positioner>
+    </Select.Root>
   )
 }
 
@@ -32,43 +111,62 @@ type CoinSelectProps = {
   detail?: (coin: MarketCoin) => string | undefined
   /** Coins listed but not choosable. */
   unavailable?: (coin: MarketCoin) => boolean
-  /** Open the list across this region instead of under the trigger alone. */
   anchorRef?: RefObject<HTMLElement | null>
 }
 
 /** A dropdown of every chain by logo, name and ticker; BSV first. */
 export function CoinSelect({ value, onChange, labelledBy, disabled, detail, unavailable, anchorRef }: CoinSelectProps) {
-  const current = NETWORKS.find((n) => n.coin === value) ?? NETWORKS[0]!
-  const valueId = useId()
+  const options = NETWORK_OPTIONS.map((o) => ({
+    ...o,
+    detail: detail?.(o.value as MarketCoin),
+    disabled: unavailable?.(o.value as MarketCoin) ?? false,
+  }))
   return (
-    <Select.Root value={value} disabled={disabled} onValueChange={(next) => next !== value && onChange(next as MarketCoin)}>
-      <Select.Trigger aria-labelledby={`${labelledBy} ${valueId}`} disabled={disabled} data-network-picker="">
-        <Select.ValueText>
-          <NetworkRow {...current} nameId={valueId} />
-        </Select.ValueText>
-      </Select.Trigger>
-      <Select.Positioner anchorRef={anchorRef}>
-        <Select.Content aria-labelledby={labelledBy} data-network-picker="">
-          {NETWORKS.map((network) => (
-            <Select.Item key={network.coin} value={network.coin} disabled={unavailable?.(network.coin) ?? false}>
-              <NetworkRow {...network} detail={detail?.(network.coin)} />
-            </Select.Item>
-          ))}
-        </Select.Content>
-      </Select.Positioner>
-    </Select.Root>
+    <AssetSelect
+      value={value}
+      options={options}
+      onChange={(next) => onChange(next as MarketCoin)}
+      labelledBy={labelledBy}
+      disabled={disabled}
+      anchorRef={anchorRef}
+    />
   )
 }
 
-/** Which chain a send or receive uses, chosen from a dropdown by name and logo; BSV is first and the default. */
-export function NetworkPicker({ value, onChange, disabled }: { value: MarketCoin; onChange: (next: MarketCoin) => void; disabled?: boolean }) {
+/** A labelled asset dropdown for a send or receive form. */
+export function AssetPicker({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string
+  value: string
+  options: readonly AssetOption[]
+  onChange: (next: string) => void
+  disabled?: boolean
+}) {
   const labelId = useId()
   return (
     <div data-aeon-scope="network-picker" data-aeon-state={stateToAttr(value)}>
       <span data-aeon-part="label" id={labelId}>
-        Network
+        {label}
       </span>
-      <CoinSelect value={value} onChange={onChange} disabled={disabled} labelledBy={labelId} />
+      <AssetSelect value={value} options={options} onChange={onChange} disabled={disabled} labelledBy={labelId} />
     </div>
+  )
+}
+
+/** Which chain a send uses, chosen from a dropdown by name and logo; BSV is first and the default. */
+export function NetworkPicker({ value, onChange, disabled }: { value: MarketCoin; onChange: (next: MarketCoin) => void; disabled?: boolean }) {
+  return (
+    <AssetPicker
+      label="Network"
+      value={value}
+      options={NETWORK_OPTIONS}
+      onChange={(next) => onChange(next as MarketCoin)}
+      disabled={disabled}
+    />
   )
 }

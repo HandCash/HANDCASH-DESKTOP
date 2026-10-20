@@ -22,6 +22,8 @@ export * from './aeon-separator.mjs';
 export * from './aeon-progress.mjs';
 export * from './aeon-radio-group.mjs';
 export * from './aeon-slider.mjs';
+export * from './aeon-range-slider.mjs';
+export * from './aeon-file-upload.mjs';
 export * from './aeon-pin-input.mjs';
 export * from './aeon-switch.mjs';
 export * from './aeon-checkbox.mjs';

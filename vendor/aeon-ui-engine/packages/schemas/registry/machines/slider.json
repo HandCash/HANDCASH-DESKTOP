@@ -2,6 +2,8 @@
   "id": "slider",
   "initial": "interaction",
   "events": [
+    "SET_BOUNDS",
+    "SET_DISABLED",
     "SET_VALUE",
     "STEP",
     "HOME",
@@ -14,6 +16,8 @@
     "id": "slider",
     "type": "compound",
     "events": [
+      "SET_BOUNDS",
+      "SET_DISABLED",
       "SET_VALUE",
       "STEP",
       "HOME",
@@ -21,7 +25,18 @@
       "POINTER_DOWN",
       "POINTER_UP"
     ],
-    "transitions": [],
+    "transitions": [
+      {
+        "event": "SET_BOUNDS",
+        "target": [],
+        "guarded": false
+      },
+      {
+        "event": "SET_DISABLED",
+        "target": [],
+        "guarded": false
+      }
+    ],
     "children": [
       {
         "key": "interaction",
@@ -110,6 +125,8 @@
   "states": {
     "slider": {
       "events": [
+        "SET_BOUNDS",
+        "SET_DISABLED",
         "SET_VALUE",
         "STEP",
         "HOME",

@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
@@ -134,18 +135,17 @@ export function FriendsPanel({ chain }: Props) {
         <EmptyState
           icon={<PersonAddIcon size={28} />}
           title="No friends yet"
-          body="Add someone by $handle or wallet key so you can send and recognize them quickly."
+          body="Add someone by $handle or wallet key."
           action={
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={() => {
                 playWalletSound('soft')
                 openAddFriend()
               }}
             >
-              Add friend
-            </button>
+              <Button.Label>Add friend</Button.Label>
+            </Button.Root>
           }
         />
       ) : (

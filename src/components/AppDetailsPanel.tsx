@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
@@ -154,40 +155,37 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
       <div className="actions app-details-actions wallet-action-bar">
         {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
         {autoPay?.enabled ? (
-          <button
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
-            type="button"
             onClick={() => {
               playWalletSound('soft')
               clearAutoPaySettings(app.origin)
             }}
           >
-            Turn off auto-pay
-          </button>
+            <Button.Label>Turn off auto-pay</Button.Label>
+          </Button.Root>
         ) : null}
         {acceptIncoming ? (
-          <button
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
-            type="button"
             onClick={() => {
               playWalletSound('soft')
               setAcceptIncomingFunds(app.origin, false)
             }}
           >
-            Require receive approval
-          </button>
+            <Button.Label>Require receive approval</Button.Label>
+          </Button.Root>
         ) : null}
-        <button
+        <Button.Root variant="ghost"
           className="btn btn-ghost"
-          type="button"
           onClick={() => {
             playWalletSound('deny')
             onRevoke(app.origin)
             onDone()
           }}
         >
-          Disconnect
-        </button>
+          <Button.Label>Disconnect</Button.Label>
+        </Button.Root>
       </div>
     </div>
   )

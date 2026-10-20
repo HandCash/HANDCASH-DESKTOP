@@ -3,11 +3,12 @@ import { useSwapViews } from '../features/swap'
 import { openSwapFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { SWAP_ASSET_INFO, type SwapAsset } from '../wallet/swap/assets'
-import { SWAP_LEG_LABEL, SWAP_ROUTE_LABEL, type SwapLeg } from '../wallet/swap/swapView'
+import { SWAP_LEG_LABEL, SWAP_ROUTE_LABEL, type SwapLeg, type SwapView } from '../wallet/swap/swapView'
 import { coinTxExplorerUrl, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
-import { SwapIcon } from './icons'
+import { ConfirmationBadge } from './CoinDepositProgress'
+import { CheckIcon, CoinGlyphIcon, SwapIcon } from './icons'
 import { SwapPairMark, SwapRouteBadge, SwapStatusPill, SwapSummary } from './SwapVisuals'
 
 const EXOLIX_EXCHANGE_URL = 'https://exolix.com/transaction/'
@@ -21,6 +22,25 @@ const short = (txid: string) => `${txid.slice(0, 10)}…${txid.slice(-6)}`
 
 function legUrl(leg: SwapLeg, chain: Chain): string {
   return leg.asset === 'bsv' ? txExplorerUrl(leg.txid, chain) : coinTxExplorerUrl(leg.asset as Exclude<SwapAsset, 'bsv'>, leg.txid)
+}
+
+type SwapStep = { key: string; label: string; asset: SwapAsset; leg?: SwapLeg; state: 'done' | 'active' | 'pending'; confirming?: SwapView['confirming'] }
+
+/** A wallet-to-wallet swap's three moves in the order they happen, the first unfinished one active. */
+function directSteps(view: SwapView): SwapStep[] | null {
+  if (view.route !== 'direct' || !view.role || (view.tone !== 'moving' && view.tone !== 'done')) return null
+  const legOf = (role: SwapLeg['role']) => view.legs.find((leg) => leg.role === role)
+  const confirmingOn = (asset: SwapAsset) => (view.confirming?.chain === asset ? view.confirming : undefined)
+  const lock = (key: string, label: string, asset: SwapAsset, leg: SwapLeg | undefined) => ({ key, label, asset, leg, confirming: leg ? confirmingOn(asset) : undefined, done: !!leg && !confirmingOn(asset) })
+  const own = lock('own', 'You lock', view.from, legOf('lock'))
+  const peer = lock('peer', 'They lock', view.to, legOf('peer-lock'))
+  const claim = legOf('claim')
+  const receive = { key: 'receive', label: 'You receive', asset: view.to, leg: claim, confirming: undefined, done: !!claim || view.tone === 'done' }
+  let reached = false
+  return (view.role === 'taker' ? [own, peer, receive] : [peer, own, receive]).map(({ done, ...step }) => {
+    const state = done ? 'done' : reached ? 'pending' : ((reached = true), 'active')
+    return { ...step, state }
+  })
 }
 
 /**
@@ -38,6 +58,9 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
     )
   }
   const exchangeId = view.route === 'exolix' ? view.id.slice('exolix:'.length) : null
+  const steps = directSteps(view)
+  const stepTxids = new Set(steps?.flatMap((step) => (step.leg ? [step.leg.txid] : [])))
+  const otherLegs = view.legs.filter((leg) => !stepTxids.has(leg.txid))
   return (
     <div className="nav-child-panel payment-details" data-aeon-scope="swap-detail" data-aeon-state={view.tone} data-route={view.route}>
       <div className="payment-details-hero">
@@ -56,6 +79,34 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
       <div className="app-details-section">
         <SwapSummary pay={{ asset: view.from, units: view.pay, caption: 'You pay' }} receive={{ asset: view.to, units: view.receive, caption: 'You get' }} />
       </div>
+
+      {steps ? (
+        <ol className="app-details-section" data-aeon-scope="swap-steps">
+          {steps.map((step) => (
+            <li key={step.key} data-aeon-state={step.state}>
+              <span data-aeon-part="marker" aria-hidden>
+                {step.state === 'done' ? <CheckIcon size={14} /> : <CoinGlyphIcon coin={step.asset} size={16} />}
+              </span>
+              <span data-aeon-part="label">
+                {step.label} {SWAP_ASSET_INFO[step.asset].ticker}
+              </span>
+              {step.confirming ? (
+                <ConfirmationBadge
+                  chain={step.confirming.chain}
+                  state={step.confirming.counted > 0 ? 'confirming' : 'unconfirmed'}
+                  counted={step.confirming.counted}
+                  needed={step.confirming.needed}
+                  label={`${step.confirming.counted} of ${step.confirming.needed} confirmations`}
+                />
+              ) : step.leg ? (
+                <button type="button" className="payment-details-woc" title={step.leg.txid} onClick={() => openExternal(legUrl(step.leg!, chain))}>
+                  {short(step.leg.txid)}
+                </button>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      ) : null}
 
       <div className="app-details-section">
         <dl className="wallet-details">
@@ -78,7 +129,7 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
               </button>
             </div>
           ) : null}
-          {view.legs.map((leg) => (
+          {otherLegs.map((leg) => (
             <div className="wallet-detail" key={leg.txid} data-aeon-part="leg" data-aeon-state={leg.role}>
               <span>
                 {SWAP_LEG_LABEL[leg.role]} · {SWAP_ASSET_INFO[leg.asset].ticker}
@@ -88,7 +139,7 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
               </button>
             </div>
           ))}
-          {view.legs.length === 0 ? (
+          {view.legs.length === 0 && !steps ? (
             <div className="wallet-detail">
               <span>Transactions</span>
               <span className="wallet-detail-value">None yet</span>

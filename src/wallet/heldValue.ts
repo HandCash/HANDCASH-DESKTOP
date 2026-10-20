@@ -10,15 +10,22 @@ function sharePct(part: number, total: number): string {
 }
 
 /**
- * The total's split by coin value, e.g. "92% BSV + 8% LTC", coins with no
- * value left out; null when BSV is all there is.
+ * The total's split by coin value, coins with no value left out; null when
+ * BSV is all there is.
  */
-export function holdingSplitLabel(parts: ReadonlyArray<{ ticker: string; usd: number }>): string | null {
+export function holdingShares<T extends { ticker: string; usd: number }>(
+  parts: ReadonlyArray<T>,
+): Array<T & { pct: string }> | null {
   const held = parts.filter((p) => p.usd > 0)
   const total = held.reduce((sum, p) => sum + p.usd, 0)
   if (!(total > 0) || held.every((p) => p.ticker === 'BSV')) return null
-  if (held.length === 1) return `100% ${held[0]!.ticker}`
-  return held.map((p) => `${sharePct(p.usd, total)} ${p.ticker}`).join(' + ')
+  if (held.length === 1) return [{ ...held[0]!, pct: '100%' }]
+  return held.map((p) => ({ ...p, pct: sharePct(p.usd, total) }))
+}
+
+/** {@link holdingShares} as text, e.g. "92% BSV / 8% LTC". */
+export function holdingSplitLabel(parts: ReadonlyArray<{ ticker: string; usd: number }>): string | null {
+  return holdingShares(parts)?.map((p) => `${p.pct} ${p.ticker}`).join(' / ') ?? null
 }
 
 /** USD value of `units` on `chain` at `usdPerCoin`; null when the price is unknown. */

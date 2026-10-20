@@ -1,6 +1,7 @@
 import { openSetting } from '../wallet/navStore'
-import { playWalletSound } from '../wallet/soundService'
 import { APP_VERSION } from '../version'
+import { SETTINGS_APPLICATION_ICONS, SettingsControlRow, SettingsNavRow, SettingsSection, settingIconFor } from './settings'
+
 export function AboutHandCashPanel() {
   return (
     <div
@@ -21,22 +22,21 @@ export function AboutHandCashPanel() {
           HandCash does not hold your seed or spend for you. If you lose this device without a
           backup, your funds cannot be recovered by support.
         </p>
-        <p className="settings-row-desc">Version {APP_VERSION}</p>
       </div>
 
-      <div className="actions about-handcash-actions">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          data-aeon-part="view-statecharts"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('statecharts')
-          }}
-        >
-          View statecharts
-        </button>
-      </div>
+      <SettingsSection title="This app" part="app">
+        <ul className="settings-list">
+          <SettingsControlRow label="Version" icon={SETTINGS_APPLICATION_ICONS.version}>
+            <span className="settings-row-desc mono">{APP_VERSION}</span>
+          </SettingsControlRow>
+          <SettingsNavRow
+            label="Statecharts"
+            description="The state machines behind each flow"
+            icon={settingIconFor('statecharts').icon}
+            onClick={() => openSetting('statecharts')}
+          />
+        </ul>
+      </SettingsSection>
     </div>
   )
 }

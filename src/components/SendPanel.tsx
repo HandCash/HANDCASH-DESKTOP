@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { NetworkPicker } from './NetworkPicker'
+import { AssetPicker, NETWORK_OPTIONS, swapCoinOption } from './NetworkPicker'
 import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { coinUsd as coinUnitsUsd } from '../wallet/heldValue'
-import { COIN_INFO, formatCoin, isCoinChain } from '../wallet/coins/coinChains'
+import { COIN_INFO, formatCoin, formatCoinShort, isCoinChain } from '../wallet/coins/coinChains'
 import { parseFungibleAmount } from '../wallet/token/types'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import { ListRow } from '@aeon-ui/react'
@@ -53,6 +53,7 @@ import { parseHandleInput } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
+import { formatBsvSignificant } from '../wallet/session'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
@@ -186,6 +187,16 @@ export function SendPanel({
         eta: SWAP_ETA,
       }
   const destReady = coin !== null || destIsNative
+  /** Every coin this wallet sends natively, with what it holds of each, then coins a recipient gets through a swap. */
+  const nativeTickers = new Set(NETWORK_OPTIONS.map((o) => o.sym))
+  const coinOptions = [
+    ...NETWORK_OPTIONS.map((o) => ({
+      ...o,
+      detail: o.value === 'bsv' ? formatBsvSignificant(balanceSats, 4).replace(/\s*BSV$/, '') : isCoinChain(o.value) ? formatCoinShort(o.value, heldCoins[o.value]) : undefined,
+    })),
+    ...swapCoins.filter((c) => !nativeTickers.has(c.code)).map((c) => ({ ...swapCoinOption(c, `Swap · ${c.eta}`), value: `swap:${c.code}` })),
+  ]
+  const coinValue = destIsNative ? network : `swap:${destAssetId}`
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
@@ -574,10 +585,18 @@ export function SendPanel({
         </p>
       ) : null}
       {sendSnap.matches('editing') && (
-        <NetworkPicker
-          value={network}
+        <AssetPicker
+          label="Coin"
+          value={coinValue}
+          options={coinOptions}
           onChange={(next) => {
             playWalletSound('soft')
+            if (next.startsWith('swap:')) {
+              const code = next.slice('swap:'.length)
+              setDestAssetId(code)
+              openMarketSwap(buildSellBsvSwapUrl(code))
+              return
+            }
             // A recipient means one network; never carry it to the other.
             handleResolveRef.current.cancel()
             setRecipientQuery('')
@@ -585,7 +604,7 @@ export function SendPanel({
             setAmountDraft('')
             send({ type: 'EDIT', to: '', amount: '', friendLabel: null, payeeIdentityKey: null })
             setDestAssetId('bsv')
-            setNetwork(next)
+            setNetwork(next as MarketCoin)
           }}
         />
       )}
@@ -739,46 +758,15 @@ export function SendPanel({
                 ) : null}
               </div>
 
-              {coinWallet ? (
-                <p className="send-eta-row">
-                  <span className="send-eta-label">Arrival</span>
-                  <strong className="send-eta-value">{coinWallet.binding.paymentEta}</strong>
+              <p className="send-eta-row" data-ready={destReady ? '' : undefined}>
+                <span className="send-eta-label">Arrival</span>
+                <strong className="send-eta-value">{destAsset.eta}</strong>
+              </p>
+              {!destReady ? (
+                <p className="send-dest-soon" role="status">
+                  Opening swap to send BSV as {destAsset.label}…
                 </p>
-              ) : (
-              <div className="field send-dest-field">
-                <label htmlFor="send-dest">Destination</label>
-                <select
-                  id="send-dest"
-                  className="send-dest-select"
-                  value={destAssetId}
-                  onChange={(e) => {
-                    playWalletSound('soft')
-                    const next = e.target.value
-                    setDestAssetId(next)
-                    if (next !== 'bsv') {
-                      openMarketSwap(buildSellBsvSwapUrl(next))
-                    }
-                  }}
-                >
-                  <option value="bsv">BSV — {NATIVE_BSV_ETA}</option>
-                  {swapCoins.map((coin) => (
-                    <option key={coin.code} value={coin.code}>
-                      {coin.code} — {coin.eta}
-                    </option>
-                  ))}
-                </select>
-                <p className="send-eta-row" data-ready={destReady ? '' : undefined}>
-                  <span className="send-eta-label">Arrival</span>
-                  <strong className="send-eta-value">{destAsset.eta}</strong>
-                </p>
-                {!destReady ? (
-                  <p className="send-dest-soon" role="status">
-                    Opening HandCash swap to send BSV as {destAsset.label}. Native Instant send stays
-                    on BSV.
-                  </p>
-                ) : null}
-              </div>
-              )}
+              ) : null}
 
             </div>
           </div>
@@ -810,8 +798,7 @@ export function SendPanel({
               ) : null}
               {coinInfo ? (
                 <p className="send-confirm-note">
-                  Paid on {coinInfo.label} from this wallet's own coins, plus the {coinInfo.label} network fee. This cannot be undone.
-                  {payeeKey ? ` Their wallet receives ${coinInfo.label} at its identity, and is told which key the coins are locked to.` : ''}
+                  Plus the {coinInfo.label} network fee. Can't be undone.
                 </p>
               ) : null}
             </div>

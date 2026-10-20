@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { createElement, useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import type { ModelViewerElement } from '@google/model-viewer'
@@ -86,13 +87,12 @@ export function DeferredModelViewer({ src, alt }: Props) {
         <div className="collectable-model-fallback" role="alert">
           <strong>3D preview unavailable</strong>
           <span>{snapshot.context.error}</span>
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
             onClick={() => send({ type: 'RETRY' })}
           >
-            Try again
-          </button>
+            <Button.Label>Try again</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
       {createElement('model-viewer', {

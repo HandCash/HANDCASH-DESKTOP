@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import { Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
@@ -307,8 +308,7 @@ export function SettingsPanel() {
                 label={`Version ${runningVersion}`}
                 description={versionDetail || undefined}
               >
-                <button
-                  type="button"
+                <Button.Root variant="solid"
                   className="btn btn-primary settings-action-btn"
                   disabled={checkButtonStatus(checking, context.mode) !== 'idle'}
                   onClick={() => {
@@ -316,8 +316,8 @@ export function SettingsPanel() {
                     void check()
                   }}
                 >
-                  {checking ? 'Checking…' : 'Check update'}
-                </button>
+                  <Button.Label>{checking ? 'Checking…' : 'Check update'}</Button.Label>
+                </Button.Root>
               </SettingsControlRow>
             </>
           ) : null}
@@ -366,16 +366,15 @@ export function SettingsPanel() {
               description="Copy this window to the clipboard"
             >
               <span className="settings-action-stack">
-                <button
-                  type="button"
+                <Button.Root variant="solid"
                   className="btn btn-primary settings-action-btn"
                   onClick={() => {
                     playWalletSound('soft')
                     void window.handcash?.copyScreenshot?.()
                   }}
                 >
-                  Take screenshot
-                </button>
+                  <Button.Label>Take screenshot</Button.Label>
+                </Button.Root>
                 <ShortcutHint
                   className="settings-shortcut-hint"
                   keys={screenshotShortcutKeys(window.handcash?.platform)}

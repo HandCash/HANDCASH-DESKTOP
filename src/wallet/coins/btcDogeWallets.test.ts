@@ -199,3 +199,17 @@ describe('native Dogecoin', () => {
     expect(broadcasts).toHaveLength(0)
   })
 })
+
+describe('swap claims', () => {
+  it('spends a broadcast claim at once and never books it as a deposit', async () => {
+    await btcWallet.recordClaim(tx(9), 40_000n)
+    receive(9, 40_000n, false)
+    const report = await btcWallet.refresh()
+    expect(report.balance).toEqual({ spendable: '40000', confirming: '0' })
+    expect(recorded).toEqual([])
+    expect(btcWallet.readCoinViews()).toEqual([])
+    const paid = await btcWallet.send({ address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', litoshi: '20000' }, { origin: 'app.example' })
+    expect(paid.status).toBe('sent')
+    expect(parseLtcTx(fromHex(broadcasts[0]!)).inputs.map((input) => input.txid)).toEqual([tx(9)])
+  })
+})

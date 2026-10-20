@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import {
   getDependencyHealthSnapshot,
@@ -130,16 +131,15 @@ export function WalletHealthPanel() {
           data-aeon-part="health-actions"
           data-aeon-state={health.stateAttr}
         >
-          <button
-            type="button"
+          <Button.Root variant="solid"
             className="btn btn-primary settings-action-btn"
             disabled={health.busy}
             onClick={() => {
               void refresh()
             }}
           >
-            {checking ? 'Checking…' : 'Refresh'}
-          </button>
+            <Button.Label>{checking ? 'Checking…' : 'Refresh'}</Button.Label>
+          </Button.Root>
         </div>
       </div>
 
@@ -175,8 +175,7 @@ export function WalletHealthPanel() {
             >
               {healing ? '…' : healStatus.label}
             </span>
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary settings-action-btn"
               disabled={health.busy}
               data-aeon-part="heal-action"
@@ -185,8 +184,8 @@ export function WalletHealthPanel() {
                 void healFromHistory()
               }}
             >
-              {healing ? 'Healing…' : 'Heal'}
-            </button>
+              <Button.Label>{healing ? 'Healing…' : 'Heal'}</Button.Label>
+            </Button.Root>
           </SettingsControlRow>
         </ul>
       </SettingsSection>

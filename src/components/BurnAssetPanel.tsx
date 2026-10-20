@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -304,15 +305,14 @@ function BurnShell({
                 <p className="burn-note">{alternativeNote}</p>
               ) : null}
               {alternativeActionLabel && onAlternativeAction ? (
-                <button
-                  type="button"
+                <Button.Root variant="ghost"
                   className="btn btn-ghost burn-forget"
                   disabled={busy}
                   aria-busy={forgetting || undefined}
                   onClick={onAlternativeAction}
                 >
-                  {forgetting ? 'Forgetting…' : alternativeActionLabel}
-                </button>
+                  <Button.Label>{forgetting ? 'Forgetting…' : alternativeActionLabel}</Button.Label>
+                </Button.Root>
               ) : null}
             </div>
           </div>
@@ -413,7 +413,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
       <EmptyState
         icon={<CollectablesIcon size={28} />}
         title="Token not available to burn"
-        body="This tip is not in the wallet’s token basket anymore. Refresh Tokens, or burn it from the install that still holds the balance."
+        body="This wallet no longer holds this token here. Refresh Tokens, or burn it on the install that holds it."
       />
     )
   }
@@ -557,14 +557,13 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
                 event({ type: 'SET_AMOUNT', amount: e.target.value })
               }
             />
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               disabled={refusal != null}
               onClick={() => event({ type: 'SET_AMOUNT', amount: held })}
             >
-              All
-            </button>
+              <Button.Label>All</Button.Label>
+            </Button.Root>
           </div>
           <p className="field-hint burn-available">
             {held} {token.sym} available
@@ -883,7 +882,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
       onBack={() => event({ type: 'BACK' })}
       onCancel={() => openCollectableDetails(item.outpoint)}
       alternativeActionLabel="Forget from wallet"
-      alternativeNote="Or remove it from this wallet without spending it. Nothing is broadcast, and the on-chain UTXO remains where it is."
+      alternativeNote="Or remove it from this wallet without spending it. Nothing is broadcast."
       onAlternativeAction={forget}
     />
   )

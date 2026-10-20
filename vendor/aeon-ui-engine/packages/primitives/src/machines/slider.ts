@@ -15,6 +15,8 @@ export type SliderEvent =
   | { type: 'POINTER_UP' }
   | { type: 'HOME' }
   | { type: 'END' }
+  | { type: 'SET_BOUNDS'; min: number; max: number; step: number }
+  | { type: 'SET_DISABLED'; disabled: boolean }
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
@@ -55,6 +57,15 @@ export const sliderMachine = setup({
     end: assign({
       value: ({ context }) => context.max,
     }),
+    setBounds: assign(({ context, event }) => {
+      if (event.type !== 'SET_BOUNDS') return context
+      const { min, max, step } = event
+      return { ...context, min, max, step, value: snap(context.value, min, max, step) }
+    }),
+    setDisabled: assign({
+      disabled: ({ context, event }) =>
+        event.type === 'SET_DISABLED' ? event.disabled : context.disabled,
+    }),
   },
 }).createMachine({
   id: 'slider',
@@ -66,6 +77,12 @@ export const sliderMachine = setup({
     disabled: input.disabled ?? false,
   }),
   initial: 'interaction',
+  // Bounds and disabled follow the host regardless of interaction state, so a
+  // range that widens (audio duration arriving) stops clamping to stale limits.
+  on: {
+    SET_BOUNDS: { actions: 'setBounds' },
+    SET_DISABLED: { actions: 'setDisabled' },
+  },
   states: {
     interaction: {
       initial: 'idle',

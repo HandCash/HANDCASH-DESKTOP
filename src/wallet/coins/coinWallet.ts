@@ -23,7 +23,9 @@ import { getWalletRuntime } from '../walletRuntime'
  *
  * Received coins are spendable once this wallet's own header chain for the
  * coin counts `depth` confirmations over their block; change is spendable once
- * the payment that made it has been broadcast. Sources are untrusted: amounts
+ * the payment that made it has been broadcast, and so is a swap claim, which
+ * spends a lock already buried to `depth` that only this wallet may spend
+ * before its lock time. Sources are untrusted: amounts
  * come from raw transactions this wallet checked, and depth only from its own
  * header chain.
  *
@@ -94,8 +96,11 @@ export class CoinRefusalError extends Error {
 export type Coin = {
   litoshi: string
   at: number
-  /** `received`: paid to this wallet by anyone. `change`: this wallet's own payment returning to it. */
-  source: 'received' | 'change'
+  /**
+   * `received`: paid to this wallet by anyone. `change`: this wallet's own payment returning to it.
+   * `claim`: this wallet's claim of a swap lock, recorded when broadcast (output 0).
+   */
+  source: 'received' | 'change' | 'claim'
   /** Received coins only: buried `depth` deep on this wallet's own chain. */
   proven?: true
   phase?: CoinDepositPhase
@@ -390,9 +395,10 @@ export function createCoinWallet(binding: CoinBinding) {
 
   const spentKeys = (state: CoinState) => new Set(Object.values(state.payments).flatMap((p) => p.inputs))
 
-  /** A coin this wallet may spend now: a buried received coin, or change from its own broadcast payment. */
+  /** A coin this wallet may spend now: a buried received coin, its own broadcast swap claim, or change from its own broadcast payment. */
   function spendable(state: CoinState, key: string, coin: Coin): boolean {
     if (coin.source === 'received') return coin.proven === true
+    if (coin.source === 'claim') return true
     return state.payments[key.split(':')[0]!]?.status === 'sent'
   }
 
@@ -953,6 +959,22 @@ export function createCoinWallet(binding: CoinBinding) {
     return 'sent'
   }
 
+  /**
+   * Record a swap claim this wallet broadcast. Its lock was buried to proof
+   * depth before the claim was signed, and until the lock time nobody else can
+   * spend it, so the claim's output does not wait out a received coin's depth.
+   * Refunds are not recorded here: the counterparty, holding the secret, may
+   * still claim a lock its payer takes back.
+   */
+  function recordClaim(txid: string, litoshi: bigint): Promise<void> {
+    return serial(async () => {
+      const state = readState()
+      const key = outpointKey(txid, 0)
+      state.coins[key] = { litoshi: litoshi.toString(), at: state.coins[key]?.at ?? Date.now(), source: 'claim' }
+      writeState(state)
+    })
+  }
+
   /** The script a claim or refund pays back into this wallet; the watcher reads the address for it a while. */
   function receiveScript(): { script: Uint8Array; address: string } {
     const active = requireActive()
@@ -1253,6 +1275,7 @@ export function createCoinWallet(binding: CoinBinding) {
     /** The time of the tip of this wallet's own header chain for the coin (unix seconds); undefined when unknown. */
     chainTime: (): Promise<number | undefined> => proofRules.anchor().tipTime?.() ?? Promise.resolve(undefined),
     broadcastRaw,
+    recordClaim,
     receiveScript,
     feeRate: () => src().feeRate(),
     ingestPaymentNotice,

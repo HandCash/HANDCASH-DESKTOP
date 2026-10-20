@@ -46,15 +46,15 @@ export const IMPORT_SOURCE_LABELS: Readonly<Record<ImportSourceKind, string>> = 
   handcash: 'HandCash',
   phrase: 'Recovery phrase',
   twetch: 'Twetch',
-  yours: 'Yours export',
+  yours: 'Yours Wallet',
   wif: 'Private key',
 }
 
 export const IMPORT_SOURCE_HINTS: Readonly<Record<ImportSourceKind, string>> = {
   handcash: 'The two keys from HandCash → Settings → Export keys',
   phrase: '12 or 24 words from any BSV wallet',
-  twetch: 'Your Twetch 12-word phrase — shown here, never used to sign in apps',
-  yours: 'The JSON file from Yours → Settings → Export keys',
+  twetch: 'Your 12-word Twetch recovery phrase',
+  yours: 'The key file from Yours → Settings → Export keys',
   wif: 'One or more WIF private keys',
 }
 

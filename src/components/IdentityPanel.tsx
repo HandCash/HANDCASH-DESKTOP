@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { PublicIdentitiesPanel } from './PublicIdentitiesPanel'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
@@ -131,14 +132,13 @@ export function IdentityPanel({ profile }: Props) {
                     <SkeletonQr />
                   )}
                 </div>
-                <button
-                  type="button"
+                <Button.Root variant="ghost"
                   className="btn btn-ghost identity-copy-btn"
                   onClick={() => void copyIdentity()}
                 >
                   <CopyIcon size={14} />
                   Copy wallet key
-                </button>
+                </Button.Root>
               </div>
               <div className="identity-hero-meta">
                 <div className="identity-field">
@@ -157,13 +157,12 @@ export function IdentityPanel({ profile }: Props) {
                       <p className="identity-handle-missing">
                         No handle claimed yet
                       </p>
-                      <button
-                        type="button"
+                      <Button.Root variant="ghost"
                         className="btn btn-ghost identity-claim-btn"
                         onClick={openClaim}
                       >
-                        Claim handle
-                      </button>
+                        <Button.Label>Claim handle</Button.Label>
+                      </Button.Root>
                     </div>
                   )}
                 </div>

@@ -187,12 +187,16 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions {
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
-  flex: 1 1 0;
+  flex: 35 1 0;
   min-width: 0;
   overflow: hidden;
   font-size: inherit;
   text-transform: none;
   letter-spacing: inherit;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions .btn.wallet-action--swap {
+  flex-grow: 30;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
@@ -413,11 +417,6 @@ html:is(.platform-mobile, .layout-compact) .panel-label-bar {
   z-index: 6;
   margin-top: 0;
   margin-bottom: 4px;
-}
-
-/* Apps open via Scan / deep links — not an inline URL field on this tab. */
-html:is(.platform-mobile, .layout-compact) .app-browser-launcher {
-  display: none;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.empty-state) {
@@ -1143,4 +1142,37 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions:has(> .btn:nth-child(
 html:is(.platform-mobile, .layout-compact) .wallet-actions:has(> .btn:nth-child(3)) .btn-icon {
   gap: 6px;
   padding-inline: 8px;
+}
+
+/* Collect: six fixed columns on phones; Send lives in the item's details. */
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collection-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions .collectable-send-btn {
+  display: none;
+}
+
+/* The ticker bar stays one row high: its coin dots sit on the bar's bottom edge. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  translate: -50% 0;
+  gap: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots button {
+  width: 4px;
+  height: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots button[aria-current='true'] {
+  width: 10px;
+}
+
+/* Each coin is one full-width slide; the compact market body rule above would otherwise share the bar between them. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel > .bsv-slide {
+  flex: 0 0 100%;
 }

@@ -128,7 +128,9 @@ When generating Aeon UI, constrain props/parts/states to @aeon-ui/schemas catalo
 Import headless from @aeon-ui/react or styled from @aeon-ui/ui.
 Install: npm install aeon-ui-engine react react-dom xstate @xstate/react
 CSS: import 'aeon-ui-engine/aeon.css'
-Vite: aeonUiVitePlugin() from aeon-ui-engine/vite
+Link: postinstall + npx aeon-ui link (node_modules/@aeon-ui/*)
+Next.js: transpilePackages for @aeon-ui/* + "use client"; Vite plugin optional
+Vue/Solid/Svelte: thin adapters only — React is the full catalog
 
 ${STATECHART_PROMPTS.async}
 

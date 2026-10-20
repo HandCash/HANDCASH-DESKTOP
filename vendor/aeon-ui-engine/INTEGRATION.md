@@ -2,7 +2,7 @@
 
 **Agents:** [AGENTS.md](./AGENTS.md) · [docs/API_PATTERNS.md](./docs/API_PATTERNS.md)
 
-**npm consumers:** start with **[CONSUMER.md](./CONSUMER.md)** — install `aeon-ui-engine`, peer deps, and `aeonUiViteAliases()` before any `@aeon-ui/*` import works.
+**npm consumers:** start with **[CONSUMER.md](./CONSUMER.md)** — install `aeon-ui-engine` (postinstall links `@aeon-ui/*`), peer deps, then import. Vite plugin is optional; Next.js needs `transpilePackages` only.
 
 Aeon UI is **three layers**. You can use one or all.
 

@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { stateToAttr } from '@aeon-ui/core'
@@ -113,9 +114,9 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
           </button>
 
           <div className="actions qr-actions">
-            <button className="btn btn-primary" type="button" onClick={onClose}>
-              Done
-            </button>
+            <Button.Root variant="solid" className="btn btn-primary" onClick={onClose}>
+              <Button.Label>Done</Button.Label>
+            </Button.Root>
           </div>
         </div>
       </div>

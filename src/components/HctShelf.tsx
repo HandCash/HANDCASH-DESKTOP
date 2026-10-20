@@ -1,3 +1,4 @@
+import { Button, Field } from '@aeon-ui/react'
 import { startTransition, useEffect, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
@@ -137,9 +138,9 @@ export function HctShelf({
       {failed ? (
         <div className="settings-row" data-aeon-part="failed">
           <span className="settings-row-desc">HCT holdings could not be read: {error}</span>
-          <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'REFRESH' })}>
-            Retry
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'REFRESH' })}>
+            <Button.Label>Retry</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
       {ungrouped.length > 0 ? (
@@ -210,9 +211,9 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
     >
       <h3 className="collect-section-title">Send {label(asset)}</h3>
       {supply ? <p className="settings-row-desc" data-aeon-part="supply">{supply}</p> : null}
-      <div className="field">
-        <label htmlFor="hct-send-recipient">To</label>
-        <input
+      <Field.Root className="field">
+        <Field.Label htmlFor="hct-send-recipient">To</Field.Label>
+        <Field.Control
           id="hct-send-recipient"
           value={recipient}
           disabled={action.busy}
@@ -222,11 +223,11 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
           spellCheck={false}
           autoFocus
         />
-      </div>
+      </Field.Root>
       {asset.kind === 'token' ? (
-        <div className="field">
-          <label htmlFor="hct-send-amount">Amount (you hold {amountOf(asset)})</label>
-          <input
+        <Field.Root className="field">
+          <Field.Label htmlFor="hct-send-amount">Amount (you hold {amountOf(asset)})</Field.Label>
+          <Field.Control
             id="hct-send-amount"
             inputMode="decimal"
             value={amount}
@@ -236,15 +237,15 @@ function HctSendForm({ asset, onClose }: { asset: HctAssetSummary; onClose: () =
             autoComplete="off"
             aria-invalid={amount.trim() !== '' && (units === null || overBalance)}
           />
-        </div>
+        </Field.Root>
       ) : null}
       <div className="actions">
-        <button type="button" className="btn btn-ghost" disabled={action.busy} onClick={onClose}>
-          Cancel
-        </button>
-        <button type="submit" className="btn btn-primary" data-aeon-part="trigger" disabled={!ready || action.busy}>
-          {action.running('send') ? 'Sending…' : 'Send'}
-        </button>
+        <Button.Root variant="ghost" className="btn btn-ghost" disabled={action.busy} onClick={onClose}>
+          <Button.Label>Cancel</Button.Label>
+        </Button.Root>
+        <Button.Root variant="solid" type="submit" className="btn btn-primary" data-aeon-part="trigger" disabled={!ready || action.busy}>
+          <Button.Label>{action.running('send') ? 'Sending…' : 'Send'}</Button.Label>
+        </Button.Root>
       </div>
       <AsyncActionPrompt action={action} />
     </form>

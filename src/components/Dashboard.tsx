@@ -1,6 +1,8 @@
+import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
+import { useTickerCoin } from '../features/tickerCoin'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
 import {
@@ -12,8 +14,9 @@ import {
   subscribeUsdRate,
 } from '../wallet/fx'
 import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
-import { COIN_CHAINS, COIN_INFO } from '../wallet/coins/coinChains'
-import { coinUsd, holdingSplitLabel } from '../wallet/heldValue'
+import { COIN_CHAINS, COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
+import { coinUsd, holdingShares } from '../wallet/heldValue'
+import type { MarketCoin } from '../wallet/bsvMarket'
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -25,6 +28,7 @@ import {
   SendIcon,
   ReceiveIcon,
   SwapIcon,
+  CoinGlyphIcon,
 } from './icons'
 import { WalletAccountMenu } from './WalletAccountMenu'
 import {
@@ -172,6 +176,45 @@ function walletIdentityChip(
   }
 }
 
+type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string }
+
+/** Seen by copy and screen readers only, so figures and units don't run together. */
+const HIDDEN_SPACE = <span className="sr-only">{'\u00a0'}</span>
+
+function HiddenUnit({ unit }: { unit: string }) {
+  return unit ? <span className="sr-only">{`\u00a0${unit}`}</span> : null
+}
+
+/** A line of coin marks with a figure each: shares of the total, or amounts held. */
+function BalanceParts({ parts, prefix }: { parts: BalancePart[]; prefix: string | null }) {
+  return (
+    <span className="balance-split">
+      {prefix ? (
+        <span className="balance-split-sep">
+          {prefix}
+          {HIDDEN_SPACE}
+        </span>
+      ) : null}
+      {parts.map((part, i) => (
+        <Fragment key={part.coin}>
+          {i > 0 ? (
+            <span className="balance-split-sep">
+              {HIDDEN_SPACE}/{HIDDEN_SPACE}
+            </span>
+          ) : null}
+          <span className="balance-split-share" title={part.title}>
+            <span className="balance-split-mark" aria-hidden>
+              <CoinGlyphIcon coin={part.coin} size={15} />
+            </span>
+            {part.text}
+            <HiddenUnit unit={part.unit} />
+          </span>
+        </Fragment>
+      ))}
+    </span>
+  )
+}
+
 /** Vault master can host multiple account wallets (BRC-208). */
 export function Dashboard({
   profile,
@@ -261,31 +304,56 @@ export function Dashboard({
 
   const heldCoins = useHeldCoins()
   const coinPrices = useCoinPrices()
+  const tickerCoin = useTickerCoin()
   const bsvUsd = usdPerBsv == null ? null : satsToUsd(balanceSats, usdPerBsv)
   const heldChains = COIN_CHAINS.filter((chain) => heldCoins[chain] > 0n)
-  const heldCoinUsd = heldChains.map((chain) => ({ ticker: COIN_INFO[chain].ticker, usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]) }))
+  const heldCoinUsd = heldChains.map((chain) => ({ coin: chain as MarketCoin, ticker: COIN_INFO[chain].ticker, usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]) }))
   // Holding other coins, the total is valued in every coin and the second line is the split.
   const splitParts =
     heldChains.length > 0 && bsvUsd != null && heldCoinUsd.every((c) => c.usd != null)
-      ? [{ ticker: 'BSV', usd: bsvUsd }, ...heldCoinUsd.map((c) => ({ ticker: c.ticker, usd: c.usd! }))]
+      ? [{ coin: 'bsv' as MarketCoin, ticker: 'BSV', usd: bsvUsd }, ...heldCoinUsd.map((c) => ({ coin: c.coin, ticker: c.ticker, usd: c.usd! }))]
       : null
-  const split = splitParts ? { totalUsd: splitParts.reduce((sum, p) => sum + p.usd, 0), label: holdingSplitLabel(splitParts) } : null
+  const split = splitParts
+    ? {
+        totalUsd: splitParts.reduce((sum, p) => sum + p.usd, 0),
+        shares: holdingShares(splitParts),
+      }
+    : null
+  // Coins only add up in dollars. In BSV the headline is the BSV actually held
+  // and every other coin follows in its own units, never converted.
   const usdLabel =
     split ? formatUsd(split.totalUsd)
     : heldChains.length > 0 ? '—'
     : formatUsdFromSats(balanceSats, usdPerBsv)
-  const bsvLabel =
-    split && usdPerBsv ? formatBsvSignificant(Math.round((split.totalUsd / usdPerBsv) * 1e8), 5)
-    : formatBsvSignificant(balanceSats, 5)
-  const primaryBalanceLabel =
-    currency === 'usd' ? usdLabel : bsvLabel
-  const secondaryBalanceLabel =
-    split?.label ?? (currency === 'usd' ? bsvLabel : usdLabel)
+  const bsvLabel = formatBsvSignificant(balanceSats, 4)
+  const bsvPart: BalancePart = bsvLabel.endsWith(' BSV')
+    ? { coin: 'bsv', text: bsvLabel.slice(0, -' BSV'.length), unit: 'BSV', title: bsvLabel }
+    : { coin: 'bsv', text: bsvLabel, unit: '', title: bsvLabel }
+  const otherCoins: BalancePart[] = heldChains.map((chain) => {
+    const text = formatCoinShort(chain, heldCoins[chain])
+    const unit = COIN_INFO[chain].ticker
+    return { coin: chain, text, unit, title: `${text} ${unit}` }
+  })
+  const holdings = [bsvPart, ...otherCoins]
+  // The coin picked in the ticker leads, as long as the wallet holds it.
+  const focus = holdings.find((part) => part.coin === tickerCoin) ?? bsvPart
+  const focusFirst = (parts: BalancePart[]) =>
+    [...parts].sort((a, b) => Number(b.coin === focus.coin) - Number(a.coin === focus.coin))
+  const shareParts: BalancePart[] | null =
+    split?.shares?.map((share) => ({ coin: share.coin, text: share.pct, unit: share.ticker, title: `${share.pct} ${share.ticker}` })) ?? null
+  const secondaryBalanceLabel = currency === 'usd' ? bsvLabel : usdLabel
+  const secondaryParts =
+    heldChains.length === 0 ? null
+    : currency === 'usd' ? { parts: focusFirst(shareParts ?? holdings), prefix: null }
+    : {
+        parts: holdings.filter((part) => part !== focus && !(part === bsvPart && balanceSats === 0)),
+        prefix: '+',
+      }
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
     minPx: 8,
-    watch: `${currency}|${usdLabel}|${bsvLabel}|${split?.label ?? ''}`,
+    watch: `${currency}|${usdLabel}|${focus.title}|${secondaryParts?.parts.map((part) => part.title).join() ?? ''}`,
   })
 
   useEffect(() => {
@@ -727,14 +795,7 @@ export function Dashboard({
                   data-aeon-part="balance"
                   data-aeon-state={balancePending ? 'pending' : currency}
                   aria-busy={balancePending || undefined}
-                  aria-label={
-                    balancePending
-                      ? 'Reading the selected wallet balance'
-                      : currency === 'usd'
-                      ? 'Balance in USD. Click to show BSV first.'
-                      : 'Balance in BSV. Click to show USD first.'
-                  }
-                  title="Click to swap currency"
+                  title={currency === 'usd' ? 'Show in BSV' : 'Show in USD'}
                   disabled={balancePending}
                   onClick={() => {
                     playWalletSound('soft')
@@ -751,12 +812,31 @@ export function Dashboard({
                       <span
                         className={`balance balance-primary balance-${currency === 'usd' ? 'fiat' : 'bsv'}`}
                       >
-                        {primaryBalanceLabel}
+                        {currency === 'usd' ? (
+                          usdLabel
+                        ) : focus.unit ? (
+                          <>
+                            <span className="balance-unit-mark" aria-hidden>
+                              <CoinGlyphIcon coin={focus.coin} />
+                            </span>
+                            {focus.text}
+                            <HiddenUnit unit={focus.unit} />
+                          </>
+                        ) : (
+                          focus.text
+                        )}
                       </span>
                       <span
                         className={`balance-secondary balance-${currency === 'usd' ? 'bsv' : 'fiat'}`}
                       >
-                        {secondaryBalanceLabel}
+                        {secondaryParts ? (
+                          <BalanceParts {...secondaryParts} />
+                        ) : (
+                          secondaryBalanceLabel
+                        )}
+                      </span>
+                      <span className="sr-only">
+                        {currency === 'usd' ? '. Show in BSV' : '. Show in USD'}
                       </span>
                     </>
                   )}
@@ -765,7 +845,7 @@ export function Dashboard({
             </div>
 
             <div className="actions wallet-actions">
-              <button
+              <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 onClick={() => {
                   playWalletSound('soft')
@@ -774,9 +854,9 @@ export function Dashboard({
               >
                 <SendIcon size={22} />
                 <span className="wallet-action-label">Send</span>
-              </button>
-              <button
-                className="btn btn-ghost btn-icon"
+              </Button.Root>
+              <Button.Root variant="ghost"
+                className="btn btn-ghost btn-icon wallet-action--swap"
                 onClick={() => {
                   playWalletSound('soft')
                   openSwapFlow()
@@ -784,8 +864,8 @@ export function Dashboard({
               >
                 <SwapIcon size={22} />
                 <span className="wallet-action-label">Swap</span>
-              </button>
-              <button
+              </Button.Root>
+              <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 onClick={() => {
                   playWalletSound('soft')
@@ -794,7 +874,7 @@ export function Dashboard({
               >
                 <ReceiveIcon size={22} />
                 <span className="wallet-action-label">Receive</span>
-              </button>
+              </Button.Root>
             </div>
           </div>
         </div>

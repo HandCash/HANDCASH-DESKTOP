@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/fileUpload.json",
+  "title": "FileUpload",
+  "description": "Drag-drop surface via fileUploadMachine — idle | dragging | rejected. File bytes stay in React callbacks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "FileUpload"
+    },
+    "scope": {
+      "const": "fileUpload"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "dropzone",
+          "input",
+          "label",
+          "hint",
+          "preview",
+          "clearTrigger",
+          "rejectionMessage"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "dragging",
+          "rejected"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "fileUpload.root",
+          "description": "fileUpload.root"
+        },
+        "Dropzone": {
+          "const": "fileUpload.dropzone",
+          "description": "fileUpload.dropzone"
+        },
+        "Input": {
+          "const": "fileUpload.input",
+          "description": "fileUpload.input"
+        },
+        "Label": {
+          "const": "fileUpload.label",
+          "description": "fileUpload.label"
+        },
+        "Hint": {
+          "const": "fileUpload.hint",
+          "description": "fileUpload.hint"
+        },
+        "Preview": {
+          "const": "fileUpload.preview",
+          "description": "fileUpload.preview"
+        },
+        "ClearTrigger": {
+          "const": "fileUpload.clearTrigger",
+          "description": "fileUpload.clearTrigger"
+        },
+        "RejectionMessage": {
+          "const": "fileUpload.rejectionMessage",
+          "description": "fileUpload.rejectionMessage"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "fileUploadMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "DRAG_OVER",
+          "DRAG_LEAVE",
+          "DROP_ACCEPT",
+          "DROP_REJECT",
+          "RESET"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "fileUpload",
+    "parts": [
+      "root",
+      "dropzone",
+      "input",
+      "label",
+      "hint",
+      "preview",
+      "clearTrigger",
+      "rejectionMessage"
+    ],
+    "states": [
+      "idle",
+      "dragging",
+      "rejected"
+    ],
+    "machine": "fileUploadMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "DRAG_OVER",
+      "DRAG_LEAVE",
+      "DROP_ACCEPT",
+      "DROP_REJECT",
+      "RESET"
+    ],
+    "slots": {
+      "Root": "fileUpload.root",
+      "Dropzone": "fileUpload.dropzone",
+      "Input": "fileUpload.input",
+      "Label": "fileUpload.label",
+      "Hint": "fileUpload.hint",
+      "Preview": "fileUpload.preview",
+      "ClearTrigger": "fileUpload.clearTrigger",
+      "RejectionMessage": "fileUpload.rejectionMessage"
+    },
+    "examples": []
+  }
+}

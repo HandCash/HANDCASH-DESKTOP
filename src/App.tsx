@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useCallback, useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -47,9 +48,12 @@ import {
 } from './wallet/balanceSnapshot'
 import { DISPLAY_BALANCE_REFRESH_EVENT, publishDisplayBalanceRefresh } from './wallet/displayBalanceRefresh'
 import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
+import { swapUnlockHold } from './wallet/swap/unlockHold'
+import { SwapUnlockNotice } from './components/SwapUnlockNotice'
 import { getPaymentProgress } from './wallet/paymentProgress'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
+const SWAP_HOLD_RECHECK_MS = 60 * 1000
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -75,9 +79,16 @@ export function App() {
     if (shouldAutoUnlock()) return
     let timer = 0
     let hideTimer = 0
+    // A swap waiting on this wallet's signature keeps it unlocked until that step's deadline.
+    const idleLock = () => {
+      const hold = swapUnlockHold()
+      if (hold === null) return lockWallet('idle')
+      window.clearTimeout(timer)
+      timer = window.setTimeout(idleLock, Math.min(Math.max(hold - Date.now(), 0), SWAP_HOLD_RECHECK_MS))
+    }
     const arm = () => {
       window.clearTimeout(timer)
-      timer = window.setTimeout(() => lockWallet('idle'), AUTO_LOCK_IDLE_MS)
+      timer = window.setTimeout(idleLock, AUTO_LOCK_IDLE_MS)
     }
     // Locking on every hide (alt-tab / close) remounts the lock screen which
     // auto-prompts Touch ID — fingerprint while the user is leaving. Grace the
@@ -86,7 +97,7 @@ export function App() {
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         window.clearTimeout(hideTimer)
-        hideTimer = window.setTimeout(() => lockWallet('idle'), HIDE_LOCK_GRACE_MS)
+        hideTimer = window.setTimeout(idleLock, HIDE_LOCK_GRACE_MS)
         return
       }
       window.clearTimeout(hideTimer)
@@ -370,6 +381,7 @@ export function App() {
           <div className="titlebar-end" data-aeon-no-drag>
             {(snapshot.matches('ready') || snapshot.matches('sending')) && (
               <div className="titlebar-actions">
+                <SwapUnlockNotice />
                 <button
                   type="button"
                   className="titlebar-action-btn"
@@ -420,9 +432,9 @@ export function App() {
                 <h1 className="auth-title">Something broke</h1>
                 <p className="error auth-error">{snapshot.context.error}</p>
               </div>
-              <button className="btn btn-primary auth-submit" onClick={() => send({ type: 'CLEAR_ERROR' })}>
-                Retry
-              </button>
+              <Button.Root variant="solid" className="btn btn-primary auth-submit" onClick={() => send({ type: 'CLEAR_ERROR' })}>
+                <Button.Label>Retry</Button.Label>
+              </Button.Root>
             </section>
           )}
 

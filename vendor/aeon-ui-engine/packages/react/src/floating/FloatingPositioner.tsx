@@ -22,6 +22,10 @@ export interface FloatingPositionerProps extends HTMLAttributes<HTMLDivElement> 
   portalled?: boolean
   placement?: AnchorPlacement
   matchAnchorWidth?: boolean
+  /** Gap between trigger and surface. */
+  gutter?: number
+  /** Stack level for the portalled surface. */
+  zIndex?: number
   children?: ReactNode
 }
 
@@ -37,6 +41,8 @@ export const FloatingPositioner = forwardRef<HTMLDivElement, FloatingPositionerP
       portalled = true,
       placement = 'bottom-start',
       matchAnchorWidth = false,
+      gutter,
+      zIndex,
       children,
       className,
       ...rest
@@ -46,6 +52,8 @@ export const FloatingPositioner = forwardRef<HTMLDivElement, FloatingPositionerP
     const mounted = usePortalledMount()
     useAnchorPosition(anchorRef ?? triggerRef, positionerRef, open && portalled, placement, {
       matchWidth: matchAnchorWidth,
+      gutter,
+      zIndex,
     })
 
     if (!open) return null

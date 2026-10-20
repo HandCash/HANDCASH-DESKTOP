@@ -1,3 +1,4 @@
+import { Field } from '@aeon-ui/react'
 import { useState } from 'react'
 import {
   listWalletConfigOptions,
@@ -111,9 +112,9 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
       ) : null}
 
       {customHost && selected !== 'none' ? (
-        <div className="field">
-          <label htmlFor="setup-history-url">History backup URL</label>
-          <input
+        <Field.Root className="field">
+          <Field.Label htmlFor="setup-history-url">History backup URL</Field.Label>
+          <Field.Control
             id="setup-history-url"
             value={historyUrl}
             onChange={(e) => setHistoryUrl(e.target.value)}
@@ -121,7 +122,7 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
             autoComplete="off"
             spellCheck={false}
           />
-        </div>
+        </Field.Root>
       ) : null}
 
       {error ? (

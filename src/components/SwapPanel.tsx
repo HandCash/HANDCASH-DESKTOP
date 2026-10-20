@@ -37,6 +37,9 @@ type Props = {
 const QUOTE_DEBOUNCE_MS = 500
 const RECENT_SWAPS = 5
 
+/** Holdings in the coin list: a summary, so four significant digits. */
+const shortUnits = (asset: SwapAsset, units: bigint) =>
+  Number(unitsToDecimal(asset, units)).toLocaleString('en-US', { maximumSignificantDigits: 4, useGrouping: false })
 const fmt = (asset: SwapAsset, units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
 
 function usdOf(asset: SwapAsset, units: bigint): number | null {
@@ -71,14 +74,14 @@ const routeName = (route: SwapRoute) => (route.kind === 'exolix' ? 'Exolix' : `D
 
 function routeNote(route: SwapRoute): string {
   return route.kind === 'exolix'
-    ? 'Exolix holds your coins between your deposit and its payout.'
-    : 'Wallet to wallet: nobody holds your coins; both sides complete or both are refunded.'
+    ? 'Exolix holds your coins mid-swap'
+    : 'Nobody holds your coins'
 }
 
 function startedText(started: SwapStart): string {
   return started.via === 'exolix'
-    ? `${fmt(started.record.from, BigInt(started.record.pay))} sent to Exolix; ${fmt(started.record.to, BigInt(started.record.receive))} pays out to this wallet.`
-    : `Offer taken: this wallet locks ${fmt(started.from, started.pay)} once the maker accepts, then claims ${fmt(started.to, started.receive)} on its own.`
+    ? `Sent to Exolix · ${fmt(started.record.to, BigInt(started.record.receive))} on its way`
+    : `Offer taken · ${fmt(started.to, started.receive)} on its way`
 }
 
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} hours`
@@ -215,8 +218,6 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
     <div className="nav-child-panel" data-aeon-scope="swap" data-aeon-state={stateToAttr(snap.value)}>
       {view === 'form' ? (
         <>
-          <p data-aeon-part="lede">Between coins in this wallet. No addresses to paste.</p>
-
           <div data-aeon-part="pair">
             <section ref={payLeg} data-aeon-part="leg" aria-label="You pay">
               <div data-aeon-part="leg-head">
@@ -241,7 +242,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
                   labelledBy={payLabel}
                   anchorRef={payLeg}
                   onChange={(c) => pick('from')(c as SwapAsset)}
-                  detail={(c) => unitsToDecimal(c as SwapAsset, held[c as SwapAsset])}
+                  detail={(c) => shortUnits(c as SwapAsset, held[c as SwapAsset])}
                   unavailable={(c) => held[c as SwapAsset] === 0n}
                 />
               </div>

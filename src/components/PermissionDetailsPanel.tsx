@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { ScopeIcon } from './ScopeIcon'
 import { getPermissionScope, appDisplayName } from '../wallet/appIdentity'
 import { clearAutoPaySettings, getAutoPaySettings } from '../wallet/autoPay'
@@ -93,32 +94,30 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
           <span>
             Limit <strong>${autoPay.maxUsd}</strong> / {autoPay.windowHours}h
           </span>
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost btn-compact"
             onClick={() => {
               playWalletSound('soft')
               clearAutoPaySettings(origin)
             }}
           >
-            Turn off
-          </button>
+            <Button.Label>Turn off</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
 
       {showReceiveToggle ? (
         <div className="permission-details-limits">
           <span>Auto-accepting plain BSV receives</span>
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost btn-compact"
             onClick={() => {
               playWalletSound('soft')
               setAcceptIncomingFunds(origin, false)
             }}
           >
-            Require approval
-          </button>
+            <Button.Label>Require approval</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
     </div>

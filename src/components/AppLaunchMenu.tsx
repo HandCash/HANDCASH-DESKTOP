@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import { openAppLaunch } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
@@ -15,8 +16,7 @@ export function AppLaunchMenu({ url, origin, name }: Props) {
   if (target.kind !== 'open') return null
 
   return (
-    <button
-      type="button"
+    <Button.Root variant="solid"
       className="btn btn-primary btn-icon connected-app-icon-action"
       aria-label={`Launch ${name}`}
       title={`Launch ${name}`}
@@ -26,6 +26,6 @@ export function AppLaunchMenu({ url, origin, name }: Props) {
       }}
     >
       <LaunchIcon size={17} />
-    </button>
+    </Button.Root>
   )
 }

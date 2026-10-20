@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
 
 import { useEffect, useRef, useState } from 'react'
@@ -33,7 +34,8 @@ import { inspectLocalToolboxState } from '../wallet/layers'
 import { useAsyncAction, type AsyncActionOutcome } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
-import { HistoryBackupUrlField } from './settings'
+import { CloudUploadIcon, DownloadIcon, FileIcon } from './icons'
+import { HistoryBackupUrlField, SettingsControlRow, SettingsSection } from './settings'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 function formatWhen(ts: number | null): string {
@@ -279,33 +281,68 @@ export function HistoryBackupPanel() {
         }}
       />
 
-      <div className="actions" style={{ marginTop: 8 }}>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          disabled={busy || !effectiveUrl}
-          onClick={() => void checkCloud()}
-        >
-          {action.running('check') ? 'Checking…' : 'Check cloud'}
-        </button>
-        {effectiveUrl ? (
-          <span className="settings-row-desc">
-            Last upload: {formatWhen(prefs.lastUploadedAt)}
-            {prefs.lastError ? ` · ${prefs.lastError}` : ''}
-          </span>
+      <SettingsSection title="Cloud copy" part="cloud">
+        <ul className="settings-list">
+          <SettingsControlRow
+            label="Last upload"
+            icon={<CloudUploadIcon size={20} />}
+            description={
+              effectiveUrl
+                ? `${formatWhen(prefs.lastUploadedAt)}${prefs.lastError ? ` · ${prefs.lastError}` : ''}`
+                : 'No backup host set'
+            }
+          >
+            <Button.Root
+              variant="ghost"
+              className="btn btn-ghost"
+              disabled={busy || !effectiveUrl}
+              onClick={() => void checkCloud()}
+            >
+              <Button.Label>{action.running('check') ? 'Checking…' : 'Check'}</Button.Label>
+            </Button.Root>
+          </SettingsControlRow>
+          {historyUnlocked ? (
+            <>
+              <SettingsControlRow label="Back up now" description="Upload this wallet’s history to the host">
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost"
+                  disabled={busy || !effectiveUrl}
+                  onClick={() => void runUpload()}
+                >
+                  <Button.Label>
+                    {action.running('upload') || action.running('overwrite') ? 'Backing up…' : 'Back up'}
+                  </Button.Label>
+                </Button.Root>
+              </SettingsControlRow>
+              <SettingsControlRow
+                label="Replace from cloud"
+                description="Swap this device’s history for the cloud copy"
+              >
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost"
+                  disabled={busy || !effectiveUrl}
+                  onClick={() => void runRestoreUrl()}
+                >
+                  <Button.Label>{action.running('restore') ? 'Replacing…' : 'Replace'}</Button.Label>
+                </Button.Root>
+              </SettingsControlRow>
+            </>
+          ) : null}
+        </ul>
+        {cloudDetail ? (
+          <p className="settings-row-desc" role="status">
+            {cloudDetail}
+          </p>
         ) : null}
-      </div>
-      {cloudDetail ? (
-        <p className="settings-row-desc" role="status">
-          {cloudDetail}
-        </p>
-      ) : null}
+      </SettingsSection>
 
       {!historyUnlocked ? (
         <ConfirmPasswordGate
           id="history-backup-password"
           title="Confirm it’s you"
-          lede="Confirm with device unlock or your HandCash password. Backups are sealed to your wallet key."
+          lede="Backups are sealed to your wallet key."
           actionLabel="Unlock history actions"
           onVerified={(pw) => {
             setPassword(pw)
@@ -313,95 +350,77 @@ export function HistoryBackupPanel() {
           }}
         />
       ) : (
-        <div className="settings-form settings-form-compact">
-          <p className="settings-row-desc">Unlocked for this session.</p>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy}
-              onClick={() => void runExportFile()}
-            >
-              {action.running('file') ? 'Exporting…' : 'Download .brc39'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={busy}
-              onClick={() => fileRef.current?.click()}
-            >
-              {action.running('import') ? 'Importing…' : 'Import file'}
-            </button>
-          </div>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={busy || !effectiveUrl}
-              onClick={() => void runUpload()}
-            >
-              {action.running('upload') || action.running('overwrite') ? 'Backing up…' : 'Back up now'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={busy || !effectiveUrl}
-              onClick={() => void runRestoreUrl()}
-            >
-              {action.running('restore') ? 'Replacing…' : 'Replace from cloud'}
-            </button>
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".brc39,application/vnd.brc39.wallet,application/octet-stream"
-            hidden
-            onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
-          />
+        <>
+          <SettingsSection title="Backup file" part="file">
+            <ul className="settings-list">
+              <SettingsControlRow
+                label="Download a backup"
+                icon={<DownloadIcon size={20} />}
+                description="An encrypted .brc39 file of this wallet’s history"
+              >
+                <Button.Root
+                  variant="solid"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => void runExportFile()}
+                >
+                  <Button.Label>{action.running('file') ? 'Exporting…' : 'Download'}</Button.Label>
+                </Button.Root>
+              </SettingsControlRow>
+              <SettingsControlRow
+                label="Import a backup"
+                icon={<FileIcon size={20} />}
+                description="Merge a .brc39 file into this wallet"
+              >
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <Button.Label>{action.running('import') ? 'Importing…' : 'Choose file'}</Button.Label>
+                </Button.Root>
+              </SettingsControlRow>
+            </ul>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".brc39,application/vnd.brc39.wallet,application/octet-stream"
+              hidden
+              onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
+            />
+          </SettingsSection>
 
-          {localSnaps.length > 0 ? (
-            <div className="settings-form settings-form-compact" style={{ marginTop: 12 }}>
-              <p className="settings-row-label">On-device snapshots</p>
-              <p className="settings-row-desc">
-                Never overwritten. Newest first; restore merges into this wallet.
-              </p>
-              <ul className="settings-list" style={{ margin: '8px 0 0', padding: 0, listStyle: 'none' }}>
+          <SettingsSection title="On-device snapshots" part="snapshots">
+            <p className="settings-row-desc">Never overwritten. Newest first; restoring merges into this wallet.</p>
+            {localSnaps.length > 0 ? (
+              <ul className="settings-list">
                 {localSnaps.slice(0, 8).map((snap) => (
-                  <li
+                  <SettingsControlRow
                     key={snap.id}
-                    className="settings-row"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
-                      padding: '6px 0',
-                    }}
+                    label={formatWhen(snap.exportedAt)}
+                    description={`${(snap.bytes / 1024).toFixed(1)} KB`}
                   >
-                    <span className="settings-row-desc">
-                      {formatWhen(snap.exportedAt)} · {(snap.bytes / 1024).toFixed(1)} KB
-                    </span>
-                    <button
-                      type="button"
+                    <Button.Root
+                      variant="ghost"
                       className="btn btn-ghost"
                       disabled={busy}
                       onClick={() => void runRestoreLocal(snap.id)}
                     >
-                      {action.running('local') ? 'Restoring…' : 'Restore'}
-                    </button>
-                  </li>
+                      <Button.Label>{action.running('local') ? 'Restoring…' : 'Restore'}</Button.Label>
+                    </Button.Root>
+                  </SettingsControlRow>
                 ))}
               </ul>
-            </div>
-          ) : (
-            <p className="settings-row-desc" style={{ marginTop: 8 }}>
-              No snapshots yet — export once, or spend to write one automatically.
-            </p>
-          )}
+            ) : (
+              <p className="settings-row-desc">No snapshots yet. Export once, or spend, to write one.</p>
+            )}
+          </SettingsSection>
 
-          <div className="actions" style={{ marginTop: 4 }}>
-            <button
-              type="button"
+          <div className="actions" data-aeon-part="session">
+            <span className="settings-row-desc">Unlocked for this session.</span>
+            <Button.Root
+              variant="ghost"
               className="btn btn-ghost"
               onClick={() => {
                 setPassword(null)
@@ -409,21 +428,20 @@ export function HistoryBackupPanel() {
                 playWalletSound('soft')
               }}
             >
-              Lock again
-            </button>
+              <Button.Label>Lock again</Button.Label>
+            </Button.Root>
           </div>
-        </div>
+        </>
       )}
 
-      <div className="actions" style={{ marginTop: 12 }}>
-        <button
-          type="button"
+      <div className="actions">
+        <Button.Root variant="solid"
           className="btn btn-primary"
           onClick={confirmHistory}
           disabled={!canConfirm}
         >
-          {canConfirm ? 'History backup saved' : 'Export first'}
-        </button>
+          <Button.Label>{canConfirm ? 'History backup saved' : 'Export first'}</Button.Label>
+        </Button.Root>
       </div>
 
       <AsyncActionPrompt action={action} />

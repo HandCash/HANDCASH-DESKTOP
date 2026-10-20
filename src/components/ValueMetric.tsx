@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import type { ReactNode } from 'react'
 import { copyText } from '../wallet/clipboard'
 
@@ -17,23 +18,21 @@ export function ValueMetric({ title, value, children, showQr = false, onShowQr, 
         <h3>{title}</h3>
         <div className="metric-actions">
           {showQr && onShowQr && (
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost btn-compact"
               onClick={() => onShowQr(title, value)}
               aria-label={`Show QR for ${title}`}
             >
-              QR
-            </button>
+              <Button.Label>QR</Button.Label>
+            </Button.Root>
           )}
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost btn-compact"
             onClick={() => void (onCopy ? onCopy(value) : copyText(value))}
             aria-label={`Copy ${title}`}
           >
-            Copy
-          </button>
+            <Button.Label>Copy</Button.Label>
+          </Button.Root>
         </div>
       </div>
       {children ?? <p className="mono">{value}</p>}

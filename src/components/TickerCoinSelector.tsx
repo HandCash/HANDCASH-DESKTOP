@@ -13,6 +13,31 @@ import {
   type MarketCoin,
 } from '../wallet/bsvMarket'
 import { TICKER_COINS, TICKER_COIN_ORDER } from '../wallet/tickerCoin'
+import { useHeldCoins } from '../features/heldCoins'
+import { coinUsd } from '../wallet/heldValue'
+import { COIN_INFO, formatCoinShort, type CoinChain } from '../wallet/coins/coinChains'
+import { formatBsvSignificant } from '../wallet/session'
+import { formatUsd, formatUsdFromSats } from '../wallet/fx'
+
+/** What the wallet holds of `coin`, short, with its value at the ticker's quote; null when none. */
+function heldIn(
+  coin: MarketCoin,
+  heldBsvSats: number | null,
+  heldCoins: Record<CoinChain, bigint>,
+  priceUsd: number | null,
+): { amount: string; usd: string | null } | null {
+  if (coin === 'bsv') {
+    if (!heldBsvSats) return null
+    return {
+      amount: formatBsvSignificant(heldBsvSats, 4),
+      usd: priceUsd == null ? null : formatUsdFromSats(heldBsvSats, priceUsd),
+    }
+  }
+  const units = heldCoins[coin]
+  if (units === 0n) return null
+  const usd = coinUsd(coin, units, priceUsd)
+  return { amount: `${formatCoinShort(coin, units)} ${COIN_INFO[coin].ticker}`, usd: usd == null ? null : formatUsd(usd) }
+}
 
 const COIN_MARKS = { ltc: LitecoinIcon, bch: BitcoinCashIcon, btc: BitcoinIcon, doge: DogecoinIcon } as const
 
@@ -27,7 +52,16 @@ export function TickerCoinMark({ coin, size }: { coin: MarketCoin; size: number 
 }
 
 /** Every coin the ticker can show, priced from the cache; picking one is the caller's event. */
-export function TickerCoinSelector({ selected, onPick }: { selected: MarketCoin; onPick: (coin: MarketCoin) => void }) {
+export function TickerCoinSelector({
+  selected,
+  heldBsvSats,
+  onPick,
+}: {
+  selected: MarketCoin
+  heldBsvSats: number | null
+  onPick: (coin: MarketCoin) => void
+}) {
+  const heldCoins = useHeldCoins()
   const [, priced] = useReducer((n: number) => n + 1, 0)
   useEffect(() => {
     const unsub = subscribeBsvMarket(priced)
@@ -40,6 +74,7 @@ export function TickerCoinSelector({ selected, onPick }: { selected: MarketCoin;
       <ul data-aeon-part="list" role="listbox" aria-label="Show in ticker">
         {TICKER_COIN_ORDER.map((coin) => {
           const stats = getCachedBsvMarket(coin)
+          const held = heldIn(coin, heldBsvSats, heldCoins, stats?.priceUsd ?? null)
           return (
             <li key={coin}>
               <ListRow.Root
@@ -58,6 +93,12 @@ export function TickerCoinSelector({ selected, onPick }: { selected: MarketCoin;
                     {stats ? `${formatPriceUsd(stats.priceUsd)} · ${formatPct(stats.change24hPct)} 24h` : 'Price unavailable'}
                   </ListRow.Description>
                 </span>
+                {held ? (
+                  <span data-aeon-part="held" aria-label={`You hold ${held.amount}`}>
+                    <span data-aeon-part="held-amount">{held.amount}</span>
+                    {held.usd ? <span data-aeon-part="held-usd">{held.usd}</span> : null}
+                  </span>
+                ) : null}
               </ListRow.Root>
             </li>
           )

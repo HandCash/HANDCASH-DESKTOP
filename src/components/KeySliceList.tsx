@@ -1,4 +1,4 @@
-import { Accordion, ListRow, Progress } from '@aeon-ui/react'
+import { Accordion, Button, ListRow, Progress } from '@aeon-ui/react'
 import { sliceSetLabel } from '../wallet/brc140IssuedSet'
 
 export type SliceHandoffMethod = 'share' | 'email' | 'copy' | 'download'
@@ -116,37 +116,33 @@ export function KeySliceList({
               <Accordion.ItemContent value={itemId} className="key-slice-body">
                 <code className="mono split-backup-share">{share}</code>
                 <div className="actions split-backup-item-actions">
-                  <button
-                    type="button"
+                  <Button.Root variant="solid"
                     className="btn btn-primary"
                     onClick={() => void onHandoff(index, 'share', destination)}
                   >
-                    Share this slice
-                  </button>
-                  <button
-                    type="button"
+                    <Button.Label>Share this slice</Button.Label>
+                  </Button.Root>
+                  <Button.Root variant="ghost"
                     className="btn btn-ghost"
                     onClick={() => void onHandoff(index, 'copy', destination)}
                   >
-                    Copy
-                  </button>
-                  <button
-                    type="button"
+                    <Button.Label>Copy</Button.Label>
+                  </Button.Root>
+                  <Button.Root variant="ghost"
                     className="btn btn-ghost"
                     onClick={() => void onHandoff(index, 'download', destination)}
                   >
-                    Save file
-                  </button>
+                    <Button.Label>Save file</Button.Label>
+                  </Button.Root>
                 </div>
                 <div className="actions split-backup-item-actions">
-                  <button
-                    type="button"
+                  <Button.Root variant="ghost"
                     className={saved ? 'btn btn-ghost' : 'btn btn-primary'}
                     disabled={saved}
                     onClick={() => onConfirmSaved(index)}
                   >
-                    {saved ? 'Saved — confirmed' : 'I saved this slice'}
-                  </button>
+                    <Button.Label>{saved ? 'Saved — confirmed' : 'I saved this slice'}</Button.Label>
+                  </Button.Root>
                 </div>
               </Accordion.ItemContent>
             </Accordion.Item>
@@ -155,15 +151,14 @@ export function KeySliceList({
       </Accordion.Root>
       {onRotateShares ? (
         <div className="actions">
-          <button
-            type="button"
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
             disabled={rotateBusy}
             title="Replace this set. Slices from the old set will not combine with the new ones."
             onClick={() => void onRotateShares()}
           >
-            {rotateBusy ? 'Replacing…' : 'Replace slice set'}
-          </button>
+            <Button.Label>{rotateBusy ? 'Replacing…' : 'Replace slice set'}</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
     </div>

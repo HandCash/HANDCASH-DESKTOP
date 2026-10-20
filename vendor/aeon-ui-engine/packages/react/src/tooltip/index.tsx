@@ -272,11 +272,15 @@ export interface TooltipPositionerProps extends HTMLAttributes<HTMLDivElement> {
   /** Mount tooltip in document.body (default true). */
   portalled?: boolean
   placement?: AnchorPlacement
+  /** Gap between trigger and tip (default 4). */
+  gutter?: number
+  /** Stack level for the portalled surface (default 50). */
+  zIndex?: number
   children?: ReactNode
 }
 
 const Positioner = forwardRef<HTMLDivElement, TooltipPositionerProps>(function TooltipPositioner(
-  { portalled = true, placement = 'top-start', children, className, ...rest },
+  { portalled = true, placement = 'top-start', gutter, zIndex, children, className, ...rest },
   ref,
 ) {
   const { open, triggerRef, positionerRef } = useTooltipCtx()
@@ -291,6 +295,8 @@ const Positioner = forwardRef<HTMLDivElement, TooltipPositionerProps>(function T
       positionerRef={positionerRef}
       portalled={portalled}
       placement={placement}
+      gutter={gutter}
+      zIndex={zIndex}
       className={className}
       {...rest}
     >

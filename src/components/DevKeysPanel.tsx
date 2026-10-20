@@ -1,6 +1,7 @@
+import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stateToAttr } from "@aeon-ui/core";
-import { MetricStrip } from "@aeon-ui/ui";
+import { MetricStrip, Switch } from "@aeon-ui/ui";
 import { useMachine } from "@xstate/react";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
@@ -42,6 +43,7 @@ import { launchConnectedApp } from "../wallet/openAppInWalletBrowser";
 
 const BRC_WORKER_ORIGIN = "https://brc-cloud.bcryderman.workers.dev";
 import { Skeleton } from "./Skeleton";
+import { SettingsControlRow, SettingsNavRow } from "./settings";
 
 type DevKeyAction =
   | "create"
@@ -305,9 +307,9 @@ export function DevKeysPanel() {
 
   const fundForm = (n: number) => (
     <div className="settings-form" data-aeon-part="fund">
-      <div className="field">
-        <label htmlFor="dev-key-fund">Amount (sats)</label>
-        <input
+      <Field.Root className="field">
+        <Field.Label htmlFor="dev-key-fund">Amount (sats)</Field.Label>
+        <Field.Control
           id="dev-key-fund"
           inputMode="numeric"
           placeholder="10,000"
@@ -316,7 +318,7 @@ export function DevKeysPanel() {
           autoComplete="off"
           autoFocus
         />
-      </div>
+      </Field.Root>
       <div data-aeon-part="fund-presets">
         {FUND_PRESETS.map((sats) => (
           <button
@@ -339,16 +341,14 @@ export function DevKeysPanel() {
           : "Paid from this wallet. You approve it next."}
       </p>
       <div className="actions">
-        <button
-          type="button"
+        <Button.Root variant="outline"
           className="btn"
           disabled={action.busy}
           onClick={() => send({ type: "CANCEL" })}
         >
-          Cancel
-        </button>
-        <button
-          type="button"
+          <Button.Label>Cancel</Button.Label>
+        </Button.Root>
+        <Button.Root variant="solid"
           className="btn btn-primary"
           disabled={!fundable || action.busy}
           onClick={async () => {
@@ -369,12 +369,12 @@ export function DevKeysPanel() {
             }
           }}
         >
-          {action.running("fund")
+          <Button.Label>{action.running("fund")
             ? "Sending…"
             : fundable
             ? `Fund ${formatSats(fundSats)} sats`
-            : "Fund"}
-        </button>
+            : "Fund"}</Button.Label>
+        </Button.Root>
       </div>
     </div>
   );
@@ -382,8 +382,7 @@ export function DevKeysPanel() {
   const actions = (key: DevKeyView) => (
     <div data-aeon-part="key-actions">
       {key.wallet ? (
-        <button
-          type="button"
+        <Button.Root variant="solid"
           className="btn btn-primary"
           disabled={!key.publicKey || action.busy}
           onClick={() => {
@@ -392,11 +391,10 @@ export function DevKeysPanel() {
             send({ type: "FUND", n: key.n });
           }}
         >
-          Fund
-        </button>
+          <Button.Label>Fund</Button.Label>
+        </Button.Root>
       ) : null}
-      <button
-        type="button"
+      <Button.Root variant="ghost"
         className={key.wallet ? "btn btn-ghost" : "btn btn-primary"}
         disabled={!key.publicKey || action.busy}
         onClick={() =>
@@ -419,11 +417,10 @@ export function DevKeysPanel() {
           )
         }
       >
-        {action.running("copy") ? "Copying…" : "Copy server config"}
-      </button>
+        <Button.Label>{action.running("copy") ? "Copying…" : "Copy server config"}</Button.Label>
+      </Button.Root>
       {recoverable(key) ? (
-        <button
-          type="button"
+        <Button.Root variant="ghost"
           className="btn btn-ghost"
           disabled={!key.publicKey || action.busy}
           onClick={() =>
@@ -446,12 +443,11 @@ export function DevKeysPanel() {
             )
           }
         >
-          {action.running("recover") ? "Recovering…" : "Recover"}
-        </button>
+          <Button.Label>{action.running("recover") ? "Recovering…" : "Recover"}</Button.Label>
+        </Button.Root>
       ) : null}
       {key.wallet ? (
-        <button
-          type="button"
+        <Button.Root variant="outline"
           className="btn"
           disabled={!key.publicKey || action.busy || key.wallet.refreshing}
           onClick={() =>
@@ -461,12 +457,11 @@ export function DevKeysPanel() {
             })
           }
         >
-          {key.wallet.refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+          <Button.Label>{key.wallet.refreshing ? "Refreshing…" : "Refresh"}</Button.Label>
+        </Button.Root>
       ) : null}
       {removable(key) ? (
-        <button
-          type="button"
+        <Button.Root variant="ghost"
           className="btn btn-ghost"
           data-aeon-part="remove"
           disabled={action.busy}
@@ -487,8 +482,8 @@ export function DevKeysPanel() {
             )
           }
         >
-          {action.running("remove") ? "Removing…" : "Remove"}
-        </button>
+          <Button.Label>{action.running("remove") ? "Removing…" : "Remove"}</Button.Label>
+        </Button.Root>
       ) : null}
     </div>
   );
@@ -578,24 +573,17 @@ export function DevKeysPanel() {
       data-aeon-scope="dev-keys"
       data-aeon-state={stateToAttr(snapshot.value)}
     >
-      <button
-        type="button"
-        className="dev-keys-portal"
-        data-aeon-part="portal"
-        onClick={() => {
-          playWalletSound("soft");
-          launchConnectedApp(BRC_WORKER_ORIGIN, `${BRC_WORKER_ORIGIN}/`, "in-app");
-        }}
-      >
-        <AppsIcon size={20} />
-        <span data-aeon-part="portal-copy">
-          <strong>BRC Wørker</strong>
-          <span>HandCash apps on BRC-CLOUD</span>
-        </span>
-        <span data-aeon-part="portal-go" aria-hidden>
-          Open
-        </span>
-      </button>
+      <ul className="settings-list" data-aeon-part="portal">
+        <SettingsNavRow
+          label="BRC Wørker"
+          description="HandCash apps on BRC-CLOUD"
+          icon={<AppsIcon size={20} />}
+          trailingEnd={<span data-aeon-part="portal-go">Open</span>}
+          onClick={() =>
+            launchConnectedApp(BRC_WORKER_ORIGIN, `${BRC_WORKER_ORIGIN}/`, "in-app")
+          }
+        />
+      </ul>
       <p className="settings-hint">
         Keys you give your own server. Each one can sign as your identity, hold
         a wallet your server spends, or both. None of them can reveal your
@@ -603,58 +591,44 @@ export function DevKeysPanel() {
       </p>
       {snapshot.matches("creating") ? (
         <div className="settings-form" data-aeon-part="create">
-          <label
-            className={`wallet-setup-option${
-              canSign ? "" : " is-disabled"
-            }${canSign && capabilities.sign ? " is-selected" : ""}`}
-          >
-            <input
-              type="checkbox"
-              checked={canSign && capabilities.sign}
-              disabled={!canSign}
-              onChange={(e) =>
-                setCapabilities((c) => ({ ...c, sign: e.target.checked }))
-              }
-            />
-            <span className="wallet-setup-option-body">
-              <strong>
-                {signing.kind === "ready" ? `Sign as ${signing.name}` : "Sign"}
-              </strong>
-              <span>
-                {signing.kind === "ready"
+          <ul className="settings-list" aria-label="What this key can do">
+            <SettingsControlRow
+              label={signing.kind === "ready" ? `Sign as ${signing.name}` : "Sign"}
+              description={
+                signing.kind === "ready"
                   ? "Your server signs as this identity"
-                  : signing.message}
-              </span>
-            </span>
-          </label>
-          <label
-            className={`wallet-setup-option${
-              capabilities.wallet ? " is-selected" : ""
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={capabilities.wallet}
-              onChange={(e) =>
-                setCapabilities((c) => ({ ...c, wallet: e.target.checked }))
+                  : signing.message
               }
-            />
-            <span className="wallet-setup-option-body">
-              <strong>Wallet</strong>
-              <span>Your server spends it; you fund and recover it here</span>
-            </span>
-          </label>
+              icon={<KeyIcon size={20} />}
+            >
+              <Switch.Root
+                checked={canSign && capabilities.sign}
+                disabled={!canSign}
+                onCheckedChange={(sign: boolean) => setCapabilities((c) => ({ ...c, sign }))}
+                aria-label="Sign"
+              />
+            </SettingsControlRow>
+            <SettingsControlRow
+              label="Wallet"
+              description="Your server spends it; you fund and recover it here"
+              icon={<WalletScopeIcon size={20} />}
+            >
+              <Switch.Root
+                checked={capabilities.wallet}
+                onCheckedChange={(wallet: boolean) => setCapabilities((c) => ({ ...c, wallet }))}
+                aria-label="Wallet"
+              />
+            </SettingsControlRow>
+          </ul>
           <div className="actions">
-            <button
-              type="button"
+            <Button.Root variant="outline"
               className="btn"
               disabled={action.busy}
               onClick={() => send({ type: "CANCEL" })}
             >
-              Cancel
-            </button>
-            <button
-              type="button"
+              <Button.Label>Cancel</Button.Label>
+            </Button.Root>
+            <Button.Root variant="solid"
               className="btn btn-primary"
               disabled={action.busy || !chosen}
               onClick={async () => {
@@ -668,8 +642,8 @@ export function DevKeysPanel() {
                 if (ok) send({ type: "DONE" });
               }}
             >
-              {action.running("create") ? "Creating…" : "Create key"}
-            </button>
+              <Button.Label>{action.running("create") ? "Creating…" : "Create key"}</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : keys.length === 0 ? (
@@ -677,27 +651,25 @@ export function DevKeysPanel() {
           title="No developer keys"
           body="Create one to give a server its own identity signature or wallet."
           action={
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               onClick={startCreate}
             >
-              New key
-            </button>
+              <Button.Label>New key</Button.Label>
+            </Button.Root>
           }
         />
       ) : (
         <>
           <div data-aeon-part="head">
             <Overview keys={keys} currency={currency} />
-            <button
-              type="button"
+            <Button.Root variant="solid"
               className="btn btn-primary"
               disabled={action.busy || fundKey != null}
               onClick={startCreate}
             >
-              New key
-            </button>
+              <Button.Label>New key</Button.Label>
+            </Button.Root>
           </div>
           <ul data-aeon-part="keys" data-aeon-state={action.stateAttr}>
             {keys.map(card)}

@@ -201,10 +201,10 @@ export function formatPrimaryFromSats(
   sats: number,
   currency: DisplayCurrency,
   usdPerBsv: number | null = getCachedUsdPerBsv(),
-  opts?: { compact?: boolean; signed?: boolean },
+  opts?: { compact?: boolean; signed?: boolean; significant?: number },
 ): string {
-  // Outside the hero balance, BSV uses 5 significant figures.
-  if (currency === 'bsv') return formatBsvSignificant(sats, 5)
+  // Outside the hero balance, BSV uses 5 significant figures unless a summary asks for fewer.
+  if (currency === 'bsv') return formatBsvSignificant(sats, opts?.significant ?? 5)
   return formatUsdFromSats(sats, usdPerBsv, opts)
 }
 

@@ -2,7 +2,7 @@ import { getActiveWallet } from '../wallet/session'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { ListRow } from '@aeon-ui/react'
+import { Button, ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { assetSendMachine } from '../machines/assetSendMachine'
 import {
@@ -455,14 +455,13 @@ export function SendFungiblePanel({ tokenId, onSent }: Props) {
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <button
-                    type="button"
+                  <Button.Root variant="ghost"
                     className="btn btn-ghost"
                     disabled={sendBlocked}
                     onClick={fillMax}
                   >
-                    Max
-                  </button>
+                    <Button.Label>Max</Button.Label>
+                  </Button.Root>
                 </div>
               </div>
 

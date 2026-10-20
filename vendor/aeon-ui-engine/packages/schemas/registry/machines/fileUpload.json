@@ -1,0 +1,182 @@
+{
+  "id": "fileUpload",
+  "initial": "idle",
+  "events": [
+    "DRAG_OVER",
+    "DROP_REJECT",
+    "RESET",
+    "DRAG_LEAVE",
+    "DROP_ACCEPT"
+  ],
+  "tree": {
+    "key": "fileUpload",
+    "id": "fileUpload",
+    "type": "compound",
+    "events": [
+      "DRAG_OVER",
+      "DROP_REJECT",
+      "RESET",
+      "DRAG_LEAVE",
+      "DROP_ACCEPT"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "fileUpload.idle",
+        "type": "atomic",
+        "events": [
+          "DRAG_OVER",
+          "DROP_REJECT",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "DRAG_OVER",
+            "target": [
+              "dragging"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DROP_REJECT",
+            "target": [
+              "rejected"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "dragging",
+        "id": "fileUpload.dragging",
+        "type": "atomic",
+        "events": [
+          "DRAG_OVER",
+          "DRAG_LEAVE",
+          "DROP_ACCEPT",
+          "DROP_REJECT"
+        ],
+        "transitions": [
+          {
+            "event": "DRAG_OVER",
+            "target": [
+              "dragging"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DRAG_LEAVE",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DROP_ACCEPT",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DROP_REJECT",
+            "target": [
+              "rejected"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "rejected",
+        "id": "fileUpload.rejected",
+        "type": "atomic",
+        "events": [
+          "DRAG_OVER",
+          "DROP_ACCEPT",
+          "DROP_REJECT",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "DRAG_OVER",
+            "target": [
+              "dragging"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DROP_ACCEPT",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DROP_REJECT",
+            "target": [
+              "rejected"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "fileUpload": {
+      "events": [
+        "DRAG_OVER",
+        "DROP_REJECT",
+        "RESET",
+        "DRAG_LEAVE",
+        "DROP_ACCEPT"
+      ],
+      "type": "compound"
+    },
+    "fileUpload.idle": {
+      "events": [
+        "DRAG_OVER",
+        "DROP_REJECT",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "fileUpload.dragging": {
+      "events": [
+        "DRAG_OVER",
+        "DRAG_LEAVE",
+        "DROP_ACCEPT",
+        "DROP_REJECT"
+      ],
+      "type": "atomic"
+    },
+    "fileUpload.rejected": {
+      "events": [
+        "DRAG_OVER",
+        "DROP_ACCEPT",
+        "DROP_REJECT",
+        "RESET"
+      ],
+      "type": "atomic"
+    }
+  }
+}

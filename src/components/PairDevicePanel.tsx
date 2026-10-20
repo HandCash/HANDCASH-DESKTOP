@@ -3,7 +3,7 @@ import { getActiveWallet } from '../wallet/session'
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { useMachine } from '@xstate/react'
-import { ListRow, StatusBanner } from '@aeon-ui/react'
+import { Button, Field, ListRow, StatusBanner } from '@aeon-ui/react'
 
 import {
   buildPairPayload,
@@ -368,21 +368,20 @@ export function PairDevicePanel() {
 
         {opened ? (
           <>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="recover-secret">
+            <Field.Root className="field">
+              <Field.Label htmlFor="recover-secret">
                 {opened.mnemonic ? 'Recovery phrase' : 'Emergency key'}
-              </label>
-              <textarea
+              </Field.Label>
+              <Field.Textarea
                 id="recover-secret"
                 rows={3}
                 readOnly
                 value={opened.mnemonic ?? opened.rootKeyHex}
                 spellCheck={false}
               />
-            </div>
+            </Field.Root>
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 onClick={() =>
                   void copyText(opened.mnemonic ?? opened.rootKeyHex, {
@@ -390,39 +389,38 @@ export function PairDevicePanel() {
                   })
                 }
               >
-                Copy
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={leave}>
-                Done
-              </button>
+                <Button.Label>Copy</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={leave}>
+                <Button.Label>Done</Button.Label>
+              </Button.Root>
             </div>
           </>
         ) : (
           <>
             {needsPassword ? (
-              <div className="field" data-aeon-part="field">
-                <label htmlFor="recover-password">Your unlock password</label>
-                <input
+              <Field.Root className="field">
+                <Field.Label htmlFor="recover-password">Your unlock password</Field.Label>
+                <Field.Control
                   id="recover-password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-              </div>
+              </Field.Root>
             ) : null}
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 disabled={busy || !passwordReady}
                 onClick={() => void unseal()}
               >
-                {busy ? 'Opening…' : 'Open copy'}
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={leave}>
-                Back
-              </button>
+                <Button.Label>{busy ? 'Opening…' : 'Open copy'}</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={leave}>
+                <Button.Label>Back</Button.Label>
+              </Button.Root>
             </div>
           </>
         )}
@@ -517,29 +515,28 @@ export function PairDevicePanel() {
               Seals this wallet’s keys so only {peer.label} can open the copy.
             </p>
             {needsPassword ? (
-              <div className="field" data-aeon-part="field">
-                <label htmlFor="seal-password">Your unlock password</label>
-                <input
+              <Field.Root className="field">
+                <Field.Label htmlFor="seal-password">Your unlock password</Field.Label>
+                <Field.Control
                   id="seal-password"
                   type="password"
                   autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
-              </div>
+              </Field.Root>
             ) : null}
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 disabled={busy || !passwordReady}
                 onClick={() => void sealForPeer()}
               >
-                {busy ? 'Sealing…' : 'Create copy'}
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-                Back
-              </button>
+                <Button.Label>{busy ? 'Sealing…' : 'Create copy'}</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
+                <Button.Label>Back</Button.Label>
+              </Button.Root>
             </div>
           </>
         ) : null}
@@ -549,27 +546,25 @@ export function PairDevicePanel() {
             <p>Scan on {peer.label}</p>
             <AnimatedQr value={spareText} alt="Sealed recovery code" size={180} />
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 disabled={!spareText}
                 onClick={() => void copyText(spareText, { label: 'recovery code' })}
               >
-                Copy code
-              </button>
-              <button
-                type="button"
+                <Button.Label>Copy code</Button.Label>
+              </Button.Root>
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 onClick={() => {
                   confirmSpareStoredByPeer(peer.deviceId)
                   leave()
                 }}
               >
-                {peer.label} stored it
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={leave}>
-                Later
-              </button>
+                <Button.Label>{peer.label} stored it</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={leave}>
+                <Button.Label>Later</Button.Label>
+              </Button.Root>
             </div>
           </div>
         ) : null}
@@ -581,8 +576,7 @@ export function PairDevicePanel() {
               code it shows.
             </p>
             <div className="actions">
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 disabled={busy}
                 onClick={() => {
@@ -590,17 +584,17 @@ export function PairDevicePanel() {
                   send({ type: 'SCAN' })
                 }}
               >
-                Scan their code
-              </button>
-              <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-                Back
-              </button>
+                <Button.Label>Scan their code</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
+                <Button.Label>Back</Button.Label>
+              </Button.Root>
             </div>
             {showPaste ? (
               <>
-                <div className="field" data-aeon-part="field">
-                  <label htmlFor="spare-paste">Paste the recovery code</label>
-                  <textarea
+                <Field.Root className="field">
+                  <Field.Label htmlFor="spare-paste">Paste the recovery code</Field.Label>
+                  <Field.Textarea
                     id="spare-paste"
                     rows={3}
                     value={paste}
@@ -608,26 +602,24 @@ export function PairDevicePanel() {
                     autoComplete="off"
                     spellCheck={false}
                   />
-                </div>
+                </Field.Root>
                 <div className="actions">
-                  <button
-                    type="button"
+                  <Button.Root variant="ghost"
                     className="btn btn-ghost"
                     disabled={busy || !paste.trim()}
                     onClick={() => void importForPeer()}
                   >
-                    {busy ? 'Storing…' : 'Store copy'}
-                  </button>
+                    <Button.Label>{busy ? 'Storing…' : 'Store copy'}</Button.Label>
+                  </Button.Root>
                 </div>
               </>
             ) : (
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost device-backup-paste-toggle"
                 onClick={() => setShowPaste(true)}
               >
-                Paste instead
-              </button>
+                <Button.Label>Paste instead</Button.Label>
+              </Button.Root>
             )}
           </>
         ) : null}
@@ -635,23 +627,21 @@ export function PairDevicePanel() {
         {choosing ? (
           <div className="actions device-backup-foot">
             {role.protectsPeer ? (
-              <button
-                type="button"
+              <Button.Root variant="solid"
                 className="btn btn-primary"
                 onClick={() => {
                   playWalletSound('soft')
                   send({ type: 'OPEN_RECOVERY', peerDeviceId: peer.deviceId })
                 }}
               >
-                Restore {peer.label}
-              </button>
+                <Button.Label>Restore {peer.label}</Button.Label>
+              </Button.Root>
             ) : null}
-            <button type="button" className="btn btn-ghost" onClick={leave}>
-              Back
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={leave}>
+              <Button.Label>Back</Button.Label>
+            </Button.Root>
             {/* Destructive last, and set apart from the everyday actions. */}
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost device-backup-remove"
               onClick={() => {
                 playWalletSound('soft')
@@ -661,8 +651,8 @@ export function PairDevicePanel() {
                 leave()
               }}
             >
-              Remove
-            </button>
+              <Button.Label>Remove</Button.Label>
+            </Button.Root>
           </div>
         ) : null}
       </div>
@@ -688,26 +678,24 @@ export function PairDevicePanel() {
       ) : null}
 
       <div className="actions device-backup-link">
-        <button
-          type="button"
+        <Button.Root variant="solid"
           className="btn btn-primary"
           onClick={() => {
             playWalletSound('soft')
             send({ type: 'SCAN' })
           }}
         >
-          Scan to link
-        </button>
-        <button
-          type="button"
+          <Button.Label>Scan to link</Button.Label>
+        </Button.Root>
+        <Button.Root variant="ghost"
           className="btn btn-ghost"
           onClick={() => {
             playWalletSound('soft')
             send({ type: 'TOGGLE_MY_CODE' })
           }}
         >
-          {showMyCode ? 'Hide my code' : 'Show my code'}
-        </button>
+          <Button.Label>{showMyCode ? 'Hide my code' : 'Show my code'}</Button.Label>
+        </Button.Root>
       </div>
 
       {showMyCode ? (
@@ -728,14 +716,13 @@ export function PairDevicePanel() {
             <SkeletonQr size={180} />
           )}
           <div className="actions">
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               disabled={!pairText}
               onClick={() => void copyText(pairText, { label: 'device code' })}
             >
-              Copy code
-            </button>
+              <Button.Label>Copy code</Button.Label>
+            </Button.Root>
           </div>
         </div>
       ) : null}

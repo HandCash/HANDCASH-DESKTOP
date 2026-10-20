@@ -1,3 +1,4 @@
+import { RadioGroup } from '@aeon-ui/react'
 import type { ReactNode } from 'react'
 
 export type SettingsIconToggleOption<T extends string> = {
@@ -21,27 +22,26 @@ export function SettingsIconToggle<T extends string>({
   ariaLabel,
 }: Props<T>) {
   return (
-    <div className="settings-icon-toggle" role="radiogroup" aria-label={ariaLabel}>
-      {options.map((opt) => {
-        const selected = opt.value === value
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            role="radio"
+    <RadioGroup.Root
+      className="settings-icon-toggle"
+      aria-label={ariaLabel}
+      value={value}
+      onValueChange={(next) => {
+        if (next !== value) onChange(next as T)
+      }}
+    >
+      {options.map((opt) => (
+        <RadioGroup.Item key={opt.value} value={opt.value} className="settings-icon-toggle-item">
+          <RadioGroup.ItemControl
             className="settings-icon-toggle-btn"
-            aria-checked={selected}
             aria-label={opt.label}
             title={opt.label}
-            data-selected={selected ? '' : undefined}
-            onClick={() => {
-              if (!selected) onChange(opt.value)
-            }}
+            data-selected={opt.value === value ? '' : undefined}
           >
             {opt.icon}
-          </button>
-        )
-      })}
-    </div>
+          </RadioGroup.ItemControl>
+        </RadioGroup.Item>
+      ))}
+    </RadioGroup.Root>
   )
 }

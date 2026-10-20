@@ -170,6 +170,24 @@
       "description": "Range control via sliderMachine — idle | dragging plus numeric value in context."
     },
     {
+      "id": "rangeSlider",
+      "title": "RangeSlider",
+      "scope": "rangeSlider",
+      "schemaUrl": "https://aeon-ui.com/registry/components/rangeSlider.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/rangeSlider.json",
+      "runtime": "useAeonMachine",
+      "description": "Two-thumb range via rangeSliderMachine — idle | dragging with values pair and minStepsBetween gap."
+    },
+    {
+      "id": "fileUpload",
+      "title": "FileUpload",
+      "scope": "fileUpload",
+      "schemaUrl": "https://aeon-ui.com/registry/components/fileUpload.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/fileUpload.json",
+      "runtime": "useAeonMachine",
+      "description": "Drag-drop surface via fileUploadMachine — idle | dragging | rejected. File bytes stay in React callbacks."
+    },
+    {
       "id": "pinInput",
       "title": "PinInput",
       "scope": "pinInput",

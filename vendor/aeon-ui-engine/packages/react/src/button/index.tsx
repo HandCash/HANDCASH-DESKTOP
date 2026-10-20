@@ -1,6 +1,12 @@
 import { buttonAnatomy, partAttrs } from '@aeon-ui/core'
-import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react'
+import {
+  forwardRef,
+  type ButtonHTMLAttributes,
+  type HTMLAttributes,
+  type ReactNode,
+} from 'react'
 import { mergeProps } from '../utils/merge-props.js'
+import { Slot } from '../utils/slot.js'
 
 /** Action button lifecycle — see STATES.md and `buttonLifecycleMachine`. */
 export type ButtonStatus = 'idle' | 'pending' | 'success' | 'failure' | 'disabled'
@@ -10,34 +16,63 @@ export interface ButtonRootProps extends ButtonHTMLAttributes<HTMLButtonElement>
   size?: 'xs' | 'sm' | 'md' | 'lg'
   /** Machine-aligned lifecycle; `disabled` prop overrides to `disabled`. */
   status?: ButtonStatus
+  /**
+   * Merge button attrs onto a single child (e.g. Next.js `<Link>` / `<a>`).
+   * Child must be one React element.
+   */
+  asChild?: boolean
   children?: ReactNode
 }
 
 const Root = forwardRef<HTMLButtonElement, ButtonRootProps>(function ButtonRoot(
-  { variant = 'solid', size = 'md', disabled, status = 'idle', children, className, ...rest },
+  {
+    variant = 'solid',
+    size = 'md',
+    disabled,
+    status = 'idle',
+    asChild = false,
+    children,
+    className,
+    type,
+    ...rest
+  },
   ref,
 ) {
   const resolvedStatus: ButtonStatus = disabled ? 'disabled' : status
   const isBusy = resolvedStatus === 'pending'
   // Success is terminal until RESET — keep data-aeon-state="success" but block input.
   const isLocked = resolvedStatus === 'success'
+  const isDisabled = Boolean(disabled || isBusy || isLocked || resolvedStatus === 'disabled')
+
+  const aeonProps = {
+    className,
+    'data-aeon-variant': variant,
+    'data-aeon-size': size,
+    'aria-busy': isBusy || undefined,
+    'aria-disabled': asChild && isDisabled ? true : undefined,
+    ...mergeProps(
+      partAttrs(buttonAnatomy.scope, buttonAnatomy.root, {
+        state: resolvedStatus,
+        disabled: isDisabled,
+      }),
+      rest,
+    ),
+  }
+
+  if (asChild) {
+    return (
+      <Slot ref={ref as never} {...aeonProps}>
+        {children}
+      </Slot>
+    )
+  }
 
   return (
     <button
       ref={ref}
-      type="button"
-      disabled={disabled || isBusy || isLocked || resolvedStatus === 'disabled'}
-      aria-busy={isBusy || undefined}
-      className={className}
-      data-aeon-variant={variant}
-      data-aeon-size={size}
-      {...mergeProps(
-        partAttrs(buttonAnatomy.scope, buttonAnatomy.root, {
-          state: resolvedStatus,
-          disabled: Boolean(disabled || resolvedStatus === 'disabled' || isLocked),
-        }),
-        rest,
-      )}
+      type={type ?? 'button'}
+      disabled={isDisabled}
+      {...aeonProps}
     >
       {children}
     </button>

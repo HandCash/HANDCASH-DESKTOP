@@ -1,0 +1,201 @@
+{
+  "id": "rangeSlider",
+  "initial": "interaction",
+  "events": [
+    "SET_VALUES",
+    "SET_BOUNDS",
+    "SET_DISABLED",
+    "POINTER_DOWN",
+    "STEP",
+    "HOME",
+    "END",
+    "POINTER_MOVE",
+    "POINTER_UP"
+  ],
+  "tree": {
+    "key": "rangeSlider",
+    "id": "rangeSlider",
+    "type": "compound",
+    "events": [
+      "SET_VALUES",
+      "SET_BOUNDS",
+      "SET_DISABLED",
+      "POINTER_DOWN",
+      "STEP",
+      "HOME",
+      "END",
+      "POINTER_MOVE",
+      "POINTER_UP"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "interaction",
+        "id": "rangeSlider.interaction",
+        "type": "compound",
+        "events": [
+          "SET_VALUES",
+          "SET_BOUNDS",
+          "SET_DISABLED",
+          "POINTER_DOWN",
+          "STEP",
+          "HOME",
+          "END",
+          "POINTER_MOVE",
+          "POINTER_UP"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "idle",
+            "id": "rangeSlider.interaction.idle",
+            "type": "atomic",
+            "events": [
+              "SET_VALUES",
+              "SET_BOUNDS",
+              "SET_DISABLED",
+              "POINTER_DOWN",
+              "STEP",
+              "HOME",
+              "END"
+            ],
+            "transitions": [
+              {
+                "event": "SET_VALUES",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "SET_BOUNDS",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "SET_DISABLED",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "POINTER_DOWN",
+                "target": [
+                  "dragging"
+                ],
+                "guarded": true
+              },
+              {
+                "event": "STEP",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "HOME",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "END",
+                "target": [],
+                "guarded": true
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "dragging",
+            "id": "rangeSlider.interaction.dragging",
+            "type": "atomic",
+            "events": [
+              "POINTER_MOVE",
+              "POINTER_UP",
+              "SET_VALUES",
+              "SET_BOUNDS",
+              "SET_DISABLED"
+            ],
+            "transitions": [
+              {
+                "event": "POINTER_MOVE",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "POINTER_UP",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              },
+              {
+                "event": "SET_VALUES",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "SET_BOUNDS",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "SET_DISABLED",
+                "target": [],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "rangeSlider": {
+      "events": [
+        "SET_VALUES",
+        "SET_BOUNDS",
+        "SET_DISABLED",
+        "POINTER_DOWN",
+        "STEP",
+        "HOME",
+        "END",
+        "POINTER_MOVE",
+        "POINTER_UP"
+      ],
+      "type": "compound"
+    },
+    "rangeSlider.interaction": {
+      "events": [
+        "SET_VALUES",
+        "SET_BOUNDS",
+        "SET_DISABLED",
+        "POINTER_DOWN",
+        "STEP",
+        "HOME",
+        "END",
+        "POINTER_MOVE",
+        "POINTER_UP"
+      ],
+      "type": "compound"
+    },
+    "rangeSlider.interaction.idle": {
+      "events": [
+        "SET_VALUES",
+        "SET_BOUNDS",
+        "SET_DISABLED",
+        "POINTER_DOWN",
+        "STEP",
+        "HOME",
+        "END"
+      ],
+      "type": "atomic"
+    },
+    "rangeSlider.interaction.dragging": {
+      "events": [
+        "POINTER_MOVE",
+        "POINTER_UP",
+        "SET_VALUES",
+        "SET_BOUNDS",
+        "SET_DISABLED"
+      ],
+      "type": "atomic"
+    }
+  }
+}

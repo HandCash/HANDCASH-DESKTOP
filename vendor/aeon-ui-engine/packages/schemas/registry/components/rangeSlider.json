@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/rangeSlider.json",
+  "title": "RangeSlider",
+  "description": "Two-thumb range via rangeSliderMachine — idle | dragging with values pair and minStepsBetween gap.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "RangeSlider"
+    },
+    "scope": {
+      "const": "rangeSlider"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "track",
+          "range",
+          "thumb",
+          "valueText"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "dragging"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "rangeSlider.root",
+          "description": "rangeSlider.root"
+        },
+        "Track": {
+          "const": "rangeSlider.track",
+          "description": "rangeSlider.track"
+        },
+        "Range": {
+          "const": "rangeSlider.range",
+          "description": "rangeSlider.range"
+        },
+        "Thumb": {
+          "const": "rangeSlider.thumb",
+          "description": "rangeSlider.thumb"
+        },
+        "ValueText": {
+          "const": "rangeSlider.valueText",
+          "description": "rangeSlider.valueText"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "rangeSliderMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SET_VALUES",
+          "SET_BOUNDS",
+          "SET_DISABLED",
+          "POINTER_DOWN",
+          "POINTER_MOVE",
+          "POINTER_UP",
+          "STEP",
+          "HOME",
+          "END"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "<RangeSlider.Root defaultValue={[20, 80]} minStepsBetween={1}>\n  <RangeSlider.Track /><RangeSlider.Range />\n  <RangeSlider.Thumb index={0} /><RangeSlider.Thumb index={1} />\n</RangeSlider.Root>"
+      ]
+    }
+  },
+  "x-aeon": {
+    "scope": "rangeSlider",
+    "parts": [
+      "root",
+      "track",
+      "range",
+      "thumb",
+      "valueText"
+    ],
+    "states": [
+      "idle",
+      "dragging"
+    ],
+    "machine": "rangeSliderMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SET_VALUES",
+      "SET_BOUNDS",
+      "SET_DISABLED",
+      "POINTER_DOWN",
+      "POINTER_MOVE",
+      "POINTER_UP",
+      "STEP",
+      "HOME",
+      "END"
+    ],
+    "slots": {
+      "Root": "rangeSlider.root",
+      "Track": "rangeSlider.track",
+      "Range": "rangeSlider.range",
+      "Thumb": "rangeSlider.thumb",
+      "ValueText": "rangeSlider.valueText"
+    },
+    "examples": [
+      "<RangeSlider.Root defaultValue={[20, 80]} minStepsBetween={1}>\n  <RangeSlider.Track /><RangeSlider.Range />\n  <RangeSlider.Thumb index={0} /><RangeSlider.Thumb index={1} />\n</RangeSlider.Root>"
+    ]
+  }
+}

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { Accordion, Progress, StatusBanner } from '@aeon-ui/react'
+import { Accordion, Button, Progress, StatusBanner } from '@aeon-ui/react'
 import {
   importItemBrowserMachine,
   queuedOutpoints,
@@ -36,7 +36,7 @@ import { DeferredImage } from '../DeferredImage'
 import { SelectionCheckbox } from '../SelectionCheckbox'
 import { Skeleton, SkeletonLine } from '../Skeleton'
 import { useWalletActionDock } from '../WalletActionDock'
-import { CloseIcon, CollectablesIcon, DownloadIcon } from '../icons'
+import { CloseIcon, CollectablesIcon, DownloadIcon, ExpandMoreIcon } from '../icons'
 import { useScrollIdle } from '../uiFeed/useScrollIdle'
 import { useWindowedRange } from '../uiFeed/useWindowedRange'
 
@@ -360,7 +360,7 @@ const ImportShelf = memo(function ImportShelf({
             </span>
           </span>
           <Accordion.ItemIndicator className="collect-collection-indicator" aria-hidden>
-            ▾
+            <ExpandMoreIcon size={20} />
           </Accordion.ItemIndicator>
         </Accordion.ItemTrigger>
         <SelectionCheckbox
@@ -500,9 +500,9 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             <StatusBanner.Body>{context.syncError ?? context.readError}</StatusBanner.Body>
           </StatusBanner.Copy>
           <div className="actions">
-            <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'RETRY' })}>
-              Try again
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'RETRY' })}>
+              <Button.Label>Try again</Button.Label>
+            </Button.Root>
           </div>
         </StatusBanner.Root>
       ) : null}
@@ -543,14 +543,13 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             <StatusBanner.Body>Keeps going if you leave this page — Activity shows it too.</StatusBanner.Body>
           </StatusBanner.Copy>
           <div className="actions">
-            <button
-              type="button"
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
               disabled={run.stopping || run.waiting.length === 0}
               onClick={() => send({ type: 'STOP' })}
             >
-              {run.stopping ? 'Stopping…' : 'Stop'}
-            </button>
+              <Button.Label>{run.stopping ? 'Stopping…' : 'Stop'}</Button.Label>
+            </Button.Root>
           </div>
         </StatusBanner.Root>
       ) : null}
@@ -562,9 +561,9 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             {notice.body ? <StatusBanner.Body>{notice.body}</StatusBanner.Body> : null}
           </StatusBanner.Copy>
           <div className="actions">
-            <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'DISMISS' })}>
-              Dismiss
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'DISMISS' })}>
+              <Button.Label>Dismiss</Button.Label>
+            </Button.Root>
           </div>
         </StatusBanner.Root>
       ) : null}
@@ -603,7 +602,7 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
             collapsible
             defaultValue={context.shelves.length === 1 ? [context.shelves[0]!.key] : []}
             onValueChange={onOpen}
-            className={context.shelves.length > 1 ? 'collect-collections collect-collections--many' : 'collect-collections'}
+            className="collect-collections"
           >
             {context.shelves.map((shelf) => (
               <ImportShelf
@@ -630,9 +629,9 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
       )}
 
       <div className="actions">
-        <button type="button" className="btn btn-ghost" onClick={props.onBack}>
-          Back
-        </button>
+        <Button.Root variant="ghost" className="btn btn-ghost" onClick={props.onBack}>
+          <Button.Label>Back</Button.Label>
+        </Button.Root>
       </div>
     </div>
   )

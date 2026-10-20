@@ -1,3 +1,5 @@
+import { Button, Field } from '@aeon-ui/react'
+import { Switch } from '@aeon-ui/ui'
 import { useEffect, useState } from 'react'
 import {
   getHistoryBackupPrefs,
@@ -11,6 +13,8 @@ import {
 } from '../../wallet/walletSetupApply'
 import { playWalletSound } from '../../wallet/soundService'
 import { toastSuccess } from '../../wallet/toast'
+import { CloudUploadIcon } from '../icons'
+import { SettingsControlRow } from './SettingsControlRow'
 
 type Props = {
   id?: string
@@ -75,37 +79,33 @@ export function HistoryBackupUrlField({
 
   return (
     <div className="settings-form settings-form-compact" data-aeon-part="history-url-field">
-      {!customHost && !optedOut ? (
-        <p className="settings-row-desc" data-aeon-part="history-url-hint">
-          History host: <strong>{HANDCASH_HISTORY_HOST_LABEL}</strong>
-        </p>
-      ) : null}
-
-      {optedOut && !customHost ? (
-        <p className="settings-row-desc" data-aeon-part="history-url-hint">
-          No backup host — you chose not to use HandCash during setup.
-        </p>
-      ) : null}
-
-      <label className="wallet-setup-option" style={{ marginTop: 8 }}>
-        <input
-          type="checkbox"
-          checked={customHost}
-          onChange={(e) => {
-            const on = e.target.checked
-            setCustomHost(on)
-            if (!on && !optedOut) save(handCashHistoryUrl())
-          }}
-        />
-        <span className="wallet-setup-option-body">
-          <strong>Use a custom history host</strong>
-        </span>
-      </label>
+      <ul className="settings-list">
+        <SettingsControlRow
+          label="Custom history host"
+          icon={<CloudUploadIcon size={20} />}
+          description={
+            customHost
+              ? 'Backups go to the URL below'
+              : optedOut
+                ? 'Off · you chose no backup host during setup'
+                : `Off · backups go to ${HANDCASH_HISTORY_HOST_LABEL}`
+          }
+        >
+          <Switch.Root
+            checked={customHost}
+            aria-label="Custom history host"
+            onCheckedChange={(on) => {
+              setCustomHost(on)
+              if (!on && !optedOut) save(handCashHistoryUrl())
+            }}
+          />
+        </SettingsControlRow>
+      </ul>
 
       {customHost ? (
-        <div className="field">
-          <label htmlFor={id}>{label}</label>
-          <input
+        <Field.Root className="field">
+          <Field.Label htmlFor={id}>{label}</Field.Label>
+          <Field.Control
             id={id}
             type="url"
             placeholder={handCashHistoryUrl()}
@@ -114,24 +114,23 @@ export function HistoryBackupUrlField({
             autoComplete="off"
             spellCheck={false}
           />
-        </div>
+        </Field.Root>
       ) : null}
 
       {showActions && customHost ? (
         <div className="actions">
-          <button type="button" className="btn btn-primary" onClick={() => save(draft)}>
-            Save URL
-          </button>
-          <button
-            type="button"
+          <Button.Root variant="solid" className="btn btn-primary" onClick={() => save(draft)}>
+            <Button.Label>Save URL</Button.Label>
+          </Button.Root>
+          <Button.Root variant="ghost"
             className="btn btn-ghost"
             onClick={() => {
               setCustomHost(false)
               save(handCashHistoryUrl())
             }}
           >
-            Use HandCash
-          </button>
+            <Button.Label>Use HandCash</Button.Label>
+          </Button.Root>
         </div>
       ) : null}
     </div>

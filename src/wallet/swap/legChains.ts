@@ -108,6 +108,7 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
         value: signed.tx.outputs[0]!.value,
         async commit() {
           const sent = await wallet.broadcastRaw(signed.hex, signed.txid)
+          if (path.kind === 'claim') await wallet.recordClaim(signed.txid, signed.tx.outputs[0]!.value)
           console.info(`[swap-settle] ${chain} ${label} ${signed.txid.slice(0, 12)} ${sent}`)
         },
       }
@@ -122,6 +123,7 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<Sw
         async commit() {
           wallet.receiveScript()
           const sent = await wallet.broadcastRaw(filled.hex, filled.txid)
+          await wallet.recordClaim(filled.txid, filled.value)
           console.info(`[swap-settle] ${chain} ${label} ${filled.txid.slice(0, 12)} ${sent} (presigned)`)
         },
       }

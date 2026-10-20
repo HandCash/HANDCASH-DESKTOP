@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useRef, useState } from 'react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
@@ -479,8 +480,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           ) : null}
           {!isModel && item.imageUrl ? (
             <div className="collectable-details-media-actions">
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 onClick={copyImage}
                 disabled={action.busy}
@@ -490,7 +490,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               >
                 <CopyIcon size={14} />
                 {action.running('copy') ? 'Copying…' : 'Copy image'}
-              </button>
+              </Button.Root>
             </div>
           ) : null}
         </div>

@@ -51,16 +51,21 @@ const Root = forwardRef<HTMLDivElement, MenuRootProps>(function MenuRoot(
   ref,
 ) {
   const [snapshot, send] = useAeonMachine(popoverMachine, { input: { open: defaultOpen } })
-  const resolvedOpen = open ?? snapshot.context.open
+  const machineOpen = snapshot.context.open
+  const resolvedOpen = open ?? machineOpen
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const positionerRef = useRef<HTMLDivElement>(null)
   const triggerId = useId()
   const menuId = useId()
 
+  /** Machine intent, so a controlled owner still hears its own trigger. */
+  const reportedOpen = useRef(machineOpen)
   useEffect(() => {
-    onOpenChange?.(resolvedOpen)
-  }, [resolvedOpen, onOpenChange])
+    if (reportedOpen.current === machineOpen) return
+    reportedOpen.current = machineOpen
+    onOpenChange?.(machineOpen)
+  }, [machineOpen, onOpenChange])
 
   useEffect(() => {
     if (open !== undefined) send({ type: 'SET_OPEN', open })
@@ -129,11 +134,15 @@ export interface MenuPositionerProps extends HTMLAttributes<HTMLDivElement> {
   /** Mount menu in document.body (default true). */
   portalled?: boolean
   placement?: AnchorPlacement
+  /** Gap between trigger and menu (default 4). */
+  gutter?: number
+  /** Stack level for the portalled surface (default 50). */
+  zIndex?: number
   children?: ReactNode
 }
 
 const Positioner = forwardRef<HTMLDivElement, MenuPositionerProps>(function MenuPositioner(
-  { portalled = true, placement = 'bottom-start', children, className, ...rest },
+  { portalled = true, placement = 'bottom-start', gutter, zIndex, children, className, ...rest },
   ref,
 ) {
   const { open, triggerRef, positionerRef } = useMenuCtx()
@@ -148,6 +157,8 @@ const Positioner = forwardRef<HTMLDivElement, MenuPositionerProps>(function Menu
       positionerRef={positionerRef}
       portalled={portalled}
       placement={placement}
+      gutter={gutter}
+      zIndex={zIndex}
       className={className}
       {...rest}
     >
@@ -160,13 +171,41 @@ const Content = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(funct
   { onKeyDown, ...rest },
   ref,
 ) {
-  const { open, send, menuId } = useMenuCtx()
+  const { open, send, menuId, triggerRef } = useMenuCtx()
+  const contentRef = useRef<HTMLDivElement | null>(null)
+
+  // Focus enters the surface while it is open and returns to the trigger on
+  // dismiss, so keyboard users stay inside the menu they opened.
+  useEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current
+    contentRef.current?.focus({ preventScroll: true })
+    return () => {
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true })
+    }
+  }, [open, triggerRef])
+
+  // Escape closes wherever focus sits — trigger, item or elsewhere on the page.
+  useEffect(() => {
+    if (!open) return
+    const onDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') send({ type: 'ESCAPE' })
+    }
+    document.addEventListener('keydown', onDocumentKeyDown)
+    return () => document.removeEventListener('keydown', onDocumentKeyDown)
+  }, [open, send])
+
   if (!open) return null
   return (
     <div
-      ref={ref}
+      ref={(node) => {
+        contentRef.current = node
+        if (typeof ref === 'function') ref(node)
+        else if (ref) ref.current = node
+      }}
       id={menuId}
       role="menu"
+      tabIndex={-1}
       {...mergeProps(
         partAttrs(menuAnatomy.scope, menuAnatomy.content, { state: 'open' }),
         {

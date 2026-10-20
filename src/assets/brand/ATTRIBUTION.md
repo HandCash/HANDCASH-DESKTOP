@@ -19,3 +19,14 @@ Brand marks are HandCash property and used here as part of the official HandCash
 The Litecoin, Bitcoin Cash, Bitcoin and Dogecoin glyphs in `src/components/icons.tsx`
 come from [`cryptocurrency-icons`](https://github.com/spothq/cryptocurrency-icons) 0.18.1
 (CC0 1.0). Disc colours are the chains' own brand colours, set in `handcash.css`.
+
+## Import source marks
+
+Shown only to name the wallet a user imports from (Settings → Import).
+
+| File | Source |
+|------|--------|
+| `wallets/twetch.svg` | https://twetch.com/favicon.svg |
+| `wallets/yours.png` | https://github.com/yours-org/yours-wallet/blob/main/public/logo192.png |
+
+Both marks belong to their owners.

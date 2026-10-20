@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Prompt } from '@aeon-ui/react'
+import { Button, Prompt } from '@aeon-ui/react'
 import { useUpdate } from '../wallet/updateProvider'
 import { playWalletSound } from '../wallet/soundService'
 
@@ -200,22 +200,20 @@ export function UpdatePrompt() {
                 {copy.action ? (
                   <div className="update-toast-actions">
                     {copy.action === 'download' ? (
-                      <button
-                        type="button"
+                      <Button.Root variant="solid"
                         className="btn btn-primary"
                         onClick={() => void download()}
                       >
-                        {sideloadManual ? 'Get update' : 'Update'}
-                      </button>
+                        <Button.Label>{sideloadManual ? 'Get update' : 'Update'}</Button.Label>
+                      </Button.Root>
                     ) : null}
                     {copy.action === 'restart' ? (
-                      <button
-                        type="button"
+                      <Button.Root variant="solid"
                         className="btn btn-primary"
                         onClick={() => void install()}
                       >
-                        Restart to Update
-                      </button>
+                        <Button.Label>Restart to Update</Button.Label>
+                      </Button.Root>
                     ) : null}
                   </div>
                 ) : null}

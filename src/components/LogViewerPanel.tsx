@@ -1,3 +1,4 @@
+import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import {
   clearAppLogs,
@@ -13,6 +14,7 @@ import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { useAsyncAction } from '../hooks/useAsyncAction'
+import { SettingsSection } from './settings'
 
 const DISPLAY_LINES = 300
 
@@ -140,91 +142,100 @@ export function LogViewerPanel() {
         unexpectedly, the previous session appears at the top.
       </p>
 
-      <div className="settings-form settings-form-compact log-viewer-tools">
-        <div className="field">
-          <label htmlFor="log-upload-url">Upload URL</label>
-          <input
-            id="log-upload-url"
-            className="settings-control-input settings-control-input-block"
-            type="url"
-            inputMode="url"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="https://…/v1/logs/hc-…"
-            value={logUploadUrl}
-            data-aeon-part="log-upload-url"
-            onChange={(e) => setLogUploadUrlState(e.target.value)}
-            onBlur={() => setLogUploadUrl(logUploadUrl)}
-          />
-          <p className="field-hint">Filled in automatically — change only if support gave you another.</p>
-        </div>
-        <div className="field">
-          <label htmlFor="log-filter">Filter</label>
-          <input
-            id="log-filter"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="cloud-backup, sync, error…"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        <div
-          className="actions log-viewer-actions"
-          data-aeon-part="log-actions"
-          data-aeon-state={logs.stateAttr}
-        >
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={logs.busy}
-            data-aeon-part="refresh-logs"
-            onClick={() => void refresh()}
-          >
-            {logs.running('refresh') ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={() => void copyAll()}>
-            Copy
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            data-aeon-part="upload-logs"
-            disabled={logs.busy}
-            onClick={() => void upload()}
-          >
-            {logs.running('upload') ? 'Uploading…' : 'Upload'}
-          </button>
-          {window.handcash?.openLogs ? (
-            <button
-              type="button"
-              className="btn btn-ghost"
-              data-aeon-part="open-logs"
-              onClick={() => {
-                playWalletSound('soft')
-                void window.handcash?.openLogs?.().then((result) => {
-                  if (result && !result.ok) playWalletSound('error')
-                })
-              }}
+      <SettingsSection title="Send to support" part="upload">
+        <div className="settings-form settings-form-compact log-viewer-tools">
+          <Field.Root className="field">
+            <Field.Label htmlFor="log-upload-url">Upload URL</Field.Label>
+            <Field.Control
+              id="log-upload-url"
+              className="settings-control-input settings-control-input-block"
+              type="url"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="https://…/v1/logs/hc-…"
+              value={logUploadUrl}
+              data-aeon-part="log-upload-url"
+              onChange={(e) => setLogUploadUrlState(e.target.value)}
+              onBlur={() => setLogUploadUrl(logUploadUrl)}
+            />
+            <Field.Hint className="field-hint">
+              Filled in automatically. Change it only if support gave you another.
+            </Field.Hint>
+          </Field.Root>
+          <div className="actions" data-aeon-state={logs.stateAttr}>
+            <Button.Root
+              variant="solid"
+              className="btn btn-primary"
+              data-aeon-part="upload-logs"
+              disabled={logs.busy}
+              onClick={() => void upload()}
             >
-              Open folder
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => {
-              playWalletSound('soft')
-              clearAppLogs()
-              clearPreviousSessionLogs()
-              setEntries([])
-              setPrevious([])
-            }}
-          >
-            Clear ring
-          </button>
+              <Button.Label>{logs.running('upload') ? 'Uploading…' : 'Upload session'}</Button.Label>
+            </Button.Root>
+          </div>
         </div>
-      </div>
+      </SettingsSection>
+
+      <SettingsSection title="This session" part="session">
+        <div className="settings-form settings-form-compact log-viewer-tools">
+          <Field.Root className="field">
+            <Field.Label htmlFor="log-filter">Filter</Field.Label>
+            <Field.Control
+              id="log-filter"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="cloud-backup, sync, error…"
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field.Root>
+          <div
+            className="actions log-viewer-actions"
+            data-aeon-part="log-actions"
+            data-aeon-state={logs.stateAttr}
+          >
+            <Button.Root
+              variant="ghost"
+              className="btn btn-ghost"
+              disabled={logs.busy}
+              data-aeon-part="refresh-logs"
+              onClick={() => void refresh()}
+            >
+              <Button.Label>{logs.running('refresh') ? 'Refreshing…' : 'Refresh'}</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void copyAll()}>
+              <Button.Label>Copy</Button.Label>
+            </Button.Root>
+              {window.handcash?.openLogs ? (
+                <Button.Root variant="ghost"
+                  className="btn btn-ghost"
+                  data-aeon-part="open-logs"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void window.handcash?.openLogs?.().then((result) => {
+                      if (result && !result.ok) playWalletSound('error')
+                    })
+                  }}
+                >
+                  <Button.Label>Open folder</Button.Label>
+                </Button.Root>
+              ) : null}
+              <Button.Root variant="ghost"
+                className="btn btn-ghost"
+                onClick={() => {
+                  playWalletSound('soft')
+                  clearAppLogs()
+                  clearPreviousSessionLogs()
+                  setEntries([])
+                  setPrevious([])
+                }}
+              >
+                <Button.Label>Clear ring</Button.Label>
+              </Button.Root>
+          </div>
+        </div>
+      </SettingsSection>
 
       {logPath ? (
         <p className="settings-log-path mono" title={logPath}>

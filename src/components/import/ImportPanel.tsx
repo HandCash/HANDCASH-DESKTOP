@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { ListRow, StatusBanner } from '@aeon-ui/react'
+import { Button, StatusBanner } from '@aeon-ui/react'
 import { legacyImportMachine } from '../../machines/legacyImportMachine'
 import { formatBsv } from '../../wallet/session'
 import {
@@ -28,6 +28,7 @@ import {
   sweepImportedSource,
   takeImportIntent,
   type ImportedSource,
+  type ImportSourceKind,
   type ScanProgress,
   type SweepProgress,
 } from '../../wallet/import'
@@ -38,6 +39,8 @@ import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { AsyncActionPrompt } from '../AsyncActionPrompt'
 import { ImportSecretForm, type SecretFields } from './ImportSecretForm'
 import { ImportSourceView, type SourceFace } from './ImportSourceView'
+import { SettingsNavRow } from '../settings/SettingsNavRow'
+import { SettingsSection } from '../settings/SettingsSection'
 import { ImportSourceIcon } from './importSourceIcons'
 
 function errorText(err: unknown): string {
@@ -83,6 +86,48 @@ function scanProgressMessage(p: ScanProgress): { message: string; percent: numbe
     case 'holdings':
       return { message: `Reading holdings · ${p.done}/${p.total}`, percent: of(p.done, p.total) }
   }
+}
+
+const WALLET_KINDS: readonly ImportSourceKind[] = ['handcash', 'twetch', 'yours']
+
+const KIND_GROUPS: ReadonlyArray<{ title: string; kinds: readonly ImportSourceKind[] }> = [
+  { title: 'From a wallet', kinds: IMPORT_SOURCE_KINDS.filter((k) => WALLET_KINDS.includes(k)) },
+  { title: 'From a phrase or key', kinds: IMPORT_SOURCE_KINDS.filter((k) => !WALLET_KINDS.includes(k)) },
+]
+
+function SourceKindList({ onPick }: { onPick: (kind: ImportSourceKind) => void }) {
+  return (
+    <>
+      {KIND_GROUPS.map((group) => (
+        <SettingsSection key={group.title} title={group.title} part="kinds">
+          <ul className="settings-list">
+            {group.kinds.map((kind) => (
+              <SettingsNavRow
+                key={kind}
+                label={IMPORT_SOURCE_LABELS[kind]}
+                description={IMPORT_SOURCE_HINTS[kind]}
+                leading={<ImportSourceIcon kind={kind} />}
+                onClick={() => onPick(kind)}
+              />
+            ))}
+          </ul>
+        </SettingsSection>
+      ))}
+    </>
+  )
+}
+
+/** What a saved source still holds, naming only what is there. */
+function sourceSummary(source: ImportedSource): string {
+  const kind = IMPORT_SOURCE_LABELS[source.kind]
+  if (!source.scan) return `${kind} · not scanned yet`
+  const { cashSats, itemCount, itemCountCapped, tokens } = planSweep(source).totals
+  const held = [
+    cashSats > 0 ? `${formatBsv(cashSats)} BSV` : null,
+    itemCount > 0 ? `${itemCount.toLocaleString()}${itemCountCapped ? '+' : ''} item${itemCount === 1 ? '' : 's'}` : null,
+    tokens.length > 0 ? `${tokens.length} token${tokens.length === 1 ? '' : 's'}` : null,
+  ].filter(Boolean)
+  return `${kind} · ${held.length > 0 ? held.join(' · ') : 'nothing left to import'}`
 }
 
 export function ImportPanel() {
@@ -268,8 +313,8 @@ export function ImportPanel() {
       {snapshot.matches('list') ? (
         <>
           <p className="settings-hint">
-            Keep older wallets here — HandCash, Twetch, Yours, any phrase or key. They stay separate
-            from this wallet’s identity; sweep compatible assets in when you choose.
+            Bring coins, items and tokens over from another wallet. Its keys stay on this device, apart
+            from your HandCash identity.
           </p>
           {pending ? (
             <StatusBanner.Root tone="warning" status="paused-items">
@@ -279,90 +324,58 @@ export function ImportPanel() {
                   {Math.max(0, pending.moved).toLocaleString()} moved,{' '}
                   {Math.max(0, pending.offset).toLocaleString()} checked from{' '}
                   <span className="mono">{pending.sourceAddress}</span>. Open the wallet it came
-                  from and sweep again to resume.
+                  from and import again to resume.
                 </StatusBanner.Body>
               </StatusBanner.Copy>
               <div className="actions" data-aeon-state={forget.stateAttr}>
-                <button
-                  type="button"
+                <Button.Root
+                  variant="ghost"
                   className="btn btn-ghost"
                   disabled={forget.busy}
                   onClick={() => void forgetPending()}
                 >
-                  Forget paused import
-                </button>
+                  <Button.Label>Forget paused import</Button.Label>
+                </Button.Root>
               </div>
             </StatusBanner.Root>
           ) : null}
-          {sources.length > 0 ? (
-            <ul data-aeon-part="sources">
-              {sources.map((s) => {
-                const totals = planSweep(s).totals
-                return (
-                  <li key={s.id}>
-                    <ListRow.Root
-                      as="button"
-                      type="button"
-                      className="settings-row"
-                      data-aeon-state={s.kind}
-                      onClick={() => send({ type: 'OPEN', sourceId: s.id })}
-                    >
-                      <ListRow.Leading aria-hidden>
-                        <ImportSourceIcon kind={s.kind} />
-                      </ListRow.Leading>
-                      <ListRow.Label>{s.label}</ListRow.Label>
-                      <ListRow.Description>
-                        {IMPORT_SOURCE_LABELS[s.kind]}
-                        {s.scan
-                          ? ` · ${formatBsv(totals.cashSats)} BSV · ${totals.itemCount}${totals.itemCountCapped ? '+' : ''} items · ${totals.tokens.length} tokens`
-                          : ' · not scanned'}
-                      </ListRow.Description>
-                    </ListRow.Root>
-                  </li>
-                )
-              })}
-            </ul>
-          ) : (
-            <p className="settings-row-desc">No saved wallets yet.</p>
-          )}
           {context.error ? (
             <p className="error" role="alert">
               {context.error}
             </p>
           ) : null}
-          <div className="actions">
-            <button type="button" className="btn btn-primary" onClick={() => send({ type: 'ADD' })}>
-              Add a wallet
-            </button>
-          </div>
+          {sources.length > 0 ? (
+            <>
+              <ul className="settings-list" data-aeon-part="sources">
+                {sources.map((s) => (
+                  <SettingsNavRow
+                    key={s.id}
+                    label={s.label}
+                    description={sourceSummary(s)}
+                    leading={<ImportSourceIcon kind={s.kind} />}
+                        onClick={() => send({ type: 'OPEN', sourceId: s.id })}
+                  />
+                ))}
+              </ul>
+              <div className="actions">
+                <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'ADD' })}>
+                  <Button.Label>Add another wallet</Button.Label>
+                </Button.Root>
+              </div>
+            </>
+          ) : (
+            <SourceKindList onPick={(kind) => send({ type: 'PICK', kind })} />
+          )}
         </>
       ) : null}
 
       {snapshot.matches('picking') ? (
         <>
-          <ul data-aeon-part="kinds">
-            {IMPORT_SOURCE_KINDS.map((kind) => (
-              <li key={kind}>
-                <ListRow.Root
-                  as="button"
-                  type="button"
-                  className="settings-row"
-                  data-aeon-state={kind}
-                  onClick={() => send({ type: 'PICK', kind })}
-                >
-                  <ListRow.Leading aria-hidden>
-                    <ImportSourceIcon kind={kind} />
-                  </ListRow.Leading>
-                  <ListRow.Label>{IMPORT_SOURCE_LABELS[kind]}</ListRow.Label>
-                  <ListRow.Description>{IMPORT_SOURCE_HINTS[kind]}</ListRow.Description>
-                </ListRow.Root>
-              </li>
-            ))}
-          </ul>
+          <SourceKindList onPick={(kind) => send({ type: 'PICK', kind })} />
           <div className="actions">
-            <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-              Back
-            </button>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
+              <Button.Label>Back</Button.Label>
+            </Button.Root>
           </div>
         </>
       ) : null}

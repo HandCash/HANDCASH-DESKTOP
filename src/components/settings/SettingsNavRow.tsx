@@ -10,6 +10,8 @@ type Props = {
   statusTone?: 'ok' | 'warn' | 'muted'
   icon?: ReactNode
   iconTone?: SettingIconTone
+  /** Replaces the icon tile, e.g. a brand mark that brings its own tile. */
+  leading?: ReactNode
   onClick: () => void
   trailing?: ReactNode
   trailingEnd?: ReactNode
@@ -23,6 +25,7 @@ export function SettingsNavRow({
   statusTone = 'muted',
   icon,
   iconTone = 'default',
+  leading,
   onClick,
   trailing,
   trailingEnd,
@@ -36,9 +39,9 @@ export function SettingsNavRow({
           onClick()
         }}
       >
-        {icon ? (
+        {leading || icon ? (
           <ListRow.Leading aria-hidden>
-            <SettingsRowIcon tone={iconTone}>{icon}</SettingsRowIcon>
+            {leading ?? <SettingsRowIcon tone={iconTone}>{icon}</SettingsRowIcon>}
           </ListRow.Leading>
         ) : null}
         <ListRow.Label>

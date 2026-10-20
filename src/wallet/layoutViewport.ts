@@ -10,7 +10,7 @@
 export const LAYOUT_COMPACT_CLASS = 'layout-compact'
 
 /** Width at or below this is compact even in landscape (narrow tile). */
-export const COMPACT_MAX_WIDTH_PX = 720
+export const COMPACT_MAX_WIDTH_PX = 900
 
 type Listener = (compact: boolean) => void
 

@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import { AppAvatar } from './AppAvatar'
@@ -173,36 +174,33 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
           <div className="actions qr-actions app-details-actions wallet-action-bar">
             {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
             {autoPay?.enabled ? (
-              <button
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
-                type="button"
                 onClick={() => clearAutoPaySettings(app.origin)}
               >
-                Turn off auto-pay
-              </button>
+                <Button.Label>Turn off auto-pay</Button.Label>
+              </Button.Root>
             ) : null}
             {acceptIncoming ? (
-              <button
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
-                type="button"
                 onClick={() => setAcceptIncomingFunds(app.origin, false)}
               >
-                Require receive approval
-              </button>
+                <Button.Label>Require receive approval</Button.Label>
+              </Button.Root>
             ) : null}
-            <button
+            <Button.Root variant="ghost"
               className="btn btn-ghost"
-              type="button"
               onClick={() => {
                 onRevoke(app.origin)
                 onClose()
               }}
             >
-              Disconnect
-            </button>
-            <button className="btn btn-ghost" type="button" onClick={onClose}>
-              Done
-            </button>
+              <Button.Label>Disconnect</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={onClose}>
+              <Button.Label>Done</Button.Label>
+            </Button.Root>
           </div>
         </div>
       </div>

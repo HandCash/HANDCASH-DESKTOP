@@ -32,13 +32,13 @@ describe('held value', () => {
   })
 
   it('splits the total by value in whole percent, leaving out coins worth nothing', () => {
-    expect(split(['BSV', 92], ['LTC', 8])).toBe('92% BSV + 8% LTC')
-    expect(split(['BSV', 50], ['LTC', 30], ['BTC', 0], ['DOGE', 20])).toBe('50% BSV + 30% LTC + 20% DOGE')
+    expect(split(['BSV', 92], ['LTC', 8])).toBe('92% BSV / 8% LTC')
+    expect(split(['BSV', 50], ['LTC', 30], ['BTC', 0], ['DOGE', 20])).toBe('50% BSV / 30% LTC / 20% DOGE')
   })
 
   it('never rounds a holding away or claims all of the total', () => {
-    expect(split(['BSV', 1000], ['LTC', 1])).toBe('>99% BSV + <1% LTC')
-    expect(split(['BSV', 1], ['BCH', 1000])).toBe('<1% BSV + >99% BCH')
+    expect(split(['BSV', 1000], ['LTC', 1])).toBe('>99% BSV / <1% LTC')
+    expect(split(['BSV', 1], ['BCH', 1000])).toBe('<1% BSV / >99% BCH')
   })
 
   it('has no split with only BSV, and is all of one coin without BSV', () => {

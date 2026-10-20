@@ -329,6 +329,25 @@ export const sliderAnatomy = anatomy('slider', [
   'valueText',
 ] as const)
 
+export const rangeSliderAnatomy = anatomy('rangeSlider', [
+  'root',
+  'track',
+  'range',
+  'thumb',
+  'valueText',
+] as const)
+
+export const fileUploadAnatomy = anatomy('fileUpload', [
+  'root',
+  'dropzone',
+  'input',
+  'label',
+  'hint',
+  'preview',
+  'clearTrigger',
+  'rejectionMessage',
+] as const)
+
 export const pinInputAnatomy = anatomy('pinInput', ['root', 'input'] as const)
 
 /**

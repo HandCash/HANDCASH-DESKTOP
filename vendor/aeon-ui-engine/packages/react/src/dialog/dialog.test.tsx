@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Dialog } from '../dialog/index.js'
 
@@ -46,5 +47,31 @@ describe('Dialog', () => {
     expect(document.body.style.overflow).toBe('hidden')
     unmount()
     expect(document.body.style.overflow).not.toBe('hidden')
+  })
+
+  it('reports the trigger to a controlled owner', async () => {
+    const user = userEvent.setup()
+
+    function Controlled() {
+      const [open, setOpen] = useState(false)
+      return (
+        <Dialog.Root open={open} onOpenChange={setOpen}>
+          <Dialog.Trigger>Open</Dialog.Trigger>
+          <Dialog.Portal portalled={false}>
+            <Dialog.Content>
+              <Dialog.Title>Title</Dialog.Title>
+              <Dialog.CloseTrigger>Close</Dialog.CloseTrigger>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      )
+    }
+
+    render(<Controlled />)
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Close dialog' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

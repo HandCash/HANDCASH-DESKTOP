@@ -149,6 +149,9 @@ function coinWallet(who: Identity, c: SwapAsset) {
       if (!chainOf(c).online) throw new Error('chain unreachable')
       return broadcast(c, checkedTx(c, hex))
     },
+    async recordClaim(txid: string, litoshi: bigint) {
+      claimsRecorded.push({ who: who.name, chain: c, txid, litoshi })
+    },
   }
 }
 
@@ -159,6 +162,8 @@ let boxDown = false
 let nextMessage = 0
 const durable = new Map<string, string>()
 const tickets: ClaimTicket[] = []
+/** Claims each wallet booked as spendable at broadcast, rather than as deposits to wait out. */
+const claimsRecorded: Array<{ who: string; chain: SwapAsset; txid: string; litoshi: bigint }> = []
 
 vi.mock('../durableStorage', async (actual) => ({
   ...(await actual<typeof import('../durableStorage')>()),
@@ -258,6 +263,7 @@ beforeEach(() => {
   box = []
   boxDown = false
   tickets.length = 0
+  claimsRecorded.length = 0
   failNextFund = 0
   heals = 0
   beforeFund = undefined
@@ -289,6 +295,7 @@ describe('a direct swap between two wallets', () => {
     expect(m.peer.claimed).toBe(true)
     expect(heldBy('ltc', receiveScriptOf(taker, 'ltc'))).toBeGreaterThan(0n)
     expect(heldBy('doge', receiveScriptOf(maker, 'doge'))).toBeGreaterThan(0n)
+    expect(claimsRecorded.map((r) => `${r.who}:${r.chain}`).sort()).toEqual(['maker:doge', 'taker:ltc'])
     // The maker's fee output waits for HandCash, then returns at the maker's lock time.
     expect(m.outcome).toBeUndefined()
     at(T0 + 49 * H)
@@ -344,14 +351,14 @@ describe('a direct swap between two wallets', () => {
     await settle(maker)
     await settle(taker)
     expect(recordOf(maker, swapId).own.funding).toBeUndefined()
-    expect(describeSwap(recordOf(maker, swapId)).status).toBe("The taker's lock is waiting for a DOGE block (about every minute); you lock once it confirms")
-    expect(describeSwap(recordOf(taker, swapId)).status).toBe('Your lock is waiting for a DOGE block (about every minute); the maker locks once it confirms')
+    expect(describeSwap(recordOf(maker, swapId)).status).toBe("Confirming the taker's lock")
+    expect(describeSwap(recordOf(taker, swapId)).status).toBe('Confirming your lock')
 
     blocksHeld = false
     mineAll()
     await settle(taker)
     expect(recordOf(taker, swapId).own.buried).toBe(true)
-    expect(describeSwap(recordOf(taker, swapId)).status).toMatch(/^Waiting for the maker to lock; it may be offline, and has until /)
+    expect(describeSwap(recordOf(taker, swapId)).status).toMatch(/^Waiting for the maker to lock · until /)
     await settleBoth()
     expect(recordOf(taker, swapId).outcome).toBe('swapped')
   })

@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import { applyOnboardLock } from '../wallet/applyOnboardLock'
@@ -180,14 +181,13 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
         data-aeon-part="onboard-protect-actions"
         data-aeon-state={save.stateAttr}
       >
-        <button
-          type="button"
+        <Button.Root variant="solid"
           className="btn btn-primary auth-submit"
           disabled={save.busy}
           onClick={() => void apply()}
         >
-          {save.busy ? 'Saving…' : 'Continue'}
-        </button>
+          <Button.Label>{save.busy ? 'Saving…' : 'Continue'}</Button.Label>
+        </Button.Root>
       </div>
     </div>
   )

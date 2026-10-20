@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useActorRef, useSelector } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { Progress } from '@aeon-ui/react'
+import { Button, Progress } from '@aeon-ui/react'
 import { clearBackupBackoff } from '../wallet/backupWatchdog'
 import { fetchRemoteBrc39Meta, replaceLocalHistoryFromCloud } from '../wallet/historyBackup'
 import { ensureSuggestedHistoryBackupUrl } from '../wallet/historyBackupPrefs'
@@ -222,14 +222,14 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
         data-aeon-state={stateAttr}
       >
         {canRestore ? (
-          <button type="button" className="btn btn-primary primary" onClick={() => void restore()}>
-            {snapshot.matches('legacy') ? 'Restore with this password' : 'Restore history'}
-          </button>
+          <Button.Root variant="solid" className="btn btn-primary primary" onClick={() => void restore()}>
+            <Button.Label>{snapshot.matches('legacy') ? 'Restore with this password' : 'Restore history'}</Button.Label>
+          </Button.Root>
         ) : null}
         {canSkip ? (
-          <button type="button" className="btn btn-ghost" onClick={onSkip}>
-            {snapshot.matches('missing') ? 'Continue without history' : 'Skip for now'}
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={onSkip}>
+            <Button.Label>{snapshot.matches('missing') ? 'Continue without history' : 'Skip for now'}</Button.Label>
+          </Button.Root>
         ) : null}
       </div>
     </div>

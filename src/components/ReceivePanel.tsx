@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import { copyText } from '../wallet/clipboard'
@@ -13,12 +14,13 @@ import {
   type MarketSwapCurrency,
 } from '../wallet/marketSwap'
 import { DeferredImage } from './DeferredImage'
+import { AssetPicker, NETWORK_OPTIONS, swapCoinOption } from './NetworkPicker'
 import { SkeletonQr } from './Skeleton'
 import { CoinDepositProgress } from './CoinDepositProgress'
 import { useCoinDeposits } from '../features/coinDeposits'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { depositWaiting } from '../wallet/coins/depositPhase'
-import { COIN_CHAINS, COIN_INFO, isCoinChain } from '../wallet/coins/coinChains'
+import { COIN_INFO, isCoinChain } from '../wallet/coins/coinChains'
 
 export type ReceiveMode = 'peerpay' | 'address'
 
@@ -143,11 +145,6 @@ export function ReceivePanel({ address, identityKey }: Props) {
       <div className="receive-layout receive-layout-premium">
         <header className="receive-panel-intro">
           <h3 className="receive-panel-title">{coinInfo ? `Receive ${coinInfo.ticker}` : 'Receive BSV'}</h3>
-          <p className="receive-panel-lede">
-            {coinInfo
-              ? `${coinInfo.label} sent here stays ${coinInfo.label}, held by this wallet's own key. It can be spent after ${coinInfo.confirmations} ${coinInfo.label} confirmations, counted by this wallet.`
-              : 'Always settle to Bitcoin SV on this device. Swap from other assets when you need to top up.'}
-          </p>
         </header>
 
         <div className="receive-qr" data-aeon-part="media">
@@ -176,58 +173,52 @@ export function ReceivePanel({ address, identityKey }: Props) {
 
           {peerpayUri && !coin ? (
             <div className="actions receive-mode-actions">
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className={mode === 'peerpay' ? 'btn btn-primary' : 'btn btn-ghost'}
                 onClick={() => {
                   playWalletSound('soft')
                   setMode('peerpay')
                 }}
               >
-                PeerPay
-              </button>
-              <button
-                type="button"
+                <Button.Label>PeerPay</Button.Label>
+              </Button.Root>
+              <Button.Root variant="ghost"
                 className={mode === 'address' ? 'btn btn-primary' : 'btn btn-ghost'}
                 onClick={() => {
                   playWalletSound('soft')
                   setMode('address')
                 }}
               >
-                Address
-              </button>
+                <Button.Label>Address</Button.Label>
+              </Button.Root>
             </div>
           ) : null}
         </div>
 
         <div className="receive-info">
           <div className="field receive-via-field">
-            <label htmlFor="receive-via">Receive via</label>
-            <select
-              id="receive-via"
-              className="receive-via-select"
+            <AssetPicker
+              label="Receive via"
               value={viaId}
-              onChange={(e) => onViaChange(e.target.value)}
-            >
-              <option value="bsv">BSV — {NATIVE_BSV_ETA}</option>
-              {COIN_CHAINS.map((chain) => (
-                <option key={chain} value={chain}>
-                  {COIN_INFO[chain].ticker} — {COIN_INFO[chain].confirmations} {COIN_INFO[chain].label} confirmations
-                </option>
-              ))}
-              {swapCoins.map((coin) => (
-                <option key={coin.code} value={coin.code}>
-                  Swap from {coin.code} — {coin.eta}
-                </option>
-              ))}
-            </select>
+              options={[
+                ...NETWORK_OPTIONS.map((o) =>
+                  isCoinChain(o.value)
+                    ? { ...o, detail: `${COIN_INFO[o.value].confirmations} confirmations` }
+                    : { ...o, detail: NATIVE_BSV_ETA },
+                ),
+                ...swapCoins
+                  .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code))
+                  .map((c) => swapCoinOption(c, `Swap · ${c.eta}`)),
+              ]}
+              onChange={onViaChange}
+            />
             <p className="receive-eta-row" data-native={viaIsSwap ? undefined : ''}>
               <span className="receive-eta-label">Arrival</span>
               <strong className="receive-eta-value">{viaEta}</strong>
             </p>
             {viaIsSwap ? (
               <p className="receive-swap-note">
-                You’ll still receive BSV here. Opening HandCash swap for {viaLabel}…
+                Opening swap for {viaLabel}…
               </p>
             ) : null}
           </div>
@@ -251,13 +242,13 @@ export function ReceivePanel({ address, identityKey }: Props) {
             </ul>
           ) : null}
           <div className="actions receive-actions">
-            <button type="button" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
-              {coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
-            </button>
+            <Button.Root variant="solid" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
+              <Button.Label>{coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}</Button.Label>
+            </Button.Root>
             {coin ? null : (
-              <button type="button" className="btn btn-ghost" onClick={() => openAddMoney()}>
-                Add money
-              </button>
+              <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => openAddMoney()}>
+                <Button.Label>Add money</Button.Label>
+              </Button.Root>
             )}
           </div>
         </div>

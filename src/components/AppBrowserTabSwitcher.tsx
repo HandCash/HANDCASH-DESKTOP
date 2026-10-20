@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { useEffect, useRef } from 'react'
 import type { EmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
@@ -79,9 +80,9 @@ export function AppBrowserTabSwitcher({
           >
             <BackIcon size={18} />
           </button>
-          <button type="button" className="btn btn-ghost" onClick={onDone}>
-            Done
-          </button>
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={onDone}>
+            <Button.Label>Done</Button.Label>
+          </Button.Root>
         </div>
       </header>
 

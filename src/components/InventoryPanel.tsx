@@ -1,18 +1,10 @@
-import {
-  startTransition,
-  useDeferredValue,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
+import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   currentIssuerResolver,
   currentIssuerTrust,
   useIssuerIdentitiesGeneration,
 } from '../hooks/useIssuerView'
-import { Accordion } from '@aeon-ui/react'
+import { Accordion, Button } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { CollectFacepile } from './CollectFacepile'
 import { SelectionCheckbox } from './SelectionCheckbox'
@@ -71,7 +63,7 @@ import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
 import { HctChip, HctShelf, hctChipActions, useHctHoldings, type HctChipActions } from './HctShelf'
 import type { HctAssetSummary } from '../wallet/hct/wallet'
-import { CloseIcon, CollectablesIcon, FireIcon, SendIcon } from './icons'
+import { CloseIcon, CollectablesIcon, ExpandMoreIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
   classifyFungibleEncoding,
@@ -98,6 +90,7 @@ import {
   type MarketListingMark,
 } from '../features/market'
 import { isItemSent } from '../wallet/sentItemGuard'
+import { isCompactLayout, subscribeCompactLayout } from '../wallet/layoutViewport'
 import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
@@ -114,6 +107,12 @@ import { useWalletActionDock } from './WalletActionDock'
 const RENDER_CHUNK = 6
 /** A basket answer this recent is reused on a tab visit instead of re-read. */
 const INVENTORY_VISIT_FRESH_MS = 30_000
+
+/** Fixed so fewer items never mean wider cards; layout-compact.css matches. */
+const GRID_COLUMNS = 8
+const GRID_COLUMNS_COMPACT = 6
+/** A card's art plus its name, for windowing estimates only. */
+const GRID_ROW_EXTENT = 112
 
 function liveMarketListing(outpoint: string): MarketListingMark | null {
   // Spent tips can still have a local listing auth until the next write;
@@ -228,7 +227,7 @@ function CollectableGridItem({
           }}
         >
           <SendIcon size={14} />
-          {sending ? verb : 'Send'}
+          <span className="collectable-send-label">{sending ? verb : 'Send'}</span>
         </button>
         <SelectionCheckbox
           className="collect-select--inline"
@@ -339,22 +338,21 @@ function CollectableItems({
   verification,
   selected,
   onSelectionChange,
-  columns = 3,
 }: {
   items: Collectable[]
   view: CollectionView
   verification: VerificationProgress
   selected: ReadonlySet<string>
   onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
-  /** Grid columns the CSS lays out at this nesting — folders are fixed at two. */
-  columns?: number
 }) {
+  const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
+  const columns = compact ? GRID_COLUMNS_COMPACT : GRID_COLUMNS
   const listRef = useRef<HTMLUListElement>(null)
   const scrolling = useScrollIdle(listRef)
   const shownCount = useChunkedCount(items.length, RENDER_CHUNK, scrolling)
   const windowed = useWindowedRange({
     total: shownCount,
-    itemExtent: view === 'grid' ? 176 : 56,
+    itemExtent: view === 'grid' ? GRID_ROW_EXTENT : 56,
     columns: view === 'grid' ? columns : 1,
     overscan: 6,
     scrollRef: listRef,
@@ -476,7 +474,7 @@ function IssuerGroupItem({
             </span>
           </span>
           <Accordion.ItemIndicator className="collect-collection-indicator" aria-hidden>
-            ▾
+            <ExpandMoreIcon size={20} />
           </Accordion.ItemIndicator>
         </Accordion.ItemTrigger>
         <SelectionCheckbox
@@ -524,7 +522,6 @@ function IssuerGroupItem({
               verification={verification}
               selected={selected}
               onSelectionChange={onSelectionChange}
-              columns={2}
             />
           </section>
         ))}
@@ -541,7 +538,6 @@ function IssuerGroupItem({
               verification={verification}
               selected={selected}
               onSelectionChange={onSelectionChange}
-              columns={2}
             />
           </section>
         ) : null}
@@ -950,7 +946,7 @@ export function InventoryPanel() {
         <EmptyState
           icon={<CollectablesIcon size={28} />}
           title="No collectables here"
-          body="Items and tokens live on the install that received them. This device updates from the network automatically; send to move them."
+          body="Items and tokens sent to this wallet show up here."
         />
       ) : (
         <div className="nav-section-scroll-body">
@@ -976,14 +972,7 @@ export function InventoryPanel() {
       {visibleItems.length > 0 || issuers.length > 0 ? (
         <section className="collect-items-section" aria-label="Issuers and items">
           {issuers.length > 0 ? (
-            <Accordion.Root
-              collapsible
-              className={
-                issuers.length > 1
-                  ? 'collect-collections collect-collections--many'
-                  : 'collect-collections'
-              }
-            >
+            <Accordion.Root collapsible className="collect-collections">
               {issuers.map((issuer) => (
                 <IssuerGroupItem
                   key={issuer.key}
@@ -1015,13 +1004,12 @@ export function InventoryPanel() {
 
           {getCollectablePageStatus().hasMore ? (
             <div className="actions collect-load-more">
-              <button
-                type="button"
+              <Button.Root variant="ghost"
                 className="btn btn-ghost"
                 onClick={() => void loadMoreCollectables()}
               >
-                Load older items
-              </button>
+                <Button.Label>Load older items</Button.Label>
+              </Button.Root>
               <span className="settings-row-desc">
                 {getCollectablePageStatus().loadedOutputs.toLocaleString()} of{' '}
                 {getCollectablePageStatus().totalOutputs.toLocaleString()} wallet outputs checked
