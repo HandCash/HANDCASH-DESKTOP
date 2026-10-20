@@ -58,7 +58,7 @@ export function WalletJobRow({ job }: { job: WalletJob }) {
     >
       <button
         type="button"
-        className="history-row history-row-btn history-progress-row"
+        className="history-row history-row-btn"
         aria-label={[title, count, detail].filter(Boolean).join(', ')}
         onClick={() => {
           playWalletSound('soft')
@@ -90,7 +90,6 @@ export function WalletJobRow({ job }: { job: WalletJob }) {
                 <Progress.Range className="history-progress-range" />
               </Progress.Track>
             </Progress.Root>
-            {count ? <span className="history-progress-count">{count}</span> : null}
           </div>
           {detail ? (
             <span className="history-when" title={detail}>
@@ -98,6 +97,13 @@ export function WalletJobRow({ job }: { job: WalletJob }) {
             </span>
           ) : null}
         </div>
+        {count ? (
+          <div className="history-amount-block">
+            <span className="history-amount history-amount-item" data-aeon-part="count">
+              {count}
+            </span>
+          </div>
+        ) : null}
       </button>
     </li>
   )
@@ -144,7 +150,7 @@ export function PendingPhraseImportRow({ cursor }: { cursor: PhraseItemMigrateCu
             <LoadingSpinner size="sm" />
           </span>
         </div>
-        <div className="history-body">
+        <div className="history-body history-progress-body">
           <strong className="history-title">Collectable import paused</strong>
           <span className="history-when" title={`${status}. ${detail}`}>
             {status} · {detail}

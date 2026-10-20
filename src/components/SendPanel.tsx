@@ -37,6 +37,7 @@ import {
 } from '../wallet/friends'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
+import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
 import {
   assertSendableBalanceForReview,
   refreshSpendableBalance,
@@ -163,6 +164,7 @@ export function SendPanel({
   const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
   /** Local draft — syncing every keystroke through XState re-rendered the whole panel. */
   const [amountDraft, setAmountDraft] = useState(() => sendSnap.context.amount)
+  const amountPad = useAmountPad()
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
   const handleResolveRef = useRef(createPinnedHandleResolveDebouncer())
@@ -623,7 +625,7 @@ export function SendPanel({
                 <input
                   id="amount"
                   className="send-amount-input"
-                  inputMode="decimal"
+                  {...amountInputProps(amountPad)}
                   value={amountDraft}
                   onChange={(e) => setAmountDraft(e.target.value)}
                   onBlur={() => syncAmountToMachine(amountDraft)}
@@ -679,6 +681,16 @@ export function SendPanel({
                 )}
                 {reviewBusy ? ' · refreshing…' : ''}
               </p>
+              {amountPad ? (
+                <AmountPad
+                  label="Amount keypad"
+                  value={amountDraft}
+                  onChange={(next) => {
+                    setAmountDraft(next)
+                    syncAmountToMachine(next)
+                  }}
+                />
+              ) : null}
             </div>
 
             <div className="send-side">

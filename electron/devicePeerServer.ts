@@ -8,6 +8,7 @@ import { ipcMain } from 'electron'
 import os from 'node:os'
 import log from 'electron-log'
 import { type BridgeWindowSource } from './bridgeWindow.js'
+import { jsonRequestErrors } from './requestErrors.js'
 
 /** Keep in sync with src/wallet/deviceWallets.ts DEVICE_PEER_PORT */
 const DEVICE_PEER_PORT = 3340
@@ -131,6 +132,8 @@ export async function startDevicePeerServer(windows: BridgeWindowSource): Promis
     setCorsHeaders(res)
     res.status(404).json({ status: 'error', description: 'Not a device-peer route' })
   })
+
+  app.use(jsonRequestErrors(setCorsHeaders))
 
   const server = await new Promise<ReturnType<typeof app.listen>>((resolve, reject) => {
     const srv = app.listen(DEVICE_PEER_PORT, '0.0.0.0', () => resolve(srv))

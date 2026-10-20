@@ -90,10 +90,6 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-s
   background: transparent;
 }
 
-html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .what-is-bsv.panel {
-  box-shadow: var(--shadow-section);
-}
-
 html:is(.platform-mobile, .layout-compact) .wallet-nav-stage,
 html:is(.platform-mobile, .layout-compact) .settings-scroll,
 html:is(.platform-mobile, .layout-compact) .nav-section-body,
@@ -165,7 +161,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-balance {
   white-space: nowrap;
   width: max-content;
   max-width: 100%;
-  font-size: 26px;
+  font-size: clamp(26px, 8vw, 36px);
   line-height: 1.15;
   /* Defeat FitSlot scale that can shrink amounts away on narrow phones */
   transform: none !important;
@@ -177,7 +173,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-balance .balance {
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-balance .balance-secondary {
-  font-size: 0.55em;
+  font-size: 0.5em;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -246,7 +242,7 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv {
   align-items: center;
   gap: 10px;
   --ticker-pad-x: 16px;
-  padding: 10px var(--ticker-pad-x);
+  padding: 10px var(--ticker-pad-x) 8px;
   position: relative;
   overflow: hidden;
 }
@@ -256,12 +252,12 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-market-body {
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(56px, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(48px, 1fr) auto;
   grid-template-areas:
     'asset spark price'
     'asset spark change';
   align-items: center;
-  column-gap: 10px;
+  column-gap: 14px;
   row-gap: 2px;
 }
 
@@ -273,14 +269,32 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-cover {
   flex-wrap: wrap;
 }
 
+/* A shown toast replaces the one-row bar in the flow, so a two-line message grows the bar instead of being cut. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv[data-aeon-state^='toast-'] .bsv-carousel-frame {
+  display: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv[data-aeon-state^='toast-'] .bsv-toast-cover {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 56px;
+  margin: -10px calc(-1 * var(--ticker-pad-x)) -8px;
+  flex-direction: column;
+  gap: 4px;
+}
+
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-title {
-  font-size: 0.82rem;
+  font-size: var(--hc-text-sm);
   letter-spacing: 0.05em;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-body {
-  font-size: 0.78rem;
+  font-size: var(--hc-text-xs);
   font-weight: 700;
+  line-height: 1.35;
+  text-wrap: balance;
 }
 
 /* Identity tab — compact hero + field list (matches Settings / Apps density). */
@@ -463,11 +477,16 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-skeleton {
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-text strong {
-  font-size: 0.78rem;
+  font-size: var(--hc-text-md);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv [data-aeon-part='held'] {
+  font-size: var(--hc-text-md);
+  color: color-mix(in srgb, var(--hc-text) 78%, transparent);
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn > svg {
@@ -476,7 +495,10 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn > svg {
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-change {
-  font-size: 0.68rem;
+  font-size: var(--hc-text-2xs);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Compact must not force neon — neon fails on the light sheet. */
@@ -517,8 +539,10 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-about {
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty {
   grid-area: spark;
+  justify-self: center;
   width: 100%;
-  height: 28px;
+  max-width: 168px;
+  height: 24px;
   margin: 0;
 }
 
@@ -548,9 +572,11 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
   justify-self: end;
   align-self: end;
   margin: 0;
-  font-size: 1.05rem;
+  font-size: var(--hc-text-lg);
   line-height: 1.15;
   letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-about {
@@ -1112,12 +1138,12 @@ html:is(.platform-mobile, .layout-compact) .identity-qr-frame .skeleton-qr {
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-handle {
-  font-size: 1.15rem;
+  font-size: var(--hc-text-xl);
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-key {
   padding: 8px 10px;
-  font-size: 0.72rem;
+  font-size: var(--hc-text-xs);
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-compose {
@@ -1160,12 +1186,12 @@ html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .col
   display: none;
 }
 
-/* The ticker bar stays one row high: its coin dots sit on the bar's bottom edge. */
+/* The coin dots get their own line under the row, so they never touch the sparkline. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-frame {
+  gap: 6px;
+}
+
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots {
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  translate: -50% 0;
   gap: 4px;
 }
 
@@ -1181,4 +1207,13 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots butto
 /* Each coin is one full-width slide; the compact market body rule above would otherwise share the bar between them. */
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel > .bsv-slide {
   flex: 0 0 100%;
+}
+
+/* Under 16px, iOS zooms the page when the field takes focus. */
+html.platform-mobile .panel-filter .search-field input {
+  font-size: 16px;
+}
+
+html:is(.platform-mobile, .layout-compact) .panel-filter-suggestions li {
+  min-height: 40px;
 }

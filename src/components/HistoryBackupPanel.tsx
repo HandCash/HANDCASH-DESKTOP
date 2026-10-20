@@ -23,6 +23,7 @@ import {
 } from '../wallet/historyBackupPrefs'
 import { recomposeWallet } from '../wallet/recompose'
 import { refreshCloudBackupHealth } from '../wallet/cloudBackupHealth'
+import { retryHistoryHostNow } from '../wallet/historyRemoteProbe'
 import {
   canConfirmHistoryBackup,
   markHistoryBackupConfirmed,
@@ -95,6 +96,7 @@ export function HistoryBackupPanel() {
     playWalletSound('soft')
     await action.run('check', async () => {
       ensureSuggestedHistoryBackupUrl()
+      retryHistoryHostNow()
       const health = await refreshCloudBackupHealth()
       setCloudDetail(health.message)
       setPrefs(getHistoryBackupPrefs())
@@ -173,6 +175,7 @@ export function HistoryBackupPanel() {
       ensureSuggestedHistoryBackupUrl()
       // The operator asked for this one — never make them wait out a backoff.
       clearBackupBackoff()
+      retryHistoryHostNow()
       try {
         await uploaded(await uploadBrc39Backup(password ?? '', { passwordAlreadyVerified: true }))
       } catch (err) {

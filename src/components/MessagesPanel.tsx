@@ -83,6 +83,7 @@ import {
   RequestMoneyIcon,
   SendIcon,
 } from './icons'
+import { SearchField } from './SearchField'
 
 type Props = {
   chain: Chain
@@ -1235,12 +1236,12 @@ export function MessagesPanel({
         </div>
         )}
         <div className="root-search chat-search" role="search">
-          <input
-            type="search"
-            placeholder="Search conversations"
+          <SearchField
+            id="chat-search-input"
+            label="Search conversations"
+            placeholder="Name or message"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
+            onValueChange={setQuery}
           />
         </div>
         <ul className="chat-peer-list">

@@ -14,6 +14,7 @@ import { MAKER_FUND_WITHIN_S, previewTake } from '../wallet/swap/settle'
 import { cancelOwnSwapOffer, ownTakenOf, takeSwapOffer } from '../wallet/swap/settleRunner'
 import { useRecentSwaps } from '../features/swap'
 import { SwapPairMark, SwapStatusPill, SwapSummary } from './SwapVisuals'
+import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
 
 const fmt = (asset: SwapAsset, units: bigint) => `${unitsToDecimal(asset, units)} ${SWAP_ASSET_INFO[asset].ticker}`
 
@@ -273,6 +274,11 @@ function TakeReview({
 }) {
   const amountId = useId()
   const [amount, setAmount] = useState(() => (pay !== null ? unitsToDecimal(offer.get, pay) : ''))
+  const amountPad = useAmountPad()
+  const typeAmount = (text: string) => {
+    setAmount(text)
+    onAmount(decimalToUnits(offer.get, text))
+  }
   const preview = pay !== null && fits ? previewTake(offer, pay) : null
   const shown = preview ?? (room ? previewTake(offer, room.max) : null)
   if (!shown || !room) return null
@@ -285,15 +291,14 @@ function TakeReview({
           <Field.Label htmlFor={amountId}>{SWAP_ASSET_INFO[offer.get].ticker} to put in</Field.Label>
           <Field.Control
             id={amountId}
-            inputMode="decimal"
+            {...amountInputProps(amountPad)}
             value={amount}
             disabled={taking || taken}
-            onChange={(e) => {
-              const text = e.target.value.replace(',', '.')
-              setAmount(text)
-              onAmount(decimalToUnits(offer.get, text))
-            }}
+            onChange={(e) => typeAmount(e.target.value.replace(',', '.'))}
           />
+          {amountPad ? (
+            <AmountPad label="Amount keypad" value={amount} onChange={typeAmount} disabled={taking || taken} />
+          ) : null}
           <Field.Hint>
             This offer can be filled in parts: from {fmt(offer.get, room.min)} up to {fmt(offer.get, room.max)}.
           </Field.Hint>

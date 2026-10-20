@@ -258,6 +258,12 @@ const GENESIS_KEY = storageRegistry.collectableGenesisAttempts.key
  */
 export const GENESIS_RETRY_MS = 24 * 60 * 60_000
 /**
+ * Bump when the lineage walk learns to prove tips it used to reject. Failures
+ * an older walk recorded are walked again at once instead of waiting out their
+ * pin, so a fix reaches items the old walk gave up on the same session.
+ */
+export const GENESIS_WALK_VERSION = 2
+/**
  * Transient network / indexer misses. Long enough that boot + panel open do
  * not re-walk the same stuck tip every session; short enough a brief outage
  * does not leave a receivable item Unverified until tomorrow.
@@ -346,6 +352,7 @@ export function shouldAttemptGenesis(
   // Proven and knows how: nothing left to learn.
   if (verdict?.tier === 'brc150' && verdict.path?.length) return false
   const failure = loadGenesisFailures().get(k)
+  if (failure && failure.walk !== GENESIS_WALK_VERSION) return true
   // Proven but pathless — a send would have to omit remittance and make the
   // receiver walk the lineage over again. One quiet walk buys that back.
   // Unproven tips that just failed a network hop wait the unavailable window
@@ -383,7 +390,13 @@ export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void
 const GENESIS_FAILURE_KEY = storageRegistry.collectableGenesisFailures.key
 const GENESIS_FAILURE_MAX_ENTRIES = 200
 
-export type GenesisFailure = { kind: GenesisFailureKind; reason: string; at: number }
+export type GenesisFailure = {
+  kind: GenesisFailureKind
+  reason: string
+  at: number
+  /** The `GENESIS_WALK_VERSION` that failed; entries from before versioning read as 1. */
+  walk: number
+}
 
 let genesisFailures: Map<string, GenesisFailure> | null = null
 
@@ -401,6 +414,7 @@ function loadGenesisFailures(): Map<string, GenesisFailure> {
         kind: entry.kind as GenesisFailureKind,
         reason: entry.reason,
         at: typeof entry.at === 'number' ? entry.at : 0,
+        walk: typeof entry.walk === 'number' ? entry.walk : 1,
       })
     }
   } catch {
@@ -426,7 +440,7 @@ export function rememberGenesisFailure(
   const map = loadGenesisFailures()
   const k = key(outpoint)
   map.delete(k)
-  map.set(k, { kind, reason, at: now })
+  map.set(k, { kind, reason, at: now, walk: GENESIS_WALK_VERSION })
   if (map.size > GENESIS_FAILURE_MAX_ENTRIES) {
     let drop = map.size - GENESIS_FAILURE_MAX_ENTRIES
     for (const existing of map.keys()) {

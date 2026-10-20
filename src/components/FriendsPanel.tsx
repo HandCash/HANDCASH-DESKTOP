@@ -1,5 +1,5 @@
 import { Button } from '@aeon-ui/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
   listFriends,
@@ -19,6 +19,7 @@ import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
 import { MessagesIcon, PersonAddIcon } from './icons'
 import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
+import { PanelFilter } from './PanelFilter'
 
 type Props = {
   chain: Chain
@@ -86,9 +87,23 @@ export function FriendsPanel({ chain }: Props) {
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeCollectionView(setView, 'friends'), [])
 
-  const filtered = useMemo(() => {
-    return searchFriends(query, friends)
-  }, [friends, query])
+  const filtered = useMemo(
+    () => query.split(',').reduce((left, term) => searchFriends(term, left), friends),
+    [friends, query],
+  )
+  const suggestFriends = useCallback(
+    (typed: string, applied: readonly string[]) => {
+      const needle = typed.trim().toLowerCase()
+      if (!needle) return []
+      const left = applied.reduce((rest, term) => searchFriends(term, rest), friends)
+      return left
+        .filter((f) => f.label.toLowerCase().includes(needle))
+        .sort((a, b) => Number(!a.label.toLowerCase().startsWith(needle)) - Number(!b.label.toLowerCase().startsWith(needle)))
+        .slice(0, 6)
+        .map((f) => ({ term: f.label, label: f.label, kind: 'Friend', count: searchFriends(f.label, left).length }))
+    },
+    [friends],
+  )
 
   return (
     <div
@@ -103,6 +118,18 @@ export function FriendsPanel({ chain }: Props) {
             {friends.length}
           </span>
         </h2>
+        {friends.length === 0 ? null : (
+          <PanelFilter
+            id="friends-search-input"
+            label="Search friends by name or wallet key"
+            placeholder="Name or wallet key"
+            value={query}
+            onValueChange={setQuery}
+            suggest={suggestFriends}
+            shown={filtered.length}
+            total={friends.length}
+          />
+        )}
         <div className="friends-panel-head-actions panel-icon-toolbar">
           <button
             type="button"
@@ -150,19 +177,6 @@ export function FriendsPanel({ chain }: Props) {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="root-search friends-search" role="search">
-            <label className="sr-only" htmlFor="friends-search-input">
-              Search friends
-            </label>
-            <input
-              id="friends-search-input"
-              type="search"
-              placeholder="Search by name or wallet key"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              autoComplete="off"
-            />
-          </div>
           {filtered.length === 0 ? (
             <div className="friends-empty">
               <strong>No friends found</strong>

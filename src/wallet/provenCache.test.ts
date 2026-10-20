@@ -167,6 +167,27 @@ describe('genesis attempt cooldown', () => {
     expect(cache.shouldAttemptGenesis(tip)).toBe(false)
   })
 
+  it('walks again at once a tip an older lineage walk rejected', async () => {
+    const tip = `${'12'.repeat(32)}.8`
+    const at = Date.now() - 5 * 60_000
+    store.set(
+      'handcash.collectables.genesisFailure.v1',
+      JSON.stringify({
+        [tip]: {
+          kind: 'invalid',
+          reason: 'not a provable lineage at hop 0 — could not map the satoshi to a parent input',
+          at,
+        },
+      }),
+    )
+    store.set('handcash.collectables.genesisAttempt.v1', JSON.stringify({ [tip]: at }))
+    const cache = await import('./provenCache')
+    expect(cache.shouldAttemptGenesis(tip)).toBe(true)
+    cache.rememberGenesisFailure(tip, 'invalid', 'still unmappable', Date.now())
+    cache.rememberGenesisAttempt(tip)
+    expect(cache.shouldAttemptGenesis(tip)).toBe(false)
+  })
+
   it('honours a legacy failure timestamp when no attempt was pinned', async () => {
     const cache = await import('./provenCache')
     const tip = `${'ef'.repeat(32)}.0`

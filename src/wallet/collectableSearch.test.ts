@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { searchCollectables } from './collectableSearch'
+import { searchCollectables, suggestCollectableTerms } from './collectableSearch'
 import type { Collectable } from './collectables'
 
 function tip(over: Partial<Collectable> = {}): Collectable {
@@ -57,5 +57,35 @@ describe('searchCollectables', () => {
       'Pixel Foxes #9999871',
     ])
     expect(searchCollectables('pixel, ocean', items)).toHaveLength(0)
+  })
+})
+
+describe('suggestCollectableTerms', () => {
+  const items = [
+    tip({ outpoint: 'a.0', name: 'Pixel Foxes #1', traits: [{ name: 'Background', value: 'Forest' }] }),
+    tip({ outpoint: 'b.0', name: 'Pixel Foxes #2', traits: [{ name: 'Background', value: 'Forest' }] }),
+    tip({ outpoint: 'c.0', name: 'Pixel Foxes #3', traits: [{ name: 'Background', value: 'Desert' }] }),
+  ]
+
+  it('completes a typed prefix with counted trait values, commonest first', () => {
+    const out = suggestCollectableTerms('f', [], items)
+    expect(out[0]).toEqual({ term: 'Background Forest', label: 'Forest', kind: 'Background', count: 2 })
+  })
+
+  it('offers the shared name without its number', () => {
+    const out = suggestCollectableTerms('pix', [], items)
+    expect(out[0]).toMatchObject({ term: 'Pixel Foxes', kind: 'Name', count: 3 })
+  })
+
+  it('counts against the applied terms and leaves them out', () => {
+    const out = suggestCollectableTerms('', ['Background Forest'], items)
+    expect(out.map((s) => s.term)).not.toContain('Background Forest')
+    expect(out.every((s) => s.count <= 2)).toBe(true)
+    expect(searchCollectables('Background Forest', items)).toHaveLength(2)
+  })
+
+  it('with nothing typed, only offers terms that narrow the list', () => {
+    const out = suggestCollectableTerms('', [], items)
+    expect(out.map((s) => s.label)).toEqual(['Forest', 'Desert'])
   })
 })

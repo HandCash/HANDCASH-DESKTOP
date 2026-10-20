@@ -1,4 +1,4 @@
-import { Beef, LockingScript, P2PKH, PrivateKey, Random, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
+import { Beef, LockingScript, P2PKH, PrivateKey, ProtoWallet, Random, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { bntHolderPublicKey } from './keys'
 import { bntHeldLock, readBnt } from './script'
@@ -45,7 +45,10 @@ function makeInstall() {
     })
   }
 
+  const keys = new ProtoWallet(root)
   const wallet = {
+    getPublicKey: (args: Parameters<ProtoWallet['getPublicKey']>[0]) => keys.getPublicKey(args),
+    createSignature: (args: Parameters<ProtoWallet['createSignature']>[0]) => keys.createSignature(args),
     async createAction(args: { inputs?: Array<{ outpoint: string }>; outputs: Pending['outputs']; inputBEEF?: number[] }) {
       const tx = new Transaction()
       const inputs = (args.inputs ?? []).map((i) => i.outpoint)
@@ -200,7 +203,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueBntAsset, mintBntAsset, transferBntAsset, preflightBntTransfer, burnBntUnits, listBntAssets, serveBntBox, proveBntBacking, adoptSignedBntAction, BntRefusal } = await import('./wallet')
+const { issueBntAsset, mintBntAsset, transferBntAsset, preflightBntTransfer, burnBntUnits, burnBntAsset, preflightBntBurn, BNT_BURN_HOLDER, listBntAssets, serveBntBox, proveBntBacking, adoptSignedBntAction, BntRefusal } = await import('./wallet')
 const { readBntState, writeBntState } = await import('./state')
 
 const alice = makeInstall()
@@ -305,6 +308,21 @@ describe('open BNT wallet', () => {
     expect(tx.outputs[1]!.lockingScript.toHex()).toBe(`006a10${Utils.toHex(Utils.toArray('wltc-redeem test', 'utf8'))}`)
     expect(erin.rows.some((r) => r.outpoint === `${burned.txid}.0`)).toBe(false)
     await expect(as(erin, () => burnBntUnits({ assetId: token.assetId, amount: 46n, holder: burnHolder, memo: 'x' }))).rejects.toMatchObject({ reason: 'insufficient' })
+  })
+
+  it('burns a holder\'s units and items to the NUMS key, whole items only', async () => {
+    const erin = makeInstall()
+    const token = await as(erin, () => issueBntAsset({ kind: 'token', sym: 'BRN', supply: '50' }))
+    const burned = await as(erin, () => burnBntAsset({ assetId: token.assetId, amount: '20' }))
+    expect(readBnt(erin.txs.get(burned.txid)!.outputs[0]!.lockingScript)).toMatchObject({ form: 'held', amount: 20n, clause: { mode: 'open', holder: BNT_BURN_HOLDER } })
+    expect((await as(erin, () => listBntAssets())).assets.find((a) => a.assetId === token.assetId)?.balance).toBe('30')
+
+    const item = await as(erin, () => issueBntAsset({ kind: 'item', name: 'Relic' }))
+    await expect(as(erin, () => preflightBntBurn({ assetId: item.assetId, amount: '2' }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
+    const gone = await as(erin, () => burnBntAsset({ assetId: item.assetId }))
+    expect(readBnt(erin.txs.get(gone.txid)!.outputs[0]!.lockingScript)).toMatchObject({ form: 'held', amount: 1n, clause: { holder: BNT_BURN_HOLDER } })
+    expect((await as(erin, () => listBntAssets())).assets.some((a) => a.assetId === item.assetId && a.balance !== '0')).toBe(false)
+    await expect(as(erin, () => burnBntAsset({ assetId: item.assetId }))).rejects.toMatchObject({ reason: 'insufficient' })
   })
 
   it('refuses supply caps that cannot hold, before anything is staged', async () => {

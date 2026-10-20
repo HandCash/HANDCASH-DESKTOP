@@ -1,4 +1,4 @@
-import { startTransition, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { startTransition, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   currentIssuerResolver,
   currentIssuerTrust,
@@ -32,7 +32,7 @@ import {
   collectableIsFungible,
   type Collectable,
 } from '../features/collectables'
-import { searchCollectables } from '../wallet/collectableSearch'
+import { searchCollectables, suggestCollectableTerms } from '../wallet/collectableSearch'
 import { subscribeAppActivity } from '../features/activity'
 import {
   groupCollectables,
@@ -84,7 +84,9 @@ import {
   selectionState,
   toggleCollectableSelection,
 } from '../wallet/collectableSelection'
+import { MiddleEllipsisName } from './MiddleEllipsisName'
 import { useWalletActionDock } from './WalletActionDock'
+import { PanelFilter } from './PanelFilter'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -184,9 +186,7 @@ function CollectableGridItem({
           ) : null}
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
-        <strong className="collection-grid-name" title={item.name}>
-          {item.name}
-        </strong>
+        <MiddleEllipsisName className="collection-grid-name" label={item.name} />
         <span
           className="collection-grid-host"
           title={item.app}
@@ -277,7 +277,7 @@ function CollectableListItem({
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <div className="connected-app-body">
-          <strong className="connected-app-name">{item.name}</strong>
+          <MiddleEllipsisName className="connected-app-name" label={item.name} />
           <span
             className="connected-app-host"
             aria-hidden={item.app ? undefined : true}
@@ -696,10 +696,18 @@ export function InventoryPanel() {
 
   const deferredItems = useDeferredValue(items)
   const deferredQuery = useDeferredValue(query)
-  const visibleItems = useMemo(() => {
-    const nfts = deferredItems.filter((item) => !collectableIsFungible(item))
-    return searchCollectables(deferredQuery, nfts)
-  }, [deferredItems, deferredQuery])
+  const nftItems = useMemo(
+    () => deferredItems.filter((item) => !collectableIsFungible(item)),
+    [deferredItems],
+  )
+  const visibleItems = useMemo(
+    () => searchCollectables(deferredQuery, nftItems),
+    [nftItems, deferredQuery],
+  )
+  const suggestTerms = useCallback(
+    (typed: string, applied: readonly string[]) => suggestCollectableTerms(typed, applied, nftItems),
+    [nftItems],
+  )
   const busyOutpoints = useMemo(
     () =>
       new Set(
@@ -804,6 +812,18 @@ export function InventoryPanel() {
     >
       <div className="connected-panel-head">
         <h2>Collectables</h2>
+        {empty && !showLoading ? null : (
+          <PanelFilter
+            id="collectables-search-input"
+            label="Search collectables by name, trait or id"
+            placeholder="Name, trait or id"
+            value={query}
+            onValueChange={setQuery}
+            suggest={suggestTerms}
+            shown={visibleItems.length}
+            total={nftItems.length}
+          />
+        )}
         <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
       {empty && !showLoading ? (
@@ -814,19 +834,6 @@ export function InventoryPanel() {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="root-search friends-search" role="search">
-            <label className="sr-only" htmlFor="collectables-search-input">
-              Search collectables
-            </label>
-            <input
-              id="collectables-search-input"
-              type="search"
-              placeholder="Search name, traits, id — comma for multiple"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              autoComplete="off"
-            />
-          </div>
           {searchEmpty ? (
             <div className="friends-empty">
               <strong>No collectables found</strong>

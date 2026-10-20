@@ -23,9 +23,11 @@ vi.mock('./provenCache', () => ({ getProvenVerdict: () => verdict() }))
 vi.mock('./oneSatImport', () => ({
   contentUrlForOrigin: (origin: string) => `https://content.test/${origin}`,
 }))
-vi.mock('./session', () => ({ getActiveWallet: () => ({ chain: 'main' }) }))
+const IDENTITY = `02${'ef'.repeat(32)}`
+vi.mock('./session', () => ({ getActiveWallet: () => ({ chain: 'main', identityKey: IDENTITY }) }))
 
 const { viewActivityItem } = await import('./activityItemView')
+const { rememberHeldBntAssets } = await import('./bnt/heldAssets')
 
 const frozen = {
   name: 'pixel foxes',
@@ -40,11 +42,25 @@ describe('viewActivityItem', () => {
     resolved.mockReturnValue(null)
     verdict.mockReturnValue(null)
     localArt.mockReturnValue(undefined)
+    rememberHeldBntAssets(IDENTITY, [])
   })
 
   it('leaves a token row alone', () => {
     const token = { name: 'DEMO', tokenId: 'ab'.repeat(20) }
     expect(viewActivityItem(token)).toBe(token)
+  })
+
+  it('paints a held BNT token and item with their deploy art', () => {
+    const icon = 'data:image/png;base64,aWNvbg=='
+    const picture = 'data:image/png;base64,cGljdHVyZQ=='
+    rememberHeldBntAssets(IDENTITY.toUpperCase(), [
+      { assetId: 'ab'.repeat(20), kind: 'token', sym: 'E2E2', imageUrl: icon },
+      { assetId: 'cd'.repeat(20), kind: 'item', name: 'Live test picture', imageUrl: picture },
+    ])
+    expect(viewActivityItem({ name: 'E2E2', tokenId: 'AB'.repeat(20), amt: '24' })).toEqual({ name: 'E2E2', tokenId: 'AB'.repeat(20), amt: '24', imageUrl: icon })
+    expect(viewActivityItem({ name: 'Live test picture', origin: 'cd'.repeat(20) }).imageUrl).toBe(picture)
+    const own = { name: 'E2E2', tokenId: 'ab'.repeat(20), imageUrl: 'data:image/png;base64,b3du' }
+    expect(viewActivityItem(own)).toBe(own)
   })
 
   it('paints a held tip from the inventory', () => {

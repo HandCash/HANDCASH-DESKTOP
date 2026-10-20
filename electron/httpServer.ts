@@ -8,6 +8,7 @@ import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
 import { bridgeDeadlineMessage, bridgeDeadlineMs } from './bridgeDeadline.js'
+import { jsonRequestErrors } from './requestErrors.js'
 import {
   bridgeConnectUnavailableMessage,
   bridgeCorsHeaders,
@@ -359,6 +360,8 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
         )
     }
   })
+
+  app.use(jsonRequestErrors(setCorsHeaders))
 
   const { cert, key, certPath } = await generateSelfSignedCert()
   await ensureCertTrusted(certPath)

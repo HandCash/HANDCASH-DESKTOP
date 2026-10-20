@@ -96,6 +96,11 @@ export function releaseHistoryHost(url: string): void {
   if (hold?.url === url) hold = null
 }
 
+/** The operator asked to try now: drop any wait, whatever host it was for. */
+export function retryHistoryHostNow(): void {
+  hold = null
+}
+
 async function headOnce(rootKeyHex: string, url: string, accept: string, now: number): Promise<RemoteBrc39Head> {
   let res: Response
   try {

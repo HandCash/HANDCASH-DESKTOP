@@ -271,13 +271,14 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           <EmptyState icon={<AppsIcon size={28} />} title="No apps connected" />
         </>
       ) : (
-        <div className="nav-section-scroll-body">
+        <>
           <AppsSearchBar
             query={query}
             onQueryChange={setQuery}
             topMatch={filteredApps[0] ?? null}
             canOpen={canOpen}
           />
+        <div className="nav-section-scroll-body">
           {filteredApps.length === 0 ? (
             address ? null : (
             <div className="friends-empty">
@@ -309,6 +310,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
             </ul>
           )}
         </div>
+        </>
       )}
     </div>
   )

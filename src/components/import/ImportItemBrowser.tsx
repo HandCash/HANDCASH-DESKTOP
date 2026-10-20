@@ -39,6 +39,7 @@ import { useWalletActionDock } from '../WalletActionDock'
 import { CloseIcon, CollectablesIcon, DownloadIcon, ExpandMoreIcon } from '../icons'
 import { useScrollIdle } from '../uiFeed/useScrollIdle'
 import { useWindowedRange } from '../uiFeed/useWindowedRange'
+import { SearchField } from '../SearchField'
 
 const PORTS: ImportItemPorts = {
   sync: (sourceId, onChange, shouldStop) => syncImportItems({ sourceId, onChange, shouldStop }),
@@ -570,17 +571,12 @@ export function ImportItemBrowser(props: { sourceId: string; label: string; onBa
 
       {total > 0 || searching ? (
         <div className="root-search friends-search" role="search">
-          <label className="sr-only" htmlFor="import-item-search">
-            Search items
-          </label>
-          <input
+          <SearchField
             id="import-item-search"
-            type="search"
-            placeholder="Search name, app or id"
+            label="Search items"
+            placeholder="Name, app or id"
             value={context.query}
-            onChange={(e) => send({ type: 'FILTER', query: e.target.value })}
-            autoComplete="off"
-            spellCheck={false}
+            onValueChange={(query) => send({ type: 'FILTER', query })}
           />
         </div>
       ) : null}

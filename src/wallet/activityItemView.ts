@@ -1,6 +1,7 @@
 import { getActiveWallet } from './session'
 
 import type { ActivityItem } from './appActivity'
+import { heldBntAssets } from './bnt/heldAssets'
 import { getCachedCollectables, type Collectable } from './collectables'
 import {
   getResolvedInscription,
@@ -77,7 +78,22 @@ function resolvedInscriptionName(...keys: Array<string | null | undefined>): str
   return undefined
 }
 
+/**
+ * A BNT row names its asset id (`tokenId` for tokens, `origin` for items). The
+ * activity store drops inlined pictures, so the deploy's art comes back from
+ * the held list.
+ */
+function withBntArt(item: ActivityItem): ActivityItem | null {
+  if (item.imageUrl) return null
+  const assetId = (item.tokenId ?? item.origin)?.trim().toLowerCase()
+  if (!assetId || !/^[0-9a-f]{40}$/.test(assetId)) return null
+  const imageUrl = heldBntAssets(getActiveWallet()?.identityKey).find((a) => a.assetId === assetId)?.imageUrl
+  return imageUrl ? { ...item, imageUrl } : null
+}
+
 export function viewActivityItem(item: ActivityItem): ActivityItem {
+  const bnt = withBntArt(item)
+  if (bnt) return bnt
   if (item.tokenId?.trim()) return item
 
   const outpoint = item.outpoint ? asOutpoint(item.outpoint) : null

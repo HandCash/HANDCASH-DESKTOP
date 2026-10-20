@@ -70,4 +70,27 @@ describe('box poller', () => {
     poller.stop()
     expect(await after(60_000)).toBe(9)
   })
+
+  it('reads every 20 s while the window is open but unfocused', async () => {
+    vi.useFakeTimers()
+    let focused = false
+    vi.stubGlobal('document', { visibilityState: 'visible', hasFocus: () => focused })
+    try {
+      const b = box([])
+      const poller = createBoxPoller({ tag: 't', io: b.io, handle: async () => 'ack', dialing: () => false })
+      poller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(19_999)
+      expect(b.lists).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(b.lists).toBe(2)
+      focused = true
+      await vi.advanceTimersByTimeAsync(20_000)
+      await vi.advanceTimersByTimeAsync(2_500)
+      expect(b.lists).toBe(4)
+      poller.stop()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

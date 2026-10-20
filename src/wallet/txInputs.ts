@@ -1,4 +1,14 @@
-import { Hash, LockingScript, PrivateKey, Spend, Transaction, TransactionSignature } from '@bsv/sdk'
+import {
+  Hash,
+  LockingScript,
+  PrivateKey,
+  Signature,
+  Spend,
+  Transaction,
+  TransactionSignature,
+  type WalletInterface,
+  type WalletProtocol,
+} from '@bsv/sdk'
 
 /** Reading, signing and script-checking one input of an Extended Format transaction. */
 
@@ -40,6 +50,27 @@ export function sighashPreimage(tx: Transaction, vin: number, scope: number): nu
 export function signInput(tx: Transaction, vin: number, key: PrivateKey, scope: number): number[] {
   const signature = key.sign(Hash.sha256(sighashPreimage(tx, vin, scope)))
   return new TransactionSignature(signature.r, signature.s, scope).toChecksigFormat()
+}
+
+/** A wallet child key named the BRC-100 way, so the wallet signs and the key never leaves it. */
+export type WalletSigner = { protocolID: WalletProtocol; keyID: string; counterparty: string }
+
+/** `signInput`, signed by BRC-100 `createSignature` over the sighash. */
+export async function signInputWithWallet(
+  wallet: Pick<WalletInterface, 'createSignature'>,
+  tx: Transaction,
+  vin: number,
+  signer: WalletSigner,
+  scope: number,
+): Promise<number[]> {
+  const { signature } = await wallet.createSignature({
+    hashToDirectlySign: Hash.hash256(sighashPreimage(tx, vin, scope)),
+    protocolID: signer.protocolID,
+    keyID: signer.keyID,
+    counterparty: signer.counterparty,
+  })
+  const parsed = Signature.fromDER(Array.from(signature))
+  return new TransactionSignature(parsed.r, parsed.s, scope).toChecksigFormat()
 }
 
 /** Script-check input `vin` against the source output its EF claims. */

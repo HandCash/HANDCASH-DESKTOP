@@ -24,6 +24,7 @@ import { runSwap, walletSwapPorts, type SwapStart } from '../wallet/swap/runSwap
 import type { Chain } from '../wallet/vault'
 import { CoinSelect } from './NetworkPicker'
 import { SwapIcon } from './icons'
+import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
 import { SwapPairMark, SwapRouteBadge, SwapStatusPill, SwapSummary } from './SwapVisuals'
 
 type Props = {
@@ -127,6 +128,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   const [pair, setPair] = useState(() => defaultPair(held))
   const { from, to } = pair
   const [amount, setAmount] = useState('')
+  const amountPad = useAmountPad()
   const pay = decimalToUnits(from, amount) ?? 0n
   const overBalance = pay > held[from]
   const asked = pay > 0n && !overBalance
@@ -231,7 +233,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
               <div data-aeon-part="leg-row">
                 <input
                   data-aeon-part="amount"
-                  inputMode="decimal"
+                  {...amountInputProps(amountPad)}
                   placeholder="0.00"
                   aria-label={`Amount of ${SWAP_ASSET_INFO[from].ticker} to pay`}
                   value={amount}
@@ -247,6 +249,7 @@ export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
                 />
               </div>
               <span data-aeon-part="fiat">{payUsd != null ? `≈ ${usdText(payUsd)}` : '\u00a0'}</span>
+              {amountPad ? <AmountPad label="Amount keypad" value={amount} onChange={setAmount} /> : null}
             </section>
 
             <button

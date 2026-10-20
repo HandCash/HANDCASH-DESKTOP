@@ -1,4 +1,4 @@
-import { Beef, PrivateKey, Transaction, Utils } from '@bsv/sdk'
+import { Beef, Transaction, Utils } from '@bsv/sdk'
 import { rememberHeldBntAssets } from './heldAssets'
 import { createActor } from 'xstate'
 import { bntMachine } from '../../machines/bntMachine'
@@ -12,12 +12,13 @@ import { formatTokenAmount } from '../amounts'
 import { runExclusiveSpend } from '../spendGuard'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { getWalletRuntime } from '../walletRuntime'
-import { signInput, sourceTxidOf } from '../txInputs'
+import { signInputWithWallet, sourceTxidOf, type WalletSigner } from '../txInputs'
 import {
   freshDerivationString,
-  bntHolderPrivateKey,
-  bntHolderPublicKey,
-  bntIssuerPrivateKey,
+  BNT_ISSUER_SIGNER,
+  bntHolderKeyFor,
+  bntHolderSigner,
+  bntIssuerKeyOf,
   readBntRemittance,
   type BntRemittance,
 } from './keys'
@@ -157,7 +158,15 @@ function requireActive(): ActiveWallet {
   return active
 }
 
-const rootOf = (active: ActiveWallet) => PrivateKey.fromHex(active.rootKeyHex)
+async function walletPublicKey(active: ActiveWallet, key: WalletSigner, forSelf: boolean): Promise<string> {
+  const { publicKey } = await active.wallet.getPublicKey({ protocolID: key.protocolID, keyID: key.keyID, counterparty: key.counterparty, forSelf })
+  return publicKey.toLowerCase()
+}
+
+/** Whether this wallet holds the clause key `holder` under `remittance`. */
+async function holdsUnder(active: ActiveWallet, remittance: BntRemittance, holder: string): Promise<boolean> {
+  return (await walletPublicKey(active, bntHolderSigner(selfOf(active), remittance), true)) === holder.toLowerCase()
+}
 const selfOf = (active: ActiveWallet) => active.identityKey.toLowerCase()
 const idOf = (tx: Transaction) => String(tx.id('hex')).toLowerCase()
 
@@ -361,7 +370,6 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
     includeCustomInstructions: true,
     limit: 10_000,
   })
-  const root = rootOf(active)
   const rows: BntRow[] = []
   for (const o of page.outputs ?? []) {
     if (o.spendable === false || !(o.tags ?? []).includes(BNT_TAG) || !o.lockingScript) continue
@@ -378,7 +386,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
       remittance = null
     }
     if (!remittance) continue
-    if (bntHolderPrivateKey(root, remittance).toPublicKey().toString() !== read.clause.holder) continue
+    if (!(await holdsUnder(active, remittance, read.clause.holder))) continue
     if (!(await isBntValidated(txid!, id))) continue
     const deploy = read.form === 'deploy' ? await deployOf(active, id, { txid: txid!, vout }) : null
     const issued = read.form === 'authority' ? read.issued : deploy?.fields.auth ? deployIssued(deploy) : null
@@ -610,9 +618,11 @@ type SignedBnt = { txid: string; atomic: number[]; tx: Transaction }
  * this wallet issued; another issuer's backed token is a claim on them, not LTC.
  */
 function bntActivityItem(active: ActiveWallet, assetId: string, fields: BntDeploy['fields'], amount: bigint): ActivityItem {
-  if (fields.kind === 'item') return { name: fields.name ?? 'Item', origin: assetId }
+  const image = deployImage(fields)
+  if (fields.kind === 'item') return { name: fields.name ?? 'Item', origin: assetId, ...(image ? { imageUrl: image } : {}) }
   return {
     name: fields.sym ?? fields.name ?? 'Token',
+    ...(image ? { imageUrl: image } : {}),
     origin: assetId,
     tokenId: assetId,
     amt: amount.toString(),
@@ -622,10 +632,10 @@ function bntActivityItem(active: ActiveWallet, assetId: string, fields: BntDeplo
 }
 
 /** A fresh holder key for `recipient` and the remittance that names it. */
-function freshHolder(active: ActiveWallet, recipient: string, prefix: string): { holder: string; remittance: BntRemittance } {
+async function freshHolder(active: ActiveWallet, recipient: string, prefix: string): Promise<{ holder: string; remittance: BntRemittance }> {
   const suffix = freshDerivationString()
   return {
-    holder: bntHolderPublicKey(rootOf(active), recipient, prefix, suffix),
+    holder: await walletPublicKey(active, bntHolderKeyFor(selfOf(active), recipient, prefix, suffix), false),
     remittance: { derivationPrefix: prefix, derivationSuffix: suffix, senderIdentityKey: selfOf(active) },
   }
 }
@@ -641,7 +651,7 @@ async function signBntAction(
   args: {
     description: string
     labels: string[]
-    inputs: Array<{ outpoint: string; description: string; key: PrivateKey; scope: number }>
+    inputs: Array<{ outpoint: string; description: string; signer: WalletSigner; scope: number }>
     outputs: PlannedOutput[]
     check: (tx: Transaction) => string | null
   },
@@ -671,7 +681,7 @@ async function signBntAction(
       const input = tx.inputs[vin]!
       const planned = targets.get(`${sourceTxidOf(tx, vin)}.${input.sourceOutputIndex}`)
       if (!planned) continue
-      input.unlockingScript = bntOpenUnlock(signInput(tx, vin, planned.key, planned.scope))
+      input.unlockingScript = bntOpenUnlock(await signInputWithWallet(active.wallet, tx, vin, planned.signer, planned.scope))
       spends[vin] = { unlockingScript: input.unlockingScript.toHex() }
     }
     if (Object.keys(spends).length !== args.inputs.length) throw new Error('A BNT input is missing from the staged action')
@@ -892,10 +902,10 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
  * back to it. A capped authority states `issued`: the row's count plus what
  * this transaction issues.
  */
-function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, prefix: string, issued: BntIssued | undefined = row.issued): PlannedOutput[] {
+async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, prefix: string, issued: BntIssued | undefined = row.issued): Promise<PlannedOutput[]> {
   const out: PlannedOutput[] = []
   if (row.read.form !== 'authority' && row.amount > 0n) {
-    const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
+    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix)
     out.push({
       lockingScript: bntHeldLock({ assetId: row.assetId, amount: row.amount, clause: { mode: 'open', holder } }).toHex(),
       satoshis: 1,
@@ -906,7 +916,7 @@ function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, prefix:
     })
   }
   if (row.authority) {
-    const { holder, remittance } = freshHolder(active, selfOf(active), prefix)
+    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix)
     out.push({
       lockingScript: bntAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder }, ...(issued ? { issued } : {}) }).toHex(),
       satoshis: 1,
@@ -942,12 +952,10 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
           refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
         }
       }
-      const root = rootOf(active)
-      const issuerKey = bntIssuerPrivateKey(root)
       const prefix = freshDerivationString()
-      const first = freshHolder(active, selfOf(active), prefix)
+      const first = await freshHolder(active, selfOf(active), prefix)
       const basket = bntFilingOf(fields.kind)
-      const inputs: Array<{ outpoint: string; description: string; key: PrivateKey; scope: number }> = []
+      const inputs: Array<{ outpoint: string; description: string; signer: WalletSigner; scope: number }> = []
       const outputs: PlannedOutput[] = [
         {
           lockingScript: bntDeployLock({ supply, payload: encodeBntPayload(fields), clause: { mode: 'open', holder: first.holder } }).toHex(),
@@ -968,15 +976,15 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
           refuse('over-cap', `The collection is full: all ${deploy.fields.size} of its items are deployed.`)
         }
         collection = { row: authority, deploy }
-        inputs.push({ outpoint: authority.outpoint, description: 'BNT collection authority', key: bntHolderPrivateKey(root, authority.remittance), scope: BNT_HOLDER_SCOPE })
+        inputs.push({ outpoint: authority.outpoint, description: 'BNT collection authority', signer: bntHolderSigner(active.identityKey, authority.remittance), scope: BNT_HOLDER_SCOPE })
         const issued = authority.issued ? { units: authority.issued.units, members: authority.issued.members + 1n } : undefined
-        outputs.push(...carryBack(active, authority, deploy, prefix, issued))
+        outputs.push(...(await carryBack(active, authority, deploy, prefix, issued)))
       }
       if (fields.bk) {
         outputs.push({ lockingScript: bntBackingScript(opts.backing!.deposit, null), satoshis: 0, outputDescription: 'BNT backing deposit' })
       }
-      const issuerPub = issuerKey.toPublicKey().toString()
-      inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', key: issuerKey, scope: BNT_ISSUER_SCOPE })
+      const issuerPub = bntIssuerKeyOf(active.identityKey)
+      inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
       // The next deploy's issuer coin rides this one; the issuer key is public by design (§3).
       outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'BNT issuer coin', basket: ISSUER_BASKET, tags: ['bnt-issuer'] })
       chart.send({ type: 'BUILT' })
@@ -1032,8 +1040,8 @@ async function splitBackedDeploy(active: ActiveWallet, row: BntRow, deploy: BntD
   const signed = await signBntAction(active, {
     description: `Split ${deploy.fields.sym ?? 'units'} deploy (BNT)`,
     labels: [LABEL, 'bnt-split'],
-    inputs: [{ outpoint: row.outpoint, description: 'BNT deploy', key: bntHolderPrivateKey(rootOf(active), row.remittance), scope: BNT_HOLDER_SCOPE }],
-    outputs: carryBack(active, row, deploy, freshDerivationString()),
+    inputs: [{ outpoint: row.outpoint, description: 'BNT deploy', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE }],
+    outputs: await carryBack(active, row, deploy, freshDerivationString()),
     check: (tx) => {
       const check = checkBntTx(tx, deploy)
       if (!check.ok) return `${check.reason}: ${check.detail}`
@@ -1109,9 +1117,8 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
           refuse('over-cap', `At most ${policy.max - authority.issued.units} more can be minted; the cap is ${policy.max}.`)
         }
       }
-      const root = rootOf(active)
       const prefix = freshDerivationString()
-      const minted = freshHolder(active, selfOf(active), prefix)
+      const minted = await freshHolder(active, selfOf(active), prefix)
       const basket = bntFilingOf(deploy.fields.kind)
       const outputs: PlannedOutput[] = [
         {
@@ -1122,7 +1129,7 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
           tags: rowTags(assetId, deploy, 'held', amount),
           customInstructions: rowInstructions(assetId, deploy.fields, 'held', amount, minted.remittance),
         },
-        ...carryBack(active, authority, deploy, prefix, issued),
+        ...(await carryBack(active, authority, deploy, prefix, issued)),
         ...(opts.backing ? [{ lockingScript: bntBackingScript(opts.backing.deposit, assetId), satoshis: 0, outputDescription: 'BNT backing deposit' }] : []),
       ]
       chart.send({ type: 'BUILT' })
@@ -1130,7 +1137,7 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
       const signed = await signBntAction(active, {
         description: `Mint ${label} (BNT)`,
         labels: [LABEL, 'bnt-mint', ...(opts.labels ?? [])],
-        inputs: [{ outpoint: authority.outpoint, description: 'BNT mint authority', key: bntHolderPrivateKey(root, authority.remittance), scope: BNT_HOLDER_SCOPE }],
+        inputs: [{ outpoint: authority.outpoint, description: 'BNT mint authority', signer: bntHolderSigner(active.identityKey, authority.remittance), scope: BNT_HOLDER_SCOPE }],
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)
@@ -1228,9 +1235,8 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       const { assetId, recipient, deploy, amount, basket, chosen } = await transferChecks(active, args)
       const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
       const self = selfOf(active)
-      const root = rootOf(active)
       const prefix = freshDerivationString()
-      const pay = freshHolder(active, recipient, prefix)
+      const pay = await freshHolder(active, recipient, prefix)
       const toSelf = recipient === self
       const outputs: PlannedOutput[] = [
         {
@@ -1243,7 +1249,7 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
         },
       ]
       if (total > amount) {
-        const change = freshHolder(active, self, prefix)
+        const change = await freshHolder(active, self, prefix)
         outputs.push({
           lockingScript: bntHeldLock({ assetId, amount: total - amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
           satoshis: 1,
@@ -1254,14 +1260,14 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
         })
       }
       for (const row of chosen.filter((r) => r.authority)) {
-        outputs.push(...carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix, row.issued))
+        outputs.push(...(await carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix, row.issued)))
       }
       chart.send({ type: 'BUILT' })
       const label = deploy.fields.kind === 'item' ? deploy.fields.name ?? 'item' : bntAmountLabel(assetId, amount)
       const signed = await signBntAction(active, {
         description: `Send ${label} (BNT)`,
         labels: [LABEL, 'bnt-transfer'],
-        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', key: bntHolderPrivateKey(root, row.remittance), scope: BNT_HOLDER_SCOPE })),
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE })),
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)
@@ -1305,6 +1311,36 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
 
 export type BurnBntResult = { assetId: string; txid: string; amount: string }
 
+/** BIP-341's NUMS point: its x is SHA-256 of the generator, so nobody knows its private key. */
+export const BNT_BURN_HOLDER = '0250929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
+
+/** Every refusal a holder's burn can give; it writes nothing. */
+async function burnChecks(active: ActiveWallet, args: { assetId?: unknown; amount?: unknown }) {
+  const assetId = String(args.assetId ?? '').trim().toLowerCase()
+  if (!isBntAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex BNT asset id.')
+  const deploy = await deployOf(active, assetId)
+  if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+  if (deploy.fields.bk) refuse('custodial', 'A backed token only goes back to its issuer, which redeems it.')
+  const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
+  if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > BNT_MAX_AMOUNT) {
+    refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
+  }
+  const amount = BigInt(amountRaw)
+  if (deploy.fields.kind === 'item' && amount !== 1n) refuse('bad-asset-args', 'An item burns whole: amount is 1.')
+  return { assetId, amount }
+}
+
+/** Refuse a burn the wallet would refuse anyway, before anyone is asked to approve it. */
+export async function preflightBntBurn(args: { assetId?: unknown; amount?: unknown }): Promise<void> {
+  await burnChecks(requireActive(), args)
+}
+
+/** A holder burns units or an item: they go to `BNT_BURN_HOLDER` and never move again. */
+export async function burnBntAsset(args: { assetId?: unknown; amount?: unknown }): Promise<BurnBntResult> {
+  const { assetId, amount } = await burnChecks(requireActive(), args)
+  return burnBntUnits({ assetId, amount, holder: BNT_BURN_HOLDER, memo: 'bnt burn' })
+}
+
 /**
  * Lock units of a token this wallet holds to `holder`, a key nobody can sign
  * for, so they can never move again (conservation forbids destroying units).
@@ -1327,12 +1363,13 @@ export async function burnBntUnits(
       if (args.amount <= 0n || args.amount > BNT_MAX_AMOUNT) refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
       const deploy = await deployOf(active, assetId)
       if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-      if (deploy.fields.mode !== 'open' || deploy.fields.kind !== 'token') refuse('unsupported-mode', 'Only open BNT tokens are burned.')
-      const rows = await heldRows(active, BNT_TOKEN_BASKET, assetId)
+      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets are not supported yet.')
+      if (deploy.fields.kind === 'item' && args.amount !== 1n) refuse('bad-asset-args', 'An item burns whole: amount is 1.')
+      const basket = bntFilingOf(deploy.fields.kind)
+      const rows = await heldRows(active, basket, assetId)
       const chosen = pickRows(rows, args.amount)
       if (!chosen) refuse('insufficient', `This wallet holds less than ${args.amount} of that asset in at most ${MAX_INPUTS} outputs.`)
       const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
-      const root = rootOf(active)
       const prefix = freshDerivationString()
       const memo = Utils.toArray(args.memo, 'utf8')
       if (memo.length === 0 || memo.length > 75) refuse('bad-asset-args', 'The burn memo is 1 to 75 bytes.')
@@ -1345,12 +1382,12 @@ export async function burnBntUnits(
         { lockingScript: `006a${Utils.toHex([memo.length])}${Utils.toHex(memo)}`, satoshis: 0, outputDescription: 'BNT burn memo' },
       ]
       if (total > args.amount) {
-        const change = freshHolder(active, selfOf(active), prefix)
+        const change = await freshHolder(active, selfOf(active), prefix)
         outputs.push({
           lockingScript: bntHeldLock({ assetId, amount: total - args.amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT change',
-          basket: BNT_TOKEN_BASKET,
+          basket,
           tags: rowTags(assetId, deploy, 'held', total - args.amount),
           customInstructions: rowInstructions(assetId, deploy.fields, 'held', total - args.amount, change.remittance),
         })
@@ -1360,7 +1397,7 @@ export async function burnBntUnits(
       const signed = await signBntAction(active, {
         description: `Burn ${label} (BNT)`,
         labels: [LABEL, 'bnt-burn', ...(opts.labels ?? [])],
-        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', key: bntHolderPrivateKey(root, row.remittance), scope: BNT_HOLDER_SCOPE })),
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE })),
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)
@@ -1521,14 +1558,13 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
   const subject = pkg.subject
   const txid = idOf(subject)
   if (txid === at.txid) return 'invalid'
-  const root = rootOf(active)
   const mine: Array<{ vout: number; read: Extract<BntOutput, { form: 'held' | 'authority' }>; remittance: BntRemittance }> = []
   for (const o of outputs) {
     const remittance = readBntRemittance({ ...o, senderIdentityKey: from })
     const script = subject.outputs[o.vout]?.lockingScript
     const read = script ? readBnt(script) : null
     if (!remittance || !read || read.form === 'deploy' || read.assetId !== wire.asset) return 'invalid'
-    if (bntHolderPrivateKey(root, remittance).toPublicKey().toString() !== read.clause.holder) return 'invalid'
+    if (!(await holdsUnder(active, remittance, read.clause.holder))) return 'invalid'
     if (read.clause.mode !== 'open') return 'retry'
     mine.push({ vout: o.vout, read, remittance })
   }

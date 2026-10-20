@@ -5,10 +5,11 @@ import { useMachine } from '@xstate/react'
 import { fromPromise, type SnapshotFrom } from 'xstate'
 import { bntHoldingsMachine } from '../machines/bntHoldingsMachine'
 import { subscribeAppActivity } from '../features/activity'
-import { useAsyncAction } from '../hooks/useAsyncAction'
+import { asyncActionError, useAsyncAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
+import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { listBntAssets, transferBntAsset, type BntAssetSummary } from '../wallet/bnt/wallet'
+import { burnBntAsset, listBntAssets, preflightBntBurn, transferBntAsset, type BntAssetSummary } from '../wallet/bnt/wallet'
 import { formatTokenAmount, parseTokenAmount } from '../wallet/amounts'
 import { resolvePinnedHandle } from '../wallet/friends'
 import { playWalletSound } from '../wallet/soundService'
@@ -159,12 +160,14 @@ export function BntShelf({
 }
 
 function BntSendForm({ asset, onClose }: { asset: BntAssetSummary; onClose: () => void }) {
-  const action = useAsyncAction<'send'>()
+  const action = useAsyncAction<'send' | 'burn'>()
   const [recipient, setRecipient] = useState('')
   const [amount, setAmount] = useState(asset.kind === 'item' ? '1' : '')
+  const amountPad = useAmountPad()
   const units = asset.kind === 'item' ? '1' : parseTokenAmount(amount, asset.dec ?? 0)
   const overBalance = units !== null && BigInt(units) > movableOf(asset)
-  const ready = recipient.trim().length > 0 && units !== null && !overBalance
+  const burnable = units !== null && !overBalance
+  const ready = recipient.trim().length > 0 && burnable
   const supply = bntSupplyLabel(asset)
 
   const submit = async () => {
@@ -195,6 +198,41 @@ function BntSendForm({ asset, onClose }: { asset: BntAssetSummary; onClose: () =
     }
     playWalletSound('soft')
     toastSuccess(`Sent ${what}`, done.delivered === false ? 'Their inbox was unreachable; the wallet keeps retrying.' : `Delivered to ${to}.`)
+    onClose()
+  }
+
+  const burn = async () => {
+    if (!units) return
+    const what = asset.kind === 'item' ? label(asset) : `${formatTokenAmount(units, asset.dec ?? 0)} ${label(asset)}`
+    const refused = await preflightBntBurn({ assetId: asset.assetId, amount: units }).then(() => null, asyncActionError)
+    if (refused) {
+      playWalletSound('error')
+      toastError('BNT burn refused', refused)
+      return
+    }
+    const outcome = await action.run(
+      'burn',
+      async () => {
+        await burnBntAsset({ assetId: asset.assetId, amount: units })
+      },
+      {
+        confirm: {
+          title: `Burn ${what}?`,
+          body: `${what} goes to a key nobody holds and can never move again. This cannot be undone.`,
+          confirmLabel: 'Burn',
+          danger: true,
+        },
+      },
+    )
+    if (!outcome.ok) {
+      if (outcome.error) {
+        playWalletSound('error')
+        toastError('BNT burn failed', outcome.error)
+      }
+      return
+    }
+    playWalletSound('soft')
+    toastSuccess(`Burned ${what}`, 'It can never move again.')
     onClose()
   }
 
@@ -229,7 +267,7 @@ function BntSendForm({ asset, onClose }: { asset: BntAssetSummary; onClose: () =
           <Field.Label htmlFor="bnt-send-amount">Amount (you hold {amountOf(asset)})</Field.Label>
           <Field.Control
             id="bnt-send-amount"
-            inputMode="decimal"
+            {...amountInputProps(amountPad)}
             value={amount}
             disabled={action.busy}
             onChange={(e) => setAmount(e.target.value)}
@@ -237,11 +275,24 @@ function BntSendForm({ asset, onClose }: { asset: BntAssetSummary; onClose: () =
             autoComplete="off"
             aria-invalid={amount.trim() !== '' && (units === null || overBalance)}
           />
+          {amountPad ? (
+            <AmountPad label="Amount keypad" value={amount} onChange={setAmount} disabled={action.busy} />
+          ) : null}
         </Field.Root>
       ) : null}
       <div className="actions">
         <Button.Root variant="ghost" className="btn btn-ghost" disabled={action.busy} onClick={onClose}>
           <Button.Label>Cancel</Button.Label>
+        </Button.Root>
+        <Button.Root
+          variant="ghost"
+          className="btn btn-ghost"
+          data-aeon-part="burn"
+          disabled={!burnable || action.busy}
+          title={asset.kind === 'item' ? `Burn ${label(asset)}` : 'Burn the amount above'}
+          onClick={() => void burn()}
+        >
+          <Button.Label>{action.running('burn') ? 'Burning…' : 'Burn'}</Button.Label>
         </Button.Root>
         <Button.Root variant="solid" type="submit" className="btn btn-primary" data-aeon-part="trigger" disabled={!ready || action.busy}>
           <Button.Label>{action.running('send') ? 'Sending…' : 'Send'}</Button.Label>

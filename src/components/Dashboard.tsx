@@ -176,7 +176,7 @@ function walletIdentityChip(
   }
 }
 
-type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string }
+type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string; unitShown?: boolean }
 
 /** Seen by copy and screen readers only, so figures and units don't run together. */
 const HIDDEN_SPACE = <span className="sr-only">{'\u00a0'}</span>
@@ -207,7 +207,11 @@ function BalanceParts({ parts, prefix }: { parts: BalancePart[]; prefix: string 
               <CoinGlyphIcon coin={part.coin} size={15} />
             </span>
             {part.text}
-            <HiddenUnit unit={part.unit} />
+            {part.unitShown ? (
+              <span className="balance-split-unit">{`\u00a0${part.unit}`}</span>
+            ) : (
+              <HiddenUnit unit={part.unit} />
+            )}
           </span>
         </Fragment>
       ))}
@@ -326,9 +330,9 @@ export function Dashboard({
     : heldChains.length > 0 ? '—'
     : formatUsdFromSats(balanceSats, usdPerBsv)
   const bsvLabel = formatBsvSignificant(balanceSats, 4)
-  const bsvPart: BalancePart = bsvLabel.endsWith(' BSV')
-    ? { coin: 'bsv', text: bsvLabel.slice(0, -' BSV'.length), unit: 'BSV', title: bsvLabel }
-    : { coin: 'bsv', text: bsvLabel, unit: '', title: bsvLabel }
+  // The hero never names BSV: its coin mark stands for the unit.
+  const bsvText = bsvLabel.endsWith(' BSV') ? bsvLabel.slice(0, -' BSV'.length) : bsvLabel
+  const bsvPart: BalancePart = { coin: 'bsv', text: bsvText, unit: '', title: bsvText }
   const otherCoins: BalancePart[] = heldChains.map((chain) => {
     const text = formatCoinShort(chain, heldCoins[chain])
     const unit = COIN_INFO[chain].ticker
@@ -340,15 +344,32 @@ export function Dashboard({
   const focusFirst = (parts: BalancePart[]) =>
     [...parts].sort((a, b) => Number(b.coin === focus.coin) - Number(a.coin === focus.coin))
   const shareParts: BalancePart[] | null =
-    split?.shares?.map((share) => ({ coin: share.coin, text: share.pct, unit: share.ticker, title: `${share.pct} ${share.ticker}` })) ?? null
-  const secondaryBalanceLabel = currency === 'usd' ? bsvLabel : usdLabel
-  const secondaryParts =
-    heldChains.length === 0 ? null
-    : currency === 'usd' ? { parts: focusFirst(shareParts ?? holdings), prefix: null }
+    split?.shares?.map((share) =>
+      share.coin === 'bsv'
+        ? { coin: share.coin, text: share.pct, unit: '', title: share.pct }
+        : { coin: share.coin, text: share.pct, unit: share.ticker, title: `${share.pct} ${share.ticker}` },
+    ) ?? null
+  // A coin picked in the ticker but not held still shows, named, beside the total.
+  const pickedEmpty = COIN_CHAINS.find((chain) => chain === tickerCoin && !(heldCoins[chain] > 0n))
+  const emptyPart: BalancePart | null = pickedEmpty
+    ? {
+        coin: pickedEmpty as MarketCoin,
+        text: '0',
+        unit: COIN_INFO[pickedEmpty].ticker,
+        title: `0 ${COIN_INFO[pickedEmpty].ticker}`,
+        unitShown: true,
+      }
+    : null
+  const heldParts =
+    currency === 'usd' ? { parts: focusFirst(shareParts ?? holdings), prefix: null }
+    : heldChains.length === 0 ? null
     : {
         parts: holdings.filter((part) => part !== focus && !(part === bsvPart && balanceSats === 0)),
         prefix: '+',
       }
+  const secondaryParts = emptyPart
+    ? { parts: [emptyPart, ...(heldParts?.parts ?? [])], prefix: heldParts?.prefix ?? null }
+    : heldParts
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
@@ -795,7 +816,7 @@ export function Dashboard({
                   data-aeon-part="balance"
                   data-aeon-state={balancePending ? 'pending' : currency}
                   aria-busy={balancePending || undefined}
-                  title={currency === 'usd' ? 'Show in BSV' : 'Show in USD'}
+                  title={currency === 'usd' ? 'Show in coins' : 'Show in USD'}
                   disabled={balancePending}
                   onClick={() => {
                     playWalletSound('soft')
@@ -814,7 +835,7 @@ export function Dashboard({
                       >
                         {currency === 'usd' ? (
                           usdLabel
-                        ) : focus.unit ? (
+                        ) : (
                           <>
                             <span className="balance-unit-mark" aria-hidden>
                               <CoinGlyphIcon coin={focus.coin} />
@@ -822,8 +843,6 @@ export function Dashboard({
                             {focus.text}
                             <HiddenUnit unit={focus.unit} />
                           </>
-                        ) : (
-                          focus.text
                         )}
                       </span>
                       <span
@@ -832,11 +851,11 @@ export function Dashboard({
                         {secondaryParts ? (
                           <BalanceParts {...secondaryParts} />
                         ) : (
-                          secondaryBalanceLabel
+                          usdLabel
                         )}
                       </span>
                       <span className="sr-only">
-                        {currency === 'usd' ? '. Show in BSV' : '. Show in USD'}
+                        {currency === 'usd' ? '. Show in coins' : '. Show in USD'}
                       </span>
                     </>
                   )}

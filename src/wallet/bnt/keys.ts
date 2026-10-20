@@ -1,4 +1,5 @@
 import { KeyDeriver, PrivateKey, PublicKey, Random, Utils } from '@bsv/sdk'
+import type { WalletSigner } from '../txInputs'
 
 /**
  * BRC-255 keys. The issuer key is the identity key's child for `[2, "bnt
@@ -23,6 +24,9 @@ export function bntIssuerKeyOf(identityKeyHex: string): string {
     .deriveChild(ANYONE, `${BNT_ISSUER_PROTOCOL[0]}-${BNT_ISSUER_PROTOCOL[1]}-${ISSUER_KEY_ID}`)
     .toString()
 }
+
+/** This wallet's issuer key, as the wallet signs with it. */
+export const BNT_ISSUER_SIGNER: WalletSigner = { protocolID: BNT_ISSUER_PROTOCOL, keyID: ISSUER_KEY_ID, counterparty: 'anyone' }
 
 /** This wallet's own issuer private key. */
 export function bntIssuerPrivateKey(root: PrivateKey): PrivateKey {
@@ -54,13 +58,24 @@ export function bntHolderPublicKey(senderRoot: PrivateKey, recipient: string, pr
   return deriver.derivePublicKey(BNT_HOLDER_PROTOCOL, keyId, who, false).toString()
 }
 
+/** The holder key `identityKey`'s wallet shares with `other`: the recipient when sending, the sender when holding. */
+export function bntHolderKeyFor(identityKey: string, other: string, prefix: string, suffix: string): WalletSigner {
+  const who = other.trim().toLowerCase()
+  if (!KEY_RE.test(who)) throw new Error('A recipient is an identity key')
+  const keyID = holderKeyId(prefix, suffix)
+  return { protocolID: BNT_HOLDER_PROTOCOL, keyID, counterparty: who === identityKey.trim().toLowerCase() ? 'self' : who }
+}
+
+/** The holder key of an output `identityKey`'s wallet holds under `remittance`, as that wallet signs with it. */
+export function bntHolderSigner(identityKey: string, remittance: BntRemittance): WalletSigner {
+  if (!KEY_RE.test(remittance.senderIdentityKey.trim().toLowerCase())) throw new Error('The remittance names no sender identity')
+  return bntHolderKeyFor(identityKey, remittance.senderIdentityKey, remittance.derivationPrefix, remittance.derivationSuffix)
+}
+
 /** The private key of an output this wallet holds under `remittance`. */
 export function bntHolderPrivateKey(root: PrivateKey, remittance: BntRemittance): PrivateKey {
-  const sender = remittance.senderIdentityKey.trim().toLowerCase()
-  if (!KEY_RE.test(sender)) throw new Error('The remittance names no sender identity')
-  const keyId = holderKeyId(remittance.derivationPrefix, remittance.derivationSuffix)
-  const self = root.toPublicKey().toString()
-  return new KeyDeriver(root).derivePrivateKey(BNT_HOLDER_PROTOCOL, keyId, sender === self ? 'self' : sender)
+  const { keyID, counterparty } = bntHolderSigner(root.toPublicKey().toString(), remittance)
+  return new KeyDeriver(root).derivePrivateKey(BNT_HOLDER_PROTOCOL, keyID, counterparty)
 }
 
 export function readBntRemittance(value: unknown): BntRemittance | null {

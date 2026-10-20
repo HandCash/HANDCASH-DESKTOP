@@ -11,6 +11,7 @@ import type { ConnectedApp } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
 import { LaunchIcon } from './icons'
 import { SettingsNavRow } from './settings'
+import { SearchField } from './SearchField'
 
 const openTab: AppBrowserOpener = async (url) => {
   openEmbeddedAppBrowser(new URL(url).origin, url)
@@ -80,22 +81,17 @@ export function AppsSearchBar({ query, onQueryChange, topMatch, canOpen }: Props
       data-aeon-state={stateToAttr(state.value)}
       onSubmit={onSubmit}
     >
-      <label className="sr-only" htmlFor="apps-search-input">
-        {canOpen ? 'Search apps or open a web address' : 'Search connected apps'}
-      </label>
-      <input
+      <SearchField
         id="apps-search-input"
-        type="search"
+        label={canOpen ? 'Search apps or open a web address' : 'Search connected apps'}
         value={query}
-        onChange={(e) => {
-          onQueryChange(e.target.value)
-          if (canOpen) send({ type: 'TYPE', value: e.target.value })
+        onValueChange={(value) => {
+          onQueryChange(value)
+          if (canOpen) send({ type: 'TYPE', value })
         }}
-        placeholder={canOpen ? 'Search apps or enter a URL' : 'Search apps'}
+        placeholder={canOpen ? 'App or web address' : 'App name'}
         enterKeyHint={address ? 'go' : 'search'}
-        autoComplete="off"
         autoCapitalize="none"
-        spellCheck={false}
         disabled={busy}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? 'apps-search-error' : undefined}

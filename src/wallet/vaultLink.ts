@@ -111,7 +111,7 @@ export function stopVaultLink(): void {
 export async function serveVaultLink(peers: Iterable<string>, now = Date.now()): Promise<void> {
   const current = link
   if (!current) return
-  await current.poller.poll()
+  if (!current.poller.running) await current.poller.poll()
   for (const device of new Set(peers)) {
     if (!device || device === current.deviceId) continue
     if (!current.table.hasSession(current.identityKey, device)) {

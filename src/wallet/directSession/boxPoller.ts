@@ -18,12 +18,13 @@ export type PollIo = {
 export type PollDecision = 'ack' | 'leave'
 
 const MAX_BACKOFF_MS = 30_000
-/** Reading less often while the window is hidden; dials from peers then fall back to the box. */
+/** Reading less often while the window is hidden or unfocused; dials from peers then fall back to the box. */
 const HIDDEN_MS = 20_000
 const MAX_SEEN = 10_000
 
 function hidden(): boolean {
-  return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  if (typeof document === 'undefined') return false
+  return document.visibilityState === 'hidden' || !document.hasFocus()
 }
 
 export function createBoxPoller(o: {

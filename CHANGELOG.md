@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.625] - 2026-10-20
+
+### Added
+
+- Holders can burn BNT tokens and items: they go to a key nobody holds and never move again. A burn the wallet would refuse is refused before you are asked to approve it.
+- Phones type amounts on a built-in number pad instead of the system keypad: Send, Swap, sending a token and taking a swap offer.
+- Collectables and Friends have a plain search box with hints for the term being typed (traits, names and apps, each with how many would remain). Separate terms with commas.
 
 ### Removed
 
@@ -15,6 +21,17 @@
 - The market lists 1Sat items only. A receipt from an earlier token sale no longer reads as a market payout.
 - Apps can no longer write into the `bntft` token basket or spend from it by label; tokens move only through `issueBntAsset`, `mintBntAsset` and `transferBntAsset`.
 - Caches the removed token code left on disk give way first when storage is full.
+- The list search box and the view toggle and buttons beside it are 36 px, like the app's other search boxes.
+- The balance no longer prints BSV beside the total (its coin mark stands for it), and a coin picked in the ticker but not held shows as 0 beside it. The compact window's balance and ticker text are smaller.
+- Corners are slightly rounder.
+- An unfocused window checks message boxes as slowly as a hidden one (every 20 s), and the vault link no longer reads twice per check, so one open wallet makes far fewer cloud requests.
+
+### Fixed
+
+- BNT activity rows show the token's art instead of the generic gem.
+- Check and Back up try the backup host again at once after an outage instead of waiting out the earlier failure, and the compact ticker message grows instead of being cut off.
+- The local wallet server answers a malformed or non-JSON request body with a plain JSON error (400, 413 or 500) instead of a page listing local file paths.
+- Collectables an older lineage walk could not prove are walked again right after an update instead of waiting out their retry.
 
 ## [1.3.624] - 2026-10-20
 
