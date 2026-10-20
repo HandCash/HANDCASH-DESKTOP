@@ -32,12 +32,11 @@ export const MAX_GENESIS_HOPS = 64
 /**
  * Input sources hydrated per hop while resolving FIFO mapping.
  *
- * A transfer spends the ordinal plus a little funding, so the sat is usually
- * in the first inputs. Hydration is in vin order and stops once mapping is
- * known (canonical i0→o0 fetches only the parent). The cap stops a transaction
- * with hundreds of inputs from turning one hop into a fetch storm.
+ * FIFO needs the satoshis of every input before the ordinal's, so a batch send
+ * of N items needs up to N of them. Hydration is in vin order and stops once
+ * the mapping is known or the inputs already pass the output's offset.
  */
-const MAX_PARENT_CANDIDATES = 8
+const MAX_PARENT_CANDIDATES = 256
 
 export type GenesisProof = {
   /** Underscore form, proven by verified BEEF rather than claimed. */
@@ -242,6 +241,9 @@ export async function walkGenesisLineage(
     }
 
     const vout = Number(match[2])
+    let offset = 0
+    for (let j = 0; j < vout; j++) offset += here.tx.outputs[j]?.satoshis ?? 0
+    let precedingIn = 0
     let parent: string | null = null
     for (let vin = 0; vin < Math.min(here.tx.inputs.length, MAX_PARENT_CANDIDATES); vin++) {
       const srcTxid = String(here.tx.inputs[vin]?.sourceTXID ?? '').toLowerCase()
@@ -261,7 +263,11 @@ export async function walkGenesisLineage(
         return { kind: 'unavailable', reason: errText(err), hops }
       }
       const ordinalVin = findOrdinalParentVin(merged, here.tx, vout)
-      if (ordinalVin == null) continue
+      if (ordinalVin == null) {
+        precedingIn += merged.findTxid(srcTxid)?.tx?.outputs[srcVout!]?.satoshis ?? 0
+        if (precedingIn > offset) break
+        continue
+      }
       const input = here.tx.inputs[ordinalVin]!
       const parentTxid = String(input.sourceTXID ?? '').toLowerCase()
       const parentVout = input.sourceOutputIndex

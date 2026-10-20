@@ -38,6 +38,14 @@ function inscription(): Transaction {
   return tx
 }
 
+/** A distinct one-item mint: content byte `n`, so every mint has its own txid. */
+function mint(n: number): Transaction {
+  const envelope = '0063036f726451' + '0a746578742f706c61696e' + '00' + '01' + n.toString(16).padStart(2, '0') + '68'
+  const tx = new Transaction()
+  tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(envelope) })
+  return tx
+}
+
 /**
  * A transfer: spends the sat and pays it on.
  *
@@ -93,6 +101,22 @@ function service(txs: Transaction[]) {
 }
 
 describe('proveGenesisLineage', () => {
+  it('proves an item sent late in a batch whose items came from separate transactions', async () => {
+    const mints = Array.from({ length: 12 }, (_, i) => mint(i + 1))
+    const batch = new Transaction()
+    for (const m of mints) {
+      batch.addInput({ sourceTransaction: m, sourceOutputIndex: 0, unlockingScript: new UnlockingScript() })
+      batch.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    }
+    const getBeef = service([...mints, batch])
+
+    const proof = await proveGenesisLineage({ tipOutpoint: `${batch.id('hex')}.10`, getBeef })
+
+    expect(proof?.origin).toBe(`${mints[10]!.id('hex')}_0`)
+    // FIFO needs the eleven inputs up to the item's own, never the twelfth.
+    expect(getBeef).toHaveBeenCalledTimes(12)
+  })
+
   it('walks an imported tip back to the inscription that created it', async () => {
     const origin = inscription()
     const hop1 = transfer(origin)
