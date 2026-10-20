@@ -16,6 +16,8 @@ export type AssetProfile = {
   methods?: string[]
   basket?: string
   spendLabel?: string
+  /** Token profiles only: whether every unit passes the six Bitcoin Native Token (BNT) tests of BRC-251. */
+  bnt?: boolean
 }
 
 export const ASSET_PROFILES: readonly AssetProfile[] = Object.freeze([
@@ -30,9 +32,10 @@ export const ASSET_PROFILES: readonly AssetProfile[] = Object.freeze([
     methods: ['getCoinAddress', 'listCoins', 'sendCoins'],
   })),
   { id: '1sat', scope: 'per-action', spec: ['BRC-147', 'BRC-150', 'BRC-165'], basket: 'p 1sat', spendLabel: 'p 1sat input id' },
-  { id: 'p2pft', scope: 'per-action', spec: ['BRC-162', 'BRC-176', 'BRC-251'], basket: 'p p2pft', spendLabel: 'p p2pft input id' },
-  { id: 'csft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csft' },
-  { id: 'csnft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csnft' },
+  { id: 'p2pft', scope: 'per-action', spec: ['BRC-162', 'BRC-176', 'BRC-251', 'BRC-255'], basket: 'p p2pft', spendLabel: 'p p2pft input id', bnt: true },
+  { id: 'p2pnft', scope: 'per-action', spec: ['BRC-255'], basket: 'p p2pnft', bnt: true },
+  { id: 'csft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csft', bnt: false },
+  { id: 'csnft', scope: 'per-action', spec: ['BRC-253'], basket: 'p csnft', bnt: false },
 ])
 
 export function listAssetProfiles(): { profiles: AssetProfile[] } {
