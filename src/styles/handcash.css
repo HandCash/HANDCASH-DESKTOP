@@ -17735,6 +17735,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   scrollbar-width: none;
   touch-action: pan-x pan-y;
   outline: none;
+  will-change: scroll-position;
 }
 
 .bsv-carousel::-webkit-scrollbar {
@@ -17754,6 +17755,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   min-width: 0;
   scroll-snap-align: start;
   scroll-snap-stop: always;
+  contain: layout style;
 }
 
 .bsv-carousel-dots {

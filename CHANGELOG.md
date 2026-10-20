@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.626] - 2026-10-20
+
+### Fixed
+
+- The ticker carousel moves smoothly: it picks the coin only once the slide has come to rest, instead of re-rendering the dashboard while the slide is still moving.
+
 ## [1.3.625] - 2026-10-20
 
 ### Added

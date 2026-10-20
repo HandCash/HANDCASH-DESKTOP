@@ -81,6 +81,9 @@ function Sparkline({ values, up }: { values: number[]; up: boolean }) {
   )
 }
 
+/** Where the browser reports the end of a scroll (snap included), the ticker waits for it instead of a quiet timer. */
+const HAS_SCROLLEND = typeof window !== 'undefined' && 'onscrollend' in window
+
 function latestToast(items: ToastItem[]): ToastItem | null {
   if (items.length === 0) return null
   return items[items.length - 1] ?? null
@@ -314,13 +317,27 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   const settle = () => {
     const track = trackRef.current
     if (!track || track.clientWidth === 0) return
-    const next = TICKER_COIN_ORDER[Math.round(track.scrollLeft / track.clientWidth)]
+    const at = track.scrollLeft / track.clientWidth
+    // Picking a coin re-renders the dashboard and nav; done between slides, that render lands under the snap animation.
+    if (Math.abs(at - Math.round(at)) > 0.02) return
+    const next = TICKER_COIN_ORDER[Math.round(at)]
     if (next && next !== coin) {
       swipedTo.current = next
       playWalletSound('soft')
       setTickerCoin(next)
     }
   }
+
+  const settleRef = useRef(settle)
+  settleRef.current = settle
+
+  useEffect(() => {
+    const track = trackRef.current
+    if (!track || choosing || !HAS_SCROLLEND) return
+    const onEnd = () => settleRef.current()
+    track.addEventListener('scrollend', onEnd)
+    return () => track.removeEventListener('scrollend', onEnd)
+  }, [choosing])
 
   const go = (next: number) => {
     const track = trackRef.current
@@ -364,6 +381,7 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
             aria-label="Coin prices"
             tabIndex={0}
             onScroll={() => {
+              if (HAS_SCROLLEND) return
               if (settleTimer.current != null) window.clearTimeout(settleTimer.current)
               settleTimer.current = window.setTimeout(settle, 120)
             }}
