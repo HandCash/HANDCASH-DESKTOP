@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.633] - 2026-10-21
+
+### Changed
+
+- Settings, HandCash Recovery leads with “Back this up on another device”: each device signed in to your wallet keeps a full copy. It lists your signed-in devices, each removable, and shows whether you saved the recovery phrase, the key slices and the emergency key. Google and email recovery stay hidden until the secure enclave holders exist.
+- A new device approved by one of your signed-in devices opens the wallet at once, with no backup step, since your other device already holds it.
+- New wallets offer the recovery phrase or key slices first; backing up on another device is in Settings once you’re in.
+
+### Fixed
+
+- An issuer backup counts as saved only once it reads back intact.
+- The list of wallets in your account is kept in the desktop file store, so it survives the app’s browser storage being cleared.
+- Scanned sign-in codes past their expiry end as Sign-in expired, and approving twice sends the wallet once.
+
 ## [1.3.632] - 2026-10-21
 
 ### Fixed
