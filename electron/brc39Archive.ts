@@ -11,6 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app } from 'electron'
 import log from 'electron-log'
+import { isDiskFull, listTempFiles, removeTempFiles, writeFileExclusive } from './atomicFile.js'
 
 export type Brc39ArchiveMeta = {
   id: string
@@ -23,13 +24,14 @@ export type Brc39ArchiveMeta = {
 
 const MAX_SNAPSHOTS_PER_IDENTITY = 40
 
+/** Fails with EEXIST if the name is taken; a crash or full disk never leaves a partial snapshot under it. */
 function writeCommittedSnapshot(file: string, bytes: Uint8Array): void {
-  const fd = fs.openSync(file, 'wx', 0o600)
-  try { fs.writeFileSync(fd, Buffer.from(bytes)); fs.fsyncSync(fd) }
-  finally { fs.closeSync(fd) }
-  if (process.platform !== 'win32') {
-    const directory = fs.openSync(path.dirname(file), 'r')
-    try { fs.fsyncSync(directory) } finally { fs.closeSync(directory) }
+  try {
+    const result = writeFileExclusive(file, bytes)
+    if (!result.directorySynced) log.warn('brc39-archive wrote, but its folder could not be synced', file, result.error)
+  } catch (err) {
+    if (isDiskFull(err)) log.error('brc39-archive not written: the disk is full', file)
+    throw err
   }
 }
 
@@ -201,7 +203,47 @@ export function readBrc39ArchiveSnapshot(args: {
   const bytes = fs.readFileSync(resolved)
   const meta = parseSnapshotName(identityKey, dir, id)
   if (!meta) throw new Error('Corrupt UTXO archive metadata')
-  return { bytes, meta: { ...meta, sha256: sha256Hex(bytes) } }
+  const digest = sha256Hex(bytes)
+  if (!digest.startsWith(meta.sha256)) throw new Error('UTXO archive snapshot is incomplete or damaged')
+  return { bytes, meta: { ...meta, sha256: digest } }
+}
+
+/**
+ * Clear what interrupted snapshot writes left behind. A temp file whose bytes
+ * match the hash in its snapshot name was complete when the write stopped, so
+ * it is linked into place if that snapshot is missing; anything else is
+ * incomplete or already in place, and is removed.
+ */
+export function sweepBrc39ArchiveTemps(): { adopted: number; removed: number } {
+  let adopted = 0
+  let removed = 0
+  let dirs: string[]
+  try {
+    dirs = fs.readdirSync(archiveRoot())
+  } catch {
+    return { adopted, removed }
+  }
+  for (const name of dirs) {
+    const dir = path.join(archiveRoot(), name)
+    for (const temp of listTempFiles(dir)) {
+      const target = /^\d+-([a-f0-9]{12})\.brc39$/i.exec(path.basename(temp.target))
+      if (target && !fs.existsSync(temp.target)) {
+        try {
+          if (sha256Hex(fs.readFileSync(temp.path)).startsWith(target[1]!.toLowerCase())) {
+            fs.linkSync(temp.path, temp.target)
+            adopted++
+            log.warn('brc39-archive recovered an interrupted snapshot', path.basename(temp.target))
+          }
+        } catch (err) {
+          log.warn('brc39-archive could not recover an interrupted snapshot', temp.path, err)
+          continue
+        }
+      }
+      removed += removeTempFiles([temp])
+    }
+  }
+  if (removed > 0) log.info('brc39-archive removed leftover temp files', removed)
+  return { adopted, removed }
 }
 
 /** Archive root path for diagnostics (never wipe on factory reset). */

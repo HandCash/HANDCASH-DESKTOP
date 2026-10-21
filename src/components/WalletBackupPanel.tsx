@@ -17,6 +17,7 @@ import {
   sliceSetLabel,
   type Brc140IssuedSet,
 } from '../wallet/brc140IssuedSet'
+import { saveBackupFile } from '../wallet/backupFileSave'
 import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
@@ -28,16 +29,6 @@ import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type BackupKind = 'split' | 'phrase' | 'key'
-
-function downloadShare(filename: string, contents: string) {
-  const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 async function emailShareToSelf(
   share: string,
@@ -173,12 +164,14 @@ export function WalletBackupPanel() {
         if (!ok) return
         toastSuccess('Copied', destination)
       } else {
-        downloadShare(
+        const saved = await saveBackupFile(
           shareDownloadFilename(index, shareSet.totalShares, shareSet.integrity),
           `# ${destination}\n# integrity ${shareSet.integrity}\n# ${sliceSetLabel(shareSet.issuedAt)}\n${share}\n`,
         )
+        if (!saved.saved) return
+        noteKeysBackupHandoff(index)
         playWalletSound('soft')
-        toastSuccess('Slice saved', destination)
+        toastSuccess(`Slice ${index + 1} saved`, saved.path)
       }
     } catch (err) {
       playWalletSound('error')

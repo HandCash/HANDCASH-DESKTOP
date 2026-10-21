@@ -15,6 +15,7 @@ import {
   sliceSetLabel,
   type Brc140IssuedSet,
 } from '../wallet/brc140IssuedSet'
+import { saveBackupFile } from '../wallet/backupFileSave'
 import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
@@ -29,16 +30,6 @@ type Props = {
 }
 
 type Kind = 'google' | 'phrase' | 'split'
-
-function downloadShare(filename: string, contents: string) {
-  const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
 
 /**
  * Mandatory post-create backup. Phrase and slices come from the live create
@@ -90,10 +81,16 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         const ok = await copyText(share, { label: `slice ${index + 1}` })
         if (!ok) return
       } else if (method === 'download') {
-        downloadShare(
+        const saved = await saveBackupFile(
           shareDownloadFilename(index, shareSet.totalShares, shareSet.integrity),
           `# ${destination}\n# integrity ${shareSet.integrity}\n# ${sliceSetLabel(shareSet.issuedAt)}\n${share}\n`,
         )
+        if (!saved.saved) return
+        noteKeysBackupHandoff(index)
+        setTick((n) => n + 1)
+        playWalletSound('soft')
+        toastSuccess(`Slice ${index + 1} saved`, saved.path)
+        return
       }
       playWalletSound('soft')
       toastSuccess('Slice handed off', destination)

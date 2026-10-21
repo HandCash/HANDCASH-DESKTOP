@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import log from 'electron-log'
+import { isDiskFull, listTempFiles, removeTempFiles, writeFileAtomic } from './atomicFile.js'
 
 type Store = Record<string, string>
 
@@ -30,23 +31,110 @@ function storePath(): string {
  */
 let cache: Store | null = null
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+let retryDelayMs = 0
+/**
+ * Set when the store file exists but could not be read. Saving would replace
+ * data this process never loaded, so nothing is written until a restart.
+ */
+let savingBlocked = false
 
 /** Coalesce a burst of writes into one file replace. */
 const FLUSH_DEBOUNCE_MS = 150
+/** A failed save (a full disk) retries on its own, backing off to once a minute. */
+const RETRY_MIN_MS = 2_000
+const RETRY_MAX_MS = 60_000
 
-function loadFromDisk(): Store {
+/** The version each save replaces, kept as a hard link: the fallback if the store file is ever unreadable. */
+function previousPath(): string {
+  return `${storePath()}.previous`
+}
+
+type Candidate = { path: string; store: Store; mtimeMs: number }
+type ReadResult =
+  | { kind: 'ok'; candidate: Candidate }
+  | { kind: 'missing' }
+  | { kind: 'corrupt' }
+  | { kind: 'unreadable'; error: unknown }
+
+function parseStore(raw: string): Store | null {
+  const parsed = JSON.parse(raw) as unknown
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  const out: Store = {}
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value === 'string') out[key] = value
+  }
+  return out
+}
+
+function readCandidate(file: string): ReadResult {
+  let raw: string
+  let mtimeMs: number
   try {
-    const raw = fs.readFileSync(storePath(), 'utf8')
-    const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const out: Store = {}
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'string') out[key] = value
-    }
-    return out
+    raw = fs.readFileSync(file, 'utf8')
+    mtimeMs = fs.statSync(file).mtimeMs
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'missing' } : { kind: 'unreadable', error }
+  }
+  try {
+    const store = parseStore(raw)
+    return store ? { kind: 'ok', candidate: { path: file, store, mtimeMs } } : { kind: 'corrupt' }
   } catch {
+    return { kind: 'corrupt' }
+  }
+}
+
+/** The most recently written copy; the store file wins a tie. */
+function newest(candidates: readonly Candidate[]): Candidate | null {
+  let best: Candidate | null = null
+  for (const candidate of candidates) if (!best || candidate.mtimeMs > best.mtimeMs) best = candidate
+  return best
+}
+
+/** Move an unparseable store file aside, never deleting it, so the next save cannot replace its bytes. */
+function quarantine(file: string): void {
+  const aside = `${file}.corrupt-${Date.now()}`
+  try {
+    fs.renameSync(file, aside)
+    log.error('durable store file is corrupt; kept it as', path.basename(aside))
+  } catch (err) {
+    savingBlocked = true
+    log.error('durable store file is corrupt and could not be moved aside; saving is off', err)
+  }
+}
+
+/**
+ * Load the newest complete copy: the store file, the previous version, or a
+ * temp file that finished syncing but was never renamed in (a crash in
+ * between). Leftover temp files are deleted only once a complete copy is the
+ * store file, so none of them can be the only good copy.
+ */
+function loadFromDisk(): Store {
+  const file = storePath()
+  const main = readCandidate(file)
+  const temps = listTempFiles(path.dirname(file), path.basename(file))
+  const fallbacks = [previousPath(), ...temps.map((temp) => temp.path)]
+    .map(readCandidate)
+    .flatMap((read) => (read.kind === 'ok' ? [read.candidate] : []))
+
+  if (main.kind === 'unreadable') {
+    savingBlocked = true
+    log.error('durable store file could not be read; saving is off so it is not replaced', main.error)
+    return { ...(newest(fallbacks)?.store ?? {}) }
+  }
+  if (main.kind === 'corrupt') quarantine(file)
+
+  const best = newest(main.kind === 'ok' ? [main.candidate, ...fallbacks] : fallbacks)
+  if (!best) {
+    if (main.kind === 'missing' && removeTempFiles(temps) > 0) log.info('durable store removed incomplete temp files')
     return {}
   }
+  if (best.path !== file) {
+    log.warn('durable store restored from', path.basename(best.path))
+    if (!persist(best.store)) return best.store
+  }
+  const removed = removeTempFiles(temps)
+  if (removed > 0) log.info('durable store removed leftover temp files', removed)
+  return best.store
 }
 
 function readStore(): Store {
@@ -55,39 +143,56 @@ function readStore(): Store {
 }
 
 /**
- * Replace the file from memory.
+ * Replace the file atomically. A failure, a full disk included, leaves the
+ * last saved file as it was.
  *
  * Serialized compact: pretty-printing added roughly a fifth to a multi-megabyte
  * write for a machine-read file, and every byte of it is paid while a renderer
  * may be parked on the next synchronous read.
  */
-export function flushDurableStore(): boolean {
+function persist(store: Store): boolean {
+  if (savingBlocked) {
+    log.error('durable store not saved: the file on disk could not be read, so it is left as it is')
+    return false
+  }
+  const file = storePath()
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const result = writeFileAtomic(file, JSON.stringify(store), { previous: previousPath() })
+    if (!result.directorySynced) log.warn('durable store saved, but its folder could not be synced', result.error)
+    return true
+  } catch (err) {
+    if (isDiskFull(err)) log.error('durable store not saved: the disk is full; the last saved file is unchanged', err)
+    else log.error('durable store flush failed; the last saved file is unchanged', err)
+    return false
+  }
+}
+
+function clearFlushTimer(): void {
   if (flushTimer) {
     clearTimeout(flushTimer)
     flushTimer = null
   }
+}
+
+function scheduleRetry(): void {
+  if (savingBlocked || flushTimer) return
+  retryDelayMs = Math.min(retryDelayMs > 0 ? retryDelayMs * 2 : RETRY_MIN_MS, RETRY_MAX_MS)
+  flushTimer = setTimeout(() => {
+    flushTimer = null
+    flushDurableStore()
+  }, retryDelayMs)
+}
+
+export function flushDurableStore(): boolean {
+  clearFlushTimer()
   if (!cache) return true
-  try {
-    const file = storePath()
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    // Atomic-ish replace to reduce torn writes.
-    const tmp = `${file}.${process.pid}.tmp`
-    const fd = fs.openSync(tmp, 'w', 0o600)
-    try {
-      fs.writeFileSync(fd, JSON.stringify(cache), 'utf8')
-      fs.fsyncSync(fd)
-    } finally { fs.closeSync(fd) }
-    fs.renameSync(tmp, file)
-    // POSIX rename durability requires the parent directory to be committed too.
-    if (process.platform !== 'win32') {
-      const dir = fs.openSync(path.dirname(file), 'r')
-      try { fs.fsyncSync(dir) } finally { fs.closeSync(dir) }
-    }
+  if (persist(cache)) {
+    retryDelayMs = 0
     return true
-  } catch (err) {
-    log.error('durable store flush failed', err)
-    return false
   }
+  scheduleRetry()
+  return false
 }
 
 function scheduleFlush(): void {
@@ -101,10 +206,19 @@ function scheduleFlush(): void {
 /**
  * `sync` is for state we cannot lose to a crash inside the debounce window —
  * the vault and a factory reset. Caches and prefs ride the debounce.
+ *
+ * A sync write takes a copy of the store and only becomes what reads see once
+ * it is on disk, so a refused write is not served from memory or saved later.
  */
 function writeStore(store: Store, opts?: { sync?: boolean }): boolean {
+  if (opts?.sync === true) {
+    if (!persist(store)) return false
+    cache = store
+    clearFlushTimer()
+    retryDelayMs = 0
+    return true
+  }
   cache = store
-  if (opts?.sync === true) return flushDurableStore()
   scheduleFlush()
   return true
 }
@@ -133,9 +247,7 @@ const VAULT_SEAL_STATUS_KEY = 'handcash.brc100.vaultSealStatus'
 
 function setVaultSealStatus(status: 'sealed' | 'unsealed'): void {
   try {
-    const store = readStore()
-    store[VAULT_SEAL_STATUS_KEY] = status
-    writeStore(store, { sync: true })
+    writeStore({ ...readStore(), [VAULT_SEAL_STATUS_KEY]: status }, { sync: true })
   } catch (err) {
     log.warn('could not persist vault seal status', err)
   }
@@ -211,7 +323,9 @@ export function durableSet(
 ): boolean {
   if (typeof key !== 'string' || !key || typeof value !== 'string') return false
   try {
-    const store = readStore()
+    const sync = requiresCommittedWrite(key)
+    const sealed = sealIfNeeded(key, value)
+    const store = sync ? { ...readStore() } : readStore()
 
     if (key === VAULT_KEY && typeof store[key] === 'string') {
       let prevPlain: string
@@ -248,8 +362,8 @@ export function durableSet(
       }
     }
 
-    store[key] = sealIfNeeded(key, value)
-    return writeStore(store, { sync: requiresCommittedWrite(key) })
+    store[key] = sealed
+    return writeStore(store, { sync })
   } catch (err) {
     log.error('durableSet failed', err)
     return false
@@ -259,14 +373,15 @@ export function durableSet(
 export function durableRemove(key: string): boolean {
   if (typeof key !== 'string' || !key) return false
   try {
-    const store = readStore()
-    if (!(key in store)) return true
+    if (!(key in readStore())) return true
+    const sync = requiresCommittedWrite(key)
+    const store = sync ? { ...readStore() } : readStore()
     if (key === VAULT_KEY && typeof store[key] === 'string') {
       archiveVaultSnapshot(store, store[key])
       log.warn('durableRemove vault.v1 — preserved backup + history')
     }
     delete store[key]
-    return writeStore(store, { sync: requiresCommittedWrite(key) })
+    return writeStore(store, { sync })
   } catch (err) {
     log.error('durableRemove failed', err)
     return false
@@ -309,7 +424,7 @@ function shouldWipeHandcashKey(key: string): boolean {
  */
 export function durableWipeWallet(): { removed: number } {
   try {
-    const store = readStore()
+    const store = { ...readStore() }
     let removed = 0
     for (const key of Object.keys(store)) {
       if (shouldWipeHandcashKey(key)) {
@@ -317,7 +432,7 @@ export function durableWipeWallet(): { removed: number } {
         removed++
       }
     }
-    writeStore(store, { sync: true })
+    if (!writeStore(store, { sync: true })) throw new Error('Could not save the wallet reset to disk')
     log.warn('durableWipeWallet removed keys', removed)
     return { removed }
   } catch (err) {

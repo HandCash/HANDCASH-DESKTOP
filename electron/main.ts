@@ -42,8 +42,10 @@ import {
   brc39ArchiveRootPath,
   listArchiveForIdentity,
   readBrc39ArchiveSnapshot,
+  sweepBrc39ArchiveTemps,
   writeBrc39ArchiveSnapshot,
 } from './brc39Archive.js'
+import { parseSaveBackupPayload, saveBackupFile } from './backupFile.js'
 import {
   createAppTray,
   destroyAppTray,
@@ -619,6 +621,12 @@ async function ensureBridge(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  try {
+    sweepBrc39ArchiveTemps()
+  } catch (err) {
+    log.warn('brc39-archive temp sweep failed', err)
+  }
+
   // Init updater before the window so the first getUpdateStatus() has the real version
   // (not the default 0.0.0) when Settings mounts.
   initAutoUpdater({
@@ -939,6 +947,21 @@ ipcMain.handle(
     clipboard.writeImage(image)
   },
 )
+
+ipcMain.handle('dialog:save-backup', async (event, payload: unknown) => {
+  const parsed = parseSaveBackupPayload(payload)
+  if (!parsed) return { ok: false as const, error: 'Invalid backup payload' }
+  const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+  return saveBackupFile({
+    ...parsed,
+    choosePath: async (defaultPath) => {
+      const { canceled, filePath } = win
+        ? await dialog.showSaveDialog(win, { defaultPath })
+        : await dialog.showSaveDialog({ defaultPath })
+      return canceled || !filePath ? null : filePath
+    },
+  })
+})
 
 ipcMain.handle(
   'dialog:save-image',

@@ -17,7 +17,7 @@ export type KeySliceListProps = {
     method: SliceHandoffMethod,
     destination: string,
   ) => void | Promise<void>
-  /** Explicit user attestation; handoff actions never mark a slice saved. */
+  /** Explicit user attestation. Share and copy never mark a slice saved; a file save does once it reads back intact. */
   onConfirmSaved: (index: number) => void
   /** Regenerate a new share set (invalidates previous slices). */
   onRotateShares?: () => void | Promise<void>

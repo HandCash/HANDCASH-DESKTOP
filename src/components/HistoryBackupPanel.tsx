@@ -147,10 +147,12 @@ export function HistoryBackupPanel() {
   const runExportFile = async () => {
     if (!historyUnlocked) return
     const outcome = await action.run('file', async () => {
-      await exportBrc39ToFile(password ?? '', { passwordAlreadyVerified: true })
-      playWalletSound('success')
-      toastSuccess('Downloaded wallet.brc39')
-      markExported()
+      const saved = await exportBrc39ToFile(password ?? '', { passwordAlreadyVerified: true })
+      if (saved.saved) {
+        playWalletSound('success')
+        toastSuccess('History backup saved', saved.path)
+        markExported()
+      }
       await refreshLocalArchive()
     })
     fail('Export failed', outcome)

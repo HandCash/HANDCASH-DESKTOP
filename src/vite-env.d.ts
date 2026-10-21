@@ -222,6 +222,11 @@ interface HandCashBridge {
   }) => Promise<
     { ok: true; canceled?: boolean } | { ok: false; error: string }
   >
+  saveBackupFile?: (payload: { filename: string; bytes: Uint8Array }) => Promise<
+    | { ok: true; saved: true; path: string; bytes: number }
+    | { ok: true; saved: false }
+    | { ok: false; error: string }
+  >
   saveImageFile?: (payload: {
     filename: string
     mime: string

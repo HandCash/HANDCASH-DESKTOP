@@ -19,6 +19,7 @@ import {
   type StorageProvider,
 } from '@handcash/wallet-engine'
 import { appendAppLog } from './appLog'
+import { saveBackupFile, type BackupSaveOutcome } from './backupFileSave'
 import { encryptBrc39Document, decryptBrc39Document } from './brc39Encrypt'
 import { historyCryptoSecret } from './historyCryptoSecret'
 import {
@@ -272,25 +273,15 @@ export async function mergeHandoverDocument(runtime: WalletRuntime, json: string
   )
 }
 
-export function downloadBrc39File(bytes: Uint8Array, filename = 'wallet.brc39'): void {
-  const copy = asArrayBufferBytes(bytes)
-  const blob = new Blob([copy], { type: BRC39_MEDIA })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
+/** Saved only once the file reads back intact; cancelling the dialog saves nothing. */
 export async function exportBrc39ToFile(
   password: string,
   opts: CreateBrc39Opts = {},
-): Promise<void> {
+): Promise<BackupSaveOutcome> {
   const bytes = await createBrc39BackupBytes(password, opts)
   const active = getActiveWallet()
   const tag = active?.identityKey?.slice(0, 8) ?? 'wallet'
-  downloadBrc39File(bytes, `wallet-${tag}.brc39`)
+  return saveBackupFile(`wallet-${tag}.brc39`, bytes)
 }
 
 export async function importBrc39FromFile(

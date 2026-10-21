@@ -188,6 +188,12 @@ const handcash = {
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
   clipboardWriteImage: (payload: { mime: string; base64: string }) =>
     ipcRenderer.invoke('clipboard:write-image', payload) as Promise<void>,
+  saveBackupFile: (payload: { filename: string; bytes: Uint8Array }) =>
+    ipcRenderer.invoke('dialog:save-backup', payload) as Promise<
+      | { ok: true; saved: true; path: string; bytes: number }
+      | { ok: true; saved: false }
+      | { ok: false; error: string }
+    >,
   saveImageFile: (payload: { filename: string; mime: string; base64: string }) =>
     ipcRenderer.invoke('dialog:save-image', payload) as Promise<
       { ok: true; canceled?: boolean; path?: string } | { ok: false; error: string }

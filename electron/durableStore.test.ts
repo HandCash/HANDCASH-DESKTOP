@@ -141,3 +141,117 @@ describe('durable store', () => {
     expect(onDisk['handcash.brc100.derivedChangeEcho.v1:wallet:main:0:02ab']).toBe('{}')
   })
 })
+
+function diskFull(): never {
+  throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+}
+
+function leftoverTemps(): string[] {
+  return fs.readdirSync(userData).filter((name) => name.endsWith('.tmp'))
+}
+
+function onDisk(): Record<string, string> {
+  return JSON.parse(fs.readFileSync(storeFile(), 'utf8')) as Record<string, string>
+}
+
+function writeAged(file: string, contents: string, ageSeconds: number): void {
+  fs.writeFileSync(file, contents, 'utf8')
+  const at = Date.now() / 1000 - ageSeconds
+  fs.utimesSync(file, at, at)
+}
+
+/** A committed key: it must reach disk before durableSet reports success. */
+const COMMITTED = 'handcash.publicIdentities'
+
+describe('durable store on a full disk or after a crash', () => {
+  it('keeps the last saved file and leaves no temp file when the disk is full', async () => {
+    fs.writeFileSync(storeFile(), JSON.stringify({ [COMMITTED]: 'old' }), 'utf8')
+    const { durableSet } = await loadStore()
+    const log = (await import('electron-log')).default
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(diskFull)
+
+    expect(durableSet(COMMITTED, 'new')).toBe(false)
+
+    expect(onDisk()[COMMITTED]).toBe('old')
+    expect(leftoverTemps()).toEqual([])
+    expect(vi.mocked(log.error).mock.calls.some(([message]) => String(message).includes('disk is full'))).toBe(true)
+    vi.restoreAllMocks()
+  })
+
+  it('does not serve or later save a committed write the disk refused', async () => {
+    fs.writeFileSync(storeFile(), JSON.stringify({ [COMMITTED]: 'old' }), 'utf8')
+    const { durableGet, durableSet, flushDurableStore } = await loadStore()
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(diskFull)
+
+    expect(durableSet(COMMITTED, 'new')).toBe(false)
+    vi.restoreAllMocks()
+
+    expect(durableGet(COMMITTED)).toBe('old')
+    expect(flushDurableStore()).toBe(true)
+    expect(onDisk()[COMMITTED]).toBe('old')
+  })
+
+  it('retries a preference save the disk refused until it lands', async () => {
+    const { durableSet } = await loadStore()
+    vi.spyOn(fs, 'writeFileSync').mockImplementationOnce(diskFull)
+
+    durableSet('handcash.pref', 'on')
+    vi.advanceTimersByTime(150)
+    expect(fs.existsSync(storeFile())).toBe(false)
+    vi.restoreAllMocks()
+
+    vi.advanceTimersByTime(2_000)
+    expect(onDisk()['handcash.pref']).toBe('on')
+  })
+
+  it('removes leftover temp files on start and keeps the saved store', async () => {
+    writeAged(storeFile(), JSON.stringify({ 'handcash.a': 'saved' }), 10)
+    writeAged(`${storeFile()}.111.tmp`, '', 5)
+    writeAged(`${storeFile()}.222.tmp`, '{"handcash.a":"tor', 5)
+    writeAged(`${storeFile()}.333.tmp`, JSON.stringify({ 'handcash.a': 'older' }), 60)
+    const { durableGet } = await loadStore()
+
+    expect(durableGet('handcash.a')).toBe('saved')
+    expect(leftoverTemps()).toEqual([])
+  })
+
+  it('keeps a complete temp file that is the only good copy, and makes it the store', async () => {
+    writeAged(`${storeFile()}.444.tmp`, JSON.stringify({ 'handcash.a': 'only copy' }), 5)
+    const { durableGet } = await loadStore()
+
+    expect(durableGet('handcash.a')).toBe('only copy')
+    expect(onDisk()['handcash.a']).toBe('only copy')
+    expect(leftoverTemps()).toEqual([])
+  })
+
+  it('falls back to the previous version when the store file is corrupt, keeping the corrupt bytes', async () => {
+    const { durableSet, flushDurableStore } = await loadStore()
+    durableSet('handcash.a', 'first')
+    flushDurableStore()
+    durableSet('handcash.a', 'second')
+    flushDurableStore()
+    fs.writeFileSync(storeFile(), '{"handcash.a":"sec', 'utf8')
+
+    const reloaded = await loadStore()
+
+    expect(reloaded.durableGet('handcash.a')).toBe('first')
+    const aside = fs.readdirSync(userData).filter((name) => name.includes('.corrupt-'))
+    expect(aside).toHaveLength(1)
+    expect(fs.readFileSync(path.join(userData, aside[0]!), 'utf8')).toBe('{"handcash.a":"sec')
+  })
+
+  it('never replaces a store file it could not read', async () => {
+    fs.writeFileSync(storeFile(), JSON.stringify({ [COMMITTED]: 'kept' }), 'utf8')
+    const read = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementation(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (file === storeFile()) throw Object.assign(new Error('EIO: i/o error, read'), { code: 'EIO' })
+      return (read as (...args: unknown[]) => unknown)(file, ...rest)
+    }) as typeof fs.readFileSync)
+    const { durableSet } = await loadStore()
+
+    expect(durableSet(COMMITTED, 'replacement')).toBe(false)
+    vi.restoreAllMocks()
+
+    expect(onDisk()[COMMITTED]).toBe('kept')
+  })
+})
