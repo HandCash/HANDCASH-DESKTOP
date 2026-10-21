@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PrivateKey } from '@bsv/sdk'
@@ -77,5 +77,18 @@ describe('live wallets file', () => {
     const created = loadOrCreateLiveWallets(path)
     expect(created.alice.rootKeyHex).toHaveLength(64)
     expect(created.bob.rootKeyHex).not.toBe(created.alice.rootKeyHex)
+  })
+
+  it('keeps an unreadable file beside the new pair instead of overwriting its keys', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hc-live-'))
+    dirs.push(dir)
+    const path = join(dir, 'wallets.json')
+    const torn = '{"v":1,"chain":"main","alice":{"handle":"live-alice","rootKeyHex":"' + 'ab'.repeat(32) + '"},"bob":{"han'
+    writeFileSync(path, torn)
+    loadOrCreateLiveWallets(path)
+    const kept = readdirSync(dir).filter((name) => name.startsWith('wallets.json.corrupt-'))
+    expect(kept).toHaveLength(1)
+    expect(readFileSync(join(dir, kept[0]!), 'utf8')).toBe(torn)
+    expect(readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
 })

@@ -1,6 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { PrivateKey } from '@bsv/sdk'
+import { writeFileExclusive } from '../../electron/atomicFile'
 import type { Chain } from './vault'
 
 export const LIVE_WALLETS_PATH = resolve(process.cwd(), '.live-wallets.json')
@@ -79,6 +80,7 @@ function randomActor(handle: string): LiveActorKeys {
   return { handle, rootKeyHex: PrivateKey.fromRandom().toHex() }
 }
 
+/** An existing file that does not load may still hold funded keys, so it is moved aside, never overwritten. */
 export function loadOrCreateLiveWallets(path = LIVE_WALLETS_PATH): LiveWalletsFile {
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<LiveWalletsFile>
@@ -107,7 +109,8 @@ export function loadOrCreateLiveWallets(path = LIVE_WALLETS_PATH): LiveWalletsFi
     bob: randomActor('live-bob'),
   }
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, `${JSON.stringify(created, null, 2)}\n`, { mode: 0o600 })
+  if (existsSync(path)) renameSync(path, `${path}.corrupt-${Date.now()}`)
+  writeFileExclusive(path, new TextEncoder().encode(`${JSON.stringify(created, null, 2)}\n`))
   return created
 }
 

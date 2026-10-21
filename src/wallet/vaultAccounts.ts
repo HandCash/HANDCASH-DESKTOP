@@ -198,7 +198,7 @@ function defaultPrimary(masterIdentityKey: string): VaultAccount {
 
 function readStoredAccounts(masterIdentityKey: string): VaultAccountStore | null {
   try {
-    const raw = localStorage.getItem(storageKey(masterIdentityKey))
+    const raw = durableGetItem(storageKey(masterIdentityKey))
     if (!raw) return null
     const parsed = JSON.parse(raw) as VaultAccountStore
     if (parsed?.version !== 1 || !Array.isArray(parsed.accounts)) return null
@@ -255,8 +255,8 @@ export function subscribeVaultAccounts(listener: () => void): () => void {
 export function writeVaultAccounts(store: VaultAccountStore): void {
   const key = storageKey(store.masterIdentityKey)
   const next = JSON.stringify(store)
-  if (localStorage.getItem(key) === next) return
-  localStorage.setItem(key, next)
+  if (durableGetItem(key) === next) return
+  durableSetItem(key, next)
   for (const listener of listeners) listener()
 }
 

@@ -1,6 +1,7 @@
 import { EncryptedMessage, PrivateKey, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
+import { saveBackupFile, type BackupSaveOutcome } from './backupFileSave'
 import { bapIdFor, bapKey } from './bapRecords'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { retainedMinedHeight } from './issuerAttribution'
@@ -638,6 +639,11 @@ export function exportPublicIdentityBackup(runtime: WalletRuntime): string {
     if (profile) profiles[row.identityKey] = profile
   }
   return JSON.stringify({ kind: BACKUP_KIND, ...store, packages, profiles }, null, 2)
+}
+
+/** Save the issuer backup where the user picks; `saved` only once it reads back intact. */
+export function saveIssuerIdentityBackup(runtime: WalletRuntime): Promise<BackupSaveOutcome> {
+  return saveBackupFile('handcash-issuer-backup.json', exportPublicIdentityBackup(runtime))
 }
 
 /** Profiles in a backup that verify for a key the restored store controls. */

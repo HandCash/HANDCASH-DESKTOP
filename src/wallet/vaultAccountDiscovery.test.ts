@@ -39,6 +39,7 @@ import {
   writeVaultAccounts,
 } from './vaultAccounts'
 import { brc157VaultMaster, brc42VaultMaster, type VaultMaster } from './vaultMaster'
+import { durableForgetCached } from './durableStorage'
 
 const MASTER = brc42VaultMaster('1ad0895dd317163f0e83499c30bc593dbcc54cad96a5f57b065ce9f700513250')
 const MASTER_IK = identityKeyForAccount(MASTER, 0)
@@ -46,6 +47,7 @@ const mem = new Map<string, string>()
 
 beforeEach(() => {
   mem.clear()
+  durableForgetCached()
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => mem.get(k) ?? null,
     setItem: (k: string, v: string) => {

@@ -10,6 +10,7 @@ import {
   type HolderRecord,
   type HolderWrite,
 } from './accountHolding'
+import { durableForgetCached } from './durableStorage'
 import type { AccountProbe } from './vaultAccountDiscovery'
 import {
   activeAccountSpendRefusal,
@@ -74,6 +75,7 @@ const devices = new Map<string, Map<string, string>>()
 function on(device: string) {
   if (!devices.has(device)) devices.set(device, new Map())
   const mem = devices.get(device)!
+  durableForgetCached()
   vi.stubGlobal('localStorage', {
     getItem: (k: string) => mem.get(k) ?? null,
     setItem: (k: string, v: string) => {

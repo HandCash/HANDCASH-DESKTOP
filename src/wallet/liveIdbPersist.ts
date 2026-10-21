@@ -5,8 +5,9 @@
  * blank wallet, scans only the P2PKH deposit address, and treats swept change
  * as gone. Same keys still own that change — this file is the missing disk.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { writeFileAtomic } from '../../electron/atomicFile'
 
 export const LIVE_IDB_PATH = resolve(process.cwd(), '.live-idb.json')
 
@@ -178,7 +179,7 @@ export async function dumpLiveWalletState(path = LIVE_IDB_PATH): Promise<number>
     databases,
     localStorage: snapshotLocalStorage(),
   }
-  writeFileSync(path, JSON.stringify(dump))
+  writeFileAtomic(path, JSON.stringify(dump))
   return names.length
 }
 

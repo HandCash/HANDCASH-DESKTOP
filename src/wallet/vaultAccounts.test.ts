@@ -166,3 +166,56 @@ describe('findVaultAccountByIdentityKey', () => {
     expect(findVaultAccountByIdentityKey(masterIk, '02dead')).toBeNull()
   })
 })
+
+describe('vault account list storage', () => {
+  const masterIk = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
+  const childIk = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
+
+  it('keeps the list in the desktop file store, so it outlives the renderer storage', async () => {
+    const local = new Map<string, string>()
+    const shell = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      get length() {
+        return local.size
+      },
+      key: (i: number) => [...local.keys()][i] ?? null,
+      getItem: (k: string) => local.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        local.set(k, v)
+      },
+      removeItem: (k: string) => {
+        local.delete(k)
+      },
+    })
+    vi.stubGlobal('window', {
+      handcash: {
+        storageGetSync: (k: string) => shell.get(k) ?? null,
+        storageSetSync: (k: string, v: string) => {
+          shell.set(k, v)
+          return true
+        },
+      },
+    })
+    vi.resetModules()
+    const durable = await import('./durableStorage')
+    durable.__resetDurableStoreOwnerForTests()
+    durable.durableForgetCached()
+    const accounts = await import('./vaultAccounts')
+
+    accounts.writeVaultAccounts({
+      version: 1,
+      masterIdentityKey: masterIk,
+      activeIndex: 1,
+      accounts: [
+        { index: 0, name: 'Primary', identityKey: masterIk },
+        { index: 1, name: 'Child', identityKey: childIk },
+      ],
+    })
+    expect(shell.has(`handcash.vault-accounts.v1:${masterIk}`)).toBe(true)
+
+    local.clear()
+    durable.durableForgetCached()
+    expect(accounts.readVaultAccounts(masterIk).accounts.map((a) => a.index)).toEqual([0, 1])
+    vi.unstubAllGlobals()
+  })
+})

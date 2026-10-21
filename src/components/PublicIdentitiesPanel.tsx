@@ -8,7 +8,6 @@ import { publicIdentitiesMachine } from '../machines/publicIdentitiesMachine'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
 import {
-  exportPublicIdentityBackup,
   importIssuerPrivateKey,
   listPublicIdentities,
   MAX_IDENTITY_BACKUP_BYTES,
@@ -18,6 +17,7 @@ import {
   removePublicIdentity,
   restorePublicIdentityBackup,
   saveIdentityProfile,
+  saveIssuerIdentityBackup,
   selectedPublicIdentityKey,
   selectPublicIdentity,
   setSignsIssuance,
@@ -231,7 +231,8 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   const exportBackup = () =>
     action.run('export', async () => {
       assertOwner()
-      downloadJson(exportPublicIdentityBackup(runtime!), 'handcash-issuer-backup.json')
+      const saved = await saveIssuerIdentityBackup(runtime!)
+      if (saved.saved) toastSuccess('Issuer backup saved', saved.path)
     })
   const copyKey = (row: PublicIdentityRow) =>
     action.run('copy', async () => {

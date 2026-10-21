@@ -39,6 +39,7 @@ import {
   removePublicIdentity,
   restorePublicIdentityBackup,
   saveIdentityProfile,
+  saveIssuerIdentityBackup,
   selectedPublicIdentityKey,
   selectPublicIdentity,
   setSignsIssuance,
@@ -86,6 +87,26 @@ describe('issuer custody', () => {
     selectPublicIdentity(runtime(), id)
     expect(issuanceSigner(runtime()).rootKeyHex).toBe(imported.toHex().padStart(64, '0'))
     expect(() => issuanceSigner(runtime(), rootId)).toThrow(/changed after approval/)
+  })
+  it('saves the issuer backup through the desktop save that reads it back', async () => {
+    importIssuerPrivateKey(runtime(), imported.toWif())
+    const save = vi.fn(async (_args: { filename: string; bytes: Uint8Array }) => ({
+      ok: true as const,
+      saved: true as const,
+      path: '/backups/handcash-issuer-backup.json',
+      bytes: 1,
+    }))
+    vi.stubGlobal('window', { handcash: { saveBackupFile: save } })
+    try {
+      const outcome = await saveIssuerIdentityBackup(runtime())
+      expect(outcome).toEqual({ saved: true, path: '/backups/handcash-issuer-backup.json' })
+      expect(save).toHaveBeenCalledTimes(1)
+      const { filename, bytes } = save.mock.calls[0]![0]
+      expect(filename).toBe('handcash-issuer-backup.json')
+      expect(new TextDecoder().decode(bytes)).toBe(exportPublicIdentityBackup(runtime()))
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
   it('keeps records account/network scoped and refuses a different wallet backup', async () => {
     importIssuerPrivateKey(runtime(), imported.toWif())
