@@ -15,6 +15,7 @@ import {
   type UnlockedVault,
 } from '../wallet/vault'
 import {
+  installApproverAccounts,
   markVaultTakeover,
   prepareAddedDevice,
   resolveBootAccount,
@@ -84,7 +85,9 @@ import {
   writeVaultAccounts,
   type VaultAccountStore,
 } from '../wallet/vaultAccounts'
-import { markManagedKeysBackupConfirmed } from '../wallet/backupStatus'
+import { markMasterKeyBackupConfirmed } from '../wallet/backupStatus'
+import { firstOnboardStep, masterKeyAlreadyBackedUp, type OnboardRoute } from '../wallet/onboardSteps'
+import { applyJoinedDeviceLock } from '../wallet/applyOnboardLock'
 
 type Props = {
   mode: 'onboarding' | 'locked'
@@ -326,10 +329,10 @@ export function AuthScreen({
   const finishCreated = async (
     unlocked: UnlockedVault,
     password: string | null,
-    kind: 'create' | 'restore',
+    kind: OnboardRoute,
     restoreDisposition: RestoreRole = restoreRole,
   ) => {
-    if (kind === 'restore' && restoreDisposition === 'keep') {
+    if (kind === 'joined' || (kind === 'restore' && restoreDisposition === 'keep')) {
       setPreparing({
         title: 'Almost ready',
         lede: 'Finding the wallets your other device holds…',
@@ -338,6 +341,7 @@ export function AuthScreen({
     } else if (kind === 'restore') {
       markVaultTakeover(unlocked.master)
     }
+    if (masterKeyAlreadyBackedUp(kind)) markMasterKeyBackupConfirmed()
     setPreparing({
       title: 'Almost ready',
       lede: 'Opening your wallet on this device.',
@@ -365,6 +369,25 @@ export function AuthScreen({
       chain: unlocked.record.chain,
     }
     // Linear onboarding: backup then what it accepts (create), or history (restore); then protect.
+    const step = firstOnboardStep(kind, Boolean(unlocked.mnemonic))
+    if (step === null) {
+      // Joined by approval: the vault master is already backed up and this
+      // install holds only a new wallet, so open it at once.
+      const pending = {
+        profile,
+        balanceSats,
+        wrapPassword: password ?? '',
+        mnemonic: null,
+        rootKeyHex: unlocked.master.keyHex,
+        step: 'protect' as const,
+        kind: 'restore' as const,
+      }
+      const device = await deviceAuthStatus().catch(() => null)
+      const lock = await applyJoinedDeviceLock(pending.wrapPassword, Boolean(device?.available))
+      setPreparing(null)
+      enterFromOnboard(pending, lock.sessionPassword)
+      return
+    }
     if (kind === 'create') {
       setPendingOnboard({
         profile,
@@ -372,38 +395,31 @@ export function AuthScreen({
         wrapPassword: password ?? '',
         mnemonic: unlocked.mnemonic,
         rootKeyHex: unlocked.master.keyHex,
-        step: unlocked.mnemonic ? 'keys-backup' : 'accept',
+        step,
         kind,
       })
       setPreparing(null)
       if (password) setSessionBackupPassword(password)
       return
     }
-    if (kind === 'restore') {
-      if (!getWalletConfigPrefs().mode) {
-        try {
-          applyDefaultRestoreWalletSetup()
-        } catch (err) {
-          console.warn('[auth] restore setup defaults failed', err)
-        }
+    if (!getWalletConfigPrefs().mode) {
+      try {
+        applyDefaultRestoreWalletSetup()
+      } catch (err) {
+        console.warn('[auth] restore setup defaults failed', err)
       }
-      if (password) setSessionBackupPassword(password)
-      setPendingOnboard({
-        profile,
-        balanceSats,
-        wrapPassword: password ?? '',
-        mnemonic: unlocked.mnemonic,
-        rootKeyHex: unlocked.master.keyHex,
-        step: 'history',
-        kind,
-      })
-      setPreparing(null)
-      return
     }
-    setPreparing(null)
-    onCreated(profile, balanceSats)
     if (password) setSessionBackupPassword(password)
-    void recomposeWallet({ password: password ?? undefined, reason: kind })
+    setPendingOnboard({
+      profile,
+      balanceSats,
+      wrapPassword: password ?? '',
+      mnemonic: unlocked.mnemonic,
+      rootKeyHex: unlocked.master.keyHex,
+      step,
+      kind: 'restore',
+    })
+    setPreparing(null)
   }
 
   const finishUnlock = async (unlocked: UnlockedVault, password: string | null) => {
@@ -685,15 +701,21 @@ export function AuthScreen({
         title: 'Restoring your vault',
         lede: 'Installing the approved vault and its recovery settings.',
       })
+      const joined = recovered.recoveryKind === 'approved-device'
+      const wrapPassword = generateWrapSecret()
+      setOpenUnlockSecret(wrapPassword)
+      setDeviceLockMode('none')
       const unlocked = await restoreVaultFromMaster({
         master: recovered.master,
         chain,
+        password: wrapPassword,
       })
       if (recovered.enrollment) setEmailRecoveryEnrollment(recovered.enrollment)
       if ('signinEmail' in recovered && recovered.signinEmail) setSigninEmail(recovered.signinEmail)
-      markManagedKeysBackupConfirmed()
       const accounts = recovered.accounts as VaultAccountStore | undefined
-      if (
+      if (joined) {
+        installApproverAccounts(unlocked.master, accounts)
+      } else if (
         accounts?.version === 1 &&
         typeof accounts.masterIdentityKey === 'string' &&
         Array.isArray(accounts.accounts)
@@ -702,9 +724,9 @@ export function AuthScreen({
       }
       await finishCreated(
         unlocked,
-        null,
-        'restore',
-        recovered.recoveryKind === 'approved-device' ? 'keep' : 'replace',
+        wrapPassword,
+        joined ? 'joined' : 'restore',
+        joined ? 'keep' : 'replace',
       )
     } catch (restoreError) {
       const message =

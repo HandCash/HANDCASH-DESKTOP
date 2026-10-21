@@ -16,6 +16,7 @@ import {
   activeAccountSpendRefusal,
   checkVaultAccountHoldings,
   claimVaultAccount,
+  installApproverAccounts,
   markVaultTakeover,
   prepareAddedDevice,
   releaseVaultAccount,
@@ -312,5 +313,26 @@ describe('one install per account across devices', () => {
     expect(activeAccountSpendRefusal(active(1))).toBe(ACCOUNT_HELD_ELSEWHERE)
     expect(activeAccountSpendRefusal(null)).toBeNull()
     expect(() => setActiveVaultAccountIndex(MASTER_IK, 1)).toThrow(ACCOUNT_HELD_ELSEWHERE)
+  })
+})
+
+describe('a device joined by approval', () => {
+  it('installs the approver accounts as held elsewhere, so it never spends them unchecked', () => {
+    initCreatedVaultAccounts(MASTER)
+    createVaultAccount({ master: MASTER, name: 'Savings', index: 1, holding: { kind: 'here', seq: 4 } })
+    const sent = readVaultAccounts(MASTER_IK)
+
+    on('B')
+    const store = installApproverAccounts(MASTER, sent)
+    expect(store.accounts.map((a) => a.name)).toEqual(sent.accounts.map((a) => a.name))
+    expect(store.accounts.find((a) => a.index === 1)!.holding).toEqual({ kind: 'elsewhere', seq: 4, deviceId: null })
+    expect(holdings()).toEqual({ 0: 'elsewhere', 1: 'elsewhere' })
+  })
+
+  it('ignores a list for another vault, or none', () => {
+    on('B')
+    const other = { version: 1, masterIdentityKey: '02' + 'cd'.repeat(32), activeIndex: 0, accounts: [] }
+    expect(installApproverAccounts(MASTER, other).masterIdentityKey).toBe(MASTER_IK)
+    expect(installApproverAccounts(MASTER, undefined).masterIdentityKey).toBe(MASTER_IK)
   })
 })

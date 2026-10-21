@@ -5,7 +5,7 @@ import {
   recoverRootKeyFromBrc140Shares,
 } from '../brc140Backup'
 import { getOrCreateDeviceId } from '../deviceWallets'
-import { markManagedKeysBackupConfirmed } from '../backupStatus'
+import { markMasterKeyBackupConfirmed } from '../backupStatus'
 import { requireWalletRuntime } from '../walletRuntime'
 import {
   createGoogleAttempt,
@@ -161,7 +161,7 @@ export async function completeGoogleEnrollment(
     enrolledAt: Date.now(),
   }
   setEmailRecoveryEnrollment(record)
-  markManagedKeysBackupConfirmed()
+  markMasterKeyBackupConfirmed()
   return record
 }
 

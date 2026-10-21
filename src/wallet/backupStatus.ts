@@ -135,8 +135,12 @@ export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boole
   return true
 }
 
-/** A managed 2-of-3 recovery has independently verified both remote shares. */
-export function markManagedKeysBackupConfirmed(): void {
+/**
+ * The vault master, the one key backup, is already held: this install was
+ * restored from it, joined by an approving device that holds it, or a managed
+ * 2-of-3 recovery verified both remote shares.
+ */
+export function markMasterKeyBackupConfirmed(): void {
   durableSetItem(vaultKey(KEYS_KEY), '1')
   durableRemoveItem(vaultKey(BACKUP_LATER_KEY))
   notify()

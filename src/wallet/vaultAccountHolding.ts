@@ -395,6 +395,40 @@ export function markVaultTakeover(master: VaultMaster): void {
 }
 
 /**
+ * Install the account list a signed-in device sent with its approval. The
+ * approver's accounts arrive held elsewhere at the seq it knew, so a holder
+ * host this install cannot reach never leaves it spending them. Discovery
+ * runs again from above the listed accounts, for any the approver had not
+ * learned of. A list for another vault, or none, leaves the local one.
+ */
+export function installApproverAccounts(master: VaultMaster, sent: unknown): VaultAccountStore {
+  const store = sent as Partial<VaultAccountStore> | null | undefined
+  const masterIdentityKey = vaultIdentityKey(master)
+  if (
+    store?.version !== 1 ||
+    typeof store.masterIdentityKey !== 'string' ||
+    store.masterIdentityKey.toLowerCase() !== masterIdentityKey.toLowerCase() ||
+    !Array.isArray(store.accounts)
+  ) {
+    return ensureVaultAccounts(master)
+  }
+  const accounts = store.accounts.map((account): VaultAccount => {
+    const holding = holdingOf(account)
+    return holding.kind === 'here'
+      ? { ...account, holding: { kind: 'elsewhere', seq: holding.seq, deviceId: null } }
+      : account
+  })
+  writeVaultAccounts({
+    ...(store as VaultAccountStore),
+    masterIdentityKey,
+    accounts,
+    takeover: false,
+    discovered: false,
+  })
+  return ensureVaultAccounts(master)
+}
+
+/**
  * A restore that keeps the other device: hold nothing that already exists,
  * and reserve a new account for this install. Discovery must finish first,
  * because the new index has to sit above every used one.

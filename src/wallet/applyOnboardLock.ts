@@ -47,3 +47,22 @@ export async function applyOnboardLock(args: {
   setDeviceLockMode('device')
   return { sessionPassword: wrap }
 }
+
+/**
+ * A device joined by approval skips "Protect this device": it takes the
+ * panel's default, device unlock where available, else no prompt. Settings
+ * changes it later.
+ */
+export async function applyJoinedDeviceLock(
+  wrapPassword: string,
+  deviceAvailable: boolean,
+): Promise<{ sessionPassword: string | null; mode: DeviceLockMode }> {
+  if (deviceAvailable) {
+    try {
+      return { ...(await applyOnboardLock({ wrapPassword, mode: 'device' })), mode: 'device' }
+    } catch (err) {
+      console.warn('[onboard] device unlock for a joined device failed', err)
+    }
+  }
+  return { ...(await applyOnboardLock({ wrapPassword, mode: 'none' })), mode: 'none' }
+}
