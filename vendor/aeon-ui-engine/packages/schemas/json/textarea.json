@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/textarea.json",
+  "title": "Textarea",
+  "description": "Multi-line input that grows with content between minRows and maxRows (CSS field-sizing).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Textarea"
+    },
+    "scope": {
+      "const": "textarea"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "disabled"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minRows": {
+          "type": "number"
+        },
+        "maxRows": {
+          "type": "number"
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "outline",
+            "ghost"
+          ]
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "textarea.root",
+          "description": "textarea.root"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "textarea",
+    "parts": [
+      "root"
+    ],
+    "states": [
+      "idle",
+      "disabled"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "Root": "textarea.root"
+    },
+    "examples": []
+  }
+}

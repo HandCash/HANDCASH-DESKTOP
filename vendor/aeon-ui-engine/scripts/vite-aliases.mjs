@@ -71,11 +71,11 @@ export function aeonUiViteAliases(opts = {}) {
     },
     {
       find: '@aeon-ui/panda/styled-system/css',
-      replacement: path.join(packages, 'panda/styled-system/css/index.mjs'),
+      replacement: path.join(packages, 'panda/styled-system/css/index.js'),
     },
     {
       find: '@aeon-ui/panda/styled-system/recipes',
-      replacement: path.join(packages, 'panda/styled-system/recipes/index.mjs'),
+      replacement: path.join(packages, 'panda/styled-system/recipes/index.js'),
     },
     {
       find: '@aeon-ui/panda/themes',

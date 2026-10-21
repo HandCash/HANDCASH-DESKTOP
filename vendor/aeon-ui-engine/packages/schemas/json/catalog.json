@@ -43,6 +43,10 @@
     "prompt",
     "statusBanner",
     "separator",
+    "prose",
+    "textarea",
+    "clipboard",
+    "segmentGroup",
     "composer",
     "thread",
     "identity",
@@ -4622,6 +4626,495 @@
         "events": [],
         "slots": {
           "Root": "separator.root"
+        },
+        "examples": []
+      }
+    },
+    "prose": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://aeon-ui.com/schemas/prose.json",
+      "title": "Prose",
+      "description": "Long-form rich text (rendered markdown); styles descendants in em, draws list markers.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "scope"
+      ],
+      "properties": {
+        "component": {
+          "const": "Prose"
+        },
+        "scope": {
+          "const": "prose"
+        },
+        "parts": {
+          "type": "array",
+          "description": "Anatomy part keys — map to data-aeon-part",
+          "items": {
+            "type": "string",
+            "enum": [
+              "root"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "states": {
+          "type": "array",
+          "description": "Allowed data-aeon-state values (stable states only)",
+          "items": {
+            "type": "string",
+            "enum": [
+              "idle"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "slots": {
+          "type": "object",
+          "description": "Named composition slots / compound parts",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "properties": {
+            "Root": {
+              "const": "prose.root",
+              "description": "prose.root"
+            }
+          }
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+          "const": null
+        },
+        "runtime": {
+          "type": "string",
+          "description": "How headless state is driven at runtime",
+          "const": "layout"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": []
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "x-aeon": {
+        "scope": "prose",
+        "parts": [
+          "root"
+        ],
+        "states": [
+          "idle"
+        ],
+        "machine": null,
+        "runtime": "layout",
+        "events": [],
+        "slots": {
+          "Root": "prose.root"
+        },
+        "examples": []
+      }
+    },
+    "textarea": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://aeon-ui.com/schemas/textarea.json",
+      "title": "Textarea",
+      "description": "Multi-line input that grows with content between minRows and maxRows (CSS field-sizing).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "scope"
+      ],
+      "properties": {
+        "component": {
+          "const": "Textarea"
+        },
+        "scope": {
+          "const": "textarea"
+        },
+        "parts": {
+          "type": "array",
+          "description": "Anatomy part keys — map to data-aeon-part",
+          "items": {
+            "type": "string",
+            "enum": [
+              "root"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "states": {
+          "type": "array",
+          "description": "Allowed data-aeon-state values (stable states only)",
+          "items": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "disabled"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "minRows": {
+              "type": "number"
+            },
+            "maxRows": {
+              "type": "number"
+            },
+            "variant": {
+              "type": "string",
+              "enum": [
+                "outline",
+                "ghost"
+              ]
+            }
+          }
+        },
+        "slots": {
+          "type": "object",
+          "description": "Named composition slots / compound parts",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "properties": {
+            "Root": {
+              "const": "textarea.root",
+              "description": "textarea.root"
+            }
+          }
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+          "const": null
+        },
+        "runtime": {
+          "type": "string",
+          "description": "How headless state is driven at runtime",
+          "const": "props"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": []
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "x-aeon": {
+        "scope": "textarea",
+        "parts": [
+          "root"
+        ],
+        "states": [
+          "idle",
+          "disabled"
+        ],
+        "machine": null,
+        "runtime": "props",
+        "events": [],
+        "slots": {
+          "Root": "textarea.root"
+        },
+        "examples": []
+      }
+    },
+    "clipboard": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://aeon-ui.com/schemas/clipboard.json",
+      "title": "Clipboard",
+      "description": "One-click copy of a value; trigger and root carry idle | copying | copied | failed.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "scope"
+      ],
+      "properties": {
+        "component": {
+          "const": "Clipboard"
+        },
+        "scope": {
+          "const": "clipboard"
+        },
+        "parts": {
+          "type": "array",
+          "description": "Anatomy part keys — map to data-aeon-part",
+          "items": {
+            "type": "string",
+            "enum": [
+              "root",
+              "trigger",
+              "indicator",
+              "status"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "states": {
+          "type": "array",
+          "description": "Allowed data-aeon-state values (stable states only)",
+          "items": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "copying",
+              "copied",
+              "failed"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "value": {
+              "type": "string"
+            },
+            "timeout": {
+              "type": "number"
+            }
+          }
+        },
+        "slots": {
+          "type": "object",
+          "description": "Named composition slots / compound parts",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "properties": {
+            "Root": {
+              "const": "clipboard.root",
+              "description": "clipboard.root"
+            },
+            "Trigger": {
+              "const": "clipboard.trigger",
+              "description": "clipboard.trigger"
+            },
+            "Indicator": {
+              "const": "clipboard.indicator",
+              "description": "clipboard.indicator"
+            }
+          }
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+          "const": "clipboardMachine"
+        },
+        "runtime": {
+          "type": "string",
+          "description": "How headless state is driven at runtime",
+          "const": "useAeonMachine"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "COPY"
+            ]
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "x-aeon": {
+        "scope": "clipboard",
+        "parts": [
+          "root",
+          "trigger",
+          "indicator",
+          "status"
+        ],
+        "states": [
+          "idle",
+          "copying",
+          "copied",
+          "failed"
+        ],
+        "machine": "clipboardMachine",
+        "runtime": "useAeonMachine",
+        "events": [
+          "COPY"
+        ],
+        "slots": {
+          "Root": "clipboard.root",
+          "Trigger": "clipboard.trigger",
+          "Indicator": "clipboard.indicator"
+        },
+        "examples": []
+      }
+    },
+    "segmentGroup": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://aeon-ui.com/schemas/segmentGroup.json",
+      "title": "SegmentGroup",
+      "description": "Compact single choice as adjacent buttons via tabsMachine (same chart family as Tabs / RadioGroup).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "scope"
+      ],
+      "properties": {
+        "component": {
+          "const": "SegmentGroup"
+        },
+        "scope": {
+          "const": "segmentGroup"
+        },
+        "parts": {
+          "type": "array",
+          "description": "Anatomy part keys — map to data-aeon-part",
+          "items": {
+            "type": "string",
+            "enum": [
+              "root",
+              "item"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "states": {
+          "type": "array",
+          "description": "Allowed data-aeon-state values (stable states only)",
+          "items": {
+            "type": "string",
+            "enum": [
+              "selected",
+              "unselected"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "type": "string",
+              "enum": [
+                "sm",
+                "md"
+              ]
+            },
+            "orientation": {
+              "type": "string",
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            }
+          }
+        },
+        "slots": {
+          "type": "object",
+          "description": "Named composition slots / compound parts",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "properties": {
+            "Root": {
+              "const": "segmentGroup.root",
+              "description": "segmentGroup.root"
+            },
+            "Item": {
+              "const": "segmentGroup.item",
+              "description": "segmentGroup.item"
+            }
+          }
+        },
+        "machine": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+          "const": "tabsMachine"
+        },
+        "runtime": {
+          "type": "string",
+          "description": "How headless state is driven at runtime",
+          "const": "useAeonMachine"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "SELECT"
+            ]
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      },
+      "x-aeon": {
+        "scope": "segmentGroup",
+        "parts": [
+          "root",
+          "item"
+        ],
+        "states": [
+          "selected",
+          "unselected"
+        ],
+        "machine": "tabsMachine",
+        "runtime": "useAeonMachine",
+        "events": [
+          "SELECT"
+        ],
+        "slots": {
+          "Root": "segmentGroup.root",
+          "Item": "segmentGroup.item"
         },
         "examples": []
       }

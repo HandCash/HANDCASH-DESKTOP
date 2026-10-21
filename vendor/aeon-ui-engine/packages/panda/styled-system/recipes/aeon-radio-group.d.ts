@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonRadioGroupVariant {
-  
-}
-
-type AeonRadioGroupVariantMap = {
-  [key in keyof AeonRadioGroupVariant]: Array<AeonRadioGroupVariant[key]>
-}
-
-type AeonRadioGroupSlot = "root" | "item" | "itemControl" | "itemIndicator" | "itemLabel"
+export type AeonRadioGroupVariant = {}
 
 export type AeonRadioGroupVariantProps = {
-  [key in keyof AeonRadioGroupVariant]?: ConditionalValue<AeonRadioGroupVariant[key]> | undefined
+  [K in keyof AeonRadioGroupVariant]?: ConditionalValue<AeonRadioGroupVariant[K]>
 }
 
-export interface AeonRadioGroupRecipe {
-  __slot: AeonRadioGroupSlot
-  __type: AeonRadioGroupVariantProps
-  (props?: AeonRadioGroupVariantProps): Pretty<Record<AeonRadioGroupSlot, string>>
-  raw: (props?: AeonRadioGroupVariantProps) => AeonRadioGroupVariantProps
-  variantMap: AeonRadioGroupVariantMap
-  variantKeys: Array<keyof AeonRadioGroupVariant>
-  splitVariantProps<Props extends AeonRadioGroupVariantProps>(props: Props): [AeonRadioGroupVariantProps, Pretty<DistributiveOmit<Props, keyof AeonRadioGroupVariantProps>>]
-  getVariantProps: (props?: AeonRadioGroupVariantProps) => AeonRadioGroupVariantProps
-}
+export type AeonRadioGroupVariantMap = RecipeVariantMap<AeonRadioGroupVariant>
 
+export type AeonRadioGroupSlot = "root" | "item" | "itemControl" | "itemIndicator" | "itemLabel"
 
-export declare const aeonRadioGroup: AeonRadioGroupRecipe
+export type AeonRadioGroupRecipe = SlotRecipeRuntimeFn<AeonRadioGroupSlot, AeonRadioGroupVariantProps, AeonRadioGroupVariantMap>
+
+export declare const aeonRadioGroup: AeonRadioGroupRecipe;

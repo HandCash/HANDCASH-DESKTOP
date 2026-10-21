@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonTabsVariant {
-  
-}
-
-type AeonTabsVariantMap = {
-  [key in keyof AeonTabsVariant]: Array<AeonTabsVariant[key]>
-}
-
-type AeonTabsSlot = "root" | "list" | "trigger" | "content" | "indicator"
+export type AeonTabsVariant = {}
 
 export type AeonTabsVariantProps = {
-  [key in keyof AeonTabsVariant]?: ConditionalValue<AeonTabsVariant[key]> | undefined
+  [K in keyof AeonTabsVariant]?: ConditionalValue<AeonTabsVariant[K]>
 }
 
-export interface AeonTabsRecipe {
-  __slot: AeonTabsSlot
-  __type: AeonTabsVariantProps
-  (props?: AeonTabsVariantProps): Pretty<Record<AeonTabsSlot, string>>
-  raw: (props?: AeonTabsVariantProps) => AeonTabsVariantProps
-  variantMap: AeonTabsVariantMap
-  variantKeys: Array<keyof AeonTabsVariant>
-  splitVariantProps<Props extends AeonTabsVariantProps>(props: Props): [AeonTabsVariantProps, Pretty<DistributiveOmit<Props, keyof AeonTabsVariantProps>>]
-  getVariantProps: (props?: AeonTabsVariantProps) => AeonTabsVariantProps
-}
+export type AeonTabsVariantMap = RecipeVariantMap<AeonTabsVariant>
 
+export type AeonTabsSlot = "root" | "list" | "trigger" | "content" | "indicator"
 
-export declare const aeonTabs: AeonTabsRecipe
+export type AeonTabsRecipe = SlotRecipeRuntimeFn<AeonTabsSlot, AeonTabsVariantProps, AeonTabsVariantMap>
+
+export declare const aeonTabs: AeonTabsRecipe;

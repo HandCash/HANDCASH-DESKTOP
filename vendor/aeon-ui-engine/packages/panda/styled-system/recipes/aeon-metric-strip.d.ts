@@ -1,36 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonMetricStripVariant {
-  /**
- * @default "cluster"
- */
-density: "cluster" | "loose"
+export type AeonMetricStripVariant = {
+  density?: "cluster" | "loose"
 }
-
-type AeonMetricStripVariantMap = {
-  [key in keyof AeonMetricStripVariant]: Array<AeonMetricStripVariant[key]>
-}
-
-type AeonMetricStripSlot = "root" | "chip" | "value" | "label"
 
 export type AeonMetricStripVariantProps = {
-  [key in keyof AeonMetricStripVariant]?: ConditionalValue<AeonMetricStripVariant[key]> | undefined
+  [K in keyof AeonMetricStripVariant]?: ConditionalValue<AeonMetricStripVariant[K]>
 }
 
-export interface AeonMetricStripRecipe {
-  __slot: AeonMetricStripSlot
-  __type: AeonMetricStripVariantProps
-  (props?: AeonMetricStripVariantProps): Pretty<Record<AeonMetricStripSlot, string>>
-  raw: (props?: AeonMetricStripVariantProps) => AeonMetricStripVariantProps
-  variantMap: AeonMetricStripVariantMap
-  variantKeys: Array<keyof AeonMetricStripVariant>
-  splitVariantProps<Props extends AeonMetricStripVariantProps>(props: Props): [AeonMetricStripVariantProps, Pretty<DistributiveOmit<Props, keyof AeonMetricStripVariantProps>>]
-  getVariantProps: (props?: AeonMetricStripVariantProps) => AeonMetricStripVariantProps
-}
+export type AeonMetricStripVariantMap = RecipeVariantMap<AeonMetricStripVariant>
 
-/**
- * Dense metric chips — value + uppercase label
- */
-export declare const aeonMetricStrip: AeonMetricStripRecipe
+export type AeonMetricStripSlot = "root" | "chip" | "value" | "label"
+
+export type AeonMetricStripRecipe = SlotRecipeRuntimeFn<AeonMetricStripSlot, AeonMetricStripVariantProps, AeonMetricStripVariantMap>
+
+export declare const aeonMetricStrip: AeonMetricStripRecipe;

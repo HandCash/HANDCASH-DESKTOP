@@ -1,38 +1,19 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonNavVariant {
-  /**
- * @default "md"
- */
-size: "sm" | "md" | "lg"
-/**
- * @default "inline"
- */
-layout: "inline" | "dock"
+export type AeonNavVariant = {
+  size?: "sm" | "md" | "lg"
+  layout?: "inline" | "dock"
 }
-
-type AeonNavVariantMap = {
-  [key in keyof AeonNavVariant]: Array<AeonNavVariant[key]>
-}
-
-type AeonNavSlot = "root" | "item" | "indicator" | "label" | "icon" | "badge"
 
 export type AeonNavVariantProps = {
-  [key in keyof AeonNavVariant]?: ConditionalValue<AeonNavVariant[key]> | undefined
+  [K in keyof AeonNavVariant]?: ConditionalValue<AeonNavVariant[K]>
 }
 
-export interface AeonNavRecipe {
-  __slot: AeonNavSlot
-  __type: AeonNavVariantProps
-  (props?: AeonNavVariantProps): Pretty<Record<AeonNavSlot, string>>
-  raw: (props?: AeonNavVariantProps) => AeonNavVariantProps
-  variantMap: AeonNavVariantMap
-  variantKeys: Array<keyof AeonNavVariant>
-  splitVariantProps<Props extends AeonNavVariantProps>(props: Props): [AeonNavVariantProps, Pretty<DistributiveOmit<Props, keyof AeonNavVariantProps>>]
-  getVariantProps: (props?: AeonNavVariantProps) => AeonNavVariantProps
-}
+export type AeonNavVariantMap = RecipeVariantMap<AeonNavVariant>
 
+export type AeonNavSlot = "root" | "item" | "indicator" | "label" | "icon" | "badge"
 
-export declare const aeonNav: AeonNavRecipe
+export type AeonNavRecipe = SlotRecipeRuntimeFn<AeonNavSlot, AeonNavVariantProps, AeonNavVariantMap>
+
+export declare const aeonNav: AeonNavRecipe;

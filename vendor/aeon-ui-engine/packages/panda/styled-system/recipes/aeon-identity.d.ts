@@ -1,36 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonIdentityVariant {
-  /**
- * @default "md"
- */
-size: "sm" | "md" | "lg"
+export type AeonIdentityVariant = {
+  size?: "sm" | "md" | "lg"
 }
-
-type AeonIdentityVariantMap = {
-  [key in keyof AeonIdentityVariant]: Array<AeonIdentityVariant[key]>
-}
-
-type AeonIdentitySlot = "root" | "avatar" | "title" | "subtitle" | "meta" | "trailing"
 
 export type AeonIdentityVariantProps = {
-  [key in keyof AeonIdentityVariant]?: ConditionalValue<AeonIdentityVariant[key]> | undefined
+  [K in keyof AeonIdentityVariant]?: ConditionalValue<AeonIdentityVariant[K]>
 }
 
-export interface AeonIdentityRecipe {
-  __slot: AeonIdentitySlot
-  __type: AeonIdentityVariantProps
-  (props?: AeonIdentityVariantProps): Pretty<Record<AeonIdentitySlot, string>>
-  raw: (props?: AeonIdentityVariantProps) => AeonIdentityVariantProps
-  variantMap: AeonIdentityVariantMap
-  variantKeys: Array<keyof AeonIdentityVariant>
-  splitVariantProps<Props extends AeonIdentityVariantProps>(props: Props): [AeonIdentityVariantProps, Pretty<DistributiveOmit<Props, keyof AeonIdentityVariantProps>>]
-  getVariantProps: (props?: AeonIdentityVariantProps) => AeonIdentityVariantProps
-}
+export type AeonIdentityVariantMap = RecipeVariantMap<AeonIdentityVariant>
 
-/**
- * Identity strip — avatar + title + subtitle
- */
-export declare const aeonIdentity: AeonIdentityRecipe
+export type AeonIdentitySlot = "root" | "avatar" | "title" | "subtitle" | "meta" | "trailing"
+
+export type AeonIdentityRecipe = SlotRecipeRuntimeFn<AeonIdentitySlot, AeonIdentityVariantProps, AeonIdentityVariantMap>
+
+export declare const aeonIdentity: AeonIdentityRecipe;

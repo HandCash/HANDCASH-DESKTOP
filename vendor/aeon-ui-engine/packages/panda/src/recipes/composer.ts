@@ -46,9 +46,10 @@ export const composerRecipe = defineSlotRecipe({
     },
     input: {
       width: '100%',
-      minH: 'controlMinHSm',
-      h: 'controlMinHSm',
-      maxH: '5.5rem',
+      /* Grows with its content; rows come from Composer.Input's minRows / maxRows. */
+      fieldSizing: 'content',
+      minH: 'max(token(spacing.controlMinHSm), calc(var(--aeon-textarea-min-rows, 1) * 1lh + 0.7rem + 2px))',
+      maxH: 'calc(var(--aeon-textarea-max-rows, 4) * 1lh + 0.7rem + 2px)',
       resize: 'none',
       overflowY: 'auto',
       boxSizing: 'border-box',

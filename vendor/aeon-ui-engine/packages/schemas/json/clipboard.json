@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/clipboard.json",
+  "title": "Clipboard",
+  "description": "One-click copy of a value; trigger and root carry idle | copying | copied | failed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Clipboard"
+    },
+    "scope": {
+      "const": "clipboard"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "trigger",
+          "indicator",
+          "status"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "copying",
+          "copied",
+          "failed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "number"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "clipboard.root",
+          "description": "clipboard.root"
+        },
+        "Trigger": {
+          "const": "clipboard.trigger",
+          "description": "clipboard.trigger"
+        },
+        "Indicator": {
+          "const": "clipboard.indicator",
+          "description": "clipboard.indicator"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "clipboardMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "COPY"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "clipboard",
+    "parts": [
+      "root",
+      "trigger",
+      "indicator",
+      "status"
+    ],
+    "states": [
+      "idle",
+      "copying",
+      "copied",
+      "failed"
+    ],
+    "machine": "clipboardMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "COPY"
+    ],
+    "slots": {
+      "Root": "clipboard.root",
+      "Trigger": "clipboard.trigger",
+      "Indicator": "clipboard.indicator"
+    },
+    "examples": []
+  }
+}

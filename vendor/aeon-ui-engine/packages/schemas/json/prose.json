@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/prose.json",
+  "title": "Prose",
+  "description": "Long-form rich text (rendered markdown); styles descendants in em, draws list markers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Prose"
+    },
+    "scope": {
+      "const": "prose"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "prose.root",
+          "description": "prose.root"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "layout"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "prose",
+    "parts": [
+      "root"
+    ],
+    "states": [
+      "idle"
+    ],
+    "machine": null,
+    "runtime": "layout",
+    "events": [],
+    "slots": {
+      "Root": "prose.root"
+    },
+    "examples": []
+  }
+}

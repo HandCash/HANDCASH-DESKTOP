@@ -1,34 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { RecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonBadgeVariant {
-  /**
- * @default "default"
- */
-variant: "default" | "accent" | "danger"
+export type AeonBadgeVariant = {
+  variant?: "default" | "accent" | "danger"
 }
-
-type AeonBadgeVariantMap = {
-  [key in keyof AeonBadgeVariant]: Array<AeonBadgeVariant[key]>
-}
-
-
 
 export type AeonBadgeVariantProps = {
-  [key in keyof AeonBadgeVariant]?: ConditionalValue<AeonBadgeVariant[key]> | undefined
+  [K in keyof AeonBadgeVariant]?: ConditionalValue<AeonBadgeVariant[K]>
 }
 
-export interface AeonBadgeRecipe {
-  
-  __type: AeonBadgeVariantProps
-  (props?: AeonBadgeVariantProps): string
-  raw: (props?: AeonBadgeVariantProps) => AeonBadgeVariantProps
-  variantMap: AeonBadgeVariantMap
-  variantKeys: Array<keyof AeonBadgeVariant>
-  splitVariantProps<Props extends AeonBadgeVariantProps>(props: Props): [AeonBadgeVariantProps, Pretty<DistributiveOmit<Props, keyof AeonBadgeVariantProps>>]
-  getVariantProps: (props?: AeonBadgeVariantProps) => AeonBadgeVariantProps
-}
+export type AeonBadgeVariantMap = RecipeVariantMap<AeonBadgeVariant>
 
+export type AeonBadgeRecipe = RecipeRuntimeFn<AeonBadgeVariantProps, AeonBadgeVariantMap>
 
-export declare const aeonBadge: AeonBadgeRecipe
+export declare const aeonBadge: AeonBadgeRecipe;

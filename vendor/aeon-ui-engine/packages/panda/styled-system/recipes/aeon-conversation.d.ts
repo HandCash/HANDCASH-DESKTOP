@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonConversationVariant {
-  
-}
-
-type AeonConversationVariantMap = {
-  [key in keyof AeonConversationVariant]: Array<AeonConversationVariant[key]>
-}
-
-type AeonConversationSlot = "root" | "item" | "leading" | "body" | "title" | "preview" | "meta" | "badge"
+export type AeonConversationVariant = {}
 
 export type AeonConversationVariantProps = {
-  [key in keyof AeonConversationVariant]?: ConditionalValue<AeonConversationVariant[key]> | undefined
+  [K in keyof AeonConversationVariant]?: ConditionalValue<AeonConversationVariant[K]>
 }
 
-export interface AeonConversationRecipe {
-  __slot: AeonConversationSlot
-  __type: AeonConversationVariantProps
-  (props?: AeonConversationVariantProps): Pretty<Record<AeonConversationSlot, string>>
-  raw: (props?: AeonConversationVariantProps) => AeonConversationVariantProps
-  variantMap: AeonConversationVariantMap
-  variantKeys: Array<keyof AeonConversationVariant>
-  splitVariantProps<Props extends AeonConversationVariantProps>(props: Props): [AeonConversationVariantProps, Pretty<DistributiveOmit<Props, keyof AeonConversationVariantProps>>]
-  getVariantProps: (props?: AeonConversationVariantProps) => AeonConversationVariantProps
-}
+export type AeonConversationVariantMap = RecipeVariantMap<AeonConversationVariant>
 
+export type AeonConversationSlot = "root" | "item" | "leading" | "body" | "title" | "preview" | "meta" | "badge"
 
-export declare const aeonConversation: AeonConversationRecipe
+export type AeonConversationRecipe = SlotRecipeRuntimeFn<AeonConversationSlot, AeonConversationVariantProps, AeonConversationVariantMap>
+
+export declare const aeonConversation: AeonConversationRecipe;

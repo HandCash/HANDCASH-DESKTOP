@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonMenuVariant {
-  
-}
-
-type AeonMenuVariantMap = {
-  [key in keyof AeonMenuVariant]: Array<AeonMenuVariant[key]>
-}
-
-type AeonMenuSlot = "root" | "trigger" | "positioner" | "content" | "item" | "separator"
+export type AeonMenuVariant = {}
 
 export type AeonMenuVariantProps = {
-  [key in keyof AeonMenuVariant]?: ConditionalValue<AeonMenuVariant[key]> | undefined
+  [K in keyof AeonMenuVariant]?: ConditionalValue<AeonMenuVariant[K]>
 }
 
-export interface AeonMenuRecipe {
-  __slot: AeonMenuSlot
-  __type: AeonMenuVariantProps
-  (props?: AeonMenuVariantProps): Pretty<Record<AeonMenuSlot, string>>
-  raw: (props?: AeonMenuVariantProps) => AeonMenuVariantProps
-  variantMap: AeonMenuVariantMap
-  variantKeys: Array<keyof AeonMenuVariant>
-  splitVariantProps<Props extends AeonMenuVariantProps>(props: Props): [AeonMenuVariantProps, Pretty<DistributiveOmit<Props, keyof AeonMenuVariantProps>>]
-  getVariantProps: (props?: AeonMenuVariantProps) => AeonMenuVariantProps
-}
+export type AeonMenuVariantMap = RecipeVariantMap<AeonMenuVariant>
 
+export type AeonMenuSlot = "root" | "trigger" | "positioner" | "content" | "item" | "separator"
 
-export declare const aeonMenu: AeonMenuRecipe
+export type AeonMenuRecipe = SlotRecipeRuntimeFn<AeonMenuSlot, AeonMenuVariantProps, AeonMenuVariantMap>
+
+export declare const aeonMenu: AeonMenuRecipe;

@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonThreadVariant {
-  
-}
-
-type AeonThreadVariantMap = {
-  [key in keyof AeonThreadVariant]: Array<AeonThreadVariant[key]>
-}
-
-type AeonThreadSlot = "root" | "list" | "item" | "bubble" | "meta" | "day" | "bind" | "card" | "cardTitle" | "cardBody" | "cardActions"
+export type AeonThreadVariant = {}
 
 export type AeonThreadVariantProps = {
-  [key in keyof AeonThreadVariant]?: ConditionalValue<AeonThreadVariant[key]> | undefined
+  [K in keyof AeonThreadVariant]?: ConditionalValue<AeonThreadVariant[K]>
 }
 
-export interface AeonThreadRecipe {
-  __slot: AeonThreadSlot
-  __type: AeonThreadVariantProps
-  (props?: AeonThreadVariantProps): Pretty<Record<AeonThreadSlot, string>>
-  raw: (props?: AeonThreadVariantProps) => AeonThreadVariantProps
-  variantMap: AeonThreadVariantMap
-  variantKeys: Array<keyof AeonThreadVariant>
-  splitVariantProps<Props extends AeonThreadVariantProps>(props: Props): [AeonThreadVariantProps, Pretty<DistributiveOmit<Props, keyof AeonThreadVariantProps>>]
-  getVariantProps: (props?: AeonThreadVariantProps) => AeonThreadVariantProps
-}
+export type AeonThreadVariantMap = RecipeVariantMap<AeonThreadVariant>
 
+export type AeonThreadSlot = "root" | "list" | "item" | "bubble" | "meta" | "day" | "bind" | "card" | "cardTitle" | "cardBody" | "cardActions"
 
-export declare const aeonThread: AeonThreadRecipe
+export type AeonThreadRecipe = SlotRecipeRuntimeFn<AeonThreadSlot, AeonThreadVariantProps, AeonThreadVariantMap>
+
+export declare const aeonThread: AeonThreadRecipe;

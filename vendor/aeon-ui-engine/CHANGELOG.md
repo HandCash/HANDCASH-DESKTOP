@@ -4,6 +4,18 @@
 
 ### Added
 
+- **Sounds (`@aeon-ui/core`).** `playSound(name)` plays short UI sounds synthesized with Web Audio (`tap`, `copy`, `send`, `success`, `attention`, `error`, `ready`); no audio files. Silent until the app calls `configureSounds({ enabled: true, volume })`. The same sound fired twice within 60 ms plays once. `createSoundPlayer` takes a context factory for tests.
+- **`Clipboard` sounds.** `clipboardMachine` plays `copy` on entering `copied` and `error` on entering `failed`, through the `soundCopied` / `soundFailed` actions.
+- **`Clipboard`.** One-click copy on `clipboardMachine` (idle, copying, copied, failed); the styled trigger swaps a copy icon for a check and a live region announces the result.
+- **`Prose`.** Styles rendered markdown in em, so it follows the surrounding font size; draws list markers the reset strips, and `<ol start>` numbers correctly.
+- **`Textarea`.** Grows with its content between `minRows` and `maxRows`; `outline` and `ghost` variants.
+- **`SegmentGroup`.** Compact single choice on `tabsMachine`; arrow keys, Home and End move the selection and skip disabled items.
+- **`Composer.Input` `minRows` / `maxRows`.** The input grows with its text (default 1 to 4 lines) instead of staying one fixed height.
+
+### Changed
+
+- **Panda CSS 2.** `@aeon-ui/panda` runs on `@pandacss/dev` 2.3 and lists `preset-base` and `preset-panda` itself, since v2 adds no presets on its own. Generated `styled-system` files are `.js` instead of `.mjs`.
+
 - **`Select.Positioner` `anchorRef`, `placement`, `matchAnchorWidth`.** The same options `Popover.Positioner` takes: a compact trigger pinned to the end of a row can open its listbox across the row it belongs to, so option labels and details are not squeezed to the trigger's width.
 
 ### Fixed

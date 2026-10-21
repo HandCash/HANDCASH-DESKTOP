@@ -1,34 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonSeparatorVariant {
-  /**
- * @default "horizontal"
- */
-orientation: "horizontal" | "vertical"
+export type AeonSeparatorVariant = {
+  orientation?: "horizontal" | "vertical"
 }
-
-type AeonSeparatorVariantMap = {
-  [key in keyof AeonSeparatorVariant]: Array<AeonSeparatorVariant[key]>
-}
-
-type AeonSeparatorSlot = "root"
 
 export type AeonSeparatorVariantProps = {
-  [key in keyof AeonSeparatorVariant]?: ConditionalValue<AeonSeparatorVariant[key]> | undefined
+  [K in keyof AeonSeparatorVariant]?: ConditionalValue<AeonSeparatorVariant[K]>
 }
 
-export interface AeonSeparatorRecipe {
-  __slot: AeonSeparatorSlot
-  __type: AeonSeparatorVariantProps
-  (props?: AeonSeparatorVariantProps): Pretty<Record<AeonSeparatorSlot, string>>
-  raw: (props?: AeonSeparatorVariantProps) => AeonSeparatorVariantProps
-  variantMap: AeonSeparatorVariantMap
-  variantKeys: Array<keyof AeonSeparatorVariant>
-  splitVariantProps<Props extends AeonSeparatorVariantProps>(props: Props): [AeonSeparatorVariantProps, Pretty<DistributiveOmit<Props, keyof AeonSeparatorVariantProps>>]
-  getVariantProps: (props?: AeonSeparatorVariantProps) => AeonSeparatorVariantProps
-}
+export type AeonSeparatorVariantMap = RecipeVariantMap<AeonSeparatorVariant>
 
+export type AeonSeparatorSlot = "root"
 
-export declare const aeonSeparator: AeonSeparatorRecipe
+export type AeonSeparatorRecipe = SlotRecipeRuntimeFn<AeonSeparatorSlot, AeonSeparatorVariantProps, AeonSeparatorVariantMap>
+
+export declare const aeonSeparator: AeonSeparatorRecipe;

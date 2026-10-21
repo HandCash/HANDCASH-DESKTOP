@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonFileUploadVariant {
-  
-}
-
-type AeonFileUploadVariantMap = {
-  [key in keyof AeonFileUploadVariant]: Array<AeonFileUploadVariant[key]>
-}
-
-type AeonFileUploadSlot = "root" | "dropzone" | "input" | "label" | "hint" | "preview" | "clearTrigger" | "rejectionMessage"
+export type AeonFileUploadVariant = {}
 
 export type AeonFileUploadVariantProps = {
-  [key in keyof AeonFileUploadVariant]?: ConditionalValue<AeonFileUploadVariant[key]> | undefined
+  [K in keyof AeonFileUploadVariant]?: ConditionalValue<AeonFileUploadVariant[K]>
 }
 
-export interface AeonFileUploadRecipe {
-  __slot: AeonFileUploadSlot
-  __type: AeonFileUploadVariantProps
-  (props?: AeonFileUploadVariantProps): Pretty<Record<AeonFileUploadSlot, string>>
-  raw: (props?: AeonFileUploadVariantProps) => AeonFileUploadVariantProps
-  variantMap: AeonFileUploadVariantMap
-  variantKeys: Array<keyof AeonFileUploadVariant>
-  splitVariantProps<Props extends AeonFileUploadVariantProps>(props: Props): [AeonFileUploadVariantProps, Pretty<DistributiveOmit<Props, keyof AeonFileUploadVariantProps>>]
-  getVariantProps: (props?: AeonFileUploadVariantProps) => AeonFileUploadVariantProps
-}
+export type AeonFileUploadVariantMap = RecipeVariantMap<AeonFileUploadVariant>
 
+export type AeonFileUploadSlot = "root" | "dropzone" | "input" | "label" | "hint" | "preview" | "clearTrigger" | "rejectionMessage"
 
-export declare const aeonFileUpload: AeonFileUploadRecipe
+export type AeonFileUploadRecipe = SlotRecipeRuntimeFn<AeonFileUploadSlot, AeonFileUploadVariantProps, AeonFileUploadVariantMap>
+
+export declare const aeonFileUpload: AeonFileUploadRecipe;

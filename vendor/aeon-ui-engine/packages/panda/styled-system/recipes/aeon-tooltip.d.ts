@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonTooltipVariant {
-  
-}
-
-type AeonTooltipVariantMap = {
-  [key in keyof AeonTooltipVariant]: Array<AeonTooltipVariant[key]>
-}
-
-type AeonTooltipSlot = "root" | "trigger" | "positioner" | "content" | "arrow"
+export type AeonTooltipVariant = {}
 
 export type AeonTooltipVariantProps = {
-  [key in keyof AeonTooltipVariant]?: ConditionalValue<AeonTooltipVariant[key]> | undefined
+  [K in keyof AeonTooltipVariant]?: ConditionalValue<AeonTooltipVariant[K]>
 }
 
-export interface AeonTooltipRecipe {
-  __slot: AeonTooltipSlot
-  __type: AeonTooltipVariantProps
-  (props?: AeonTooltipVariantProps): Pretty<Record<AeonTooltipSlot, string>>
-  raw: (props?: AeonTooltipVariantProps) => AeonTooltipVariantProps
-  variantMap: AeonTooltipVariantMap
-  variantKeys: Array<keyof AeonTooltipVariant>
-  splitVariantProps<Props extends AeonTooltipVariantProps>(props: Props): [AeonTooltipVariantProps, Pretty<DistributiveOmit<Props, keyof AeonTooltipVariantProps>>]
-  getVariantProps: (props?: AeonTooltipVariantProps) => AeonTooltipVariantProps
-}
+export type AeonTooltipVariantMap = RecipeVariantMap<AeonTooltipVariant>
 
+export type AeonTooltipSlot = "root" | "trigger" | "positioner" | "content" | "arrow"
 
-export declare const aeonTooltip: AeonTooltipRecipe
+export type AeonTooltipRecipe = SlotRecipeRuntimeFn<AeonTooltipSlot, AeonTooltipVariantProps, AeonTooltipVariantMap>
+
+export declare const aeonTooltip: AeonTooltipRecipe;

@@ -1,33 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonAsyncVariant {
-  
-}
-
-type AeonAsyncVariantMap = {
-  [key in keyof AeonAsyncVariant]: Array<AeonAsyncVariant[key]>
-}
-
-type AeonAsyncSlot = "root" | "track" | "segment" | "readout" | "readoutRail" | "readoutBody" | "actions"
+export type AeonAsyncVariant = {}
 
 export type AeonAsyncVariantProps = {
-  [key in keyof AeonAsyncVariant]?: ConditionalValue<AeonAsyncVariant[key]> | undefined
+  [K in keyof AeonAsyncVariant]?: ConditionalValue<AeonAsyncVariant[K]>
 }
 
-export interface AeonAsyncRecipe {
-  __slot: AeonAsyncSlot
-  __type: AeonAsyncVariantProps
-  (props?: AeonAsyncVariantProps): Pretty<Record<AeonAsyncSlot, string>>
-  raw: (props?: AeonAsyncVariantProps) => AeonAsyncVariantProps
-  variantMap: AeonAsyncVariantMap
-  variantKeys: Array<keyof AeonAsyncVariant>
-  splitVariantProps<Props extends AeonAsyncVariantProps>(props: Props): [AeonAsyncVariantProps, Pretty<DistributiveOmit<Props, keyof AeonAsyncVariantProps>>]
-  getVariantProps: (props?: AeonAsyncVariantProps) => AeonAsyncVariantProps
-}
+export type AeonAsyncVariantMap = RecipeVariantMap<AeonAsyncVariant>
 
-/**
- * Async data region — track, readout, and actions
- */
-export declare const aeonAsync: AeonAsyncRecipe
+export type AeonAsyncSlot = "root" | "track" | "segment" | "readout" | "readoutRail" | "readoutBody" | "actions"
+
+export type AeonAsyncRecipe = SlotRecipeRuntimeFn<AeonAsyncSlot, AeonAsyncVariantProps, AeonAsyncVariantMap>
+
+export declare const aeonAsync: AeonAsyncRecipe;

@@ -1,33 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonSelectVariant {
-  
-}
-
-type AeonSelectVariantMap = {
-  [key in keyof AeonSelectVariant]: Array<AeonSelectVariant[key]>
-}
-
-type AeonSelectSlot = "root" | "trigger" | "value" | "icon" | "positioner" | "content" | "item"
+export type AeonSelectVariant = {}
 
 export type AeonSelectVariantProps = {
-  [key in keyof AeonSelectVariant]?: ConditionalValue<AeonSelectVariant[key]> | undefined
+  [K in keyof AeonSelectVariant]?: ConditionalValue<AeonSelectVariant[K]>
 }
 
-export interface AeonSelectRecipe {
-  __slot: AeonSelectSlot
-  __type: AeonSelectVariantProps
-  (props?: AeonSelectVariantProps): Pretty<Record<AeonSelectSlot, string>>
-  raw: (props?: AeonSelectVariantProps) => AeonSelectVariantProps
-  variantMap: AeonSelectVariantMap
-  variantKeys: Array<keyof AeonSelectVariant>
-  splitVariantProps<Props extends AeonSelectVariantProps>(props: Props): [AeonSelectVariantProps, Pretty<DistributiveOmit<Props, keyof AeonSelectVariantProps>>]
-  getVariantProps: (props?: AeonSelectVariantProps) => AeonSelectVariantProps
-}
+export type AeonSelectVariantMap = RecipeVariantMap<AeonSelectVariant>
 
-/**
- * Custom listbox select — no native OS dropdown chrome
- */
-export declare const aeonSelect: AeonSelectRecipe
+export type AeonSelectSlot = "root" | "trigger" | "value" | "icon" | "positioner" | "content" | "item"
+
+export type AeonSelectRecipe = SlotRecipeRuntimeFn<AeonSelectSlot, AeonSelectVariantProps, AeonSelectVariantMap>
+
+export declare const aeonSelect: AeonSelectRecipe;

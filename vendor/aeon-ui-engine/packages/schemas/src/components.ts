@@ -615,6 +615,69 @@ export const componentSchemas = {
     slots: { Root: 'separator.root' },
   }),
 
+  prose: componentSchema({
+    id: 'https://aeon-ui.com/schemas/prose.json',
+    title: 'Prose',
+    description: 'Long-form rich text (rendered markdown); styles descendants in em, draws list markers.',
+    scope: 'prose',
+    parts: ['root'],
+    states: ['idle'],
+    machine: null,
+    runtime: 'layout',
+    slots: { Root: 'prose.root' },
+  }),
+
+  textarea: componentSchema({
+    id: 'https://aeon-ui.com/schemas/textarea.json',
+    title: 'Textarea',
+    description: 'Multi-line input that grows with content between minRows and maxRows (CSS field-sizing).',
+    scope: 'textarea',
+    parts: ['root'],
+    states: ['idle', 'disabled'],
+    machine: null,
+    runtime: 'props',
+    props: {
+      minRows: { type: 'number' },
+      maxRows: { type: 'number' },
+      variant: { type: 'string', enum: ['outline', 'ghost'] },
+    },
+    slots: { Root: 'textarea.root' },
+  }),
+
+  clipboard: componentSchema({
+    id: 'https://aeon-ui.com/schemas/clipboard.json',
+    title: 'Clipboard',
+    description: 'One-click copy of a value; trigger and root carry idle | copying | copied | failed.',
+    scope: 'clipboard',
+    parts: ['root', 'trigger', 'indicator', 'status'],
+    states: ['idle', 'copying', 'copied', 'failed'],
+    machine: 'clipboardMachine',
+    runtime: 'useAeonMachine',
+    events: ['COPY'],
+    props: {
+      value: { type: 'string' },
+      timeout: { type: 'number' },
+    },
+    slots: { Root: 'clipboard.root', Trigger: 'clipboard.trigger', Indicator: 'clipboard.indicator' },
+  }),
+
+  segmentGroup: componentSchema({
+    id: 'https://aeon-ui.com/schemas/segmentGroup.json',
+    title: 'SegmentGroup',
+    description: 'Compact single choice as adjacent buttons via tabsMachine (same chart family as Tabs / RadioGroup).',
+    scope: 'segmentGroup',
+    parts: ['root', 'item'],
+    states: ['selected', 'unselected'],
+    machine: 'tabsMachine',
+    runtime: 'useAeonMachine',
+    events: ['SELECT'],
+    props: {
+      size: { type: 'string', enum: ['sm', 'md'] },
+      orientation: { type: 'string', enum: ['horizontal', 'vertical'] },
+    },
+    slots: { Root: 'segmentGroup.root', Item: 'segmentGroup.item' },
+  }),
+
   composer: componentSchema({
     id: 'https://aeon-ui.com/schemas/composer.json',
     title: 'Composer',

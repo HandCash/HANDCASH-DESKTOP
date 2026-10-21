@@ -7,6 +7,7 @@ import {
   appShellMachine,
   asyncMachine,
   buttonLifecycleMachine,
+  clipboardMachine,
   contentRegionMachine,
   dialogMachine,
   fieldMachine,
@@ -47,6 +48,7 @@ for (const [id, schema] of Object.entries(componentSchemas)) {
 const machines = {
   async: asyncMachine,
   buttonLifecycle: buttonLifecycleMachine,
+  clipboard: clipboardMachine,
   dialog: dialogMachine,
   field: fieldMachine,
   popover: popoverMachine,

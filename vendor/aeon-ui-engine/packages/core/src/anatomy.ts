@@ -310,6 +310,18 @@ export const composerAnatomy = anatomy('composer', [
 
 export const separatorAnatomy = anatomy('separator', ['root'] as const)
 
+/** Long-form rich text (rendered markdown). Styles its descendants; no state of its own. */
+export const proseAnatomy = anatomy('prose', ['root'] as const)
+
+/** Multi-line input that grows with its content between `minRows` and `maxRows`. */
+export const textareaAnatomy = anatomy('textarea', ['root'] as const)
+
+/** Compact single choice rendered as adjacent buttons; same chart family as Tabs / RadioGroup. */
+export const segmentGroupAnatomy = anatomy('segmentGroup', ['root', 'item'] as const)
+
+/** Copy a value to the clipboard; root state idle | copying | copied | failed. */
+export const clipboardAnatomy = anatomy('clipboard', ['root', 'trigger', 'indicator', 'status'] as const)
+
 /** Progress bar — idle / loading / complete on root `data-aeon-state`. */
 export const progressAnatomy = anatomy('progress', ['root', 'track', 'range', 'label'] as const)
 

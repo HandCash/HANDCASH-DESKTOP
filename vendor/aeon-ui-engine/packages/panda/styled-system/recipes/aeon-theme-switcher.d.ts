@@ -1,34 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonThemeSwitcherVariant {
-  /**
- * @default "sm"
- */
-size: "xs" | "sm" | "md"
+export type AeonThemeSwitcherVariant = {
+  size?: "xs" | "sm" | "md"
 }
-
-type AeonThemeSwitcherVariantMap = {
-  [key in keyof AeonThemeSwitcherVariant]: Array<AeonThemeSwitcherVariant[key]>
-}
-
-type AeonThemeSwitcherSlot = "root" | "modes" | "modeBtn" | "themeSelect" | "themeTrigger"
 
 export type AeonThemeSwitcherVariantProps = {
-  [key in keyof AeonThemeSwitcherVariant]?: ConditionalValue<AeonThemeSwitcherVariant[key]> | undefined
+  [K in keyof AeonThemeSwitcherVariant]?: ConditionalValue<AeonThemeSwitcherVariant[K]>
 }
 
-export interface AeonThemeSwitcherRecipe {
-  __slot: AeonThemeSwitcherSlot
-  __type: AeonThemeSwitcherVariantProps
-  (props?: AeonThemeSwitcherVariantProps): Pretty<Record<AeonThemeSwitcherSlot, string>>
-  raw: (props?: AeonThemeSwitcherVariantProps) => AeonThemeSwitcherVariantProps
-  variantMap: AeonThemeSwitcherVariantMap
-  variantKeys: Array<keyof AeonThemeSwitcherVariant>
-  splitVariantProps<Props extends AeonThemeSwitcherVariantProps>(props: Props): [AeonThemeSwitcherVariantProps, Pretty<DistributiveOmit<Props, keyof AeonThemeSwitcherVariantProps>>]
-  getVariantProps: (props?: AeonThemeSwitcherVariantProps) => AeonThemeSwitcherVariantProps
-}
+export type AeonThemeSwitcherVariantMap = RecipeVariantMap<AeonThemeSwitcherVariant>
 
+export type AeonThemeSwitcherSlot = "root" | "modes" | "modeBtn" | "themeSelect" | "themeTrigger"
 
-export declare const aeonThemeSwitcher: AeonThemeSwitcherRecipe
+export type AeonThemeSwitcherRecipe = SlotRecipeRuntimeFn<AeonThemeSwitcherSlot, AeonThemeSwitcherVariantProps, AeonThemeSwitcherVariantMap>
+
+export declare const aeonThemeSwitcher: AeonThemeSwitcherRecipe;

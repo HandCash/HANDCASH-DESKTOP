@@ -1,44 +1,20 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonScrollVariant {
-  /**
- * @default "both"
- */
-axis: "y" | "x" | "both"
-/**
- * @default "md"
- */
-maxH: "sm" | "md" | "lg"
-/**
- * @default "full"
- */
-maxW: "full" | "md"
+export type AeonScrollVariant = {
+  axis?: "y" | "x" | "both"
+  maxH?: "sm" | "md" | "lg"
+  maxW?: "full" | "md"
 }
-
-type AeonScrollVariantMap = {
-  [key in keyof AeonScrollVariant]: Array<AeonScrollVariant[key]>
-}
-
-type AeonScrollSlot = "root" | "viewport" | "content"
 
 export type AeonScrollVariantProps = {
-  [key in keyof AeonScrollVariant]?: ConditionalValue<AeonScrollVariant[key]> | undefined
+  [K in keyof AeonScrollVariant]?: ConditionalValue<AeonScrollVariant[K]>
 }
 
-export interface AeonScrollRecipe {
-  __slot: AeonScrollSlot
-  __type: AeonScrollVariantProps
-  (props?: AeonScrollVariantProps): Pretty<Record<AeonScrollSlot, string>>
-  raw: (props?: AeonScrollVariantProps) => AeonScrollVariantProps
-  variantMap: AeonScrollVariantMap
-  variantKeys: Array<keyof AeonScrollVariant>
-  splitVariantProps<Props extends AeonScrollVariantProps>(props: Props): [AeonScrollVariantProps, Pretty<DistributiveOmit<Props, keyof AeonScrollVariantProps>>]
-  getVariantProps: (props?: AeonScrollVariantProps) => AeonScrollVariantProps
-}
+export type AeonScrollVariantMap = RecipeVariantMap<AeonScrollVariant>
 
-/**
- * Scroll viewport with axis + edge states on data-aeon-state
- */
-export declare const aeonScroll: AeonScrollRecipe
+export type AeonScrollSlot = "root" | "viewport" | "content"
+
+export type AeonScrollRecipe = SlotRecipeRuntimeFn<AeonScrollSlot, AeonScrollVariantProps, AeonScrollVariantMap>
+
+export declare const aeonScroll: AeonScrollRecipe;

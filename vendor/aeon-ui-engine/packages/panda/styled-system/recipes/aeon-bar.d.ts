@@ -1,40 +1,21 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonBarVariant {
-  /**
- * @default "sm"
- */
-size: "xs" | "sm" | "md" | "lg"
-sticky: boolean
-placement: "top" | "bottom" | "inline"
-/**
- * @default "shrink"
- */
-collapse: "shrink" | "wrap" | "collapse-center"
+export type AeonBarVariant = {
+  size?: "xs" | "sm" | "md" | "lg"
+  sticky?: boolean
+  placement?: "top" | "bottom" | "inline"
+  collapse?: "shrink" | "wrap" | "collapse-center"
 }
-
-type AeonBarVariantMap = {
-  [key in keyof AeonBarVariant]: Array<AeonBarVariant[key]>
-}
-
-type AeonBarSlot = "root" | "leading" | "center" | "trailing" | "seam"
 
 export type AeonBarVariantProps = {
-  [key in keyof AeonBarVariant]?: ConditionalValue<AeonBarVariant[key]> | undefined
+  [K in keyof AeonBarVariant]?: ConditionalValue<AeonBarVariant[K]>
 }
 
-export interface AeonBarRecipe {
-  __slot: AeonBarSlot
-  __type: AeonBarVariantProps
-  (props?: AeonBarVariantProps): Pretty<Record<AeonBarSlot, string>>
-  raw: (props?: AeonBarVariantProps) => AeonBarVariantProps
-  variantMap: AeonBarVariantMap
-  variantKeys: Array<keyof AeonBarVariant>
-  splitVariantProps<Props extends AeonBarVariantProps>(props: Props): [AeonBarVariantProps, Pretty<DistributiveOmit<Props, keyof AeonBarVariantProps>>]
-  getVariantProps: (props?: AeonBarVariantProps) => AeonBarVariantProps
-}
+export type AeonBarVariantMap = RecipeVariantMap<AeonBarVariant>
 
+export type AeonBarSlot = "root" | "leading" | "center" | "trailing" | "seam"
 
-export declare const aeonBar: AeonBarRecipe
+export type AeonBarRecipe = SlotRecipeRuntimeFn<AeonBarSlot, AeonBarVariantProps, AeonBarVariantMap>
+
+export declare const aeonBar: AeonBarRecipe;

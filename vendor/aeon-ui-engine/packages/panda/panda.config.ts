@@ -28,6 +28,10 @@ import {
   switchRecipe,
   tabsRecipe,
   separatorRecipe,
+  proseRecipe,
+  textareaRecipe,
+  segmentGroupRecipe,
+  clipboardRecipe,
   progressRecipe,
   radioGroupRecipe,
   sliderRecipe,
@@ -44,6 +48,8 @@ import { semanticTokens } from './src/theme/semantic-tokens.js'
 import { tokens } from './src/theme/tokens.js'
 
 export default defineConfig({
+  // v2 adds no presets by itself; v1 added both of these when none were listed.
+  presets: ['@pandacss/preset-base', '@pandacss/preset-panda'],
   preflight: true,
   include: [
     '../ui/src/**/*.{ts,tsx}',
@@ -68,6 +74,8 @@ export default defineConfig({
       aeonProfileHeader: [{ align: ['*'] }],
       aeonEntry: [{ density: ['*'], layout: ['*'] }],
       aeonThemeSwitcher: [{ size: ['*'] }],
+      aeonTextarea: [{ variant: ['*'] }],
+      aeonSegmentGroup: [{ size: ['*'] }],
     },
   },
   conditions: {
@@ -120,6 +128,10 @@ export default defineConfig({
         aeonDialog: dialogRecipe,
         aeonTabs: tabsRecipe,
         aeonSeparator: separatorRecipe,
+        aeonProse: proseRecipe,
+        aeonTextarea: textareaRecipe,
+        aeonSegmentGroup: segmentGroupRecipe,
+        aeonClipboard: clipboardRecipe,
         aeonProgress: progressRecipe,
         aeonRadioGroup: radioGroupRecipe,
         aeonSlider: sliderRecipe,

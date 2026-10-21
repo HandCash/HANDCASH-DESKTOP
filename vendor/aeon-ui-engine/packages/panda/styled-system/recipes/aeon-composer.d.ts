@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonComposerVariant {
-  
-}
-
-type AeonComposerVariantMap = {
-  [key in keyof AeonComposerVariant]: Array<AeonComposerVariant[key]>
-}
-
-type AeonComposerSlot = "root" | "input" | "actions" | "send" | "suggestions" | "suggestion" | "toolbar"
+export type AeonComposerVariant = {}
 
 export type AeonComposerVariantProps = {
-  [key in keyof AeonComposerVariant]?: ConditionalValue<AeonComposerVariant[key]> | undefined
+  [K in keyof AeonComposerVariant]?: ConditionalValue<AeonComposerVariant[K]>
 }
 
-export interface AeonComposerRecipe {
-  __slot: AeonComposerSlot
-  __type: AeonComposerVariantProps
-  (props?: AeonComposerVariantProps): Pretty<Record<AeonComposerSlot, string>>
-  raw: (props?: AeonComposerVariantProps) => AeonComposerVariantProps
-  variantMap: AeonComposerVariantMap
-  variantKeys: Array<keyof AeonComposerVariant>
-  splitVariantProps<Props extends AeonComposerVariantProps>(props: Props): [AeonComposerVariantProps, Pretty<DistributiveOmit<Props, keyof AeonComposerVariantProps>>]
-  getVariantProps: (props?: AeonComposerVariantProps) => AeonComposerVariantProps
-}
+export type AeonComposerVariantMap = RecipeVariantMap<AeonComposerVariant>
 
+export type AeonComposerSlot = "root" | "input" | "actions" | "send" | "suggestions" | "suggestion" | "toolbar"
 
-export declare const aeonComposer: AeonComposerRecipe
+export type AeonComposerRecipe = SlotRecipeRuntimeFn<AeonComposerSlot, AeonComposerVariantProps, AeonComposerVariantMap>
+
+export declare const aeonComposer: AeonComposerRecipe;

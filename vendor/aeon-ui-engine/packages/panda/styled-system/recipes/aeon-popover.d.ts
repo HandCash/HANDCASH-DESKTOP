@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonPopoverVariant {
-  
-}
-
-type AeonPopoverVariantMap = {
-  [key in keyof AeonPopoverVariant]: Array<AeonPopoverVariant[key]>
-}
-
-type AeonPopoverSlot = "root" | "trigger" | "positioner" | "content" | "arrow" | "closeTrigger"
+export type AeonPopoverVariant = {}
 
 export type AeonPopoverVariantProps = {
-  [key in keyof AeonPopoverVariant]?: ConditionalValue<AeonPopoverVariant[key]> | undefined
+  [K in keyof AeonPopoverVariant]?: ConditionalValue<AeonPopoverVariant[K]>
 }
 
-export interface AeonPopoverRecipe {
-  __slot: AeonPopoverSlot
-  __type: AeonPopoverVariantProps
-  (props?: AeonPopoverVariantProps): Pretty<Record<AeonPopoverSlot, string>>
-  raw: (props?: AeonPopoverVariantProps) => AeonPopoverVariantProps
-  variantMap: AeonPopoverVariantMap
-  variantKeys: Array<keyof AeonPopoverVariant>
-  splitVariantProps<Props extends AeonPopoverVariantProps>(props: Props): [AeonPopoverVariantProps, Pretty<DistributiveOmit<Props, keyof AeonPopoverVariantProps>>]
-  getVariantProps: (props?: AeonPopoverVariantProps) => AeonPopoverVariantProps
-}
+export type AeonPopoverVariantMap = RecipeVariantMap<AeonPopoverVariant>
 
+export type AeonPopoverSlot = "root" | "trigger" | "positioner" | "content" | "arrow" | "closeTrigger"
 
-export declare const aeonPopover: AeonPopoverRecipe
+export type AeonPopoverRecipe = SlotRecipeRuntimeFn<AeonPopoverSlot, AeonPopoverVariantProps, AeonPopoverVariantMap>
+
+export declare const aeonPopover: AeonPopoverRecipe;

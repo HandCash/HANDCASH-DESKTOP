@@ -1,34 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonContentVariant {
-  /**
- * @default "start"
- */
-align: "start" | "center"
+export type AeonContentVariant = {
+  align?: "start" | "center"
 }
-
-type AeonContentVariantMap = {
-  [key in keyof AeonContentVariant]: Array<AeonContentVariant[key]>
-}
-
-type AeonContentSlot = "root" | "toolbar" | "body" | "pending" | "empty" | "error" | "success" | "sentinel"
 
 export type AeonContentVariantProps = {
-  [key in keyof AeonContentVariant]?: ConditionalValue<AeonContentVariant[key]> | undefined
+  [K in keyof AeonContentVariant]?: ConditionalValue<AeonContentVariant[K]>
 }
 
-export interface AeonContentRecipe {
-  __slot: AeonContentSlot
-  __type: AeonContentVariantProps
-  (props?: AeonContentVariantProps): Pretty<Record<AeonContentSlot, string>>
-  raw: (props?: AeonContentVariantProps) => AeonContentVariantProps
-  variantMap: AeonContentVariantMap
-  variantKeys: Array<keyof AeonContentVariant>
-  splitVariantProps<Props extends AeonContentVariantProps>(props: Props): [AeonContentVariantProps, Pretty<DistributiveOmit<Props, keyof AeonContentVariantProps>>]
-  getVariantProps: (props?: AeonContentVariantProps) => AeonContentVariantProps
-}
+export type AeonContentVariantMap = RecipeVariantMap<AeonContentVariant>
 
+export type AeonContentSlot = "root" | "toolbar" | "body" | "pending" | "empty" | "error" | "success" | "sentinel"
 
-export declare const aeonContent: AeonContentRecipe
+export type AeonContentRecipe = SlotRecipeRuntimeFn<AeonContentSlot, AeonContentVariantProps, AeonContentVariantMap>
+
+export declare const aeonContent: AeonContentRecipe;

@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonSwitchVariant {
-  
-}
-
-type AeonSwitchVariantMap = {
-  [key in keyof AeonSwitchVariant]: Array<AeonSwitchVariant[key]>
-}
-
-type AeonSwitchSlot = "root" | "control" | "thumb" | "label" | "hiddenInput"
+export type AeonSwitchVariant = {}
 
 export type AeonSwitchVariantProps = {
-  [key in keyof AeonSwitchVariant]?: ConditionalValue<AeonSwitchVariant[key]> | undefined
+  [K in keyof AeonSwitchVariant]?: ConditionalValue<AeonSwitchVariant[K]>
 }
 
-export interface AeonSwitchRecipe {
-  __slot: AeonSwitchSlot
-  __type: AeonSwitchVariantProps
-  (props?: AeonSwitchVariantProps): Pretty<Record<AeonSwitchSlot, string>>
-  raw: (props?: AeonSwitchVariantProps) => AeonSwitchVariantProps
-  variantMap: AeonSwitchVariantMap
-  variantKeys: Array<keyof AeonSwitchVariant>
-  splitVariantProps<Props extends AeonSwitchVariantProps>(props: Props): [AeonSwitchVariantProps, Pretty<DistributiveOmit<Props, keyof AeonSwitchVariantProps>>]
-  getVariantProps: (props?: AeonSwitchVariantProps) => AeonSwitchVariantProps
-}
+export type AeonSwitchVariantMap = RecipeVariantMap<AeonSwitchVariant>
 
+export type AeonSwitchSlot = "root" | "control" | "thumb" | "label" | "hiddenInput"
 
-export declare const aeonSwitch: AeonSwitchRecipe
+export type AeonSwitchRecipe = SlotRecipeRuntimeFn<AeonSwitchSlot, AeonSwitchVariantProps, AeonSwitchVariantMap>
+
+export declare const aeonSwitch: AeonSwitchRecipe;

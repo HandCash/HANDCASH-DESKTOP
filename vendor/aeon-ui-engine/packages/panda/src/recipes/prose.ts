@@ -1,0 +1,110 @@
+import { defineSlotRecipe } from '@pandacss/dev'
+
+const slots = ['root'] as const
+
+const blocks = ':is(p, ul, ol, pre, blockquote, table)'
+
+/** Sizes are in em so prose follows the font size it is placed in. */
+export const proseRecipe = defineSlotRecipe({
+  className: 'aeonProse',
+  description: 'Long-form rich text: markdown output, docs, agent answers',
+  slots,
+  base: {
+    root: {
+      minW: '0',
+      color: 'fg',
+      fontFamily: 'ui',
+      lineHeight: '1.6',
+      overflowWrap: 'anywhere',
+      [`& ${blocks}`]: { m: '0', mb: '0.75em' },
+      '& > :first-child': { mt: '0' },
+      '& > :last-child': { mb: '0' },
+      '& :is(h1, h2, h3, h4, h5, h6)': {
+        mt: '1.1em',
+        mb: '0.4em',
+        color: 'fg',
+        fontWeight: 'semibold',
+        lineHeight: '1.3',
+      },
+      '& h1': { fontSize: '1.4em' },
+      '& h2': { fontSize: '1.2em' },
+      '& h3': { fontSize: '1.08em' },
+      '& :is(h4, h5, h6)': { fontSize: '1em' },
+      '& strong': { fontWeight: 'semibold' },
+      /* The Aeon reset strips list-style, so markers are drawn. list-item honours <ol start>. */
+      '& :is(ul, ol)': { pl: '1.3em', listStyle: 'none' },
+      '& li': { position: 'relative' },
+      '& li + li': { mt: '0.3em' },
+      [`& li > ${blocks}`]: { mt: '0.3em', mb: '0' },
+      '& li > p:first-child': { mt: '0' },
+      '& ul > li::before': {
+        content: '""',
+        position: 'absolute',
+        left: '-0.9em',
+        top: '0.68em',
+        width: '0.3em',
+        height: '0.3em',
+        borderRadius: 'full',
+        bg: 'muted',
+      },
+      '& ol > li::before': {
+        content: 'counter(list-item) "."',
+        position: 'absolute',
+        right: 'calc(100% + 0.45em)',
+        color: 'muted',
+        fontVariantNumeric: 'tabular-nums',
+      },
+      '& blockquote': {
+        pl: '0.8em',
+        borderLeftWidth: '2px',
+        borderLeftStyle: 'solid',
+        borderLeftColor: 'border',
+        color: 'muted',
+      },
+      '& hr': {
+        my: '1em',
+        border: '0',
+        borderTopWidth: '1px',
+        borderTopStyle: 'solid',
+        borderTopColor: 'border',
+      },
+      '& a': {
+        color: 'accent',
+        textDecoration: 'none',
+        borderRadius: 'sm',
+        outline: 'none',
+        _hover: { textDecoration: 'underline' },
+        _focusVisible: { boxShadow: 'focusRing' },
+      },
+      '& :not(pre) > code': {
+        px: '0.35em',
+        py: '0.1em',
+        borderRadius: 'sm',
+        bg: 'surfaceRaised',
+        fontFamily: 'mono',
+        fontSize: '0.9em',
+      },
+      '& pre': {
+        p: '0.75em',
+        borderRadius: 'md',
+        bg: 'bg',
+        overflow: 'auto',
+        fontFamily: 'mono',
+        fontSize: '0.9em',
+        lineHeight: '1.5',
+      },
+      '& pre code': { fontFamily: 'inherit', fontSize: 'inherit' },
+      '& table': { width: '100%', borderCollapse: 'collapse', fontSize: '0.95em' },
+      '& :is(th, td)': {
+        px: '0.6em',
+        py: '0.35em',
+        borderBottomWidth: '1px',
+        borderBottomStyle: 'solid',
+        borderBottomColor: 'border',
+        textAlign: 'start',
+      },
+      '& th': { fontWeight: 'semibold' },
+      '& img': { maxW: '100%', borderRadius: 'md' },
+    },
+  },
+})

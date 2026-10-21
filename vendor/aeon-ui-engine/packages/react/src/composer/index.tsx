@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type TextareaHTMLAttributes,
 } from 'react'
+import { rowLimits, useAutoGrow } from '../textarea/index.js'
 import { mergeProps } from '../utils/merge-props.js'
 
 /**
@@ -48,13 +49,21 @@ const Root = forwardRef<HTMLFormElement, ComposerRootProps>(function ComposerRoo
   )
 })
 
-const Input = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  function ComposerInput(props, ref) {
+export interface ComposerInputProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
+  /** Height floor in lines (default 1). */
+  minRows?: number
+  /** Height ceiling in lines before the input scrolls (default 4). */
+  maxRows?: number
+}
+
+const Input = forwardRef<HTMLTextAreaElement, ComposerInputProps>(
+  function ComposerInput({ minRows, maxRows, style, ...props }, ref) {
+    const grow = useAutoGrow(ref, props.value)
     return (
       <textarea
-        ref={ref}
-        rows={1}
-        {...mergeProps(partAttrs(composerAnatomy.scope, composerAnatomy.input), props)}
+        rows={minRows ?? 1}
+        style={{ ...rowLimits(minRows, maxRows), ...style }}
+        {...mergeProps(partAttrs(composerAnatomy.scope, composerAnatomy.input), grow, props)}
       />
     )
   },

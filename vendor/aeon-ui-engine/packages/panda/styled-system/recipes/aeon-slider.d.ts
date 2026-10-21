@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonSliderVariant {
-  
-}
-
-type AeonSliderVariantMap = {
-  [key in keyof AeonSliderVariant]: Array<AeonSliderVariant[key]>
-}
-
-type AeonSliderSlot = "root" | "track" | "range" | "thumb" | "valueText"
+export type AeonSliderVariant = {}
 
 export type AeonSliderVariantProps = {
-  [key in keyof AeonSliderVariant]?: ConditionalValue<AeonSliderVariant[key]> | undefined
+  [K in keyof AeonSliderVariant]?: ConditionalValue<AeonSliderVariant[K]>
 }
 
-export interface AeonSliderRecipe {
-  __slot: AeonSliderSlot
-  __type: AeonSliderVariantProps
-  (props?: AeonSliderVariantProps): Pretty<Record<AeonSliderSlot, string>>
-  raw: (props?: AeonSliderVariantProps) => AeonSliderVariantProps
-  variantMap: AeonSliderVariantMap
-  variantKeys: Array<keyof AeonSliderVariant>
-  splitVariantProps<Props extends AeonSliderVariantProps>(props: Props): [AeonSliderVariantProps, Pretty<DistributiveOmit<Props, keyof AeonSliderVariantProps>>]
-  getVariantProps: (props?: AeonSliderVariantProps) => AeonSliderVariantProps
-}
+export type AeonSliderVariantMap = RecipeVariantMap<AeonSliderVariant>
 
+export type AeonSliderSlot = "root" | "track" | "range" | "thumb" | "valueText"
 
-export declare const aeonSlider: AeonSliderRecipe
+export type AeonSliderRecipe = SlotRecipeRuntimeFn<AeonSliderSlot, AeonSliderVariantProps, AeonSliderVariantMap>
+
+export declare const aeonSlider: AeonSliderRecipe;

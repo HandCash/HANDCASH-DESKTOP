@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonCheckboxVariant {
-  
-}
-
-type AeonCheckboxVariantMap = {
-  [key in keyof AeonCheckboxVariant]: Array<AeonCheckboxVariant[key]>
-}
-
-type AeonCheckboxSlot = "root" | "control" | "indicator" | "label" | "hiddenInput"
+export type AeonCheckboxVariant = {}
 
 export type AeonCheckboxVariantProps = {
-  [key in keyof AeonCheckboxVariant]?: ConditionalValue<AeonCheckboxVariant[key]> | undefined
+  [K in keyof AeonCheckboxVariant]?: ConditionalValue<AeonCheckboxVariant[K]>
 }
 
-export interface AeonCheckboxRecipe {
-  __slot: AeonCheckboxSlot
-  __type: AeonCheckboxVariantProps
-  (props?: AeonCheckboxVariantProps): Pretty<Record<AeonCheckboxSlot, string>>
-  raw: (props?: AeonCheckboxVariantProps) => AeonCheckboxVariantProps
-  variantMap: AeonCheckboxVariantMap
-  variantKeys: Array<keyof AeonCheckboxVariant>
-  splitVariantProps<Props extends AeonCheckboxVariantProps>(props: Props): [AeonCheckboxVariantProps, Pretty<DistributiveOmit<Props, keyof AeonCheckboxVariantProps>>]
-  getVariantProps: (props?: AeonCheckboxVariantProps) => AeonCheckboxVariantProps
-}
+export type AeonCheckboxVariantMap = RecipeVariantMap<AeonCheckboxVariant>
 
+export type AeonCheckboxSlot = "root" | "control" | "indicator" | "label" | "hiddenInput"
 
-export declare const aeonCheckbox: AeonCheckboxRecipe
+export type AeonCheckboxRecipe = SlotRecipeRuntimeFn<AeonCheckboxSlot, AeonCheckboxVariantProps, AeonCheckboxVariantMap>
+
+export declare const aeonCheckbox: AeonCheckboxRecipe;

@@ -1,36 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonAvatarVariant {
-  /**
- * @default "md"
- */
-size: "xs" | "sm" | "md" | "lg" | "xl"
+export type AeonAvatarVariant = {
+  size?: "xs" | "sm" | "md" | "lg" | "xl"
 }
-
-type AeonAvatarVariantMap = {
-  [key in keyof AeonAvatarVariant]: Array<AeonAvatarVariant[key]>
-}
-
-type AeonAvatarSlot = "root" | "image" | "fallback" | "badge"
 
 export type AeonAvatarVariantProps = {
-  [key in keyof AeonAvatarVariant]?: ConditionalValue<AeonAvatarVariant[key]> | undefined
+  [K in keyof AeonAvatarVariant]?: ConditionalValue<AeonAvatarVariant[K]>
 }
 
-export interface AeonAvatarRecipe {
-  __slot: AeonAvatarSlot
-  __type: AeonAvatarVariantProps
-  (props?: AeonAvatarVariantProps): Pretty<Record<AeonAvatarSlot, string>>
-  raw: (props?: AeonAvatarVariantProps) => AeonAvatarVariantProps
-  variantMap: AeonAvatarVariantMap
-  variantKeys: Array<keyof AeonAvatarVariant>
-  splitVariantProps<Props extends AeonAvatarVariantProps>(props: Props): [AeonAvatarVariantProps, Pretty<DistributiveOmit<Props, keyof AeonAvatarVariantProps>>]
-  getVariantProps: (props?: AeonAvatarVariantProps) => AeonAvatarVariantProps
-}
+export type AeonAvatarVariantMap = RecipeVariantMap<AeonAvatarVariant>
 
-/**
- * Aeon avatar — always-round profile image with initials fallback + presence
- */
-export declare const aeonAvatar: AeonAvatarRecipe
+export type AeonAvatarSlot = "root" | "image" | "fallback" | "badge"
+
+export type AeonAvatarRecipe = SlotRecipeRuntimeFn<AeonAvatarSlot, AeonAvatarVariantProps, AeonAvatarVariantMap>
+
+export declare const aeonAvatar: AeonAvatarRecipe;

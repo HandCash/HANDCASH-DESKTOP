@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonPinInputVariant {
-  
-}
-
-type AeonPinInputVariantMap = {
-  [key in keyof AeonPinInputVariant]: Array<AeonPinInputVariant[key]>
-}
-
-type AeonPinInputSlot = "root" | "input"
+export type AeonPinInputVariant = {}
 
 export type AeonPinInputVariantProps = {
-  [key in keyof AeonPinInputVariant]?: ConditionalValue<AeonPinInputVariant[key]> | undefined
+  [K in keyof AeonPinInputVariant]?: ConditionalValue<AeonPinInputVariant[K]>
 }
 
-export interface AeonPinInputRecipe {
-  __slot: AeonPinInputSlot
-  __type: AeonPinInputVariantProps
-  (props?: AeonPinInputVariantProps): Pretty<Record<AeonPinInputSlot, string>>
-  raw: (props?: AeonPinInputVariantProps) => AeonPinInputVariantProps
-  variantMap: AeonPinInputVariantMap
-  variantKeys: Array<keyof AeonPinInputVariant>
-  splitVariantProps<Props extends AeonPinInputVariantProps>(props: Props): [AeonPinInputVariantProps, Pretty<DistributiveOmit<Props, keyof AeonPinInputVariantProps>>]
-  getVariantProps: (props?: AeonPinInputVariantProps) => AeonPinInputVariantProps
-}
+export type AeonPinInputVariantMap = RecipeVariantMap<AeonPinInputVariant>
 
+export type AeonPinInputSlot = "root" | "input"
 
-export declare const aeonPinInput: AeonPinInputRecipe
+export type AeonPinInputRecipe = SlotRecipeRuntimeFn<AeonPinInputSlot, AeonPinInputVariantProps, AeonPinInputVariantMap>
+
+export declare const aeonPinInput: AeonPinInputRecipe;

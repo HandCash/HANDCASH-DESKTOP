@@ -1,34 +1,18 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonAppShellVariant {
-  /**
- * @default "start"
- */
-contentAlign: "start" | "center"
+export type AeonAppShellVariant = {
+  contentAlign?: "start" | "center"
 }
-
-type AeonAppShellVariantMap = {
-  [key in keyof AeonAppShellVariant]: Array<AeonAppShellVariant[key]>
-}
-
-type AeonAppShellSlot = "root" | "header" | "subheader" | "content" | "aside" | "footer" | "dock" | "scrim"
 
 export type AeonAppShellVariantProps = {
-  [key in keyof AeonAppShellVariant]?: ConditionalValue<AeonAppShellVariant[key]> | undefined
+  [K in keyof AeonAppShellVariant]?: ConditionalValue<AeonAppShellVariant[K]>
 }
 
-export interface AeonAppShellRecipe {
-  __slot: AeonAppShellSlot
-  __type: AeonAppShellVariantProps
-  (props?: AeonAppShellVariantProps): Pretty<Record<AeonAppShellSlot, string>>
-  raw: (props?: AeonAppShellVariantProps) => AeonAppShellVariantProps
-  variantMap: AeonAppShellVariantMap
-  variantKeys: Array<keyof AeonAppShellVariant>
-  splitVariantProps<Props extends AeonAppShellVariantProps>(props: Props): [AeonAppShellVariantProps, Pretty<DistributiveOmit<Props, keyof AeonAppShellVariantProps>>]
-  getVariantProps: (props?: AeonAppShellVariantProps) => AeonAppShellVariantProps
-}
+export type AeonAppShellVariantMap = RecipeVariantMap<AeonAppShellVariant>
 
+export type AeonAppShellSlot = "root" | "header" | "subheader" | "content" | "aside" | "footer" | "dock" | "scrim"
 
-export declare const aeonAppShell: AeonAppShellRecipe
+export type AeonAppShellRecipe = SlotRecipeRuntimeFn<AeonAppShellSlot, AeonAppShellVariantProps, AeonAppShellVariantMap>
+
+export declare const aeonAppShell: AeonAppShellRecipe;

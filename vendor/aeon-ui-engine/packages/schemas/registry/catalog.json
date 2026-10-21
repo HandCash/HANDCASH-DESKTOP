@@ -291,6 +291,40 @@
       "description": "Static divider — orientation prop only."
     },
     {
+      "id": "prose",
+      "title": "Prose",
+      "scope": "prose",
+      "schemaUrl": "https://aeon-ui.com/registry/components/prose.json",
+      "runtime": "layout",
+      "description": "Long-form rich text (rendered markdown); styles descendants in em, draws list markers."
+    },
+    {
+      "id": "textarea",
+      "title": "Textarea",
+      "scope": "textarea",
+      "schemaUrl": "https://aeon-ui.com/registry/components/textarea.json",
+      "runtime": "props",
+      "description": "Multi-line input that grows with content between minRows and maxRows (CSS field-sizing)."
+    },
+    {
+      "id": "clipboard",
+      "title": "Clipboard",
+      "scope": "clipboard",
+      "schemaUrl": "https://aeon-ui.com/registry/components/clipboard.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/clipboard.json",
+      "runtime": "useAeonMachine",
+      "description": "One-click copy of a value; trigger and root carry idle | copying | copied | failed."
+    },
+    {
+      "id": "segmentGroup",
+      "title": "SegmentGroup",
+      "scope": "segmentGroup",
+      "schemaUrl": "https://aeon-ui.com/registry/components/segmentGroup.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/tabs.json",
+      "runtime": "useAeonMachine",
+      "description": "Compact single choice as adjacent buttons via tabsMachine (same chart family as Tabs / RadioGroup)."
+    },
+    {
       "id": "composer",
       "title": "Composer",
       "scope": "composer",

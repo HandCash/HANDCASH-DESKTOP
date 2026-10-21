@@ -1,31 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonDialogVariant {
-  
-}
-
-type AeonDialogVariantMap = {
-  [key in keyof AeonDialogVariant]: Array<AeonDialogVariant[key]>
-}
-
-type AeonDialogSlot = "root" | "trigger" | "backdrop" | "positioner" | "content" | "title" | "description" | "closeTrigger"
+export type AeonDialogVariant = {}
 
 export type AeonDialogVariantProps = {
-  [key in keyof AeonDialogVariant]?: ConditionalValue<AeonDialogVariant[key]> | undefined
+  [K in keyof AeonDialogVariant]?: ConditionalValue<AeonDialogVariant[K]>
 }
 
-export interface AeonDialogRecipe {
-  __slot: AeonDialogSlot
-  __type: AeonDialogVariantProps
-  (props?: AeonDialogVariantProps): Pretty<Record<AeonDialogSlot, string>>
-  raw: (props?: AeonDialogVariantProps) => AeonDialogVariantProps
-  variantMap: AeonDialogVariantMap
-  variantKeys: Array<keyof AeonDialogVariant>
-  splitVariantProps<Props extends AeonDialogVariantProps>(props: Props): [AeonDialogVariantProps, Pretty<DistributiveOmit<Props, keyof AeonDialogVariantProps>>]
-  getVariantProps: (props?: AeonDialogVariantProps) => AeonDialogVariantProps
-}
+export type AeonDialogVariantMap = RecipeVariantMap<AeonDialogVariant>
 
+export type AeonDialogSlot = "root" | "trigger" | "backdrop" | "positioner" | "content" | "title" | "description" | "closeTrigger"
 
-export declare const aeonDialog: AeonDialogRecipe
+export type AeonDialogRecipe = SlotRecipeRuntimeFn<AeonDialogSlot, AeonDialogVariantProps, AeonDialogVariantMap>
+
+export declare const aeonDialog: AeonDialogRecipe;

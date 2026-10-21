@@ -1,0 +1,110 @@
+{
+  "id": "clipboard",
+  "initial": "idle",
+  "events": [
+    "COPY"
+  ],
+  "tree": {
+    "key": "clipboard",
+    "id": "clipboard",
+    "type": "compound",
+    "events": [
+      "COPY"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "clipboard.idle",
+        "type": "atomic",
+        "events": [
+          "COPY"
+        ],
+        "transitions": [
+          {
+            "event": "COPY",
+            "target": [
+              "copying"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "copying",
+        "id": "clipboard.copying",
+        "type": "atomic",
+        "events": [],
+        "transitions": [],
+        "children": []
+      },
+      {
+        "key": "copied",
+        "id": "clipboard.copied",
+        "type": "atomic",
+        "events": [
+          "COPY"
+        ],
+        "transitions": [
+          {
+            "event": "COPY",
+            "target": [
+              "copying"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "failed",
+        "id": "clipboard.failed",
+        "type": "atomic",
+        "events": [
+          "COPY"
+        ],
+        "transitions": [
+          {
+            "event": "COPY",
+            "target": [
+              "copying"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "clipboard": {
+      "events": [
+        "COPY"
+      ],
+      "type": "compound"
+    },
+    "clipboard.idle": {
+      "events": [
+        "COPY"
+      ],
+      "type": "atomic"
+    },
+    "clipboard.copying": {
+      "events": [],
+      "type": "atomic"
+    },
+    "clipboard.copied": {
+      "events": [
+        "COPY"
+      ],
+      "type": "atomic"
+    },
+    "clipboard.failed": {
+      "events": [
+        "COPY"
+      ],
+      "type": "atomic"
+    }
+  }
+}

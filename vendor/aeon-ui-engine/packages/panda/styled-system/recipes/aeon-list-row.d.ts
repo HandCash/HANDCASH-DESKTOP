@@ -1,33 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonListRowVariant {
-  
-}
-
-type AeonListRowVariantMap = {
-  [key in keyof AeonListRowVariant]: Array<AeonListRowVariant[key]>
-}
-
-type AeonListRowSlot = "root" | "leading" | "label" | "description" | "trailing"
+export type AeonListRowVariant = {}
 
 export type AeonListRowVariantProps = {
-  [key in keyof AeonListRowVariant]?: ConditionalValue<AeonListRowVariant[key]> | undefined
+  [K in keyof AeonListRowVariant]?: ConditionalValue<AeonListRowVariant[K]>
 }
 
-export interface AeonListRowRecipe {
-  __slot: AeonListRowSlot
-  __type: AeonListRowVariantProps
-  (props?: AeonListRowVariantProps): Pretty<Record<AeonListRowSlot, string>>
-  raw: (props?: AeonListRowVariantProps) => AeonListRowVariantProps
-  variantMap: AeonListRowVariantMap
-  variantKeys: Array<keyof AeonListRowVariant>
-  splitVariantProps<Props extends AeonListRowVariantProps>(props: Props): [AeonListRowVariantProps, Pretty<DistributiveOmit<Props, keyof AeonListRowVariantProps>>]
-  getVariantProps: (props?: AeonListRowVariantProps) => AeonListRowVariantProps
-}
+export type AeonListRowVariantMap = RecipeVariantMap<AeonListRowVariant>
 
-/**
- * Settings / people list row — full-width hit target
- */
-export declare const aeonListRow: AeonListRowRecipe
+export type AeonListRowSlot = "root" | "leading" | "label" | "description" | "trailing"
+
+export type AeonListRowRecipe = SlotRecipeRuntimeFn<AeonListRowSlot, AeonListRowVariantProps, AeonListRowVariantMap>
+
+export declare const aeonListRow: AeonListRowRecipe;

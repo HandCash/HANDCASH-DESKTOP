@@ -1,33 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonFieldVariant {
-  
-}
-
-type AeonFieldVariantMap = {
-  [key in keyof AeonFieldVariant]: Array<AeonFieldVariant[key]>
-}
-
-type AeonFieldSlot = "root" | "label" | "control" | "textarea" | "message" | "hint"
+export type AeonFieldVariant = {}
 
 export type AeonFieldVariantProps = {
-  [key in keyof AeonFieldVariant]?: ConditionalValue<AeonFieldVariant[key]> | undefined
+  [K in keyof AeonFieldVariant]?: ConditionalValue<AeonFieldVariant[K]>
 }
 
-export interface AeonFieldRecipe {
-  __slot: AeonFieldSlot
-  __type: AeonFieldVariantProps
-  (props?: AeonFieldVariantProps): Pretty<Record<AeonFieldSlot, string>>
-  raw: (props?: AeonFieldVariantProps) => AeonFieldVariantProps
-  variantMap: AeonFieldVariantMap
-  variantKeys: Array<keyof AeonFieldVariant>
-  splitVariantProps<Props extends AeonFieldVariantProps>(props: Props): [AeonFieldVariantProps, Pretty<DistributiveOmit<Props, keyof AeonFieldVariantProps>>]
-  getVariantProps: (props?: AeonFieldVariantProps) => AeonFieldVariantProps
-}
+export type AeonFieldVariantMap = RecipeVariantMap<AeonFieldVariant>
 
-/**
- * Form field with orthogonal interaction, validation, and submission states
- */
-export declare const aeonField: AeonFieldRecipe
+export type AeonFieldSlot = "root" | "label" | "control" | "textarea" | "message" | "hint"
+
+export type AeonFieldRecipe = SlotRecipeRuntimeFn<AeonFieldSlot, AeonFieldVariantProps, AeonFieldVariantMap>
+
+export declare const aeonField: AeonFieldRecipe;

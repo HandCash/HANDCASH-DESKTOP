@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/segmentGroup.json",
+  "title": "SegmentGroup",
+  "description": "Compact single choice as adjacent buttons via tabsMachine (same chart family as Tabs / RadioGroup).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "SegmentGroup"
+    },
+    "scope": {
+      "const": "segmentGroup"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "item"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "selected",
+          "unselected"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md"
+          ]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "vertical"
+          ]
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "segmentGroup.root",
+          "description": "segmentGroup.root"
+        },
+        "Item": {
+          "const": "segmentGroup.item",
+          "description": "segmentGroup.item"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "tabsMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SELECT"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "segmentGroup",
+    "parts": [
+      "root",
+      "item"
+    ],
+    "states": [
+      "selected",
+      "unselected"
+    ],
+    "machine": "tabsMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SELECT"
+    ],
+    "slots": {
+      "Root": "segmentGroup.root",
+      "Item": "segmentGroup.item"
+    },
+    "examples": []
+  }
+}

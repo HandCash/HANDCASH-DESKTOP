@@ -1,33 +1,16 @@
-/* eslint-disable */
-import type { ConditionalValue } from '../types/index';
-import type { DistributiveOmit, Pretty } from '../types/system-types';
+import type { ConditionalValue } from '../types/system';
+import type { SlotRecipeRuntimeFn, RecipeVariantMap } from '../types/recipe';
 
-interface AeonComboboxVariant {
-  
-}
-
-type AeonComboboxVariantMap = {
-  [key in keyof AeonComboboxVariant]: Array<AeonComboboxVariant[key]>
-}
-
-type AeonComboboxSlot = "root" | "input" | "icon" | "content" | "item" | "empty"
+export type AeonComboboxVariant = {}
 
 export type AeonComboboxVariantProps = {
-  [key in keyof AeonComboboxVariant]?: ConditionalValue<AeonComboboxVariant[key]> | undefined
+  [K in keyof AeonComboboxVariant]?: ConditionalValue<AeonComboboxVariant[K]>
 }
 
-export interface AeonComboboxRecipe {
-  __slot: AeonComboboxSlot
-  __type: AeonComboboxVariantProps
-  (props?: AeonComboboxVariantProps): Pretty<Record<AeonComboboxSlot, string>>
-  raw: (props?: AeonComboboxVariantProps) => AeonComboboxVariantProps
-  variantMap: AeonComboboxVariantMap
-  variantKeys: Array<keyof AeonComboboxVariant>
-  splitVariantProps<Props extends AeonComboboxVariantProps>(props: Props): [AeonComboboxVariantProps, Pretty<DistributiveOmit<Props, keyof AeonComboboxVariantProps>>]
-  getVariantProps: (props?: AeonComboboxVariantProps) => AeonComboboxVariantProps
-}
+export type AeonComboboxVariantMap = RecipeVariantMap<AeonComboboxVariant>
 
-/**
- * Filterable combobox — input + listbox (extends select patterns)
- */
-export declare const aeonCombobox: AeonComboboxRecipe
+export type AeonComboboxSlot = "root" | "input" | "icon" | "content" | "item" | "empty"
+
+export type AeonComboboxRecipe = SlotRecipeRuntimeFn<AeonComboboxSlot, AeonComboboxVariantProps, AeonComboboxVariantMap>
+
+export declare const aeonCombobox: AeonComboboxRecipe;
