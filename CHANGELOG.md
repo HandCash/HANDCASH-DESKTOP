@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.628] - 2026-10-21
+
+### Added
+
+- A new device signs in by scanning a code with a signed-in device on the same network. The signed-in device sends the wallet end to end; HandCash only relays.
+- A new device that can't reach a signed-in one signs in with an email code. The request waits on approval in Activity on a signed-in device, after both show the same code. Set the email in Settings, Sign-in email. This needs the HandCash sign-in server, which is not live yet; until it is, the wallet checks for requests once a minute instead of every 5 seconds.
+- Settings has a HandCash Recovery section with a Google row and an Email row, each showing whether it is set up.
+
+### Changed
+
+- Google sign-in for recovery opens in the system browser instead of inside the app.
+- A device approval for Google recovery shows on its Activity row, with the same code check as an email sign-in, instead of a pop-up prompt.
+
 ## [1.3.627] - 2026-10-21
 
 ### Fixed
