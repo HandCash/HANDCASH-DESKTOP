@@ -11,8 +11,8 @@ type Context = {
   key: string
   /** Where the cached book stands; while `refreshing` the last book stays shown. */
   cache: CacheState
-  /** When the shown book was loaded; a cache update with the same time carries no new offers. */
-  loadedAt: number | null
+  /** The cached book the offers came from; the cache keeps its identity until the next load, which load times can't tell apart. */
+  book: OfferBookPage | null
   offers: SignedSwapOffer[]
   /** What the book says is taken of each part-fillable offer, by nonce. */
   filled: ReadonlyMap<string, bigint>
@@ -92,13 +92,13 @@ export const swapOffersMachine = setup({
     amountFits: ({ context }) => amountFits(context),
     otherKey: ({ context, event }) => update(event)?.key !== context.key,
     listed: ({ event }) => update(event)?.view.loadedAt != null,
-    newBook: ({ context, event }) => update(event)?.view.loadedAt !== context.loadedAt,
+    newBook: ({ context, event }) => update(event)?.view.data !== context.book,
     refused: ({ event }) => update(event)?.view.state === 'failed',
   },
   actions: {
     take: assign(({ event }) => {
       const view = update(event)!.view
-      return { offers: view.data!.offers, filled: view.data!.filled, loadedAt: view.loadedAt, cache: view.state }
+      return { offers: view.data!.offers, filled: view.data!.filled, book: view.data!, cache: view.state }
     }),
     note: assign(({ event }) => ({ cache: update(event)!.view.state })),
     revalidate: sendTo('book', { type: 'CACHE.INVALIDATE' }),
@@ -110,7 +110,7 @@ export const swapOffersMachine = setup({
     self: input.self,
     key: input.key,
     cache: 'idle',
-    loadedAt: null,
+    book: null,
     offers: [],
     filled: new Map(),
     pay: null,
