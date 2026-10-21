@@ -11,9 +11,9 @@ import {
   messageItemState,
   paymentBadge,
   payStatusLabel,
-  peerInitial,
   type ChatMessage,
 } from '../../features/messages'
+import type { PeerIdentityView } from '../../hooks/usePeerIdentity'
 import { getDisplayCurrency } from '../../wallet/displayCurrency'
 import { getCachedUsdPerBsv } from '../../wallet/fx'
 import {
@@ -22,6 +22,7 @@ import {
   type PaymentProgress,
 } from '../../wallet/paymentProgress'
 import { FileIcon, PayIcon } from '../icons'
+import { PeerAvatar } from '../PeerIdentity'
 
 export type MessageActions = {
   onConfirmPay?: (id: string) => void
@@ -239,8 +240,14 @@ function usePaymentProgressWhileSending(msg: ChatMessage): PaymentProgress {
 export function MessageBubble({
   msg,
   peerLabel,
+  peer = null,
   ...actions
-}: { msg: ChatMessage; peerLabel?: string } & MessageActions) {
+}: {
+  msg: ChatMessage
+  peerLabel?: string
+  /** The thread's peer profile, looked up once by the thread and shared by every bubble. */
+  peer?: PeerIdentityView | null
+} & MessageActions) {
   const paymentProgress = usePaymentProgressWhileSending(msg)
 
   if (isSystemMessage(msg)) return <SystemNote msg={msg} />
@@ -251,11 +258,7 @@ export function MessageBubble({
 
   return (
     <Thread.Item state={messageItemState(msg)} className={`chat-msg${mine ? ' is-mine' : ''}`}>
-      {!mine ? (
-        <span className="chat-msg-avatar" aria-hidden>
-          {peerInitial(label)}
-        </span>
-      ) : null}
+      {!mine ? <PeerAvatar label={label} peer={peer} className="chat-msg-avatar" /> : null}
       <div className="chat-msg-stack">
         {!mine ? (
           <div className="chat-msg-meta">

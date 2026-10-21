@@ -14,6 +14,7 @@ import {
   useThreadAutoScroll,
   useThreadMessages,
 } from '../features/messages'
+import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { EmptyState } from './EmptyState'
 import { ChatComposer } from './messages/ChatComposer'
@@ -64,6 +65,7 @@ export function MessagesPanel({
     onSent,
   })
   usePeerInboxPolling(identityKey, activePeerId)
+  const peer = usePeerIdentity(chain, activeFriend?.identityKey, activeFriend)
   const { threadListRef, threadEndRef } = useThreadAutoScroll(activePeerId, visibleMessages, peers)
   const filteredPeers = useMemo(() => filterPeers(peers, query, unreadOnly), [peers, query, unreadOnly])
   const { confirmCmd } = composer
@@ -95,7 +97,7 @@ export function MessagesPanel({
             {!nestedInNav ? (
               <ChatThreadHeader
                 friend={activeFriend}
-                chain={chain}
+                peer={peer}
                 onBack={threadOnly ? undefined : backToList}
               />
             ) : null}
@@ -106,6 +108,7 @@ export function MessagesPanel({
               visibleMessages={visibleMessages}
               timeline={timeline}
               peerLabel={activeFriend.label}
+              peer={peer}
               actions={{
                 onConfirmPay: composer.requestPayConfirm,
                 onCancelPay: composer.cancelPay,

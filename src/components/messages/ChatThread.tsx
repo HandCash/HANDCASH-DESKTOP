@@ -1,6 +1,6 @@
 import type { Ref } from 'react'
 import { Button, Thread } from '@aeon-ui/react'
-import { usePeerIdentity } from '../../hooks/usePeerIdentity'
+import type { PeerIdentityView } from '../../hooks/usePeerIdentity'
 import { activityEntryTitle, type ActivityEntry } from '../../features/activity'
 import {
   formatActivityWhen,
@@ -12,13 +12,11 @@ import {
 import { formatSatsLabel } from '../../wallet/brc218'
 import type { Friend } from '../../wallet/friends'
 import { openPaymentDetails } from '../../wallet/navStore'
-import type { Chain } from '../../wallet/vault'
 import { EmptyState } from '../EmptyState'
 import { PeerAvatar, PeerIdentityLine } from '../PeerIdentity'
 import { MessageBubble, type MessageActions } from './MessageBubble'
 
-function ChatThreadPeer({ friend, chain }: { friend: Friend; chain: Chain }) {
-  const peer = usePeerIdentity(chain, friend.identityKey, friend)
+function ChatThreadPeer({ friend, peer }: { friend: Friend; peer: PeerIdentityView | null }) {
   return (
     <>
       <PeerAvatar label={friend.label} peer={peer} className="friend-avatar chat-thread-avatar" />
@@ -36,11 +34,11 @@ function ChatThreadPeer({ friend, chain }: { friend: Friend; chain: Chain }) {
 
 export function ChatThreadHeader({
   friend,
-  chain,
+  peer,
   onBack,
 }: {
   friend: Friend
-  chain: Chain
+  peer: PeerIdentityView | null
   /** Absent when the thread stands alone with no list to go back to. */
   onBack?: () => void
 }) {
@@ -56,7 +54,7 @@ export function ChatThreadHeader({
           <Button.Label>←</Button.Label>
         </Button.Root>
       ) : null}
-      <ChatThreadPeer friend={friend} chain={chain} />
+      <ChatThreadPeer friend={friend} peer={peer} />
     </header>
   )
 }
@@ -117,6 +115,7 @@ export function ChatThreadList({
   visibleMessages,
   timeline,
   peerLabel,
+  peer,
   actions,
   listRef,
   endRef,
@@ -126,13 +125,14 @@ export function ChatThreadList({
   /** Set on the Payments tab only: chat cards and wallet activity in time order. */
   timeline: readonly PaymentTimelineRow[] | null
   peerLabel: string
+  peer: PeerIdentityView | null
   actions: MessageActions
   listRef: Ref<HTMLDivElement>
   endRef: Ref<HTMLDivElement>
 }) {
   const empty = section === 'payments' ? timeline?.length === 0 : visibleMessages.length === 0
   const bubble = (msg: ChatMessage) => (
-    <MessageBubble key={msg.id} msg={msg} peerLabel={peerLabel} {...actions} />
+    <MessageBubble key={msg.id} msg={msg} peerLabel={peerLabel} peer={peer} {...actions} />
   )
   return (
     <Thread.Root className="chat-thread-messages">

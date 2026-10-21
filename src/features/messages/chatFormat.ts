@@ -267,10 +267,6 @@ export function paymentBadge(kind: 'pay-sent' | 'tip', mine: boolean): string {
   return mine ? 'Payment' : 'Payment claimed'
 }
 
-export function peerInitial(label: string): string {
-  return label.trim().slice(0, 1).toUpperCase() || '?'
-}
-
 export function classNames(...names: ReadonlyArray<string | false | null | undefined>): string {
   return names.filter(Boolean).join(' ')
 }

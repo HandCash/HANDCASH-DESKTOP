@@ -21,7 +21,6 @@ import {
   paymentTimeline,
   payStatusLabel,
   peerActivityOutsideChat,
-  peerInitial,
   resolveAmountSats,
   shortenTxid,
   threadEmptyCopy,
@@ -65,11 +64,6 @@ describe('chat formatting', () => {
   it('caps the unread badge at 9+', () => {
     expect(unreadBadgeLabel(3)).toBe('3')
     expect(unreadBadgeLabel(10)).toBe('9+')
-  })
-
-  it('takes the first letter of a peer label, else ?', () => {
-    expect(peerInitial(' alice')).toBe('A')
-    expect(peerInitial('  ')).toBe('?')
   })
 
   it('heads local notes with the not-sent line', () => {
