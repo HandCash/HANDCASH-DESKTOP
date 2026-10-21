@@ -98,6 +98,19 @@ describe('durable store', () => {
     expect(onDisk['handcash.brc100.vault.v1']).toContain('abc')
   })
 
+  it('reports a vault write as failed when the store file does not read back with it', async () => {
+    fs.writeFileSync(storeFile(), JSON.stringify({ 'handcash.brc100.vault.v1': '{"identityKey":"abc"}' }), 'utf8')
+    const { durableGet, durableSet } = await loadStore()
+    expect(durableGet('handcash.brc100.vault.v1')).toContain('abc')
+    const stale = JSON.stringify({ 'handcash.brc100.vault.v1': '{"identityKey":"abc"}' })
+    const realRead = fs.readFileSync
+    vi.spyOn(fs, 'readFileSync').mockImplementationOnce(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) =>
+      file === storeFile() ? stale : (realRead as (...a: unknown[]) => unknown)(file, ...rest)) as typeof fs.readFileSync)
+
+    expect(durableSet('handcash.brc100.vault.v1', '{"identityKey":"abc","v":2}')).toBe(false)
+    vi.restoreAllMocks()
+  })
+
   it('flushes pending writes on demand so quit cannot drop them', async () => {
     const { durableSet, flushDurableStore } = await loadStore()
     durableSet('handcash.late', 'value')

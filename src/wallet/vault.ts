@@ -35,6 +35,7 @@ import {
   type VaultMaster,
 } from './vaultMaster'
 import { validatePassword } from './passwordPolicy.js'
+import { recoveryPhraseProblem, recoveryPhraseWords } from './recoveryPhraseCheck'
 
 /** BRC-157 entropy (new vaults), BRC-75, or the pre-BRC-75 HD master of a BIP39 seed. */
 export type MnemonicScheme = 'brc-157' | 'brc-75' | 'legacy-hd'
@@ -276,7 +277,9 @@ type MnemonicDerived = {
 }
 
 function normalizeMnemonic(mnemonic: string): Mnemonic {
-  const m = Mnemonic.fromString(mnemonic.trim().toLowerCase().replace(/\s+/g, ' '))
+  const problem = recoveryPhraseProblem(mnemonic)
+  if (problem) throw new Error(problem)
+  const m = Mnemonic.fromString(recoveryPhraseWords(mnemonic).join(' '))
   if (!m.check()) throw new Error('Invalid recovery phrase')
   return m
 }

@@ -52,7 +52,11 @@ export async function startNewDeviceSignin(requestId: string, code: string): Pro
   return { key, rA, commitment, start, revealedRB: null, code: null }
 }
 
-/** Read the relay once and move the sign-in on: reveal rA once, open the vault once it arrives. */
+/**
+ * Read the relay once and move the sign-in on: reveal rA once, open the vault
+ * once it arrives. The relay keeps the sealed vault until
+ * {@link confirmNewDeviceSigninReceived}, so a failed install can be retried.
+ */
 export async function advanceNewDeviceSignin(
   signin: NewDeviceSignin,
   read: (keyHex: string, binding: string) => Promise<SigninStatus> = readSigninStatus,
@@ -67,7 +71,6 @@ export async function advanceNewDeviceSignin(
   }
   if (status.state === 'sent' && status.sealedVault) {
     const transfer = openVaultTransfer(status.sealedVault, signin.key)
-    await confirmSigninReceived(keyHex, binding).catch(() => undefined)
     return { state: 'approved', transfer, approverLabel: status.approverLabel }
   }
   if (status.state === 'challenged' && status.rB && !signin.code) {
@@ -80,4 +83,11 @@ export async function advanceNewDeviceSignin(
   }
   if (signin.code) return { state: 'comparing', code: signin.code, expiresAt: status.expiresAt }
   return { state: 'waiting', expiresAt: status.expiresAt }
+}
+
+/** Only once the vault is saved here: the relay then drops its sealed copy. */
+export async function confirmNewDeviceSigninReceived(signin: NewDeviceSignin): Promise<void> {
+  await confirmSigninReceived(signin.key.toHex(), signin.start.binding).catch((error) => {
+    console.warn('[signin] received not confirmed; the relay drops the vault at expiry', error)
+  })
 }

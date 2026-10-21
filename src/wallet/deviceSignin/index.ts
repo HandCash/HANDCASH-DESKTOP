@@ -12,6 +12,7 @@ export {
 export { walletSigninKeyHex } from './approver'
 export {
   advanceNewDeviceSignin,
+  confirmNewDeviceSigninReceived,
   startNewDeviceSignin,
   type NewDeviceSignin,
   type SigninStep,

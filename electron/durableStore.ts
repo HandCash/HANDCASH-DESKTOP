@@ -263,6 +263,7 @@ function sealIfNeeded(key: string, value: string): string {
   }
   try {
     const buf = safeStorage.encryptString(value)
+    if (safeStorage.decryptString(buf) !== value) throw new Error('sealed vault does not open to what was sealed')
     if (key === VAULT_KEY) setVaultSealStatus('sealed')
     return SEALED_PREFIX + buf.toString('base64')
   } catch (err) {
@@ -363,11 +364,25 @@ export function durableSet(
     }
 
     store[key] = sealed
-    return writeStore(store, { sync })
+    if (!writeStore(store, { sync })) return false
+    if (isVaultKey(key) && !vaultOnDisk(key, sealed)) {
+      // Serve what the disk holds, not the write it did not keep.
+      cache = null
+      return false
+    }
+    return true
   } catch (err) {
     log.error('durableSet failed', err)
     return false
   }
+}
+
+/** The vault counts as saved only once the store file on disk reads back with it. */
+function vaultOnDisk(key: string, sealed: string): boolean {
+  const read = readCandidate(storePath())
+  if (read.kind === 'ok' && read.candidate.store[key] === sealed) return true
+  log.error('vault write did not read back from disk', key, read.kind)
+  return false
 }
 
 export function durableRemove(key: string): boolean {

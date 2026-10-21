@@ -177,6 +177,7 @@ export function refuseSignin(walletKeyHex: string, binding: string): Promise<{ o
 
 /** Plain words for a relay refusal, naming what it waits on. */
 export function signinErrorText(error: unknown): string {
+  if (error instanceof TypeError) return 'No connection to HandCash. Still trying…'
   if (!(error instanceof SigninError)) {
     return error instanceof Error ? error.message : String(error)
   }
@@ -199,6 +200,12 @@ export function signinErrorText(error: unknown): string {
       return 'Enter a valid email address.'
     case 'device-removed':
       return 'This device was removed from your wallet, so it can’t approve sign-ins.'
+    case 'signin-claimed':
+      return 'Another of your devices already took this sign-in.'
+    case 'signin-not-ready':
+    case 'signin-closed':
+    case 'signin-not-challenged':
+      return 'This sign-in already moved on: it was sent, refused or expired.'
     default:
       return `Sign-in failed (${error.code}).`
   }

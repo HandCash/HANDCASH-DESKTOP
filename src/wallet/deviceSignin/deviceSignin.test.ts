@@ -6,8 +6,8 @@ import {
   sealVaultTransfer,
   type VaultTransfer,
 } from '../deviceTransfer'
-import type { SigninRequest, SigninStatus } from './api'
-import { advanceNewDeviceSignin, type NewDeviceSignin } from './newDevice'
+import { SigninError, signinErrorText, type SigninRequest, type SigninStatus } from './api'
+import { advanceNewDeviceSignin, confirmNewDeviceSigninReceived, type NewDeviceSignin } from './newDevice'
 import { nextSigninPollMs, SIGNIN_IDLE_POLL_MS, SIGNIN_POLL_MS } from './service'
 import { signinAlertText, signinRowView } from './view'
 
@@ -83,7 +83,25 @@ describe('email sign-in on the new device', () => {
     const sealedVault = sealVaultTransfer(transfer, PrivateKey.fromRandom(), signin.key.toPublicKey().toString())
     const step = await advanceNewDeviceSignin(signin, async () => status({ state: 'sent', rB, sealedVault, approverLabel: 'Mac' }))
     expect(step.state === 'approved' && step.transfer.master.keyHex).toBe(transfer.master.keyHex)
-    expect(sent.some((url) => url.endsWith('/v1/signin/received'))).toBe(true)
+    // The relay keeps the sealed vault until this device has saved it.
+    expect(sent.some((url) => url.endsWith('/v1/signin/received'))).toBe(false)
+    await confirmNewDeviceSigninReceived(signin)
+    expect(sent.filter((url) => url.endsWith('/v1/signin/received'))).toHaveLength(1)
+  })
+
+  it('a lost acknowledgment never fails a saved sign-in', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(confirmNewDeviceSigninReceived(newDevice())).resolves.toBeUndefined()
+  })
+
+  it('names a dropped network and relay states in plain words', () => {
+    expect(signinErrorText(new TypeError('Failed to fetch'))).toMatch(/No connection/)
+    expect(signinErrorText(new SigninError('expired-or-unknown-request', 401))).toMatch(/expired/)
+    expect(signinErrorText(new SigninError('invalid-code', 401))).toMatch(/wrong/)
+    expect(signinErrorText(new SigninError('device-removed', 403))).toMatch(/removed/)
+    expect(signinErrorText(new SigninError('signin-not-ready', 409))).toMatch(/moved on/)
   })
 
   it('reports refusal and expiry', async () => {

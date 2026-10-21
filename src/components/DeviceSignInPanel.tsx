@@ -8,17 +8,20 @@
  * by HandCash, still end to end. Recovery is offered only when no device can
  * approve.
  */
+import { stateToAttr } from '@aeon-ui/core'
 import { Button, StatusBanner } from '@aeon-ui/react'
+import { useMachine } from '@xstate/react'
 import QRCode from 'qrcode'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import {
-  advanceNewDeviceSignin,
+  confirmNewDeviceSigninReceived,
   requestSigninCode,
   signinErrorText,
   startNewDeviceSignin,
   type NewDeviceSignin,
 } from '../wallet/deviceSignin'
 import { formatComparisonCode, localDeviceLabel, type VaultTransfer } from '../wallet/deviceTransfer'
+import { relaySigninMachine } from '../machines/relaySigninMachine'
 import { firstSigninStep } from './auth/authModes'
 import { DeferredImage } from './DeferredImage'
 import {
@@ -34,7 +37,11 @@ export type ApprovedVault = {
   accounts: VaultTransfer['accounts']
   /** Set when the email fallback was used. */
   signinEmail: string | null
+  /** Call once the vault is saved here; until then the relay keeps its sealed copy. */
+  acknowledge: () => Promise<void>
 }
+
+const nothingToAcknowledge = async () => undefined
 
 
 
@@ -52,12 +59,9 @@ export type SigninPhase =
   | { step: 'scan-comparing'; code: string; approverLabel: string }
   | { step: 'email' }
   | { step: 'code'; requestId: string }
-  | { step: 'waiting'; noneOnline: boolean }
-  | { step: 'comparing'; code: string }
+  | { step: 'relay'; signin: NewDeviceSignin }
   | { step: 'restoring' }
   | { step: 'ended'; reason: 'refused' | 'expired' }
-
-const POLL_MS = 2_000
 
 export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCancel }: Props) {
   const [phase, setPhase] = useState<SigninPhase>({ step: 'scan' })
@@ -68,8 +72,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [devices, setDevices] = useState<string[]>([])
-  const signin = useRef<NewDeviceSignin | null>(null)
 
   const scanning = phase.step === 'scan' || phase.step === 'scan-comparing'
   useEffect(() => {
@@ -88,6 +90,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           enrollment: event.transfer.enrollment,
           accounts: event.transfer.accounts,
           signinEmail: null,
+          acknowledge: nothingToAcknowledge,
         })
       }
     })
@@ -148,9 +151,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     setError(null)
     try {
       const started = await startNewDeviceSignin(requestId, code.trim())
-      signin.current = started
-      setDevices(started.start.devices.map((device) => device.label))
-      setPhase({ step: 'waiting', noneOnline: started.start.online === 0 })
+      setPhase({ step: 'relay', signin: started })
     } catch (cause) {
       setError(signinErrorText(cause))
     } finally {
@@ -158,41 +159,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     }
   }
 
-  const waiting = phase.step === 'waiting' || phase.step === 'comparing'
-  useEffect(() => {
-    if (!waiting) return
-    let cancelled = false
-    const poll = async () => {
-      const active = signin.current
-      if (!active) return
-      try {
-        const step = await advanceNewDeviceSignin(active)
-        if (cancelled) return
-        if (step.state === 'comparing') setPhase({ step: 'comparing', code: step.code })
-        else if (step.state === 'refused' || step.state === 'expired') setPhase({ step: 'ended', reason: step.state })
-        else if (step.state === 'approved') {
-          setPhase({ step: 'restoring' })
-          onSignedIn({
-            master: step.transfer.master,
-            enrollment: step.transfer.enrollment,
-            accounts: step.transfer.accounts,
-            signinEmail: email.trim().toLowerCase(),
-          })
-        }
-      } catch (cause) {
-        if (!cancelled) setError(signinErrorText(cause))
-      }
-    }
-    void poll()
-    const timer = window.setInterval(() => void poll(), POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [waiting, email, onSignedIn])
-
   const restart = () => {
-    signin.current = null
     setCode('')
     setError(null)
     setQr(null)
@@ -318,29 +285,24 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
         </form>
       ) : null}
 
-      {phase.step === 'waiting' ? (
-        <>
-          <StatusBanner.Root tone={phase.noneOnline ? 'warning' : 'info'} status="waiting">
-            <StatusBanner.Copy>
-              <StatusBanner.Title>Waits on one of your signed-in devices</StatusBanner.Title>
-              <StatusBanner.Body>
-                {phase.noneOnline
-                  ? 'None of your devices checked in during the last 10 minutes. Open HandCash on one, or recover instead.'
-                  : `Open Activity on ${devices.slice(0, 2).join(' or ') || 'a signed-in device'} and choose the sign-in request.`}
-              </StatusBanner.Body>
-            </StatusBanner.Copy>
-          </StatusBanner.Root>
-          {phase.noneOnline ? recoveryChoices : null}
-        </>
-      ) : null}
-
-      {phase.step === 'comparing' ? (
-        <div className="signin-code-block">
-          <span className="signin-code" data-aeon-part="comparison-code">
-            {formatComparisonCode(phase.code)}
-          </span>
-          <p className="auth-lede">Approve on your other device only if it shows this same code.</p>
-        </div>
+      {phase.step === 'relay' ? (
+        <RelaySigninWait
+          key={phase.signin.start.binding}
+          signin={phase.signin}
+          recoveryChoices={recoveryChoices}
+          onApproved={(transfer) => {
+            const signin = phase.signin
+            setPhase({ step: 'restoring' })
+            onSignedIn({
+              master: transfer.master,
+              enrollment: transfer.enrollment,
+              accounts: transfer.accounts,
+              signinEmail: email.trim().toLowerCase(),
+              acknowledge: () => confirmNewDeviceSigninReceived(signin),
+            })
+          }}
+          onEnded={(reason) => setPhase({ step: 'ended', reason })}
+        />
       ) : null}
 
       {phase.step === 'restoring' ? (
@@ -384,6 +346,62 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           <button type="button" className="auth-alt-link" onClick={onOtherWays}>
             Other ways to sign in
           </button>
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+type RelayWaitProps = {
+  signin: NewDeviceSignin
+  recoveryChoices: ReactNode
+  onApproved: (transfer: VaultTransfer) => void
+  onEnded: (reason: 'refused' | 'expired') => void
+}
+
+/** Waits on the relay through `relaySigninMachine`; the chart reports each outcome once. */
+function RelaySigninWait({ signin, recoveryChoices, onApproved, onEnded }: RelayWaitProps) {
+  const [snapshot] = useMachine(relaySigninMachine, { input: { signin } })
+  const { code, error, transfer } = snapshot.context
+  const outcome = snapshot.status === 'done' ? stateToAttr(snapshot.value) : null
+
+  useEffect(() => {
+    if (outcome === 'approved' && transfer) onApproved(transfer)
+    else if (outcome === 'refused' || outcome === 'expired') onEnded(outcome)
+    // Reported once, when the chart reaches its final state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outcome])
+
+  const noneOnline = signin.start.online === 0
+  const devices = signin.start.devices.map((device) => device.label)
+
+  return (
+    <div data-aeon-scope="relay-signin" data-aeon-state={stateToAttr(snapshot.value)}>
+      {code ? (
+        <div className="signin-code-block">
+          <span className="signin-code" data-aeon-part="comparison-code">
+            {formatComparisonCode(code)}
+          </span>
+          <p className="auth-lede">Approve on your other device only if it shows this same code.</p>
+        </div>
+      ) : (
+        <>
+          <StatusBanner.Root tone={noneOnline ? 'warning' : 'info'} status="waiting">
+            <StatusBanner.Copy>
+              <StatusBanner.Title>Waits on one of your signed-in devices</StatusBanner.Title>
+              <StatusBanner.Body>
+                {noneOnline
+                  ? 'None of your devices checked in during the last 10 minutes. Open HandCash on one, or recover instead.'
+                  : `Open Activity on ${devices.slice(0, 2).join(' or ') || 'a signed-in device'} and choose the sign-in request.`}
+              </StatusBanner.Body>
+            </StatusBanner.Copy>
+          </StatusBanner.Root>
+          {noneOnline ? recoveryChoices : null}
+        </>
+      )}
+      {error ? (
+        <p className="signin-error" role="status" data-aeon-part="relay-error">
+          {error}
         </p>
       ) : null}
     </div>

@@ -710,6 +710,7 @@ export function AuthScreen({
       ) {
         writeVaultAccounts(accounts)
       }
+      if ('acknowledge' in recovered) await recovered.acknowledge()
       await finishCreated(
         unlocked,
         wrapPassword,

@@ -46,6 +46,7 @@ import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
 import { emailRecoveryMachine } from './emailRecoveryMachine'
+import { relaySigninMachine } from './relaySigninMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -100,6 +101,7 @@ export const machineManifest = Object.freeze({
   walletCoordinator: walletCoordinatorMachine,
   accountMove: accountMoveMachine,
   emailRecovery: emailRecoveryMachine,
+  relaySignin: relaySigninMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest
