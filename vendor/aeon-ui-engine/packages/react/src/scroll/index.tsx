@@ -96,3 +96,4 @@ export const Scroll = {
 }
 
 export { useScrollState } from './use-scroll-state.js'
+export { useWindowedRange, type UseWindowedRangeOptions } from './use-windowed-range.js'

@@ -1,5 +1,5 @@
-import { Button, Field } from '@aeon-ui/react'
-import { startTransition, useEffect, useState } from 'react'
+import { Button, Field, useWindowedRange } from '@aeon-ui/react'
+import { startTransition, useEffect, useRef, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
 import type { SnapshotFrom } from 'xstate'
@@ -117,6 +117,50 @@ export function bntChipActions(holdings: Holdings): BntChipActions {
 }
 
 /**
+ * Horizontal strip of token chips, loose and inside an issuer. A wallet holding
+ * hundreds of one issuer's assets mounts only the chips in view.
+ */
+export function TokenShelf({
+  assets,
+  actions,
+  view,
+  label,
+}: {
+  assets: readonly BntAssetSummary[]
+  actions: BntChipActions
+  view: CollectionView
+  label?: string
+}) {
+  const listRef = useRef<HTMLUListElement>(null)
+  const windowed = useWindowedRange({
+    total: assets.length,
+    itemExtent: view === 'grid' ? 100 : 82,
+    overscan: 4,
+    axis: 'x',
+    scrollRef: listRef,
+  })
+  return (
+    <ul
+      ref={listRef}
+      className="token-strip"
+      role="list"
+      aria-label={label}
+      data-aeon-part="token-strip"
+      data-aeon-state={view}
+      style={
+        windowed.padStart > 0 || windowed.padEnd > 0
+          ? { paddingInlineStart: windowed.padStart, paddingInlineEnd: windowed.padEnd }
+          : undefined
+      }
+    >
+      {assets.slice(windowed.start, windowed.end).map((asset) => (
+        <BntChip key={asset.assetId} asset={asset} view={view} actions={actions} />
+      ))}
+    </ul>
+  )
+}
+
+/**
  * Panel-level BNT surface: the read failure, assets with no usable issuer,
  * and the one send form. Assets with an issuer render on that issuer's shelf.
  */
@@ -155,11 +199,7 @@ export function BntShelf({
           data-aeon-state={stateToAttr(cache)}
         >
           <h3 className="collect-section-title">BNT assets without an issuer</h3>
-          <ul className="token-strip" role="list" data-aeon-part="token-strip" data-aeon-state={view}>
-            {ungrouped.map((asset) => (
-              <BntChip key={asset.assetId} asset={asset} view={view} actions={actions} />
-            ))}
-          </ul>
+          <TokenShelf assets={ungrouped} actions={actions} view={view} />
         </section>
       ) : null}
       {open ? <BntSendForm key={open.assetId} asset={open} onClose={() => send({ type: 'CLOSE' })} /> : null}

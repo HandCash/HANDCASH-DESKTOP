@@ -4,7 +4,7 @@ import {
   currentIssuerTrust,
   useIssuerIdentitiesGeneration,
 } from '../hooks/useIssuerView'
-import { Accordion, Button } from '@aeon-ui/react'
+import { Accordion, Button, useWindowedRange } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { CollectFacepile } from './CollectFacepile'
 import { SelectionCheckbox } from './SelectionCheckbox'
@@ -13,9 +13,7 @@ import { ProfileFingerprint, SignerFingerprint } from './ProfileIdenticon'
 import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
-import { useChunkedCount } from './useChunkedCount'
 import { useScrollIdle } from './uiFeed/useScrollIdle'
-import { useWindowedRange } from './uiFeed/useWindowedRange'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -59,8 +57,7 @@ import {
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
-import { BntChip, BntShelf, bntChipActions, useBntHoldings, type BntChipActions } from './BntShelf'
-import type { BntAssetSummary } from '../wallet/bnt/wallet'
+import { BntShelf, TokenShelf, bntChipActions, useBntHoldings, type BntChipActions } from './BntShelf'
 import { CloseIcon, CollectablesIcon, ExpandMoreIcon, FireIcon, SendIcon } from './icons'
 import {
   formatPrimaryFromSats,
@@ -88,8 +85,6 @@ import { MiddleEllipsisName } from './MiddleEllipsisName'
 import { useWalletActionDock } from './WalletActionDock'
 import { PanelFilter } from './PanelFilter'
 
-/** Paint a few cards per frame so opening Collect does not block the UI. */
-const RENDER_CHUNK = 6
 /** A basket answer this recent is reused on a tab visit instead of re-read. */
 const INVENTORY_VISIT_FRESH_MS = 30_000
 
@@ -331,10 +326,9 @@ function CollectableItems({
   const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
   const columns = compact ? GRID_COLUMNS_COMPACT : GRID_COLUMNS
   const listRef = useRef<HTMLUListElement>(null)
-  const scrolling = useScrollIdle(listRef)
-  const shownCount = useChunkedCount(items.length, RENDER_CHUNK, scrolling)
+  useScrollIdle(listRef)
   const windowed = useWindowedRange({
-    total: shownCount,
+    total: items.length,
     itemExtent: view === 'grid' ? GRID_ROW_EXTENT : 56,
     columns: view === 'grid' ? columns : 1,
     overscan: 6,
@@ -488,11 +482,7 @@ function IssuerGroupItem({
             <h4 className="collect-section-title collect-nested-title">
               {issuer.items.length + bntTokens.length > 0 ? 'BNT items' : 'Items'}
             </h4>
-            <ul className="token-strip" role="list" aria-label={`${issuer.label} BNT items`} data-aeon-part="token-strip" data-aeon-state={view}>
-              {bntItems.map((asset) => (
-                <BntChip key={asset.assetId} asset={asset} view={view} actions={bntActions} />
-              ))}
-            </ul>
+            <TokenShelf assets={bntItems} actions={bntActions} view={view} label={`${issuer.label} BNT items`} />
           </section>
         ) : null}
         {issuer.collections.map((collection) => (
@@ -525,33 +515,6 @@ function IssuerGroupItem({
         ) : null}
       </Accordion.ItemContent>
     </Accordion.Item>
-  )
-}
-
-/** Horizontal row carousel of token circles — the same shelf loose and inside an issuer. */
-function TokenShelf({
-  assets,
-  actions,
-  view,
-  label,
-}: {
-  assets: readonly BntAssetSummary[]
-  actions: BntChipActions
-  view: CollectionView
-  label: string
-}) {
-  return (
-    <ul
-      className="token-strip"
-      role="list"
-      aria-label={label}
-      data-aeon-part="token-strip"
-      data-aeon-state={view}
-    >
-      {assets.map((asset) => (
-        <BntChip key={asset.assetId} asset={asset} view={view} actions={actions} />
-      ))}
-    </ul>
   )
 }
 

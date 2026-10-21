@@ -8,7 +8,19 @@ function traitHaystack(traits: CollectableTrait[]): string {
     .join(' ')
 }
 
+/** Collectables are replaced, never edited in place, so a text built once per object stays true. */
+const searchBlobs = new WeakMap<Collectable, string>()
+
 function collectableSearchBlob(item: Collectable): string {
+  let blob = searchBlobs.get(item)
+  if (blob === undefined) {
+    blob = buildSearchBlob(item)
+    searchBlobs.set(item, blob)
+  }
+  return blob
+}
+
+function buildSearchBlob(item: Collectable): string {
   const parts = [
     item.name,
     item.origin,

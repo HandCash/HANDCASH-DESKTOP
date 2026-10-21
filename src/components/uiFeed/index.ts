@@ -1,9 +1,7 @@
 /**
- * List/grid rendering, chunking, image deferral — Desktop and Mobile.
+ * List/grid scroll and image deferral (windowing is `useWindowedRange` in @aeon-ui/react) — Desktop and Mobile.
  */
 
-export { useChunkedCount } from '../useChunkedCount'
-export { useWindowedRange } from './useWindowedRange'
 export { shouldAttachDeferredSrc } from './attachSrc'
 export { useScrollIdle } from './useScrollIdle'
 export {

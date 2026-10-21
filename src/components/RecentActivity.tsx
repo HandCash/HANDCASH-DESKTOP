@@ -34,9 +34,9 @@ import {
   WarningIcon,
 } from "./icons";
 import { DeferredImage } from "./DeferredImage";
-import { useChunkedCount } from "./useChunkedCount";
 import { useScrollIdle } from "./uiFeed/useScrollIdle";
-import { useWindowedRange } from "./uiFeed/useWindowedRange";
+import { listWindowPadAttrs } from "@aeon-ui/core";
+import { useWindowedRange } from "@aeon-ui/react";
 import { CollectableVerifyMark } from "./CollectableVerifyMark";
 import { LoadingSpinner } from "./LoadingSpinner";
 import {
@@ -180,9 +180,6 @@ import { foldSwapActivity } from "../wallet/swap/swapActivity";
 
 /** Rows summarise; exact amounts live in the payment details. */
 const ROW_FIGURES = { significant: 4 } as const;
-
-/** Paint a few rows per frame so Activity does not block the UI on open. */
-const RENDER_CHUNK = 24;
 
 type ActivityFeedSnapshot = {
   generation: number;
@@ -1121,7 +1118,7 @@ export function ActivityFeed({
     peekPhraseItemMigrateCursor()
   );
   const listRef = useRef<HTMLUListElement>(null);
-  const scrolling = useScrollIdle(listRef);
+  useScrollIdle(listRef);
   useEffect(() => subscribeVerificationProgress(setVerification), []);
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), []);
   const visiblePhraseImport = phraseImportBelongsToWallet(
@@ -1165,9 +1162,8 @@ export function ActivityFeed({
     [filtered, limit],
   );
   const recordKeys = useContinuousRecordKeys(records);
-  const shownCount = useChunkedCount(records.length, RENDER_CHUNK, scrolling);
   const windowed = useWindowedRange({
-    total: shownCount,
+    total: records.length,
     itemExtent: 72,
     overscan: 10,
     rowSelector:
@@ -1369,9 +1365,8 @@ export function ActivityFeed({
         {windowed.padStart > 0 ? (
           <li
             className="history-window-pad"
-            data-ui-feed-pad="start"
+            {...listWindowPadAttrs("start")}
             style={{ height: windowed.padStart }}
-            aria-hidden
           />
         ) : null}
         {visibleRecords.map((record, index) => record.subject.swap ? (
@@ -1424,9 +1419,8 @@ export function ActivityFeed({
         {windowed.padEnd > 0 ? (
           <li
             className="history-window-pad"
-            data-ui-feed-pad="end"
+            {...listWindowPadAttrs("end")}
             style={{ height: windowed.padEnd }}
-            aria-hidden
           />
         ) : null}
         {viewAllLabel && onViewAll ? (

@@ -10,7 +10,7 @@ import { durableGetItem, durableSetItem } from "./durableStorage";
 import { storageRegistry } from "../storage/registry";
 import { COIN_INFO, isCoinChain, type CoinChain } from "./coins/coinChains";
 import { getItemArtDataUrl } from "./localItemArt";
-import { isGhostTxSuppressed } from "./ghostTxSuppress";
+import { isGhostTxSuppressed, suppressedGhostTxids } from "./ghostTxSuppress";
 import { txHadArcadeSubmitContact } from "./arcadeSubmitGuard";
 import { shouldYieldChainIngestToSpend } from "./walletCoordinator";
 import { announceSpendCompleted } from "./spendAnnounce";
@@ -2998,11 +2998,91 @@ export function listRecentActivity(limit = 40): ActivityEntry[] {
   return newestVisible(readAll(), limit);
 }
 
+/** The ledger's share of the projection; one write to the store rarely changes it. */
+type LedgerPart = {
+  ledger: readonly ActivityEntry[];
+  jobGeneration: number;
+  hidden: ReadonlySet<ActivityEntry>;
+  /** Ledger rows no stored row tells, bare import legs folded under their job. */
+  folded: ActivityEntry[];
+  /** `folded` newest first, sorted on the first feed read. */
+  newest: ActivityEntry[] | null;
+};
+
 let projection: {
   stored: ActivityEntry[];
   ledger: readonly ActivityEntry[];
   rows: ActivityEntry[];
+  part: LedgerPart;
 } | null = null;
+
+const ledgerByTxid = new WeakMap<readonly ActivityEntry[], Map<string, ActivityEntry[]>>();
+
+function ledgerRowsByTxid(ledger: readonly ActivityEntry[]): Map<string, ActivityEntry[]> {
+  let byTxid = ledgerByTxid.get(ledger);
+  if (byTxid) return byTxid;
+  byTxid = new Map();
+  for (const row of ledger) {
+    const txid = row.txid!.toLowerCase();
+    const rows = byTxid.get(txid);
+    if (rows) rows.push(row);
+    else byTxid.set(txid, [row]);
+  }
+  ledgerByTxid.set(ledger, byTxid);
+  return byTxid;
+}
+
+/**
+ * Ledger rows a stored row tells, or whose transaction is a suppressed ghost.
+ * Only rows sharing a txid with one of those can be hidden, so this reads those
+ * txids rather than testing every row of a long history on each write.
+ */
+function hiddenLedgerRows(
+  stored: readonly ActivityEntry[],
+  ledger: readonly ActivityEntry[]
+): Set<ActivityEntry> {
+  const byTxid = ledgerRowsByTxid(ledger);
+  const coverage = storedLedgerCoverage(stored, ledgerIndexOf(ledger));
+  const hidden = new Set<ActivityEntry>();
+  for (const txid of coverage.rowsByTxid.keys()) {
+    for (const row of byTxid.get(txid) ?? []) if (coverage.covers(row)) hidden.add(row);
+  }
+  for (const txid of suppressedGhostTxids()) {
+    for (const row of byTxid.get(txid) ?? []) hidden.add(row);
+  }
+  return hidden;
+}
+
+function sameMembers<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
+function projectLedger(
+  stored: readonly ActivityEntry[],
+  ledger: readonly ActivityEntry[]
+): LedgerPart {
+  const hidden = hiddenLedgerRows(stored, ledger);
+  const jobGeneration = jobIndexGeneration();
+  const prev = projection?.part;
+  if (
+    prev &&
+    prev.ledger === ledger &&
+    prev.jobGeneration === jobGeneration &&
+    sameMembers(prev.hidden, hidden)
+  ) {
+    return prev;
+  }
+  const shown = hidden.size === 0 ? ledger : ledger.filter((row) => !hidden.has(row));
+  return {
+    ledger,
+    jobGeneration,
+    hidden,
+    folded: shown.length > 0 ? foldBareImportLegs(shown) : [],
+    newest: null,
+  };
+}
 
 /** Migrate transactions further apart than this were separate import runs. */
 const IMPORT_RUN_GAP_MS = 15 * 60_000;
@@ -3037,8 +3117,19 @@ function foldBareImportLegs(rows: readonly ActivityEntry[]): ActivityEntry[] {
   }
   return rows.map((row) => {
     const group = row.item && row.kind === "earned" ? groupOf.get(row.txid!) : undefined;
-    return group ? { ...row, note: IMPORTED_COLLECTABLE_NOTE, sendGroupId: group } : row;
+    return group ? foldedImportLeg(row, group) : row;
   });
+}
+
+const foldedLegs = new WeakMap<ActivityEntry, ActivityEntry>();
+
+/** The same folded object for the same leg and job, so rows that did not change keep their identity. */
+function foldedImportLeg(row: ActivityEntry, group: string): ActivityEntry {
+  const hit = foldedLegs.get(row);
+  if (hit?.sendGroupId === group) return hit;
+  const folded = { ...row, note: IMPORTED_COLLECTABLE_NOTE, sendGroupId: group };
+  foldedLegs.set(row, folded);
+  return folded;
 }
 
 /**
@@ -3052,13 +3143,43 @@ function projectedActivity(): ActivityEntry[] {
   if (projection?.stored === stored && projection.ledger === ledger) {
     return projection.rows;
   }
-  const coverage = storedLedgerCoverage(stored, ledgerIndexOf(ledger));
-  const shown = ledger.filter(
-    (row) => !coverage.covers(row) && !isGhostTxSuppressed(row.txid!)
-  );
-  const rows = shown.length > 0 ? [...stored, ...foldBareImportLegs(shown)] : stored;
-  projection = { stored, ledger, rows };
+  const part = projectLedger(stored, ledger);
+  const rows = part.folded.length > 0 ? [...stored, ...part.folded] : stored;
+  projection = { stored, ledger, rows, part };
   return rows;
+}
+
+const byNewest = (a: ActivityEntry, b: ActivityEntry) => b.at - a.at;
+
+/**
+ * {@link newestVisible} over the projection without re-sorting the ledger:
+ * its folded rows are sorted once per ledger part and merged with the sorted
+ * store. Ties go to the stored row, exactly as one stable sort of
+ * `[...stored, ...folded]` orders them.
+ */
+function newestVisibleProjection(): ActivityEntry[] {
+  const rows = projectedActivity();
+  const p = projection;
+  if (!p || p.rows !== rows || p.part.folded.length === 0) {
+    return newestVisible(rows, Number.MAX_SAFE_INTEGER);
+  }
+  const now = Date.now();
+  const visible = (entry: ActivityEntry) =>
+    !isArchivedActivity(entry) && !isStaleApprovalPlaceholder(entry, now);
+  const stored = p.stored.filter(visible).sort(byNewest);
+  const ledger = (p.part.newest ??= [...p.part.folded].sort(byNewest));
+  const out: ActivityEntry[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < stored.length || j < ledger.length) {
+    if (j >= ledger.length || (i < stored.length && stored[i]!.at >= ledger[j]!.at)) {
+      out.push(stored[i++]!);
+      continue;
+    }
+    const row = ledger[j++]!;
+    if (visible(row)) out.push(row);
+  }
+  return out;
 }
 
 /**
@@ -3070,7 +3191,7 @@ function projectedActivity(): ActivityEntry[] {
  * A job inside the window keeps every leg, so its record counts them all.
  */
 export function listActivityFeed(limit = 40): ActivityEntry[] {
-  const rows = newestVisible(projectedActivity(), Number.MAX_SAFE_INTEGER);
+  const rows = newestVisibleProjection();
   const units = new Set<string>();
   const jobs = new Set<string>();
   const cap = Math.max(1, limit);

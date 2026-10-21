@@ -5,11 +5,11 @@ import {
   noteFeedScroll,
   subscribeFeedScroll,
 } from './scrollActivity'
-import { resolveScrollRoot } from './scrollRoot'
+import { resolveScrollRoot } from '@aeon-ui/core'
 
 /**
- * True while the feed is being flung. Chunk ramps and image prefetch shrink
- * until it settles; chain ingest yields its ordinal work for the same window.
+ * True while the feed is being flung. Image prefetch shrinks until it
+ * settles; chain ingest yields its ordinal work for the same window.
  *
  * The flag itself lives in `scrollActivity` — one owner for every feed — so this
  * hook only reports scrolls and re-renders on the transitions.

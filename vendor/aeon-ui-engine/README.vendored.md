@@ -4,7 +4,9 @@ Pinned copy of **aeon-ui-engine 1.8.0 + `main` at 41733ed** from `GenericCPU/aeo
 
 Desktop CI installs via `file:vendor/aeon-ui-engine` so release builds do not need npm publish or GitHub cross-repo checkout. The root `package.json` here drops upstream's `postinstall` link script.
 
-Plus the chart cache from upstream `cfab236` (`primitives/src/machines/cache.ts`, its test and the `index.ts` export), copied unchanged. The commits between 41733ed and it (Panda 2, Clipboard, sounds and others) are not taken yet.
+Plus the chart cache from upstream `cfab236` (`primitives/src/machines/cache.ts`, its test and the `index.ts` export), copied unchanged.
+
+Plus list windowing from upstream `729e024`, copied unchanged: `core/src/list-window.ts`, its test and the `index.ts` export; `react/src/scroll/use-windowed-range.ts`, its test and the `scroll/index.tsx` export. The commits between 41733ed and it (Panda 2, Clipboard, sounds and others) are not taken yet.
 
 npm `aeon-ui-engine@1.8.0` lacks `Select.Positioner` `anchorRef` (the swap coin picker uses it). Switch `package.json` back to the registry once a release includes it, then delete this folder.
 

@@ -60,6 +60,20 @@ describe('searchCollectables', () => {
   })
 })
 
+describe('searchCollectables index', () => {
+  it('answers repeat searches the same and indexes a replaced item afresh', () => {
+    const fox = tip({ outpoint: 'a.0', traits: [{ name: 'Background', value: 'Forest' }] })
+    const items = [fox, tip({ outpoint: 'b.0', traits: [{ name: 'Background', value: 'Desert' }] })]
+    expect(searchCollectables('forest', items)).toEqual([fox])
+    expect(searchCollectables('forest', items)).toEqual([fox])
+
+    const renamed = { ...fox, traits: [{ name: 'Background', value: 'Ocean' }] }
+    const next = [renamed, items[1]]
+    expect(searchCollectables('forest', next)).toEqual([])
+    expect(searchCollectables('ocean', next)).toEqual([renamed])
+  })
+})
+
 describe('suggestCollectableTerms', () => {
   const items = [
     tip({ outpoint: 'a.0', name: 'Pixel Foxes #1', traits: [{ name: 'Background', value: 'Forest' }] }),

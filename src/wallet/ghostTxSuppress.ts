@@ -19,6 +19,11 @@ export function isGhostTxSuppressed(txid: string): boolean {
   return ghosts.has(txid) && !txLanded(txid)
 }
 
+/** Every txid {@link isGhostTxSuppressed} holds true for; capped, so a projection reads these instead of asking per row. */
+export function suppressedGhostTxids(): string[] {
+  return ghosts.entries().map((e) => e.txid).filter(isGhostTxSuppressed)
+}
+
 export function rememberGhostTx(txid: string): void {
   ghosts.remember(txid)
   forgetTxLanded(txid)

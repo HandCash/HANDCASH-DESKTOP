@@ -18,18 +18,23 @@
  * Keyed by origin (`txid_vout`) because that is what the art belongs to; the
  * tip moves, the origin does not.
  */
-import { Beef } from '@bsv/sdk'
-import { base64ToBytes, bytesToBase64 } from './base64Binary'
+import type { Beef } from '@bsv/sdk'
+import { bytesToBase64 } from './base64Binary'
+import { getComputePort } from './compute/computeClient'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { imageMimeFor } from './inscriptionImage'
-import { parseOrdEnvelope } from './ordinalOwnership'
+import {
+  artFromScript,
+  decodeItemArtFromProvenance,
+  MAX_ITEM_ART_BYTES,
+  originArtKey,
+  scriptHexFromBeef,
+  splitArtOrigin,
+} from './itemArtDecode'
+import type { ItemArt } from '../ports/computePort'
+
+export { originArtKey } from './itemArtDecode'
 
 const STORAGE_KEY = 'handcash.itemArt.v1'
-/**
- * One item may not own the store. Studio items cap at 100 KB; this leaves room
- * for a hand-built inscription without letting a 2 MB ordinal in.
- */
-const MAX_BYTES = 256 * 1024
 const MAX_ENTRIES = 120
 /** Shared origin storage is ~5MB on Android; art is a rebuildable cache. */
 const MAX_STORE_CHARS = 512 * 1024
@@ -51,10 +56,6 @@ type Store = Record<string, ItemArtRecord>
  * work that stalls a phone.
  */
 const examined = new Set<string>()
-
-export function originArtKey(origin: string): string {
-  return origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-}
 
 /**
  * Parsed store, keyed by the raw string it came from.
@@ -114,7 +115,7 @@ function writeStore(store: Store): void {
 
 export function rememberItemArt(origin: string, body: Uint8Array, mime: string): void {
   const key = originArtKey(origin)
-  if (!key || body.length === 0 || body.length > MAX_BYTES) return
+  if (!key || body.length === 0 || body.length > MAX_ITEM_ART_BYTES) return
   const mimeSafe = mime.split(';')[0]!.trim()
   if (!mimeSafe) return
   const store = { ...readStore() }
@@ -151,13 +152,14 @@ export function itemArtUnexamined(origin: string | undefined | null): boolean {
   return !examined.has(key) && !readStore()[key]
 }
 
-function keepEnvelopeArt(origin: string, scriptHex: string | undefined): string | undefined {
-  const env = parseOrdEnvelope(scriptHex)
-  if (!env?.body.length) return undefined
-  const mime = imageMimeFor(env.contentType, env.body)
-  if (!mime) return undefined
-  rememberItemArt(origin, env.body, mime)
+function keepArt(origin: string, art: ItemArt | null): string | undefined {
+  if (!art) return undefined
+  rememberItemArt(origin, art.body, art.mime)
   return getItemArtDataUrl(origin)
+}
+
+function keepEnvelopeArt(origin: string, scriptHex: string | undefined): string | undefined {
+  return keepArt(origin, artFromScript(scriptHex))
 }
 
 /**
@@ -180,21 +182,10 @@ export function rememberItemArtFromScript(
   return keepEnvelopeArt(key, scriptHex)
 }
 
-function splitOrigin(origin: string): { txid: string; vout: number } | null {
-  const m = /^([0-9a-f]{64})_(\d+)$/.exec(originArtKey(origin))
-  if (!m) return null
-  return { txid: m[1]!, vout: Number(m[2]) }
-}
-
-function scriptHexFromBeef(beef: Beef, txid: string, vout: number): string | undefined {
-  const tx = beef.findTxid(txid)?.tx ?? beef.findAtomicTransaction(txid)
-  return tx?.outputs?.[vout]?.lockingScript?.toHex()
-}
-
 /** Art from a BEEF that contains the origin transaction. */
 export function rememberItemArtFromBeef(origin: string, beef: Beef): string | undefined {
   const key = originArtKey(origin)
-  const parts = splitOrigin(key)
+  const parts = splitArtOrigin(key)
   if (!parts) return undefined
   const known = getItemArtDataUrl(key)
   if (known) return known
@@ -214,21 +205,38 @@ export function rememberItemArtFromBeef(origin: string, beef: Beef): string | un
  * remittance: a body that does not decode to an image is simply not kept.
  */
 export function rememberItemArtFromProvenance(provenance: unknown): string | undefined {
+  const request = unexaminedProvenance(provenance)
+  if (typeof request !== 'object') return request
+  return keepArt(request.origin, decodeItemArtFromProvenance(request))
+}
+
+/** {@link rememberItemArtFromProvenance} with the BEEF decoded on the compute worker. */
+export async function rememberItemArtFromProvenanceOffThread(
+  provenance: unknown,
+): Promise<string | undefined> {
+  const request = unexaminedProvenance(provenance)
+  if (typeof request !== 'object') return request
+  try {
+    return keepArt(request.origin, await getComputePort().run('itemArtFromProvenance', request))
+  } catch {
+    return undefined
+  }
+}
+
+/** Known art as a URL, nothing to do as undefined, else the request to decode (marked examined). */
+function unexaminedProvenance(
+  provenance: unknown,
+): string | undefined | { origin: string; beefB64: string } {
   if (!provenance || typeof provenance !== 'object') return undefined
   const p = provenance as { origin?: unknown; beefB64?: unknown }
   if (typeof p.origin !== 'string' || typeof p.beefB64 !== 'string') return undefined
   const key = originArtKey(p.origin)
-  if (!splitOrigin(key)) return undefined
+  if (!splitArtOrigin(key)) return undefined
   const known = getItemArtDataUrl(key)
   if (known) return known
   if (examined.has(key)) return undefined
   examined.add(key)
-  try {
-    const beef = Beef.fromBinary(Array.from(base64ToBytes(p.beefB64)))
-    return rememberItemArtFromBeef(key, beef)
-  } catch {
-    return undefined
-  }
+  return { origin: key, beefB64: p.beefB64 }
 }
 
 export function resetLocalItemArtForTests(): void {

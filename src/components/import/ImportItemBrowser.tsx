@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { Accordion, Button, Progress, StatusBanner } from '@aeon-ui/react'
+import { Accordion, Button, Progress, StatusBanner, useWindowedRange } from '@aeon-ui/react'
 import {
   importItemBrowserMachine,
   queuedOutpoints,
@@ -38,7 +38,6 @@ import { Skeleton, SkeletonLine } from '../Skeleton'
 import { useWalletActionDock } from '../WalletActionDock'
 import { CloseIcon, CollectablesIcon, DownloadIcon, ExpandMoreIcon } from '../icons'
 import { useScrollIdle } from '../uiFeed/useScrollIdle'
-import { useWindowedRange } from '../uiFeed/useWindowedRange'
 import { SearchField } from '../SearchField'
 
 const PORTS: ImportItemPorts = {

@@ -79,7 +79,7 @@ import {
   getItemArtRecord,
   itemArtUnexamined,
   rememberItemArtFromBeef,
-  rememberItemArtFromProvenance,
+  rememberItemArtFromProvenanceOffThread,
   rememberItemArtFromScript,
 } from './localItemArt'
 import { resolvePaymentRecipient } from './friends'
@@ -1920,7 +1920,7 @@ async function hydrateLocalItemArt(
     const custom = parseCustom(o.customInstructions)
     const origin = custom.content ?? custom.origin ?? tagValue(o.tags, 'origin:')
     if (!origin || !itemArtUnexamined(origin)) continue
-    if (custom.provenance && rememberItemArtFromProvenance(custom.provenance)) {
+    if (custom.provenance && (await rememberItemArtFromProvenanceOffThread(custom.provenance))) {
       found += 1
       await yieldToUi()
       continue
