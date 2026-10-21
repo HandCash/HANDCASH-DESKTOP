@@ -45,6 +45,7 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let running = false
 let lastPollFailed = false
 let lastPresenceAt = 0
+let generation = 0
 
 function publish(next: SigninSnapshot): void {
   snapshot = next
@@ -80,17 +81,23 @@ function alert(request: SigninRequest): void {
 async function tick(): Promise<void> {
   if (running || !keyHex) return
   running = true
+  const key = keyHex
+  const round = generation
   try {
-    const result = await listSigninRequests(keyHex)
+    const result = await listSigninRequests(key)
+    // Locked or switched wallet while the read was out: its requests are not this wallet's.
+    if (round !== generation) return
     requests = result.requests
     if (result.registered && Date.now() - lastPresenceAt >= SIGNIN_PRESENCE_MS) {
-      await reportSigninPresence(keyHex, getOrCreateDeviceId(), localDeviceLabel(), 'active')
+      await reportSigninPresence(key, getOrCreateDeviceId(), localDeviceLabel(), 'active')
+      if (round !== generation) return
       lastPresenceAt = Date.now()
     }
     for (const request of requests) if (request.state === 'open') alert(request)
     publish({ registered: result.registered, rows: rowsOf(requests) })
     lastPollFailed = false
   } catch (error) {
+    if (round !== generation) return
     lastPollFailed = true
     console.warn('[signin] poll deferred', error instanceof Error ? error.message : String(error))
   } finally {
@@ -119,6 +126,7 @@ export function stopDeviceSigninService(signedOut = false): void {
   const key = keyHex
   const registered = snapshot.registered
   keyHex = null
+  generation += 1
   if (timer) clearTimeout(timer)
   timer = null
   lastPresenceAt = 0

@@ -89,6 +89,15 @@ describe('email sign-in on the new device', () => {
     expect(sent.filter((url) => url.endsWith('/v1/signin/received'))).toHaveLength(1)
   })
 
+  it('refuses a vault that arrives before this device showed its code', async () => {
+    const signin = newDevice()
+    const sealedVault = sealVaultTransfer(transfer, PrivateKey.fromRandom(), signin.key.toPublicKey().toString())
+    await expect(
+      advanceNewDeviceSignin(signin, async () => status({ state: 'sent', rB: 'cc'.repeat(32), sealedVault })),
+    ).rejects.toThrow(/before this device showed its code/)
+    expect(sent.some((url) => url.endsWith('/v1/signin/received'))).toBe(false)
+  })
+
   it('a lost acknowledgment never fails a saved sign-in', async () => {
     vi.stubGlobal('fetch', async () => {
       throw new TypeError('Failed to fetch')

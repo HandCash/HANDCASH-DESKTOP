@@ -70,6 +70,9 @@ export async function advanceNewDeviceSignin(
     throw new Error('The approving device code changed mid-way. Start again.')
   }
   if (status.state === 'sent' && status.sealedVault) {
+    if (!signin.code) {
+      throw new Error('A wallet arrived before this device showed its code to compare, so it was not installed. Start again.')
+    }
     const transfer = openVaultTransfer(status.sealedVault, signin.key)
     return { state: 'approved', transfer, approverLabel: status.approverLabel }
   }
