@@ -130,6 +130,7 @@ import {
 import { bapAddress, bapIdFor, bapKey } from './bapRecords'
 import { durableForgetCached } from './durableStorage'
 import {
+  defaultDevWalletStorageUrl,
   derivedDevKey,
   DevKeyRefused,
   devSignEligibility,
@@ -307,16 +308,35 @@ describe('generate', () => {
     fakeServerWallet(derivedDevKey(rootHex, n))
     expect(exportDevKeyConfig(runtime, n)).toBe(
       `SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, n).toHex()}\n` +
-        'WALLET_STORAGE_URL=https://storage.babbage.systems\nBSV_NETWORK=main\n',
+        'WALLET_STORAGE_URL=https://handcash-wallet-storage.bcryderman.workers.dev\nBSV_NETWORK=main\n',
     )
     await refreshDevWallet(runtime, n)
     expect(h.built).toEqual([
       {
         identityKey: derivedDevKey(rootHex, n).toPublicKey().toString(),
         services,
-        storageUrl: 'https://storage.babbage.systems',
+        storageUrl: 'https://handcash-wallet-storage.bcryderman.workers.dev',
       },
     ])
+  })
+
+  it('puts a new key on HandCash storage for its network', () => {
+    expect(defaultDevWalletStorageUrl('main')).toBe('https://handcash-wallet-storage.bcryderman.workers.dev')
+    expect(defaultDevWalletStorageUrl('test')).toBe('https://handcash-wallet-storage-test.bcryderman.workers.dev')
+  })
+
+  it('keeps an existing key on the storage its ledger saved', () => {
+    const n = walletKey()
+    const ledger = JSON.parse(store.get(ledgerKey())!)
+    ledger.keys[0].wallet.storageUrl = 'https://storage.babbage.systems'
+    store.set(ledgerKey(), JSON.stringify(ledger))
+    durableForgetCached()
+    walletKey()
+    expect(readDevKeyLedger(active).keys.map((k) => k.wallet!.storageUrl)).toEqual([
+      'https://storage.babbage.systems',
+      'https://handcash-wallet-storage.bcryderman.workers.dev',
+    ])
+    expect(exportDevKeyConfig(runtime, n)).toContain('WALLET_STORAGE_URL=https://storage.babbage.systems\n')
   })
 })
 
@@ -409,7 +429,7 @@ describe('wallet status', () => {
     await refreshDevWallet(runtime, n)
     expect(listDevKeys(runtime)[0]!.wallet).toEqual({
       status: { kind: 'ready', summary: { money: 0, moneyOutputs: 0, items: 0, tokens: 0 } },
-      storageHost: expect.stringMatching(/storage\.babbage\.systems$/),
+      storageHost: 'handcash-wallet-storage.bcryderman.workers.dev',
       refreshing: false,
     })
   })
@@ -464,6 +484,19 @@ describe('migration', () => {
       keys: [{ n: 3, material: { kind: 'derived' }, wallet: { storageUrl: 'https://box.example' } }],
     })
     expect(exportDevKeyConfig(runtime, 3)).toContain(`SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, 3).toHex()}`)
+  })
+
+  it('keeps a v1 or v2 wallet that saved no storage URL on Babbage, where it was opened', () => {
+    const testnet = { ...active, chain: 'test' } as ActiveWallet
+    walletKey()
+    const mainKey = ledgerKey()
+    generateDevKey({ instance: testnet } as unknown as WalletRuntime, { sign: false, wallet: true })
+    const testKey = [...store.keys()].find((k) => k.startsWith('handcash.serverWallet') && k !== mainKey)!
+    store.set(mainKey, JSON.stringify({ v: 2, generation: 2, pendingFunds: [], pendingRecover: null }))
+    store.set(testKey, JSON.stringify({ v: 1, generation: 2, outputs: [], pendingRecover: null }))
+    durableForgetCached()
+    expect(readDevKeyLedger(active).keys[0]!.wallet!.storageUrl).toBe('https://storage.babbage.systems')
+    expect(readDevKeyLedger(testnet).keys[0]!.wallet!.storageUrl).toBe('https://staging-storage.babbage.systems')
   })
 
   it('turns v1 fund payments into internalizations', async () => {

@@ -58,7 +58,16 @@ const PAGE = 1000
 
 const KEY = storageRegistry.devKeys.key
 
+/** HandCash's own Toolbox storage server (BRC-CLOUD workers/handcash-wallet-storage), for new keys. */
 export function defaultDevWalletStorageUrl(chain: ActiveWallet['chain']): string {
+  return `https://handcash-wallet-storage${chain === 'main' ? '' : '-test'}.bcryderman.workers.dev`
+}
+
+/**
+ * Where a v1 or v2 server wallet that saved no storage URL was opened. Its
+ * outputs are there, so migration must not move it to the new default.
+ */
+function babbageDevWalletStorageUrl(chain: ActiveWallet['chain']): string {
   return `https://${chain === 'main' ? '' : 'staging-'}storage.babbage.systems`
 }
 
@@ -277,7 +286,7 @@ function v1Funds(raw: V1Ledger, active: ActiveWallet): PendingDevFund[] {
 /** v1/v2 held one server wallet at keyID = generation: it is that numbered key. */
 function migrate(raw: V1Ledger | V2Ledger, active: ActiveWallet): DevKeyLedger {
   const wallet: DevKeyWallet = {
-    storageUrl: (raw.v === 2 && raw.storageUrl) || defaultDevWalletStorageUrl(active.chain),
+    storageUrl: (raw.v === 2 && raw.storageUrl) || babbageDevWalletStorageUrl(active.chain),
     pendingFunds:
       raw.v === 1 ? v1Funds(raw, active) : Array.isArray(raw.pendingFunds) ? raw.pendingFunds : [],
     pendingRecover: raw.pendingRecover ?? null,

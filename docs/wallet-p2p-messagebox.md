@@ -56,10 +56,16 @@ ticked: **Sign**, **Wallet**, or both.
 
 ```
 SERVER_PRIVATE_KEY=<hex>
-WALLET_STORAGE_URL=https://storage.babbage.systems   # Wallet only
+WALLET_STORAGE_URL=https://handcash-wallet-storage.bcryderman.workers.dev   # Wallet only
 BSV_NETWORK=main
-BAP_ID=<bapId>                                      # Sign only
+BAP_ID=<bapId>                                                             # Sign only
 ```
+
+A new key's storage is HandCash's own Toolbox storage server (BRC-CLOUD
+`workers/handcash-wallet-storage`); testnet keys get
+`https://handcash-wallet-storage-test.bcryderman.workers.dev`. A key keeps the
+storage URL saved with it, so keys made earlier stay on Babbage
+(`storage.babbage.systems`, `staging-storage` for testnet).
 
 HandCash opens the same key against the same storage, on this session's
 services. Both see one set of outputs, so there is no report protocol and
