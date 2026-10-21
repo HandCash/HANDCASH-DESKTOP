@@ -2,8 +2,12 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-21
+
 ### Added
 
+- **Chart cache (`@aeon-ui/primitives`).** `createChartCache({ id, load, ttl, tags? })` is a keyed cache charts invoke as `cache.actor`, shared by every chart instance. Each key is a `cacheEntryMachine` (`idle`, `loading`, `ready`, `stale`, `refreshing`, `failed`): one load per key, a time-to-live per key, stale data served while it revalidates, and `CACHE.INVALIDATE` by key or tag. `peek()` returns a stable view for selectors. Ids naming secrets, keys or spend decisions are refused.
+- **Windowed lists.** `computeListWindow` (`@aeon-ui/core`) and `useWindowedRange` (`@aeon-ui/react`) mount only the rows in view, for vertical lists and horizontal strips.
 - **Sounds (`@aeon-ui/core`).** `playSound(name)` plays short UI sounds synthesized with Web Audio (`tap`, `copy`, `send`, `success`, `attention`, `error`, `ready`); no audio files. Silent until the app calls `configureSounds({ enabled: true, volume })`. The same sound fired twice within 60 ms plays once. `createSoundPlayer` takes a context factory for tests.
 - **`Clipboard` sounds.** `clipboardMachine` plays `copy` on entering `copied` and `error` on entering `failed`, through the `soundCopied` / `soundFailed` actions.
 - **`Clipboard`.** One-click copy on `clipboardMachine` (idle, copying, copied, failed); the styled trigger swaps a copy icon for a check and a live region announces the result.
@@ -20,6 +24,8 @@
 
 ### Fixed
 
+- **Controlled `Tabs.Root` reports clicks.** With `value` set, a trigger click calls `onValueChange` with the clicked value; before, it changed only machine state the controlled value ignored, so the tab never switched. `Tabs.Root` also takes div attributes.
+- **`RadioGroup.Root` takes `aria-label`.** Its props extend div attributes, so `aria-label`, `id` and the rest type-check (the root already passed them through).
 - **`anatomy()` carries its `scope` at runtime.** The type promised `.scope`, but the object had none, so `scopeAttrs(x.scope, …)` emitted `data-aeon-scope="undefined"`.
 
 ## [1.8.0] - 2026-09-27

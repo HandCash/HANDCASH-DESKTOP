@@ -1,13 +1,14 @@
 {
   "name": "aeon-ui-engine",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "private": false,
   "type": "module",
   "bin": {
-    "aeon-ui": "./packages/cli/dist/bin.js"
+    "aeon-ui": "packages/cli/dist/bin.js"
   },
   "exports": {
     "./vite": "./scripts/vite-aliases.mjs",
+    "./link": "./scripts/link-scoped-packages.mjs",
     "./aeon.css": "./packages/panda/aeon.css",
     "./tsconfig.base.json": "./tsconfig.base.json",
     "./CONSUMER.md": "./CONSUMER.md",
@@ -16,6 +17,9 @@
   },
   "files": [
     "packages",
+    "!packages/*/node_modules",
+    "!packages/**/*.test.ts",
+    "!packages/**/*.test.tsx",
     "scripts",
     "tsconfig.base.json",
     "CONSUMER.md",
@@ -25,13 +29,14 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "link:scoped": "node ./scripts/link-scoped-packages.mjs",
     "build": "pnpm --filter @aeon-ui/panda run codegen && pnpm -r run build",
     "build:headless": "pnpm --filter @aeon-ui/core --filter @aeon-ui/primitives --filter @aeon-ui/react run build",
     "codegen": "pnpm --filter @aeon-ui/panda codegen",
     "dev": "pnpm --filter @aeon-ui/demo dev",
     "examples": "pnpm --filter @aeon-ui/examples dev",
     "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm run test:headless",
+    "test": "pnpm run test:headless && pnpm --filter @aeon-ui/demo run test",
     "test:headless": "pnpm run build:headless && pnpm --filter @aeon-ui/core --filter @aeon-ui/primitives --filter @aeon-ui/react run test",
     "changeset": "changeset",
     "version-packages": "changeset version",
