@@ -79,7 +79,7 @@ export const DEFAULT_MARKET_BASE_URL =
     import.meta.env.VITE_MARKET_BASE_URL.trim()) ||
   'https://handcash.io'
 
-/** Buy BSV with other crypto; pays into this device over the BRC-100 bridge. */
+/** Swap crypto for Bitcoin SV; pays into this device over the BRC-100 bridge. */
 export const ADD_MONEY_URL = `${DEFAULT_MARKET_BASE_URL.replace(/\/+$/, '')}/wallet/swap`
 
 /**

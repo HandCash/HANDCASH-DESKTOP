@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.632] - 2026-10-21
+
+### Fixed
+
+- What is BSV? says “Bitcoin SV is an electronic cash system”, no longer “Bitcoin (BSV)”.
+
 ## [1.3.631] - 2026-10-21
 
 ### Changed

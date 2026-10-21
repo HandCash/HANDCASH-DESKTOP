@@ -10,7 +10,7 @@ export const TICKER_COINS: Record<MarketCoin, TickerCoinInfo> = {
     sym: 'BSV',
     aboutTitle: 'What is BSV?',
     about:
-      'Bitcoin (BSV) is an electronic cash system that enables direct, online payments from one party to another. It functions exactly like physical cash but for the web.',
+      'Bitcoin SV is an electronic cash system that enables direct, online payments from one party to another. It functions exactly like physical cash but for the web.',
     url: OFFICIAL_URL,
   },
   ...(Object.fromEntries(
