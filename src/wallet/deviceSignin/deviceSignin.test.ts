@@ -8,6 +8,7 @@ import {
 } from '../deviceTransfer'
 import type { SigninRequest, SigninStatus } from './api'
 import { advanceNewDeviceSignin, type NewDeviceSignin } from './newDevice'
+import { nextSigninPollMs, SIGNIN_IDLE_POLL_MS, SIGNIN_POLL_MS } from './service'
 import { signinAlertText, signinRowView } from './view'
 
 const transfer: VaultTransfer = {
@@ -143,5 +144,15 @@ describe('email sign-in rows on signed-in devices', () => {
     })
     expect(signinRowView(request({ state: 'refused' }), here).face).toBe('refused')
     expect(signinRowView(request({ state: 'expired' }), here).face).toBe('expired')
+  })
+})
+
+describe('sign-in polling pace', () => {
+  it('polls fast only while the relay answers for a registered or unknown wallet', () => {
+    expect(nextSigninPollMs(true, false)).toBe(SIGNIN_POLL_MS)
+    expect(nextSigninPollMs(null, false)).toBe(SIGNIN_POLL_MS)
+    expect(nextSigninPollMs(false, false)).toBe(SIGNIN_IDLE_POLL_MS)
+    expect(nextSigninPollMs(null, true)).toBe(SIGNIN_IDLE_POLL_MS)
+    expect(nextSigninPollMs(true, true)).toBe(SIGNIN_IDLE_POLL_MS)
   })
 })

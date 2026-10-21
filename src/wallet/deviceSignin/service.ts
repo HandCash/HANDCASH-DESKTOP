@@ -24,6 +24,11 @@ export const SIGNIN_POLL_MS = 5_000
 export const SIGNIN_IDLE_POLL_MS = 60_000
 export const SIGNIN_PRESENCE_MS = 5 * 60_000
 
+/** A relay that failed (down, or not deployed yet) is retried at the idle pace, not every 5 s. */
+export function nextSigninPollMs(registered: boolean | null, lastPollFailed: boolean): number {
+  return registered === false || lastPollFailed ? SIGNIN_IDLE_POLL_MS : SIGNIN_POLL_MS
+}
+
 export type SigninSnapshot = {
   registered: boolean | null
   rows: SigninRowView[]
@@ -38,6 +43,7 @@ let requests: SigninRequest[] = []
 let keyHex: string | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
 let running = false
+let lastPollFailed = false
 let lastPresenceAt = 0
 
 function publish(next: SigninSnapshot): void {
@@ -83,7 +89,9 @@ async function tick(): Promise<void> {
     }
     for (const request of requests) if (request.state === 'open') alert(request)
     publish({ registered: result.registered, rows: rowsOf(requests) })
+    lastPollFailed = false
   } catch (error) {
+    lastPollFailed = true
     console.warn('[signin] poll deferred', error instanceof Error ? error.message : String(error))
   } finally {
     running = false
@@ -94,7 +102,7 @@ async function tick(): Promise<void> {
 function schedule(): void {
   if (!keyHex) return
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => void tick(), snapshot.registered === false ? SIGNIN_IDLE_POLL_MS : SIGNIN_POLL_MS)
+  timer = setTimeout(() => void tick(), nextSigninPollMs(snapshot.registered, lastPollFailed))
 }
 
 export function startDeviceSigninService(): void {
@@ -114,6 +122,7 @@ export function stopDeviceSigninService(signedOut = false): void {
   if (timer) clearTimeout(timer)
   timer = null
   lastPresenceAt = 0
+  lastPollFailed = false
   requests = []
   publish({ registered: null, rows: [] })
   if (signedOut && key && registered) {
