@@ -2335,7 +2335,7 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   height: 72px;
   margin-top: 12px;
   border-radius: var(--hc-radius);
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--hc-text) 3%, transparent);
 }
 
 /* Market direction is semantic — never Omarchy accent / sheet primary. */
@@ -3707,7 +3707,7 @@ button.wallet-detail-value.is-copied {
 .key-slice-progress-track {
   height: 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
   overflow: hidden;
 }
 
@@ -3749,7 +3749,7 @@ button.wallet-detail-value.is-copied {
 .history-progress-track {
   height: 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
   overflow: hidden;
 }
 
@@ -3920,7 +3920,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   width: 28px;
   height: 28px;
   border-radius: var(--hc-radius);
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
   font-size: var(--hc-text-sm);
   font-weight: 700;
   color: var(--hc-muted);
@@ -3954,7 +3954,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   text-transform: uppercase;
   padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
   color: var(--hc-muted);
 }
 
@@ -11069,7 +11069,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   padding: 6px 8px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--hc-text) 3%, transparent);
 }
 
 .collectable-trait-strip [data-aeon-part='value'] {
