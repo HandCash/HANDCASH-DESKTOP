@@ -1,16 +1,10 @@
 import { Button } from '@aeon-ui/react'
-import { usePeerIdentity } from '../../hooks/usePeerIdentity'
 import { formatDay, unreadBadgeLabel, type ChatPeer } from '../../features/messages'
 import { openAddFriend } from '../../wallet/navStore'
 import type { Chain } from '../../wallet/vault'
 import { PersonAddIcon } from '../icons'
-import { PeerAvatar } from '../PeerIdentity'
+import { PeerAvatarForKey } from '../PeerIdentity'
 import { SearchField } from '../SearchField'
-
-function ChatPeerAvatar({ label, identityKey, chain }: { label: string; identityKey?: string; chain: Chain }) {
-  const peer = usePeerIdentity(chain, identityKey)
-  return <PeerAvatar label={label} peer={peer} />
-}
 
 function SidebarTools({
   unreadOnly,
@@ -62,7 +56,7 @@ function ChatPeerRow({
       data-selected={selected ? '' : undefined}
       onClick={() => onSelect(peerId)}
     >
-      <ChatPeerAvatar label={label} identityKey={friend?.identityKey} chain={chain} />
+      <PeerAvatarForKey label={label} identityKey={friend?.identityKey} chain={chain} />
       <span className="chat-peer-body">
         <span className="chat-peer-top">
           <strong className="chat-peer-name">{label}</strong>

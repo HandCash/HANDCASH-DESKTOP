@@ -13,24 +13,8 @@ import { formatSatsLabel } from '../../wallet/brc218'
 import type { Friend } from '../../wallet/friends'
 import { openPaymentDetails } from '../../wallet/navStore'
 import { EmptyState } from '../EmptyState'
-import { PeerAvatar, PeerIdentityLine } from '../PeerIdentity'
+import { PeerIdentityBlock } from '../PeerIdentity'
 import { MessageBubble, type MessageActions } from './MessageBubble'
-
-function ChatThreadPeer({ friend, peer }: { friend: Friend; peer: PeerIdentityView | null }) {
-  return (
-    <>
-      <PeerAvatar label={friend.label} peer={peer} className="friend-avatar chat-thread-avatar" />
-      <div className="chat-thread-titles">
-        <strong>{friend.label}</strong>
-        {peer ? (
-          <PeerIdentityLine peer={peer} />
-        ) : (
-          <span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>
-        )}
-      </div>
-    </>
-  )
-}
 
 export function ChatThreadHeader({
   friend,
@@ -54,7 +38,14 @@ export function ChatThreadHeader({
           <Button.Label>←</Button.Label>
         </Button.Root>
       ) : null}
-      <ChatThreadPeer friend={friend} peer={peer} />
+      <PeerIdentityBlock
+        label={friend.label}
+        peer={peer}
+        avatarClassName="friend-avatar chat-thread-avatar"
+        bodyClassName="chat-thread-titles"
+        name={<strong>{friend.label}</strong>}
+        fallback={<span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>}
+      />
     </header>
   )
 }

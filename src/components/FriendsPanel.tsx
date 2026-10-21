@@ -1,79 +1,63 @@
 import { Button } from '@aeon-ui/react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Chain } from '../wallet/vault'
-import {
-  listFriends,
-  searchFriends,
-  subscribeFriends,
-  type Friend,
-} from '../wallet/friends'
+import { filterFriends, suggestFriends } from '../features/friends'
+import { listFriends, subscribeFriends, type Friend } from '../wallet/friends'
 import {
   getCollectionView,
   subscribeCollectionView,
   type CollectionView,
 } from '../wallet/collectionView'
 import { openAddFriend, openFriendDetails, openMessagesInbox } from '../wallet/navStore'
-import { playWalletSound } from '../wallet/soundService'
-import { usePeerIdentity } from '../hooks/usePeerIdentity'
+import { withSoftSound } from '../wallet/soundedAction'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
 import { MessagesIcon, PersonAddIcon } from './icons'
-import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
+import { FriendIdentityBlock } from './PeerIdentity'
 import { PanelFilter } from './PanelFilter'
 
 type Props = {
   chain: Chain
 }
 
+const openAddFriendSoftly = withSoftSound(openAddFriend)
+const openMessagesSoftly = withSoftSound(openMessagesInbox)
+
+function friendKeyLine(friend: Friend, className: string) {
+  return (
+    <span className={className} title={friend.identityKey}>
+      {friend.identityKey}
+    </span>
+  )
+}
+
 function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  const peer = usePeerIdentity(chain, friend.identityKey, friend)
   return (
     <li className="friend-row">
-      <button
-        type="button"
-        className="friend-row-main"
-        onClick={() => {
-          playWalletSound('soft')
-          openFriendDetails(friend.id)
-        }}
-      >
-        <PeerAvatar label={friend.label} peer={peer} />
-        <div className="friend-row-body">
-          <strong className="friend-label">{friend.label}</strong>
-          {peer ? (
-            <PeerIdentityLine peer={peer} />
-          ) : (
-            <span className="friend-key mono" title={friend.identityKey}>
-              {friend.identityKey}
-            </span>
-          )}
-        </div>
+      <button type="button" className="friend-row-main" onClick={withSoftSound(() => openFriendDetails(friend.id))}>
+        <FriendIdentityBlock
+          chain={chain}
+          friend={friend}
+          bodyClassName="friend-row-body"
+          name={<strong className="friend-label">{friend.label}</strong>}
+          fallback={friendKeyLine(friend, 'friend-key mono')}
+        />
       </button>
     </li>
   )
 }
 
 function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  const peer = usePeerIdentity(chain, friend.identityKey, friend)
   return (
     <li className="collection-grid-card friend-grid-card">
-      <button
-        type="button"
-        className="collection-grid-main"
-        onClick={() => {
-          playWalletSound('soft')
-          openFriendDetails(friend.id)
-        }}
-      >
-        <PeerAvatar label={friend.label} peer={peer} className="friend-avatar friend-avatar-lg" />
-        <strong className="collection-grid-name">{friend.label}</strong>
-        {peer ? (
-          <PeerIdentityLine peer={peer} />
-        ) : (
-          <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
-            {friend.identityKey}
-          </span>
-        )}
+      <button type="button" className="collection-grid-main" onClick={withSoftSound(() => openFriendDetails(friend.id))}>
+        <FriendIdentityBlock
+          chain={chain}
+          friend={friend}
+          avatarClassName="friend-avatar friend-avatar-lg"
+          name={<strong className="collection-grid-name">{friend.label}</strong>}
+          fallback={friendKeyLine(friend, 'collection-grid-host friend-key mono')}
+        />
       </button>
     </li>
   )
@@ -87,21 +71,9 @@ export function FriendsPanel({ chain }: Props) {
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeCollectionView(setView, 'friends'), [])
 
-  const filtered = useMemo(
-    () => query.split(',').reduce((left, term) => searchFriends(term, left), friends),
-    [friends, query],
-  )
-  const suggestFriends = useCallback(
-    (typed: string, applied: readonly string[]) => {
-      const needle = typed.trim().toLowerCase()
-      if (!needle) return []
-      const left = applied.reduce((rest, term) => searchFriends(term, rest), friends)
-      return left
-        .filter((f) => f.label.toLowerCase().includes(needle))
-        .sort((a, b) => Number(!a.label.toLowerCase().startsWith(needle)) - Number(!b.label.toLowerCase().startsWith(needle)))
-        .slice(0, 6)
-        .map((f) => ({ term: f.label, label: f.label, kind: 'Friend', count: searchFriends(f.label, left).length }))
-    },
+  const filtered = useMemo(() => filterFriends(friends, query), [friends, query])
+  const suggest = useCallback(
+    (typed: string, applied: readonly string[]) => suggestFriends(friends, typed, applied),
     [friends],
   )
 
@@ -125,7 +97,7 @@ export function FriendsPanel({ chain }: Props) {
             placeholder="Name or wallet key"
             value={query}
             onValueChange={setQuery}
-            suggest={suggestFriends}
+            suggest={suggest}
             shown={filtered.length}
             total={friends.length}
           />
@@ -136,10 +108,7 @@ export function FriendsPanel({ chain }: Props) {
             className="panel-icon-btn"
             aria-label="Open messages"
             title="Messages"
-            onClick={() => {
-              playWalletSound('soft')
-              openMessagesInbox()
-            }}
+            onClick={openMessagesSoftly}
           >
             <MessagesIcon size={16} />
           </button>
@@ -148,10 +117,7 @@ export function FriendsPanel({ chain }: Props) {
             className="panel-icon-btn"
             aria-label="Add friend"
             title="Add friend"
-            onClick={() => {
-              playWalletSound('soft')
-              openAddFriend()
-            }}
+            onClick={openAddFriendSoftly}
           >
             <PersonAddIcon size={16} />
           </button>
@@ -164,13 +130,7 @@ export function FriendsPanel({ chain }: Props) {
           title="No friends yet"
           body="Add someone by $handle or wallet key."
           action={
-            <Button.Root variant="solid"
-              className="btn btn-primary"
-              onClick={() => {
-                playWalletSound('soft')
-                openAddFriend()
-              }}
-            >
+            <Button.Root variant="solid" className="btn btn-primary" onClick={openAddFriendSoftly}>
               <Button.Label>Add friend</Button.Label>
             </Button.Root>
           }

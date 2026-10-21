@@ -1,5 +1,7 @@
-import { useMemo } from 'react'
-import type { PeerIdentityView } from '../hooks/usePeerIdentity'
+import { useMemo, type ReactNode } from 'react'
+import { usePeerIdentity, type PeerIdentityView } from '../hooks/usePeerIdentity'
+import type { Friend } from '../wallet/friends'
+import type { Chain } from '../wallet/vault'
 import { issuerIdentityImageDataUrl } from '../wallet/issuerIdentity'
 import { profileFingerprint } from '../wallet/issuerTrust'
 import { ProfileIdenticon } from './ProfileIdenticon'
@@ -68,4 +70,58 @@ export function PeerIdentityLine({ peer }: { peer: PeerIdentityView | null }) {
       <span className="identity-pill-id mono">{profileFingerprint(id).short}</span>
     </span>
   )
+}
+
+export type PeerIdentityBlockProps = {
+  label: string
+  peer: PeerIdentityView | null
+  /** The contact's name as the screen titles it. */
+  name: ReactNode
+  /** Shown under the name when the contact presented no profile. */
+  fallback: ReactNode
+  avatarClassName?: string
+  /** Wraps the name and identity line in a div (`''` for no class); without it they sit beside the avatar. */
+  bodyClassName?: string
+}
+
+/** A contact's avatar, then their name over the profile they presented, else `fallback`. */
+export function PeerIdentityBlock({ label, peer, name, fallback, avatarClassName, bodyClassName }: PeerIdentityBlockProps) {
+  const lines = (
+    <>
+      {name}
+      {peer ? <PeerIdentityLine peer={peer} /> : fallback}
+    </>
+  )
+  return (
+    <>
+      <PeerAvatar label={label} peer={peer} className={avatarClassName} />
+      {bodyClassName === undefined ? lines : <div className={bodyClassName || undefined}>{lines}</div>}
+    </>
+  )
+}
+
+/** {@link PeerIdentityBlock} for a saved friend; asks them again for a profile this device evicted. */
+export function FriendIdentityBlock({
+  chain,
+  friend,
+  ...block
+}: Omit<PeerIdentityBlockProps, 'label' | 'peer'> & { chain: Chain; friend: Friend }) {
+  const peer = usePeerIdentity(chain, friend.identityKey, friend)
+  return <PeerIdentityBlock label={friend.label} peer={peer} {...block} />
+}
+
+/** A contact's avatar looked up by wallet key alone, for rows with no identity line. */
+export function PeerAvatarForKey({
+  chain,
+  identityKey,
+  label,
+  className,
+}: {
+  chain: Chain
+  identityKey?: string
+  label: string
+  className?: string
+}) {
+  const peer = usePeerIdentity(chain, identityKey)
+  return <PeerAvatar label={label} peer={peer} className={className} />
 }

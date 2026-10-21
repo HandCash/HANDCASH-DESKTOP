@@ -11,6 +11,7 @@ import {
 } from '../wallet/friends'
 import { clearNavChild, openMessagesWithFriend } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
+import { withSoftSound } from '../wallet/soundedAction'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { identityCardRefusalMessage } from '../wallet/identityCard'
@@ -18,7 +19,7 @@ import { importIdentityCard, requestIdentityCard } from '../wallet/identityCardS
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CopyIcon, MessagesIcon } from './icons'
-import { PeerAvatar, PeerIdentityLine } from './PeerIdentity'
+import { PeerIdentityBlock, PeerIdentityLine } from './PeerIdentity'
 
 const MAX_CARD_FILE_BYTES = 400 * 1024
 
@@ -112,11 +113,14 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     <div className="nav-child-panel friend-details" data-aeon-scope="friend-details">
       <form className="friends-add-form" onSubmit={onSave}>
         <section className="friend-details-overview" aria-labelledby="friend-overview-name">
-          <PeerAvatar label={displayHandle} peer={peer} className="friend-avatar friend-avatar-lg" />
-          <div>
-            <h3 id="friend-overview-name">{displayHandle}</h3>
-            {peer ? <PeerIdentityLine peer={peer} /> : handleFixed ? <p>Handle contact</p> : null}
-          </div>
+          <PeerIdentityBlock
+            label={displayHandle}
+            peer={peer}
+            avatarClassName="friend-avatar friend-avatar-lg"
+            bodyClassName=""
+            name={<h3 id="friend-overview-name">{displayHandle}</h3>}
+            fallback={handleFixed ? <p>Handle contact</p> : null}
+          />
         </section>
 
         {handleFixed ? null : (
@@ -217,12 +221,10 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
-          <Button.Root variant="solid"
+          <Button.Root
+            variant="solid"
             className="btn btn-primary"
-            onClick={() => {
-              playWalletSound('soft')
-              openMessagesWithFriend(friend.id)
-            }}
+            onClick={withSoftSound(() => openMessagesWithFriend(friend.id))}
           >
             <MessagesIcon size={16} />
             Message
