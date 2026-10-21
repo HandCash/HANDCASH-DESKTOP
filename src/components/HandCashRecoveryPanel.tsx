@@ -1,225 +1,160 @@
-import { Button, Field, StatusBanner } from '@aeon-ui/react'
-import { useMachine } from '@xstate/react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Button } from '@aeon-ui/react'
+import { useCallback, useEffect, useState } from 'react'
 import {
-  emailMethodStatus,
-  googleMethodStatus,
-  recoveryStage,
-  type RecoveryMethodStatus,
+  SELF_BACKUPS,
+  selfBackupStatus,
+  signedInDeviceRows,
+  type RelayDevices,
+  type SignedInDeviceRow,
 } from '../features/recovery'
-import { emailRecoveryMachine } from '../machines/emailRecoveryMachine'
+import { listAddedDevices, noteDeviceRemoved, subscribeAddedDevices } from '../wallet/addedDevices'
+import { openBackupFormat, savedBackupFormats, subscribeBackupFormats } from '../wallet/backupFormats'
 import {
-  beginGoogleEnrollment,
-  completeGoogleEnrollment,
-  googleEnrollmentEmail,
-  recoveryEmailUrl,
-  type GoogleEnrollmentSession,
-} from '../wallet/brc250/enrollment'
-import { getEmailRecoveryEnrollment } from '../wallet/brc250/store'
-import { openInSystemBrowser } from '../wallet/brc250/systemBrowser'
+  listSigninDevices,
+  removeSigninDevice,
+  signinErrorText,
+  walletSigninKeyHex,
+} from '../wallet/deviceSignin'
+import { localDeviceLabel } from '../wallet/deviceTransfer'
+import { getOrCreateDeviceId } from '../wallet/deviceWallets'
+import { openScanFlow, openSetting } from '../wallet/navStore'
+import { readVaultMeta } from '../wallet/vault'
+import { SettingsNavRow, SettingsSection, settingIconFor } from './settings'
 
-type Props = {
-  onReady?: () => void
-}
+function useSignedInDevices() {
+  const [relay, setRelay] = useState<RelayDevices | null>(null)
+  const [added, setAdded] = useState(() => listAddedDevices())
+  const [error, setError] = useState<string | null>(null)
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
+  const reload = useCallback(async () => {
+    try {
+      setRelay(await listSigninDevices(walletSigninKeyHex()))
+    } catch {
+      setRelay(null)
+    }
+  }, [])
 
-export function RecoveryMethod({
-  method,
-  title,
-  about,
-  status,
-  children,
-}: {
-  method: 'google' | 'email'
-  title: string
-  about: string
-  status: RecoveryMethodStatus
-  children?: ReactNode
-}) {
-  return (
-    <li className="recovery-method" data-aeon-part={`recovery-${method}`} data-aeon-state={status.tone}>
-      <div className="recovery-method-head">
-        <strong>{title}</strong>
-        <span className="recovery-method-status">{status.text}</span>
-      </div>
-      <p className="settings-hint">{about}</p>
-      {children}
-    </li>
-  )
-}
-
-/** HandCash Recovery: Google proves who you are, email holds the second share. */
-export function HandCashRecoveryPanel({ onReady }: Props) {
-  const [snapshot, send] = useMachine(emailRecoveryMachine)
-  const session = useRef<GoogleEnrollmentSession | null>(null)
-  const draftOpenedFor = useRef<string | null>(null)
-  const [mailboxCopy, setMailboxCopy] = useState('')
-  const enrollment = getEmailRecoveryEnrollment()
-  const stage = recoveryStage(snapshot.value, enrollment)
-  const email = enrollment?.mailboxConfirmed ? enrollment.email : snapshot.context.email
-
+  useEffect(() => subscribeAddedDevices(() => setAdded(listAddedDevices())), [])
   useEffect(() => {
-    if (stage !== 'waitingForGoogle') return
-    let cancelled = false
-    const poll = async () => {
-      try {
-        const active = session.current
-        if (!active) return
-        const verified = await googleEnrollmentEmail(active)
-        if (!cancelled && verified) send({ type: 'GOOGLE_VERIFIED', email: verified })
-      } catch (error) {
-        if (!cancelled) send({ type: 'FAIL', message: messageOf(error) })
+    void reload()
+  }, [reload, added])
+
+  const remove = async (row: SignedInDeviceRow) => {
+    if (!row.remove) return
+    setError(null)
+    try {
+      if (row.remove.kind === 'relay') {
+        await removeSigninDevice(walletSigninKeyHex(), row.remove.deviceId)
+        noteDeviceRemoved(row.label)
+        await reload()
+      } else {
+        noteDeviceRemoved(row.label, row.remove.id)
       }
+    } catch (cause) {
+      setError(signinErrorText(cause))
     }
-    void poll()
-    const timer = window.setInterval(() => void poll(), 2_000)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [stage, send])
-
-  const openDraft = async () => {
-    const active = session.current
-    if (!active || !email) return
-    await openInSystemBrowser(recoveryEmailUrl(email, active.mailboxShare))
   }
 
-  useEffect(() => {
-    const binding = session.current?.attempt.binding ?? null
-    if (stage !== 'mailingShare' || !binding || draftOpenedFor.current === binding) return
-    draftOpenedFor.current = binding
-    openDraft().then(
-      () => send({ type: 'MAIL_SENT' }),
-      (error) => send({ type: 'FAIL', message: messageOf(error) }),
-    )
+  const rows = signedInDeviceRows({
+    thisDeviceId: getOrCreateDeviceId(),
+    thisLabel: localDeviceLabel(),
+    relay,
+    added,
   })
+  return { rows, remove, error }
+}
 
-  const start = async () => {
-    send({ type: 'ENROLL' })
-    setMailboxCopy('')
-    try {
-      const next = await beginGoogleEnrollment()
-      session.current = next
-      await openInSystemBrowser(next.attempt.openUrl)
-      send({ type: 'BROWSER_OPENED' })
-    } catch (error) {
-      send({ type: 'FAIL', message: messageOf(error) })
-    }
-  }
-
-  const confirm = async () => {
-    const active = session.current
-    if (!active || !mailboxCopy.trim()) return
-    send({ type: 'CONFIRM_MAILBOX' })
-    try {
-      await completeGoogleEnrollment(active, mailboxCopy)
-      send({ type: 'MAIL_CONFIRMED' })
-      onReady?.()
-    } catch (error) {
-      send({ type: 'FAIL', message: messageOf(error) })
-    }
-  }
-
-  const googleStatus = googleMethodStatus(stage, email)
-  const canStart = stage === 'idle'
+/**
+ * HandCash Recovery: the wallet signed in on more than one device is the
+ * backup. Backing up another wallet and self-kept copies are the fallbacks.
+ */
+export function HandCashRecoveryPanel() {
+  const devices = useSignedInDevices()
+  const [saved, setSaved] = useState(() => savedBackupFormats())
+  useEffect(() => subscribeBackupFormats(() => setSaved(savedBackupFormats())), [])
+  const hasPhrase = Boolean(readVaultMeta()?.hasMnemonic)
 
   return (
-    <div data-aeon-scope="handcash-recovery" data-aeon-state={stage} className="split-backup-shares">
-      <p className="settings-hint">
-        HandCash provides this recovery, not Google or your email provider. Your wallet key is split
-        into shares: HandCash&rsquo;s recovery server keeps one, your email keeps another, and
-        neither opens the wallet alone.
-      </p>
-
-      <ul className="recovery-methods">
-        <RecoveryMethod
-          method="google"
-          title="Google"
-          about="Proves it’s you with the Google account already signed in to your browser. HandCash’s recovery server checks the sign-in; Google never holds a share."
-          status={googleStatus}
-        >
-          {canStart ? (
-            <div className="actions">
-              <Button.Root variant="solid" className="btn btn-primary" onClick={() => void start()}>
-                <Button.Label>Continue with Google</Button.Label>
-              </Button.Root>
-            </div>
-          ) : null}
-          {stage === 'waitingForGoogle' && session.current ? (
-            <div className="actions">
-              <Button.Root
-                variant="ghost"
-                className="btn btn-ghost"
-                onClick={() => void openInSystemBrowser(session.current!.attempt.openUrl)}
-              >
-                <Button.Label>Open Google again</Button.Label>
-              </Button.Root>
-            </div>
-          ) : null}
-        </RecoveryMethod>
-
-        <RecoveryMethod
-          method="email"
-          title="Email"
-          about="Holds the second share. HandCash puts it in a draft to your Google address; send it, then paste the share back once to prove it arrived."
-          status={emailMethodStatus(stage, email)}
-        >
-          {stage === 'confirmingMailbox' ? (
-            <>
-              <Field.Root className="field">
-                <Field.Label htmlFor="recovery-mailbox-share">Share from the email</Field.Label>
-                <Field.Textarea
-                  id="recovery-mailbox-share"
-                  className="mono"
-                  rows={4}
-                  value={mailboxCopy}
-                  onChange={(event) => setMailboxCopy(event.target.value)}
-                  placeholder="Paste the share from your email"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </Field.Root>
-              <div className="actions">
-                <Button.Root
-                  variant="solid"
-                  className="btn btn-primary"
-                  disabled={!mailboxCopy.trim()}
-                  onClick={() => void confirm()}
-                >
-                  <Button.Label>Confirm share</Button.Label>
-                </Button.Root>
-                <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void openDraft()}>
-                  <Button.Label>Open draft again</Button.Label>
-                </Button.Root>
-              </div>
-            </>
-          ) : null}
-        </RecoveryMethod>
-      </ul>
-
-      {stage === 'ready' ? (
-        <p className="settings-hint">
-          To restore, sign in with Google on the new device and approve it on one you used in the
-          last seven days. With none, recovery waits seven days, then asks for the share from your
-          email.
-        </p>
-      ) : null}
-
-      {stage === 'failed' ? (
-        <StatusBanner.Root tone="danger">
-          <StatusBanner.Copy>
-            <StatusBanner.Title>Recovery setup stopped</StatusBanner.Title>
-            <StatusBanner.Body>{snapshot.context.error}</StatusBanner.Body>
-          </StatusBanner.Copy>
-          <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void start()}>
-            <Button.Label>Start again</Button.Label>
+    <div data-aeon-scope="handcash-recovery" className="split-backup-shares">
+      <section data-aeon-part="recovery-devices">
+        <div className="actions">
+          <Button.Root variant="solid" className="btn btn-primary" onClick={() => openScanFlow()}>
+            <Button.Label>Back this up on another device</Button.Label>
           </Button.Root>
-        </StatusBanner.Root>
-      ) : null}
+        </div>
+        <p className="settings-hint">
+          Use this wallet on your phone or another computer. Each device keeps a full copy, so
+          losing one doesn&rsquo;t lose your wallet.
+        </p>
+        <p className="settings-hint">
+          On the other device, open HandCash and choose Sign in, then scan its code here.
+        </p>
+        <ul className="recovery-methods" aria-label="Signed-in devices">
+          {devices.rows.map((row) => (
+            <li
+              key={row.key}
+              className="recovery-method"
+              data-aeon-part="recovery-device"
+              data-aeon-state={row.status.tone}
+            >
+              <div className="recovery-method-head">
+                <strong>{row.label}</strong>
+                <span className="recovery-method-status">{row.status.text}</span>
+              </div>
+              {row.remove ? (
+                <div className="actions">
+                  <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void devices.remove(row)}>
+                    <Button.Label>Remove</Button.Label>
+                  </Button.Root>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+        {devices.error ? (
+          <p className="signin-error" role="alert">
+            {devices.error}
+          </p>
+        ) : null}
+        <p className="settings-hint">
+          Removing a device stops it approving sign-ins. It keeps the wallet it already has, so if a
+          device is lost, move your funds to a new wallet.
+        </p>
+      </section>
+
+      <section data-aeon-part="recovery-other-wallet">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="Back up a different wallet"
+            description="Keep another wallet’s copy here, or this one’s on someone else’s device"
+            icon={settingIconFor('device-handoff').icon}
+            onClick={() => openSetting('device-handoff')}
+          />
+        </ul>
+      </section>
+
+      <SettingsSection title="Save a backup yourself" part="recovery-self">
+        <p className="settings-hint">For when you can&rsquo;t sign in on another device.</p>
+        <ul className="settings-list">
+          {SELF_BACKUPS.map(({ format, title }) => {
+            const status = selfBackupStatus(format, saved, hasPhrase)
+            return (
+              <SettingsNavRow
+                key={format}
+                label={title}
+                status={status.text}
+                statusTone={status.tone}
+                icon={settingIconFor('backup').icon}
+                onClick={() => openBackupFormat(format)}
+              />
+            )
+          })}
+        </ul>
+      </SettingsSection>
+
+      <p className="settings-hint" data-aeon-part="recovery-enclave">
+        Secure enclave recovery is coming.
+      </p>
     </div>
   )
 }

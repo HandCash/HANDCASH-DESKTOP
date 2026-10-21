@@ -7,6 +7,7 @@
  * match for a key of its own.
  */
 import { PrivateKey } from '@bsv/sdk'
+import { recordAddedDevice } from '../addedDevices'
 import { getEmailRecoveryEnrollment } from '../brc250/store'
 import { deviceAuthStatus, deviceAuthUnlock } from '../deviceAuth'
 import {
@@ -73,6 +74,7 @@ export async function approveSigninRequest(request: SigninRequest): Promise<void
   )
   await completeSignin(walletSigninKeyHex(), request.binding, getOrCreateDeviceId(), sealed)
   ownRB.delete(request.binding)
+  recordAddedDevice({ id: request.binding, label: request.label, via: 'relay' })
 }
 
 export async function refuseSigninRequest(request: SigninRequest): Promise<void> {

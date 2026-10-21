@@ -33,9 +33,7 @@ import {
   setAcceptedCoins,
   type AcceptedCoins,
 } from '../wallet/acceptedCoins'
-import { savedRecoveryStatuses } from '../features/recovery'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
-import { getEmailRecoveryEnrollment } from '../wallet/brc250/store'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
@@ -155,27 +153,17 @@ const ACCEPTED_COINS_ICONS: Record<AcceptedCoins, ReactNode> = {
   ),
 }
 
-const RECOVERY_METHODS = [
-  { method: 'google', label: 'Google' },
-  { method: 'email', label: 'Email' },
-] as const
-
 function RecoveryRows() {
-  const statuses = savedRecoveryStatuses(getEmailRecoveryEnrollment())
   const { icon, tone } = settingIconFor('google-recovery')
   return (
     <ul className="settings-list">
-      {RECOVERY_METHODS.map(({ method, label }) => (
-        <SettingsNavRow
-          key={method}
-          label={label}
-          status={statuses[method].text}
-          statusTone={statuses[method].tone}
-          icon={icon}
-          iconTone={tone}
-          onClick={() => openSetting('google-recovery')}
-        />
-      ))}
+      <SettingsNavRow
+        label="Back this up on another device"
+        description="Each device keeps a full copy"
+        icon={icon}
+        iconTone={tone}
+        onClick={() => openSetting('google-recovery')}
+      />
     </ul>
   )
 }

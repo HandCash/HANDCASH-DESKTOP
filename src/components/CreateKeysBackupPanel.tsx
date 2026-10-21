@@ -21,7 +21,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
-import { HandCashRecoveryPanel } from './HandCashRecoveryPanel'
+import { markBackupFormatSaved } from '../wallet/backupFormats'
 
 type Props = {
   mnemonic: string
@@ -29,20 +29,18 @@ type Props = {
   onDone: () => void
 }
 
-type Kind = 'google' | 'phrase' | 'split'
+type Kind = 'phrase' | 'split'
 
 /**
  * Mandatory post-create backup. Phrase and slices come from the live create
  * result — never gated on a HandCash password.
  */
 export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
-  const [kind, setKind] = useState<Kind>('google')
+  const [kind, setKind] = useState<Kind>('phrase')
   const [shareSet, setShareSet] = useState<Brc140IssuedSet | null>(null)
   const [, setTick] = useState(0)
 
-  const canConfirm =
-    kind !== 'google' &&
-    canConfirmKeysBackup(kind === 'phrase' ? 'phrase' : 'split')
+  const canConfirm = canConfirmKeysBackup(kind)
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
   const showSlices = async (rotate: boolean) => {
@@ -101,7 +99,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
   }
 
   const confirm = () => {
-    if (!markKeysBackupConfirmed(kind === 'phrase' ? 'phrase' : 'split')) {
+    if (!markKeysBackupConfirmed(kind)) {
       toastError(
         'Save a backup first',
         kind === 'split'
@@ -111,6 +109,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
       playWalletSound('deny')
       return
     }
+    markBackupFormatSaved(kind)
     playWalletSound('success')
     toastSuccess('Recovery backup saved')
     onDone()
@@ -120,20 +119,11 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="create-keys-backup">
       <h2>Save your recovery backup</h2>
       <p className="auth-lede">
-        Recommended: HandCash Recovery, with Google and email. You can also keep a recovery phrase
-        or two key slices yourself.
+        Keep a recovery phrase or two key slices yourself. Once you&rsquo;re in, back this wallet
+        up on another device from Settings.
       </p>
 
       <div className="actions" style={{ marginBottom: 12 }}>
-        <Button.Root variant="ghost"
-          className={kind === 'google' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={() => {
-            setKind('google')
-            setShareSet(null)
-          }}
-        >
-          <Button.Label>HandCash Recovery</Button.Label>
-        </Button.Root>
         <Button.Root variant="ghost"
           className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
           onClick={() => {
@@ -152,8 +142,6 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
           <Button.Label>Key slices</Button.Label>
         </Button.Root>
       </div>
-
-      {kind === 'google' ? <HandCashRecoveryPanel onReady={onDone} /> : null}
 
       {kind === 'phrase' ? (
         <div className="split-backup-shares">
@@ -204,7 +192,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         </div>
       ) : null}
 
-      {kind !== 'google' ? <div className="actions" style={{ marginTop: 16 }}>
+      <div className="actions" style={{ marginTop: 16 }}>
         <Button.Root variant="solid" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
           <Button.Label>I’ve saved my backup — continue</Button.Label>
         </Button.Root>
@@ -219,9 +207,10 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         >
           <Button.Label>I’ll do this later</Button.Label>
         </Button.Root>
-      </div> : null}
+      </div>
       <p className="auth-lede" style={{ marginTop: 8 }}>
-        Later is fine. Don’t skip forever — this is the only way back if the device is wiped.
+        Later is fine. Until this wallet is on a second device or saved here, losing this device
+        loses it.
       </p>
     </div>
   )

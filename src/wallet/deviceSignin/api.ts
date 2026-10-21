@@ -135,6 +135,18 @@ export function reportSigninPresence(
   return signed(walletKeyHex, '/v1/signin/presence', { body: { deviceId, label, state } })
 }
 
+export type SigninDevice = { deviceId: string; label: string; lastSeen: number }
+
+export function listSigninDevices(
+  walletKeyHex: string,
+): Promise<{ onlineMs: number; devices: SigninDevice[] }> {
+  return signed(walletKeyHex, '/v1/signin/devices', { method: 'GET' })
+}
+
+export function removeSigninDevice(walletKeyHex: string, deviceId: string): Promise<{ ok: true }> {
+  return signed(walletKeyHex, '/v1/signin/devices', { method: 'DELETE', body: { deviceId } })
+}
+
 export function listSigninRequests(
   walletKeyHex: string,
 ): Promise<{ registered: boolean; requests: SigninRequest[] }> {
@@ -185,6 +197,8 @@ export function signinErrorText(error: unknown): string {
       return 'Too many attempts from here. Try again in an hour.'
     case 'invalid-email':
       return 'Enter a valid email address.'
+    case 'device-removed':
+      return 'This device was removed from your wallet, so it can’t approve sign-ins.'
     default:
       return `Sign-in failed (${error.code}).`
   }

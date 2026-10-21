@@ -1,6 +1,6 @@
 import { PrivateKey } from '@bsv/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { VaultTransfer } from '../deviceTransfer'
+import { openVaultTransfer, type VaultTransfer } from '../deviceTransfer'
 import {
   approveScanLogin,
   listScanLoginRows,
@@ -129,6 +129,53 @@ describe('scan-to-login pairing and approval', () => {
     expect(confirm).toHaveBeenCalledWith('approve sign-in on Windows PC')
     expect(listScanLoginRows()[0]).toMatchObject({ face: 'approved', title: 'Signed in on Windows PC' })
     expect(events.some((event) => event.type === 'vault')).toBe(true)
+  })
+})
+
+describe('scan-to-login session limits', () => {
+  it('a code past its expiry ends on the approving device without asking to approve', async () => {
+    const confirm = vi.fn(async () => undefined)
+    const sent: string[] = []
+    setScanLoginDeps({ fetchImpl: lanFetch(sent), label: () => 'Mac', vault: () => transfer, confirm })
+    const { payload, off } = pair()
+    await startScanLoginApproval(payload)
+    off()
+    vi.useFakeTimers({ now: payload.expiresAt + 1 })
+    try {
+      expect(listScanLoginRows()[0]).toMatchObject({ face: 'expired', live: false, title: 'Sign-in expired' })
+      sent.length = 0
+      await expect(approveScanLogin(payload.loginKey)).rejects.toThrow(/expired/)
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(confirm).not.toHaveBeenCalled()
+    expect(sent).toEqual([])
+  })
+
+  it('approving twice sends the wallet once', async () => {
+    const sent: string[] = []
+    setScanLoginDeps({ fetchImpl: lanFetch(sent), label: () => 'Mac', vault: () => transfer, confirm: async () => undefined })
+    const { payload, off } = pair()
+    await startScanLoginApproval(payload)
+    sent.length = 0
+    const results = await Promise.allSettled([approveScanLogin(payload.loginKey), approveScanLogin(payload.loginKey)])
+    off()
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(sent.filter((body) => body.includes('sealedVault'))).toHaveLength(1)
+    expect(listScanLoginRows()[0]).toMatchObject({ face: 'approved' })
+  })
+
+  it('a captured QR cannot open the wallet: it is sealed to a key the QR does not carry', async () => {
+    const { payload, off } = pair()
+    const seen: string[] = []
+    const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl: lanFetch(seen) })
+    await sendScanLoginVault(conn, transfer, lanFetch(seen))
+    off()
+    const sealed = JSON.parse(seen.find((body) => body.includes('sealedVault'))!).sealedVault as string
+    const captured = tryParseScanLoginPayload(scanLoginQrText(payload))!
+    expect(JSON.stringify(captured)).not.toMatch(/keyHex|privateKey/)
+    expect(() => openVaultTransfer(sealed, PrivateKey.fromRandom())).toThrow()
+    expect(handleScanLoginRequest({ method: 'POST', path: '/handcash-device/v1/scan-login/hello', body: '{}' }).status).toBe(404)
   })
 })
 

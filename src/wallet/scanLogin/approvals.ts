@@ -1,4 +1,5 @@
 /** Scanned sign-in codes on the approving device, as Activity rows. */
+import { recordAddedDevice, type AddedDevice } from '../addedDevices'
 import { getEmailRecoveryEnrollment } from '../brc250/store'
 import { confirmPresence } from '../deviceSignin/approver'
 import type { SigninRowFace, SigninRowView } from '../deviceSignin/view'
@@ -26,6 +27,7 @@ export type ScanLoginDeps = {
   label?: () => string
   vault?: () => VaultTransfer
   confirm?: (reason: string) => Promise<void>
+  onApproved?: (device: Omit<AddedDevice, 'addedAt'>) => void
 }
 
 const entries = new Map<string, Entry>()
@@ -35,6 +37,7 @@ let deps: Required<ScanLoginDeps> = {
   label: () => localDeviceLabel(),
   vault: () => vaultTransferOf(requireWalletRuntime().instance.vaultMaster, getEmailRecoveryEnrollment()),
   confirm: confirmPresence,
+  onApproved: (device) => recordAddedDevice(device),
 }
 
 /** Test seam. */
@@ -73,12 +76,22 @@ export async function startScanLoginApproval(payload: ScanLoginPayload): Promise
   }
 }
 
+const approving = new Set<string>()
+
 export async function approveScanLogin(loginKey: string): Promise<void> {
   const entry = entries.get(loginKey)
+  if (entry && entry.payload.expiresAt <= Date.now()) throw new Error('This sign-in expired. Scan a fresh code.')
   if (!entry?.conn || entry.face !== 'comparing') throw new Error('Compare the codes before approving')
-  await deps.confirm(`approve sign-in on ${entry.payload.label}`)
-  await sendScanLoginVault(entry.conn, deps.vault(), deps.fetchImpl)
-  update(loginKey, { face: 'approved' })
+  if (approving.has(loginKey)) throw new Error('Already sending to this device')
+  approving.add(loginKey)
+  try {
+    await deps.confirm(`approve sign-in on ${entry.payload.label}`)
+    await sendScanLoginVault(entry.conn, deps.vault(), deps.fetchImpl)
+    update(loginKey, { face: 'approved' })
+    deps.onApproved({ id: loginKey, label: entry.payload.label, via: 'local' })
+  } finally {
+    approving.delete(loginKey)
+  }
 }
 
 export async function refuseScanLoginFor(loginKey: string): Promise<void> {
@@ -88,9 +101,11 @@ export async function refuseScanLoginFor(loginKey: string): Promise<void> {
   update(loginKey, { face: 'refused', error: null })
 }
 
-export function scanLoginRowView(entry: Entry): SigninRowView {
+export function scanLoginRowView(entry: Entry, now = Date.now()): SigninRowView {
   const { payload } = entry
   const label = payload.label
+  const live = entry.face === 'claimed' || entry.face === 'comparing'
+  if (live && payload.expiresAt <= now) entry = { ...entry, face: 'expired' }
   const base = {
     key: `scan:${payload.loginKey}`,
     binding: payload.loginKey,
@@ -117,11 +132,13 @@ export function scanLoginRowView(entry: Entry): SigninRowView {
       }
     case 'refused':
       return { ...base, title: 'Sign-in refused', detail: entry.error ?? label, live: false }
+    case 'expired':
+      return { ...base, title: 'Sign-in expired', detail: `${label} · nobody approved it`, live: false }
     default:
       return { ...base, title: requested, detail: `Connecting to ${label} on this network`, live: true }
   }
 }
 
 export function listScanLoginRows(): SigninRowView[] {
-  return [...entries.values()].sort((a, b) => b.createdAt - a.createdAt).map(scanLoginRowView)
+  return [...entries.values()].sort((a, b) => b.createdAt - a.createdAt).map((entry) => scanLoginRowView(entry))
 }

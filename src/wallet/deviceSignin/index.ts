@@ -1,6 +1,9 @@
 export {
+  listSigninDevices,
   registerSigninEmail,
+  removeSigninDevice,
   removeSigninEmail,
+  type SigninDevice,
   requestSigninCode,
   signinErrorText,
   SigninError,

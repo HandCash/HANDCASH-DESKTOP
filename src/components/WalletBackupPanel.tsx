@@ -18,6 +18,7 @@ import {
   type Brc140IssuedSet,
 } from '../wallet/brc140IssuedSet'
 import { saveBackupFile } from '../wallet/backupFileSave'
+import { markBackupFormatSaved, takeRequestedBackupFormat } from '../wallet/backupFormats'
 import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
@@ -58,7 +59,10 @@ async function emailShareToSelf(
 export function WalletBackupPanel() {
   const meta = readVaultMeta()
   const hasPhrase = Boolean(meta?.hasMnemonic)
-  const [kind, setKind] = useState<BackupKind>('split')
+  const [kind, setKind] = useState<BackupKind>(() => {
+    const requested = takeRequestedBackupFormat()
+    return requested === 'phrase' && !hasPhrase ? 'split' : (requested ?? 'split')
+  })
   /** One exclusive key-material operation; `rotate` confirms first. */
   const backup = useAsyncAction<'reveal' | 'rotate'>()
   const [mnemonic, setMnemonic] = useState<string | null>(null)
@@ -202,6 +206,7 @@ export function WalletBackupPanel() {
       playWalletSound('deny')
       return
     }
+    markBackupFormatSaved(kind)
     clearReveal()
     playWalletSound('success')
     toastSuccess('Keys backup saved', 'History backup is next if you have not done it yet.')
