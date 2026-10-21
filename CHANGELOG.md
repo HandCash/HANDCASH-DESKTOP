@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.630] - 2026-10-21
+
+### Changed
+
+- Design plan for enclave recovery in `docs/enclave-recovery.md`: shares split 2 of 3 across HandCash’s enclave, Haste’s enclave and your device, and every release waits, alerts your devices and email, can be cancelled and is logged on Bitcoin SV first. No app change.
+
 ## [1.3.629] - 2026-10-21
 
 ### Added
