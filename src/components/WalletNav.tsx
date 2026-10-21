@@ -75,6 +75,7 @@ import { StatechartsPanel } from './StatechartsPanel'
 import { UnlockSettingsPanel } from './UnlockSettingsPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
+import { SigninEmailPanel } from './SigninEmailPanel'
 import { ImportPanel } from './import/ImportPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { HandCashRecoveryPanel } from './HandCashRecoveryPanel'
@@ -700,6 +701,9 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'device-handoff' && (
                 <DeviceHandoffPanel />
+              )}
+              {stageChild.type === 'setting' && stageChild.settingId === 'signin-email' && (
+                <SigninEmailPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'import' && (
                 <ImportPanel />
