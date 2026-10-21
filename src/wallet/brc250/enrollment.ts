@@ -80,6 +80,54 @@ export function recoveryEmailUrl(
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
+const GOOGLE_MAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com'])
+const GOOGLE_MX = /(^|\.)(google|googlemail|gmail)\.com$/
+const DOH = 'https://cloudflare-dns.com/dns-query'
+
+/** MX hosts for `domain`, or null if the lookup failed or the domain doesn't exist. */
+async function lookupMx(domain: string): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${DOH}?name=${encodeURIComponent(domain)}&type=MX`, {
+      headers: { Accept: 'application/dns-json' },
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as {
+      Status?: number
+      Answer?: Array<{ type?: number; data?: unknown }>
+    }
+    if (body.Status !== 0) return null
+    return (body.Answer ?? [])
+      .filter((record) => record.type === 15)
+      .map((record) => String(record.data).trim().split(/\s+/)[1] ?? '')
+      .map((host) => host.toLowerCase().replace(/\.$/, ''))
+      .filter(Boolean)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The recovery email holds the mailbox share, so it must be a check Google
+ * can't pass alone: refuse any address whose mail Google handles, judged by
+ * the domain's MX records so Google Workspace domains count too.
+ */
+export async function assertRecoveryEmailOutsideGoogle(email: string): Promise<void> {
+  const address = email.trim().toLowerCase()
+  const domain = address.slice(address.lastIndexOf('@') + 1)
+  if (!address.includes('@') || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain)) {
+    throw new Error('Google returned no usable email address for recovery')
+  }
+  const googleHosted = new Error(
+    `Google handles mail for ${domain}, so it can't be the recovery email next to Google sign-in. Use a Google account whose address is with another provider.`,
+  )
+  if (GOOGLE_MAIL_DOMAINS.has(domain)) throw googleHosted
+  const hosts = await lookupMx(domain)
+  if (!hosts?.length) {
+    throw new Error(`Couldn't confirm who handles mail for ${domain}. Try again.`)
+  }
+  if (hosts.some((host) => GOOGLE_MX.test(host))) throw googleHosted
+}
+
 export async function googleEnrollmentEmail(
   session: GoogleEnrollmentSession,
 ): Promise<string | null> {
@@ -88,7 +136,10 @@ export async function googleEnrollmentEmail(
     commitment: session.commitment,
     purpose: 'enroll',
   })
-  return proof ? googleEmailOf(proof.idToken) : null
+  if (!proof) return null
+  const email = googleEmailOf(proof.idToken)
+  await assertRecoveryEmailOutsideGoogle(email)
+  return email
 }
 
 export async function completeGoogleEnrollment(
@@ -101,6 +152,8 @@ export async function completeGoogleEnrollment(
     purpose: 'enroll',
   })
   if (!proof) throw new Error('Finish Google sign-in in the browser first')
+  const recoveryEmail = googleEmailOf(proof.idToken)
+  await assertRecoveryEmailOutsideGoogle(recoveryEmail)
   const pasted = extractBrc140Shares(pastedMailboxCopy)
   if (!pasted.includes(session.mailboxShare)) {
     throw new Error('Paste the recovery share from the email you sent yourself')
@@ -125,6 +178,7 @@ export async function completeGoogleEnrollment(
     key: authorityKey,
     body: {
       binding: session.attempt.binding,
+      recoveryEmail,
       authorityKey: authorityPublicKey,
       hostShare: session.hostShare,
       mailboxConfirmed: true,
@@ -143,6 +197,9 @@ export async function completeGoogleEnrollment(
   })
   if (!enrolled.ok || !enrolled.mailboxConfirmed) {
     throw new Error('Recovery host did not confirm both recovery shares')
+  }
+  if (enrolled.email.trim().toLowerCase() !== recoveryEmail) {
+    throw new Error('Recovery host enrolled a different email than Google signed in')
   }
   const record: EmailRecoveryEnrollment = {
     v: 1,
