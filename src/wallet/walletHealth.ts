@@ -9,8 +9,16 @@
  * rebinds + resets so root's "Synced" cannot paint onto an unsynced child.
  */
 
+/**
+ * Why an `ok` phase is not a clean sync: `timeout` when the refresh gave up and
+ * the balance is the local one, `stillImporting` when ingest carries on in the
+ * background. A patch that sets `phase` without a reason clears it.
+ */
+export type SyncReason = 'timeout' | 'stillImporting'
+
 export type SyncHealth = {
   phase: 'idle' | 'syncing' | 'ok' | 'error'
+  reason: SyncReason | null
   /** Longer user-facing line; null when quiet. */
   message: string | null
   heldOneSats: number
@@ -33,15 +41,24 @@ let boundIdentityKey: string | null = null
 let boundAccountIndex: number | null = null
 const syncHealthByIdentity = new Map<string, SyncHealth>()
 
-let syncHealth: SyncHealth = {
-  phase: 'idle',
-  message: null,
-  heldOneSats: 0,
-  pendingTips: 0,
-  updatedAt: 0,
-  identityKey: null,
-  accountIndex: null,
+function idleSyncHealth(
+  identityKey: string | null,
+  accountIndex: number | null,
+  updatedAt: number,
+): SyncHealth {
+  return {
+    phase: 'idle',
+    reason: null,
+    message: null,
+    heldOneSats: 0,
+    pendingTips: 0,
+    updatedAt,
+    identityKey,
+    accountIndex,
+  }
 }
+
+let syncHealth: SyncHealth = idleSyncHealth(null, null, 0)
 
 let unlockNeeded = false
 let unlockClearTimer: ReturnType<typeof setTimeout> | null = null
@@ -83,23 +100,31 @@ function armSyncingWatchdog(): void {
     } catch {
       /* ignore */
     }
-    // Never claim a clean Synced while chain ingest may still hold the spend
-    // lock — that is how sends time out with a green "Synced" pill. Keep a
-    // catching-up message so the status bubble stays honest.
+    // Never claim a clean Synced after a hung refresh: either chain ingest
+    // still holds the spend lock (that is how sends time out with a green
+    // "Synced" pill) or the refresh gave up and the balance is the local one.
     void import('./walletCoordinator')
       .then(({ getWalletCoordinatorSnapshot }) => {
         const ingestBusy =
           getWalletCoordinatorSnapshot().chainIngest === 'active'
-        setSyncHealth({
-          phase: 'ok',
-          message: ingestBusy
-            ? 'Still importing in the background…'
-            : null,
-        })
+        setSyncHealth(
+          ingestBusy
+            ? {
+                phase: 'ok',
+                reason: 'stillImporting',
+                message: 'Still importing in the background…',
+              }
+            : {
+                phase: 'ok',
+                reason: 'timeout',
+                message: 'Refresh took too long — showing local balance.',
+              },
+        )
       })
       .catch(() => {
         setSyncHealth({
           phase: 'ok',
+          reason: 'stillImporting',
           message: 'Still importing in the background…',
         })
       })
@@ -120,30 +145,15 @@ export function bindSyncHealthAccount(
   if (!args) {
     boundIdentityKey = null
     boundAccountIndex = null
-    syncHealth = {
-      phase: 'idle',
-      message: null,
-      heldOneSats: 0,
-      pendingTips: 0,
-      updatedAt: Date.now(),
-      identityKey: null,
-      accountIndex: null,
-    }
+    syncHealth = idleSyncHealth(null, null, Date.now())
     emitSync()
     return
   }
   boundIdentityKey = args.identityKey
   boundAccountIndex = args.accountIndex
   syncHealth =
-    syncHealthByIdentity.get(args.identityKey) ?? {
-      phase: 'idle',
-      message: null,
-      heldOneSats: 0,
-      pendingTips: 0,
-      updatedAt: Date.now(),
-      identityKey: args.identityKey,
-      accountIndex: args.accountIndex,
-    }
+    syncHealthByIdentity.get(args.identityKey) ??
+    idleSyncHealth(args.identityKey, args.accountIndex, Date.now())
   syncHealthByIdentity.set(args.identityKey, syncHealth)
   if (syncHealth.phase === 'syncing') armSyncingWatchdog()
   emitSync()
@@ -165,19 +175,16 @@ export function getSyncHealth(): SyncHealth {
  * Patches stamped with a different identityKey (abandoned ingest after switch)
  * are dropped so root cannot paint Synced onto a child.
  */
-export function setSyncHealth(patch: Partial<SyncHealth>): void {
+export function setSyncHealth(input: Partial<SyncHealth>): void {
+  const patch: Partial<SyncHealth> =
+    input.phase !== undefined && input.reason === undefined
+      ? { ...input, reason: null }
+      : input
   const targetIdentity = patch.identityKey ?? boundIdentityKey
   if (targetIdentity && targetIdentity !== boundIdentityKey) {
     const previous =
-      syncHealthByIdentity.get(targetIdentity) ?? {
-        phase: 'idle',
-        message: null,
-        heldOneSats: 0,
-        pendingTips: 0,
-        updatedAt: 0,
-        identityKey: targetIdentity,
-        accountIndex: patch.accountIndex ?? null,
-      }
+      syncHealthByIdentity.get(targetIdentity) ??
+      idleSyncHealth(targetIdentity, patch.accountIndex ?? null, 0)
     syncHealthByIdentity.set(targetIdentity, {
       ...previous,
       ...patch,

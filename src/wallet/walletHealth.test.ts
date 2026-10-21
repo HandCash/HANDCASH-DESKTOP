@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   bindSyncHealthAccount,
   getSyncHealth,
@@ -55,5 +55,33 @@ describe('walletHealth account stamp', () => {
     expect(getSyncHealth().phase).toBe('syncing')
     expect(getSyncHealth().message).toBe('child sync')
     expect(getSyncHealth().identityKey).toBe('ik-child')
+  })
+})
+
+describe('walletHealth reason', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    bindSyncHealthAccount(null)
+  })
+
+  it('a phase change without a reason clears the last one', () => {
+    bindSyncHealthAccount({ identityKey: 'ik-r', accountIndex: 0 })
+    setSyncHealth({ phase: 'ok', reason: 'timeout', message: 'slow' })
+    expect(getSyncHealth().reason).toBe('timeout')
+    setSyncHealth({ heldOneSats: 3 })
+    expect(getSyncHealth().reason).toBe('timeout')
+    setSyncHealth({ phase: 'ok', message: null })
+    expect(getSyncHealth().reason).toBeNull()
+  })
+
+  it('a hung refresh with ingest idle ends as a timeout, not a clean sync', async () => {
+    vi.useFakeTimers()
+    bindSyncHealthAccount({ identityKey: 'ik-w', accountIndex: 0 })
+    setSyncHealth({ phase: 'syncing', message: 'refreshing' })
+    await vi.advanceTimersByTimeAsync(45_000)
+    await vi.dynamicImportSettled()
+    await vi.waitFor(() => expect(getSyncHealth().phase).toBe('ok'))
+    expect(getSyncHealth().reason).toBe('timeout')
+    expect(getSyncHealth().message).toMatch(/local balance/)
   })
 })

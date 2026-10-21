@@ -1,41 +1,34 @@
-import { useEffect, useState } from 'react'
-import {
-  getSyncHealth,
-  subscribeSyncHealth,
-  type SyncHealth,
-} from '../wallet/walletHealth'
+import { stateToAttr } from '@aeon-ui/core'
+import { useMachine } from '@xstate/react'
+import { useEffect } from 'react'
+import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 import {
   getCloudBackupHealth,
   refreshCloudBackupHealth,
   subscribeCloudBackupHealth,
-  type CloudBackupHealth,
 } from '../wallet/cloudBackupHealth'
-import {
-  getPaymentProgress,
-  subscribePaymentProgress,
-  type PaymentProgress,
-} from '../wallet/paymentProgress'
 import {
   getWalletProgress,
   isWalletProgressBusy,
   subscribeWalletProgress,
   walletProgressDetail,
   walletProgressLabel,
-  type WalletProgress,
 } from '../wallet/walletProgress'
 import {
   describeWalletCoordinator,
   subscribeWalletCoordinator,
-  type WalletCoordinatorLiveStatus,
 } from '../wallet/walletCoordinator'
+import {
+  isUnlockedSession,
+  refreshBlocked,
+  walletStatusFor,
+  walletStatusMachine,
+  type WalletSession,
+  type WalletStatusContext,
+  type WalletStatusState,
+} from '../machines/walletStatusMachine'
 
-export type WalletSession =
-  | 'boot'
-  | 'onboarding'
-  | 'locked'
-  | 'ready'
-  | 'sending'
-  | 'failure'
+export type { WalletSession }
 
 type Props = {
   session: WalletSession
@@ -58,182 +51,130 @@ function pillLabel(raw: string): string {
   return raw.replace(/[…\.]+$/u, '').trim()
 }
 
-function resolveStatus(
-  session: WalletSession,
-  health: SyncHealth,
-  cloud: CloudBackupHealth,
-  networkOnline: boolean,
-  bridgeOnline: boolean,
-  payment: PaymentProgress,
-  walletProgress: WalletProgress = getWalletProgress(),
-  coordinator: WalletCoordinatorLiveStatus = describeWalletCoordinator(),
-): StatusView {
-  if (session === 'boot') {
-    return { label: 'Opening', tone: 'busy', detail: 'Starting HandCash' }
-  }
-  if (session === 'failure') {
-    return { label: 'Failed', tone: 'error', detail: 'App hit an error — retry' }
-  }
-  // In-flight sends must always win the pill — including while queued behind
-  // sync, after navigating away from the send screen, and over sync/backup
-  // error banners. Desktop and mobile share this component.
-  if (payment.phase !== 'idle' && payment.label) {
-    return {
-      label: pillLabel(payment.label),
-      tone: 'busy',
-      detail: payment.detail,
-    }
-  }
-  if (session === 'sending') {
-    return { label: 'Sending', tone: 'busy', detail: 'Broadcasting payment' }
-  }
-  if (!networkOnline) {
-    return {
-      label: 'No network',
-      tone: 'error',
-      detail: 'Device is offline — sends and sync need a connection',
-    }
-  }
-  // Progress bus stays honest after soft Syncing clear — never paint Synced
-  // while Refresh / 1sat / phrase import is still running.
-  if (isWalletProgressBusy(walletProgress)) {
-    return {
-      label: walletProgressLabel(walletProgress),
-      tone: 'busy',
-      detail:
-        walletProgressDetail(walletProgress) ??
-        'Still catching up with the network',
-    }
-  }
-  // Soft in-flight sync / backup probes stay quiet — only terminal outcomes matter.
-  // "Chain failed" read as though the blockchain itself had broken. This is only
-  // the read path: local funds and keys are untouched, the balance is just stale.
-  if (health.phase === 'error') {
-    return {
-      label: 'Sync failed',
-      tone: 'error',
-      detail: `${
-        health.message ?? 'Couldn’t reach the network to refresh funds.'
-      } Balance may be out of date — your coins and keys are safe. Retrying.`,
-    }
-  }
-  if (cloud.phase === 'error') {
-    return {
-      label: 'Backup failed',
-      tone: 'error',
-      detail: `${
-        cloud.message ?? 'History backup host (BRC-39) is not responding.'
-      } This device is fine — only the off-device history copy is behind.`,
-    }
-  }
-  if (cloud.phase === 'delayed') {
-    return {
-      label: cloud.label,
-      tone: 'warn',
-      detail: `${cloud.message ?? 'Backup host is busy.'} This device is fine — the off-device copy catches up automatically.`,
-    }
-  }
-  // Coordinator is ground truth for the spend lock. Soft Syncing clear / the
-  // 45s syncing watchdog can paint phase:ok while chainIngest is still active —
-  // that is the "Synced but Wallet is busy" report.
-  if (coordinator.chainIngest === 'active' || coordinator.spendWaiting > 0) {
-    return {
-      label: coordinator.spendWaiting > 0 ? 'Waiting to send' : 'Catching up',
-      tone: 'busy',
-      detail: coordinator.summary,
-    }
-  }
-  if (health.phase === 'syncing') {
-    return {
-      label: 'Syncing',
-      tone: 'busy',
-      detail: `${health.message ?? 'Refreshing funds against the network'} · ${
-        coordinator.summary
-      }`,
-    }
-  }
-  if (session === 'locked') {
-    return { label: 'Locked', tone: 'muted', detail: 'Unlock to spend or connect apps' }
-  }
-  if (session === 'onboarding') {
-    return { label: 'Setup', tone: 'muted', detail: 'Create or restore a wallet' }
-  }
-  if (!bridgeOnline) {
-    return {
-      label: 'Bridge off',
-      tone: 'warn',
-      detail: 'Local BRC-100 bridge is not listening — apps cannot connect',
-    }
-  }
-
-  // A latch-proven tip we cannot name yet is an item that has definitely landed.
-  // Reporting "Synced" while it is missing from Collectables is exactly how a
-  // transfer looks lost to the person who sent it.
-  if (health.pendingTips > 0) {
-    return {
-      label: health.pendingTips === 1 ? 'Item arriving' : `${health.pendingTips} arriving`,
-      tone: 'busy',
-      detail:
-        health.pendingTips === 1
-          ? 'Collectable received — identifying it with the indexer'
-          : `${health.pendingTips} collectables received — identifying them with the indexer`,
-    }
-  }
-
-  // Chain ingest wins. History replica (BRC-39) is optional backup — never alarm as
-  // "Out of sync" when funds/items are healthy on this device. See wallet/layers.ts.
-  if (health.phase === 'ok') {
-    const timedOut =
-      typeof health.message === 'string' &&
-      /took too long|showing local balance/i.test(health.message)
-    if (timedOut) {
+function statusView(state: WalletStatusState, c: WalletStatusContext): StatusView {
+  const { health, cloud, coordinator } = c
+  switch (state) {
+    case 'opening':
+      return { label: 'Opening', tone: 'busy', detail: 'Starting HandCash' }
+    case 'failed':
+      return { label: 'Failed', tone: 'error', detail: 'App hit an error — retry' }
+    case 'offline':
       return {
-        label: 'Network slow',
-        tone: 'warn',
-        detail: health.message,
+        label: 'No network',
+        tone: 'error',
+        detail: 'Device is offline — sends and sync need a connection',
       }
-    }
-    const stillImporting =
-      typeof health.message === 'string' &&
-      /still importing/i.test(health.message)
-    if (stillImporting) {
+    case 'refreshing':
       return {
-        label: 'Catching up',
+        label: 'Syncing',
         tone: 'busy',
-        detail: health.message,
+        detail: 'Refreshing funds and history against the network',
       }
-    }
-    return {
-      label: 'Synced',
-      tone: 'ok',
-      detail:
-        cloud.phase === 'ok'
-          ? (cloud.message ?? health.message ?? 'Chain ingest and history replica look healthy')
-          : health.message ??
-            (cloud.phase === 'pending'
-              ? 'Chain OK — history replica (BRC-39) still uploading'
-              : cloud.phase === 'off'
-                ? 'Chain OK — history replica not configured'
-                : 'Chain OK'),
-    }
+    case 'catchingUp':
+      if (isWalletProgressBusy(c.progress)) {
+        return {
+          label: walletProgressLabel(c.progress),
+          tone: 'busy',
+          detail: walletProgressDetail(c.progress) ?? 'Still catching up with the network',
+        }
+      }
+      if (coordinator.chainIngest === 'active') {
+        return { label: 'Catching up', tone: 'busy', detail: coordinator.summary }
+      }
+      return { label: 'Catching up', tone: 'busy', detail: health.message }
+    case 'syncFailed':
+      // "Chain failed" read as though the blockchain itself had broken. This is
+      // only the read path: local funds and keys are untouched.
+      return {
+        label: 'Sync failed',
+        tone: 'error',
+        detail: `${
+          health.message ?? 'Couldn’t reach the network to refresh funds.'
+        } Balance may be out of date — your coins and keys are safe. Retrying.`,
+      }
+    case 'backupFailed':
+      return {
+        label: 'Backup failed',
+        tone: 'error',
+        detail: `${
+          cloud.message ?? 'History backup host (BRC-39) is not responding.'
+        } This device is fine — only the off-device history copy is behind.`,
+      }
+    case 'backupDelayed':
+      return {
+        label: cloud.label,
+        tone: 'warn',
+        detail: `${cloud.message ?? 'Backup host is busy.'} This device is fine — the off-device copy catches up automatically.`,
+      }
+    case 'waitingToSend':
+      return { label: 'Waiting to send', tone: 'busy', detail: coordinator.summary }
+    case 'syncing':
+      return {
+        label: 'Syncing',
+        tone: 'busy',
+        detail: `${health.message ?? 'Refreshing funds against the network'} · ${
+          coordinator.summary
+        }`,
+      }
+    case 'locked':
+      return { label: 'Locked', tone: 'muted', detail: 'Unlock to spend or connect apps' }
+    case 'setup':
+      return { label: 'Setup', tone: 'muted', detail: 'Create or restore a wallet' }
+    case 'bridgeOff':
+      return {
+        label: 'Bridge off',
+        tone: 'warn',
+        detail: 'Local BRC-100 bridge is not listening — apps cannot connect',
+      }
+    case 'itemArriving':
+      return {
+        label: health.pendingTips === 1 ? 'Item arriving' : `${health.pendingTips} arriving`,
+        tone: 'busy',
+        detail:
+          health.pendingTips === 1
+            ? 'Collectable received — identifying it with the indexer'
+            : `${health.pendingTips} collectables received — identifying them with the indexer`,
+      }
+    case 'networkSlow':
+      return { label: 'Network slow', tone: 'warn', detail: health.message }
+    case 'synced':
+      // Chain ingest wins. The history replica (BRC-39) is an optional backup —
+      // never alarm when funds and items are healthy here. See wallet/layers.ts.
+      if (health.phase !== 'ok') {
+        return {
+          label: 'Synced',
+          tone: 'ok',
+          detail: cloud.message ?? 'History replica looks healthy',
+        }
+      }
+      return {
+        label: 'Synced',
+        tone: 'ok',
+        detail:
+          cloud.phase === 'ok'
+            ? (cloud.message ?? health.message ?? 'Chain ingest and history replica look healthy')
+            : health.message ??
+              (cloud.phase === 'pending'
+                ? 'Chain OK — history replica (BRC-39) still uploading'
+                : cloud.phase === 'off'
+                  ? 'Chain OK — history replica not configured'
+                  : 'Chain OK'),
+      }
+    case 'ready':
+      return {
+        label: 'Ready',
+        tone: 'ok',
+        detail:
+          cloud.phase === 'pending'
+            ? (cloud.message ??
+              'Wallet unlocked — history replica pending (does not affect local balance)')
+            : 'Wallet unlocked — chain ingest only, no history replica',
+      }
   }
+}
 
-  if (cloud.phase === 'ok') {
-    return {
-      label: 'Synced',
-      tone: 'ok',
-      detail: cloud.message ?? 'History replica looks healthy',
-    }
-  }
-  return {
-    label: 'Ready',
-    tone: 'ok',
-    detail:
-      cloud.phase === 'pending'
-        ? (cloud.message ??
-          'Wallet unlocked — history replica pending (does not affect local balance)')
-        : 'Wallet unlocked — chain ingest only, no history replica',
-  }
+function resolveStatus(c: WalletStatusContext): StatusView {
+  return statusView(walletStatusFor(c), c)
 }
 
 function sessionFromMachine(value: unknown): WalletSession {
@@ -252,87 +193,68 @@ function sessionFromMachine(value: unknown): WalletSession {
   return 'boot'
 }
 
-function isUnlocked(session: WalletSession): boolean {
-  return session === 'ready' || session === 'sending'
-}
-
 /** Titlebar status — one pill, one typeface. Tap when unlocked to refresh. */
 export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props) {
-  const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
-  const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
-  const [payment, setPayment] = useState<PaymentProgress>(() => getPaymentProgress())
-  const [walletProgress, setWalletProgress] = useState<WalletProgress>(() =>
-    getWalletProgress(),
-  )
-  const [coordinator, setCoordinator] = useState<WalletCoordinatorLiveStatus>(() =>
-    describeWalletCoordinator(),
-  )
-  const [networkOnline, setNetworkOnline] = useState(
-    () => typeof navigator === 'undefined' || navigator.onLine,
-  )
-  const [manualBusy, setManualBusy] = useState(false)
+  const [snapshot, send] = useMachine(walletStatusMachine, {
+    input: {
+      session,
+      bridgeOnline,
+      health: getSyncHealth(),
+      cloud: getCloudBackupHealth(),
+      networkOnline: typeof navigator === 'undefined' || navigator.onLine,
+      progress: getWalletProgress(),
+      coordinator: describeWalletCoordinator(),
+    },
+  })
 
-  useEffect(() => subscribeSyncHealth(setHealth), [])
-  useEffect(() => subscribeCloudBackupHealth(setCloud), [])
-  useEffect(() => subscribePaymentProgress(setPayment), [])
-  useEffect(() => subscribeWalletProgress(setWalletProgress), [])
-  useEffect(() => subscribeWalletCoordinator(setCoordinator), [])
+  useEffect(() => send({ type: 'SESSION', session }), [send, session])
+  useEffect(() => send({ type: 'BRIDGE', online: bridgeOnline }), [send, bridgeOnline])
+  useEffect(() => subscribeSyncHealth((health) => send({ type: 'SYNC_HEALTH', health })), [send])
+  useEffect(
+    () => subscribeCloudBackupHealth((cloud) => send({ type: 'BACKUP_HEALTH', cloud })),
+    [send],
+  )
+  useEffect(
+    () => subscribeWalletProgress((progress) => send({ type: 'WALLET_PROGRESS', progress })),
+    [send],
+  )
+  useEffect(
+    () =>
+      subscribeWalletCoordinator((coordinator) => send({ type: 'COORDINATOR', coordinator })),
+    [send],
+  )
 
   useEffect(() => {
-    const sync = () => setNetworkOnline(navigator.onLine)
+    const sync = () => send({ type: 'NETWORK', online: navigator.onLine })
     window.addEventListener('online', sync)
     window.addEventListener('offline', sync)
     return () => {
       window.removeEventListener('online', sync)
       window.removeEventListener('offline', sync)
     }
-  }, [])
+  }, [send])
 
   useEffect(() => {
-    if (!isUnlocked(session)) return
+    if (!isUnlockedSession(session)) return
     void refreshCloudBackupHealth()
     const id = window.setInterval(() => void refreshCloudBackupHealth(), 60_000)
     return () => window.clearInterval(id)
   }, [session])
 
-  const view = resolveStatus(
-    session,
-    health,
-    cloud,
-    networkOnline,
-    bridgeOnline,
-    payment,
-    walletProgress,
-    coordinator,
-  )
-  const display =
-    manualBusy &&
-    health.phase !== 'syncing' &&
-    payment.phase === 'idle' &&
-    !isWalletProgressBusy(walletProgress) &&
-    coordinator.chainIngest !== 'active'
-      ? {
-          label: 'Syncing',
-          tone: 'busy' as const,
-          detail: 'Refreshing funds and history against the network',
-        }
-      : view
+  const context = snapshot.context
+  const display = statusView(snapshot.value as WalletStatusState, context)
+  const stateAttr = stateToAttr(snapshot.value)
 
   // Always the same control when a refresh handler exists — never swap to a
   // <div> mid-session (that flipped fonts and dropped the click target).
-  const tapEnabled = Boolean(onManualSync) && isUnlocked(session) && networkOnline
-  const tapBusy =
-    manualBusy ||
-    health.phase === 'syncing' ||
-    payment.phase !== 'idle' ||
-    isWalletProgressBusy(walletProgress) ||
-    coordinator.chainIngest === 'active' ||
-    coordinator.spendWaiting > 0
+  const tapEnabled =
+    Boolean(onManualSync) && isUnlockedSession(context.session) && context.networkOnline
+  const tapBusy = refreshBlocked(context)
 
   const handleManualSync = () => {
-    if (!tapEnabled || tapBusy || !onManualSync) return
-    setManualBusy(true)
-    void Promise.resolve(onManualSync()).finally(() => setManualBusy(false))
+    if (!tapEnabled || !onManualSync || !snapshot.can({ type: 'REFRESH' })) return
+    send({ type: 'REFRESH' })
+    void Promise.resolve(onManualSync()).finally(() => send({ type: 'REFRESH_DONE' }))
   }
 
   const label = pillLabel(display.label)
@@ -347,6 +269,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
         type="button"
         className="status-pill status-pill-btn"
         data-aeon-no-drag
+        data-aeon-state={stateAttr}
         data-tone={display.tone}
         title={title}
         aria-live="polite"
@@ -366,6 +289,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     <div
       className="status-pill"
       data-aeon-no-drag
+      data-aeon-state={stateAttr}
       data-tone={display.tone}
       title={title}
       aria-live="polite"
