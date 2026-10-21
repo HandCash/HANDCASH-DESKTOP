@@ -63,6 +63,12 @@ describe('viewActivityItem', () => {
     expect(viewActivityItem(own)).toBe(own)
   })
 
+  it('paints a BNT row from the art store when the asset is no longer held', () => {
+    const picture = 'data:image/png;base64,c2VudA=='
+    localArt.mockImplementation(((key: string) => (key === `bnt:${'cd'.repeat(20)}` ? picture : undefined)) as () => undefined)
+    expect(viewActivityItem({ name: 'Live test picture', origin: 'CD'.repeat(20) }).imageUrl).toBe(picture)
+  })
+
   it('paints a held tip from the inventory', () => {
     held.mockReturnValue([
       {

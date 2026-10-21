@@ -50,8 +50,26 @@ function inventoryReadArgs(args: ListOutputsArgs): ListOutputsArgs {
   return {
     ...args,
     includeTags: true,
-    includeCustomInstructions: false,
+    includeCustomInstructions: readsExactRows(args) && args.includeCustomInstructions === true,
   }
+}
+
+function readTags(args: ListOutputsArgs): string[] {
+  return Array.isArray(args.tags) ? args.tags.filter((t): t is string => typeof t === 'string') : []
+}
+
+/** A read narrowed to `id:` rows: a few rows, so their remittance is affordable. */
+function readsExactRows(args: ListOutputsArgs): boolean {
+  const tags = readTags(args)
+  return tags.length > 0 && tags.every((t) => t.startsWith('id:'))
+}
+
+/**
+ * The painted projection is the whole basket without `id:` tags, so it can
+ * only stand in for an unfiltered first page.
+ */
+function projectionAnswers(args: ListOutputsArgs): boolean {
+  return readTags(args).length === 0 && !args.offset
 }
 
 /**
@@ -68,7 +86,8 @@ export async function listMarketBasketOutputs(
       ? (args as { basket?: unknown }).basket
       : undefined
 
-  const cached = cachedMarketListOutputs(basket)
+  const fromProjection = projectionAnswers(args)
+  const cached = fromProjection ? cachedMarketListOutputs(basket) : null
   const busy = walletBusyForMarketRead()
   // Only an item inventory is large enough to wedge an idle read. A token
   // basket is a few rows, and its paint lags the wallet's own spends: a cancel
@@ -99,7 +118,7 @@ export async function listMarketBasketOutputs(
   try {
     return await raceTimeout(live, MARKET_LIST_TIMEOUT_MS)
   } catch (err) {
-    const fallback = cachedMarketListOutputs(basket)
+    const fallback = fromProjection ? cachedMarketListOutputs(basket) : null
     if (fallback && fallback.outputs.length > 0) {
       console.info(
         `[market-inventory] listOutputs ${err instanceof Error ? err.message : 'failed'} — serving cache (${fallback.outputs.length} row(s))`,

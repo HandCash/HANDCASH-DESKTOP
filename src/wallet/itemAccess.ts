@@ -953,8 +953,14 @@ export function itemViewGranted(access: ItemAccess, request: ItemViewRequest): b
   if (access.view === 'none') return false
   if (access.view === 'all') return true
   // Filtered grant is the ceiling: a later `p 1sat all` is allowed and then
-  // filtered, instead of re-prompting forever.
-  if (request.wantsAll) return access.view === 'filtered'
+  // filtered, instead of re-prompting forever. One naming nothing came from
+  // the bug that stored the unnarrowed request; ask again.
+  if (request.wantsAll) {
+    return (
+      access.view === 'filtered' &&
+      access.collections.length + access.apps.length + access.creators.length + access.ids.length > 0
+    )
+  }
   if (request.scope === 'collection') {
     return request.collections.every((value) => access.collections.includes(value))
   }

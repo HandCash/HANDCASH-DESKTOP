@@ -1547,9 +1547,11 @@ export async function requestItemViewApproval(
     return 'allow'
   }
   let promptNames: string[] | undefined
+  let granted = original
   if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
     const converted = await thirdPartyItemViewRequest(original)
     promptNames = converted.names
+    granted = converted.request
   }
 
   const { title, summary, details } = promptNames
@@ -1559,7 +1561,7 @@ export async function requestItemViewApproval(
   const grant = (decision: PermissionDecision) => {
     if (decision === 'allow') {
       patchItemAccess(origin, (cur) =>
-        mergeItemViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+        mergeItemViewGrant(cur, granted, { allowAll: catalog || !thirdParty }),
       )
     }
     return decision

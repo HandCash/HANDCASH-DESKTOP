@@ -21,5 +21,10 @@ export function rememberHeldBntAssets(identityKey: string, assets: readonly Held
 }
 
 export function heldBntAssets(identityKey: string | undefined): readonly HeldBntAsset[] {
-  return held && identityKey && held.identityKey === identityKey.toLowerCase() ? held.assets : []
+  return heldBntAssetsListed(identityKey) ? held!.assets : []
+}
+
+/** False until this identity's holdings were listed this session: an empty list then means none held. */
+export function heldBntAssetsListed(identityKey: string | undefined): boolean {
+  return !!held && !!identityKey && held.identityKey === identityKey.toLowerCase()
 }

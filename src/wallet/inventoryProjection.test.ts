@@ -23,8 +23,13 @@ describe('held inventory projection', () => {
     expect(grantableTokensFromOutputs(outputs)).toEqual([{ id: 'ab'.repeat(20), ticker: 'GOLD' }])
   })
 
-  it('answers nothing for another identity', () => {
+  it('has no answer for an identity whose holdings were not listed yet', () => {
     identity.key = '03'.padEnd(66, 'b')
+    expect(heldInventoryOutputs('p bntft all')).toBeNull()
+  })
+
+  it('answers an empty list once holdings were listed and none are held', () => {
+    rememberHeldBntAssets(identity.key, [])
     expect(heldInventoryOutputs('p bntft all')?.outputs).toEqual([])
   })
 

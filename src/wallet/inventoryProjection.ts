@@ -1,6 +1,6 @@
 import { getCachedCollectables, type Collectable } from './collectables'
 import { ITEM_STORAGE_BASKET, TOKEN_BASKET } from './assetBaskets'
-import { heldBntAssets, type HeldBntAsset } from './bnt/heldAssets'
+import { heldBntAssets, heldBntAssetsListed, type HeldBntAsset } from './bnt/heldAssets'
 import { getActiveWallet } from './session'
 import { toUnderscoreOutpoint } from './outpointFormat'
 
@@ -50,7 +50,9 @@ export function heldInventoryOutputs(
     return { outputs, totalOutputs: outputs.length }
   }
   if (name === TOKEN_BASKET || name === `p ${TOKEN_BASKET} all`) {
-    const outputs = heldBntAssets(getActiveWallet()?.identityKey)
+    const identityKey = getActiveWallet()?.identityKey
+    if (!heldBntAssetsListed(identityKey)) return null
+    const outputs = heldBntAssets(identityKey)
       .filter((asset) => asset.kind === 'token')
       .map(tokenOutput)
     return { outputs, totalOutputs: outputs.length }

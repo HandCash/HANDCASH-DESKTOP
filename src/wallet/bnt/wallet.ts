@@ -1,5 +1,6 @@
 import { Beef, Transaction, Utils } from '@bsv/sdk'
 import { rememberHeldBntAssets } from './heldAssets'
+import { bntDeployArt } from './art'
 import { createActor } from 'xstate'
 import { bntMachine } from '../../machines/bntMachine'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN, type ActivityItem } from '../appActivity'
@@ -288,6 +289,7 @@ async function deployOf(active: ActiveWallet, assetId: string, at?: { txid: stri
   await markBntValidated([where.txid], assetId)
   deployCache.set(assetId, read.deploy)
   rememberBntAsset(assetId, read.deploy.fields)
+  bntDeployArt(assetId, read.deploy.fields)
   return read.deploy
 }
 
@@ -545,22 +547,6 @@ function supplySummary(deploy: BntDeploy, rows: BntRow[]): BntSupplySummary {
   }
 }
 
-const IMAGE_ITEM_MAX_BYTES = 512 * 1024
-
-function dataUrl(mediaType: string, bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return `data:${mediaType};base64,${btoa(binary)}`
-}
-
-function deployImage(fields: BntDeployFields): string | undefined {
-  if (fields.icon && /^image\//i.test(fields.icon.mediaType)) return dataUrl(fields.icon.mediaType, fields.icon.bytes)
-  if (fields.kind === 'item' && fields.c && fields.ctype && /^image\//i.test(fields.ctype) && fields.c.length <= IMAGE_ITEM_MAX_BYTES) {
-    return dataUrl(fields.ctype, fields.c)
-  }
-  return undefined
-}
-
 /** Open BNT assets this wallet holds, from validated rows only. */
 export async function listBntAssets(): Promise<{ assets: BntAssetSummary[] }> {
   const active = requireActive()
@@ -573,7 +559,7 @@ export async function listBntAssets(): Promise<{ assets: BntAssetSummary[] }> {
     const deploy = await deployOf(active, assetId)
     if (!deploy) continue
     if (list.some((r) => r.basket !== bntFilingOf(deploy.fields.kind))) continue
-    const image = deployImage(deploy.fields)
+    const image = bntDeployArt(assetId, deploy.fields)
     const locked = list.reduce((sum, r) => sum + (r.locked && r.read.form !== 'authority' ? r.amount : 0n), 0n)
     assets.push({
       assetId,
@@ -618,7 +604,7 @@ type SignedBnt = { txid: string; atomic: number[]; tx: Transaction }
  * this wallet issued; another issuer's backed token is a claim on them, not LTC.
  */
 function bntActivityItem(active: ActiveWallet, assetId: string, fields: BntDeploy['fields'], amount: bigint): ActivityItem {
-  const image = deployImage(fields)
+  const image = bntDeployArt(assetId, fields)
   if (fields.kind === 'item') return { name: fields.name ?? 'Item', origin: assetId, ...(image ? { imageUrl: image } : {}) }
   return {
     name: fields.sym ?? fields.name ?? 'Token',
@@ -1013,6 +999,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       await putBntDeployRecord({ assetId: issued.assetId, txid: signed.txid, vout: 0 })
       deployCache.set(issued.assetId, issued)
       rememberBntAsset(issued.assetId, issued.fields)
+      bntDeployArt(issued.assetId, issued.fields)
       await commitSigned(signed, [issued.assetId, ...(collection ? [collection.row.assetId] : [])], true)
       chart.send({ type: 'BROADCASTED' })
       chart.send({ type: 'DELIVERED' })

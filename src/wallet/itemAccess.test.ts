@@ -198,6 +198,20 @@ describe('BRC-99 p 1sat baskets', () => {
     expect(outputMatchesItemAccess(access, ['id:row-2'], undefined, request)).toBe(false)
   })
 
+  it('asks again when a filtered grant names nothing', () => {
+    const all = parseItemViewRequest({ basket: 'p 1sat all' })
+    const empty = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, all, { allowAll: false })
+    expect(empty.view).toBe('filtered')
+    expect(itemViewGranted(empty, all)).toBe(false)
+
+    const named = mergeItemViewGrant(
+      DEFAULT_ITEM_ACCESS,
+      { scope: 'app', collections: [], apps: ['bubblemint'], creators: [], ids: [], wantsAll: false },
+      { allowAll: false },
+    )
+    expect(itemViewGranted(named, all)).toBe(true)
+  })
+
   it('normalizes new grant axes on existing stored access', () => {
     expect(normalizeItemAccess({ view: 'all', canSend: true })).toMatchObject({
       view: 'all',

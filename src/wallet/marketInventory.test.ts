@@ -132,6 +132,47 @@ describe('market inventory listOutputs fast path', () => {
     )
   })
 
+  it('reads a tag-filtered request from storage, never the projection', async () => {
+    getWalletCoordinatorSnapshot.mockReturnValue({ chainIngest: 'active', spend: 'idle' })
+    getCachedCollectables.mockReturnValue([
+      {
+        outpoint: `${'a'.repeat(64)}.1`,
+        origin: `${'b'.repeat(64)}_0`,
+        name: 'Fox',
+        satoshis: 1,
+        imageUrl: '',
+        traits: [],
+        extras: [],
+        proven: true,
+        authenticity: 'brc150',
+      },
+    ])
+    const row = { outpoint: `${'c'.repeat(64)}.0`, tags: ['id:row-1'], customInstructions: '{}' }
+    const listOutputs = vi.fn().mockResolvedValue({ outputs: [row], totalOutputs: 1 })
+    const result = await listMarketBasketOutputs({ listOutputs } as never, {
+      basket: '1sat',
+      tags: ['id:row-1'],
+      includeCustomInstructions: true,
+    })
+    expect(result.outputs).toEqual([row])
+    expect(listOutputs).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ['id:row-1'], includeCustomInstructions: true }),
+    )
+  })
+
+  it('drops remittance on a read filtered by anything but id', async () => {
+    getCachedCollectables.mockReturnValue([])
+    const listOutputs = vi.fn().mockResolvedValue({ outputs: [], totalOutputs: 0 })
+    await listMarketBasketOutputs({ listOutputs } as never, {
+      basket: '1sat',
+      tags: ['app:bubblemint'],
+      includeCustomInstructions: true,
+    })
+    expect(listOutputs).toHaveBeenCalledWith(
+      expect.objectContaining({ includeCustomInstructions: false }),
+    )
+  })
+
   /**
    * A cold basket on a busy wallet has taken upwards of 40s. The short cap
    * exists so a concurrent refresh can fill the paint; with nothing painted,
