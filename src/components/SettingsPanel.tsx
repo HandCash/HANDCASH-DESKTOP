@@ -73,6 +73,11 @@ const SECURITY_ITEMS: SettingItem[] = [
     description: 'Keep a copy on your other device',
   },
   {
+    id: 'signin-email',
+    label: 'Sign-in email',
+    description: 'For new devices that can’t reach this one',
+  },
+  {
     id: 'import',
     label: 'Import',
     description: 'HandCash, Twetch, Yours, phrases and keys',

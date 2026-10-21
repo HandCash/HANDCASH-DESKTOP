@@ -8,6 +8,8 @@ import {
 type Listener = (request: PendingDeviceApproval | null) => void
 
 const listeners = new Set<Listener>()
+/** rB this device sent per binding; the code is computed from it, not the host's copy. */
+const ownChallenges = new Map<string, string>()
 let current: PendingDeviceApproval | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let running = false
@@ -30,7 +32,8 @@ async function tick(): Promise<void> {
     const first = requests[0] ?? null
     if (first?.state === 'open') {
       try {
-        await challengeDeviceLogin(first)
+        const { rB } = await challengeDeviceLogin(first)
+        ownChallenges.set(first.binding, rB)
       } catch {
         // Another registered device may have claimed it first.
       }
@@ -69,4 +72,8 @@ export function subscribeBrc250Approval(listener: Listener): () => void {
 
 export function refreshBrc250Approvals(): void {
   void tick()
+}
+
+export function brc250OwnChallenge(binding: string): string | null {
+  return ownChallenges.get(binding) ?? null
 }

@@ -17991,3 +17991,67 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Sign-in: approval inline on its Activity row, and the new device's QR. */
+.signin-detail {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 14px 58px;
+}
+
+.signin-facts {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  font-size: var(--hc-text-sm, 0.8125rem);
+}
+
+.signin-facts dt {
+  color: var(--hc-muted);
+}
+
+.signin-facts dd {
+  margin: 0;
+}
+
+.signin-code-block {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.signin-code {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.signin-note {
+  margin: 0;
+  color: var(--hc-muted);
+}
+
+.signin-error {
+  margin: 0;
+  color: var(--hc-danger);
+}
+
+.signin-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scan-login {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.scan-login-qr {
+  width: 240px;
+  height: 240px;
+  border-radius: var(--hc-radius);
+  background: #fff;
+}

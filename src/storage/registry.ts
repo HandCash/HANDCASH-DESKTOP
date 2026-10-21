@@ -322,6 +322,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  signinEmail: defineStorage({
+    key: 'handcash.signin.email.v1',
+    owner: 'custody',
+    scope: 'wallet',
+    version: 1,
+  }),
   walletConfig: defineStorage({
     key: 'handcash.brc100.walletConfig.v1',
     owner: 'setup',

@@ -3,8 +3,6 @@ import { describe, expect, it } from 'vitest'
 import type { ActiveWallet } from '../session'
 import {
   authorityPrivateKey,
-  comparisonCode,
-  commitmentFor,
   requestPreimage,
   signedHeaders,
 } from './crypto'
@@ -44,15 +42,5 @@ describe('BRC-250 wallet cryptography', () => {
         sig,
       ),
     ).toBe(true)
-  })
-
-  it('binds commitments and comparison codes to this login', () => {
-    const key = PrivateKey.fromRandom().toPublicKey()
-    expect(commitmentFor(key, 'aa'.repeat(32))).not.toBe(
-      commitmentFor(key, 'bb'.repeat(32)),
-    )
-    expect(
-      comparisonCode('binding', 'aa'.repeat(32), 'bb'.repeat(32)),
-    ).toMatch(/^\d{8}$/)
   })
 })

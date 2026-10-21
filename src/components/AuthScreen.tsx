@@ -67,7 +67,18 @@ import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 import { GoogleLoginPanel, type GoogleRecoveredVault } from './GoogleLoginPanel'
+import { DeviceSignInPanel, type ApprovedVault } from './DeviceSignInPanel'
+import {
+  EXISTING_WALLET_MODE,
+  OTHER_SIGNIN_MODE,
+  RESTORE_METHODS,
+  formModeAfterGoogle,
+  initialFormMode,
+  isRestoreMethod,
+  type FormMode,
+} from './auth/authModes'
 import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
+import { setSigninEmail } from '../wallet/deviceSignin'
 import {
   writeVaultAccounts,
   type VaultAccountStore,
@@ -85,15 +96,6 @@ type Props = {
   onFail: (error: string) => void
 }
 
-/** Custody restore paths the vault can bootstrap from. */
-type RestoreMethod = 'phrase' | 'shares' | 'key'
-type FormMode = 'create' | 'unlock' | 'google' | RestoreMethod
-
-const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
-  { id: 'phrase', label: 'Phrase' },
-  { id: 'shares', label: 'Shares' },
-  { id: 'key', label: 'Key' },
-]
 
 /** What a restore does to the install that held this vault before (`accountHolding.ts`). */
 type RestoreRole = 'replace' | 'keep'
@@ -110,10 +112,6 @@ const RESTORE_ROLES: { id: RestoreRole; label: string; hint: string }[] = [
     hint: 'Your other device keeps its wallets and this one gets a new wallet. Move a wallet between them from the wallet menu.',
   },
 ]
-
-function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
-  return mode === 'phrase' || mode === 'shares' || mode === 'key'
-}
 
 function normalizeRootKeyHex(raw: string): string {
   const s = raw.trim().replace(/^0x/i, '')
@@ -144,9 +142,7 @@ export function AuthScreen({
   const [snapshot, send] = useMachine(unlockMachine)
   const chain: Chain = 'main'
   const stateAttr = stateToAttr(snapshot.value)
-  const [formMode, setFormMode] = useState<FormMode>(
-    recoveryOnly ? 'phrase' : mode === 'locked' ? 'unlock' : 'create',
-  )
+  const [formMode, setFormMode] = useState<FormMode>(() => initialFormMode({ mode, recoveryOnly }))
   const [mnemonicInput, setMnemonicInput] = useState('')
   const [sharesInput, setSharesInput] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
@@ -678,7 +674,11 @@ export function AuthScreen({
     })
   }
 
-  const restoreGoogleVault = async (recovered: GoogleRecoveredVault) => {
+  const restoreGoogleVault = async (
+    recovered:
+      | GoogleRecoveredVault
+      | (ApprovedVault & { recoveryKind: 'approved-device' }),
+  ) => {
     try {
       setPreparing({
         title: 'Restoring your vault',
@@ -688,7 +688,8 @@ export function AuthScreen({
         master: recovered.master,
         chain,
       })
-      setEmailRecoveryEnrollment(recovered.enrollment)
+      if (recovered.enrollment) setEmailRecoveryEnrollment(recovered.enrollment)
+      if ('signinEmail' in recovered && recovered.signinEmail) setSigninEmail(recovered.signinEmail)
       markManagedKeysBackupConfirmed()
       const accounts = recovered.accounts as VaultAccountStore | undefined
       if (
@@ -771,14 +772,25 @@ export function AuthScreen({
     )
   }
 
+  if (formMode === 'signin' && !preparing) {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="signin">
+        <DeviceSignInPanel
+          onSignedIn={(vault) => void restoreGoogleVault({ ...vault, recoveryKind: 'approved-device' })}
+          onOtherWays={() => setFormMode(OTHER_SIGNIN_MODE)}
+          onRecovery={(way) => setFormMode(way === 'google' ? 'google' : 'phrase')}
+          onCancel={() => setFormMode(initialFormMode({ mode, recoveryOnly }))}
+        />
+      </section>
+    )
+  }
+
   if (formMode === 'google' && !preparing) {
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="google">
         <GoogleLoginPanel
           onRecovered={(recovered) => void restoreGoogleVault(recovered)}
-          onCancel={() =>
-            setFormMode(mode === 'locked' && !recoveryOnly ? 'unlock' : 'phrase')
-          }
+          onCancel={() => setFormMode(formModeAfterGoogle({ mode, recoveryOnly }))}
         />
       </section>
     )
@@ -1079,18 +1091,23 @@ export function AuthScreen({
         {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
           <p className="auth-alt">
             Already have a wallet?{' '}
-            <button type="button" className="auth-alt-link" onClick={() => setFormMode('google')}>
-              Continue with Google
-            </button>
-            {' · '}
-            <button type="button" className="auth-alt-link" onClick={() => setFormMode('phrase')}>
-              Restore
+            <button
+              type="button"
+              className="auth-alt-link"
+              data-aeon-part="existing-wallet"
+              onClick={() => setFormMode(EXISTING_WALLET_MODE)}
+            >
+              Sign in
             </button>
           </p>
         ) : null}
 
         {mode === 'onboarding' && !recoveryOnly && isRestoreMethod(formMode) ? (
           <p className="auth-alt">
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode(EXISTING_WALLET_MODE)}>
+              Sign in with email and your device
+            </button>
+            {' · '}
             New here?{' '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('create')}>
               Create a wallet

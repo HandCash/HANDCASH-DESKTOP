@@ -38,6 +38,7 @@ function iconFor(id: SettingId): SettingIconSpec {
     case 'history-backup':
       return { icon: <DownloadIcon size={ICON_SIZE} /> }
     case 'device-handoff':
+    case 'signin-email':
       return { icon: <DevicesIcon size={ICON_SIZE} /> }
     case 'import':
       return { icon: <RefreshIcon size={ICON_SIZE} /> }

@@ -1,17 +1,19 @@
-import {
-  EncryptedMessage,
-  PrivateKey,
-  PublicKey,
-  Utils,
-} from '@bsv/sdk'
+import { PrivateKey, PublicKey, Utils } from '@bsv/sdk'
 import { recoverRootKeyFromBrc140Shares } from '../brc140Backup'
+import {
+  approvalComparisonCode as sharedComparisonCode,
+  commitmentFor,
+  comparisonCode,
+  freshLoginKey,
+  localDeviceLabel,
+  openVaultTransfer,
+  randomHex,
+  sealVaultTransfer,
+  vaultTransferOf,
+  type VaultTransfer,
+} from '../deviceTransfer'
 import { getOrCreateDeviceId } from '../deviceWallets'
 import { requireWalletRuntime } from '../walletRuntime'
-import {
-  identityKeyForAccount,
-  readVaultAccounts,
-} from '../vaultAccounts'
-import type { VaultMaster } from '../vaultMaster'
 import {
   createGoogleAttempt,
   readLoginStatus,
@@ -19,13 +21,7 @@ import {
   startLoginRequest,
   verifiedGoogleProof,
 } from './api'
-import {
-  authorityPrivateKey,
-  comparisonCode,
-  commitmentFor,
-  freshLoginKey,
-  randomHex,
-} from './crypto'
+import { authorityPrivateKey } from './crypto'
 import { getEmailRecoveryEnrollment } from './store'
 import {
   BRC250_HOST,
@@ -57,14 +53,7 @@ export type PendingDeviceApproval = {
   expiresAt: number
 }
 
-export type VaultTransfer = {
-  v: 1
-  kind: 'handcash-brc250-vault'
-  master: VaultMaster
-  enrollment: ReturnType<typeof getEmailRecoveryEnrollment>
-  accounts: unknown
-  sentAt: number
-}
+export type { VaultTransfer }
 
 export async function beginNewDeviceGoogleLogin(
   host = BRC250_HOST,
@@ -157,14 +146,7 @@ export function approvalComparisonCode(
   request: PendingDeviceApproval,
   rB: string,
 ): string {
-  if (!request.rA) throw new Error('The new device has not revealed its code')
-  if (
-    commitmentFor(PublicKey.fromString(request.loginKey), request.rA) !==
-    request.commitment.toLowerCase()
-  ) {
-    throw new Error('The new device reveal does not match its signed-in request')
-  }
-  return comparisonCode(request.binding, request.rA, rB)
+  return sharedComparisonCode(request, rB)
 }
 
 export async function approveDeviceLogin(
@@ -177,27 +159,16 @@ export async function approveDeviceLogin(
     throw new Error('Compare the device codes before approving')
   }
   const authority = authorityPrivateKey(active)
-  const payload: VaultTransfer = {
-    v: 1,
-    kind: 'handcash-brc250-vault',
-    master: active.vaultMaster,
-    enrollment,
-    accounts: readVaultAccounts(identityKeyForAccount(active.vaultMaster, 0)),
-    sentAt: Date.now(),
-  }
-  const cipher = EncryptedMessage.encrypt(
-    Utils.toArray(JSON.stringify(payload), 'utf8'),
+  const sealedVault = sealVaultTransfer(
+    vaultTransferOf(active.vaultMaster, enrollment),
     authority,
-    PublicKey.fromString(request.loginKey),
+    request.loginKey,
   )
   await signedBrc250Fetch({
     host: enrollment.host,
     path: '/v1/login/complete',
     key: authority,
-    body: {
-      binding: request.binding,
-      sealedVault: Utils.toBase64(cipher),
-    },
+    body: { binding: request.binding, sealedVault },
   })
 }
 
@@ -218,15 +189,7 @@ export function openApprovedVault(
   login: NewDeviceLogin,
   sealedVault: string,
 ): VaultTransfer {
-  const plain = EncryptedMessage.decrypt(
-    Utils.toArray(sealedVault, 'base64'),
-    login.key,
-  )
-  const payload = JSON.parse(Utils.toUTF8(plain)) as VaultTransfer
-  if (payload.v !== 1 || payload.kind !== 'handcash-brc250-vault' || !payload.master?.keyHex) {
-    throw new Error('The approving device sent an invalid vault')
-  }
-  return payload
+  return openVaultTransfer(sealedVault, login.key)
 }
 
 export async function requestDelayedRecoveryShare(
@@ -330,15 +293,6 @@ function base64urlBytes(value: string): Uint8Array {
     '=',
   )
   return Uint8Array.from(atob(padded), (ch) => ch.charCodeAt(0))
-}
-
-function localDeviceLabel(): string {
-  if (typeof navigator === 'undefined') return 'HandCash device'
-  if (/android/i.test(navigator.userAgent)) return 'Android phone'
-  if (/iphone|ipad/i.test(navigator.userAgent)) return 'iPhone'
-  if (/mac/i.test(navigator.userAgent)) return 'Mac'
-  if (/win/i.test(navigator.userAgent)) return 'Windows PC'
-  return 'HandCash device'
 }
 
 function currentAuthorityKey(): PrivateKey {

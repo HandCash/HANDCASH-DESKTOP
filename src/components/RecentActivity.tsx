@@ -157,6 +157,7 @@ import {
   useWalletJobs,
   WalletJobRow,
 } from "./activity/ActivityJobRows";
+import { SigninApprovalRowItem, useSigninApprovals } from "./activity/SigninApprovalRows";
 import { batchCountLabel } from "./activity/batchCountLabel";
 
 import { EmptyState } from "./EmptyState";
@@ -1087,6 +1088,7 @@ export function ActivityFeed({
     ? phraseImport
     : null;
   const jobs = useWalletJobs();
+  const signins = useSigninApprovals();
   const swaps = useSwapViews();
 
   // A job's own row speaks for it until it leaves; then its rows fold into one record.
@@ -1295,7 +1297,7 @@ export function ActivityFeed({
   }, [origins, filters.origin]);
 
   const body =
-    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 ? (
+    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 && signins.length === 0 ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : "Nothing matches"}
@@ -1309,6 +1311,9 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
+        {signins.map((row) => (
+          <SigninApprovalRowItem key={row.view.key} row={row} />
+        ))}
         {jobs.map((job) => (
           <WalletJobRow key={job.id} job={job} />
         ))}

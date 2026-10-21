@@ -321,6 +321,9 @@ export function clearActiveWallet(): void {
   void import('./brc250/deviceService').then(({ stopBrc250DeviceService }) =>
     stopBrc250DeviceService(true),
   )
+  void import('./deviceSignin/service').then(({ stopDeviceSigninService }) =>
+    stopDeviceSigninService(true),
+  )
   clearSessionBackupPassword()
   void import('./walletProgress').then(({ bindWalletProgressAccount }) => {
     bindWalletProgressAccount(null)
@@ -534,6 +537,9 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   void import('./accountMove').then(({ startHoldingService }) => startHoldingService())
   void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
     startBrc250DeviceService(),
+  )
+  void import('./deviceSignin/service').then(({ startDeviceSigninService }) =>
+    startDeviceSigninService(),
   )
   void import('./coinMethods').then(({ COIN_CHAINS, coinWalletOf }) => {
     for (const chain of COIN_CHAINS) void coinWalletOf(chain).then((coin) => coin.startWatcher())

@@ -1,6 +1,6 @@
 import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { commitmentFor } from './crypto'
+import { commitmentFor } from '../deviceTransfer'
 import {
   approvalComparisonCode,
   recoverDelayedVault,

@@ -11,6 +11,7 @@ import {
   getOrCreateDeviceId,
 } from './deviceWallets'
 import { listCollectables } from './collectables'
+import { handleScanLoginRequest, isScanLoginPath } from './scanLogin/receiver'
 
 type HttpRequestEvent = {
   method: string
@@ -36,6 +37,8 @@ export async function handleDevicePeerRequest(
   }
 
   const path = event.path.replace(/\/+$/, '') || '/'
+  // Scan-to-login runs before any wallet exists on this device.
+  if (isScanLoginPath(path)) return handleScanLoginRequest({ ...event, path })
   const active = getActiveWallet()
 
   if (path.endsWith('/handcash-device/v1/health') && event.method === 'GET') {

@@ -1,7 +1,15 @@
 import { Button } from '@aeon-ui/react'
 import { useRef, useState } from 'react'
-import { clearNavChild, closeSideScan, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
+import {
+  clearNavChild,
+  closeSideScan,
+  openAddFriend,
+  openSendFlow,
+  openSetting,
+  setNavSection,
+} from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
+import { startScanLoginApproval, tryParseScanLoginPayload } from '../wallet/scanLogin'
 import { tryParseDeviceKeyBackupPackage } from '../wallet/deviceKeyBackup'
 import { setPendingPairScan } from '../wallet/pendingPairScan'
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
@@ -61,6 +69,15 @@ export function ScanPanel({ placement = 'nav' }: Props) {
   }
 
   const routePairOrBackup = (raw: string): boolean => {
+    const scanLogin = tryParseScanLoginPayload(raw)
+    if (scanLogin) {
+      void startScanLoginApproval(scanLogin)
+      playWalletSound('soft')
+      toastSuccess('Sign-in request', `Compare the code with ${scanLogin.label} in Activity.`)
+      dismiss()
+      setNavSection('activity')
+      return true
+    }
     const pair = tryParsePairPayload(raw)
     const spare = tryParseDeviceKeyBackupPackage(raw)
     if (!pair && !spare) return false

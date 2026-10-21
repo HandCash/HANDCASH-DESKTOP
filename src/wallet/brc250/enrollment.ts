@@ -14,7 +14,8 @@ import {
   signedBrc250Fetch,
   verifiedGoogleProof,
 } from './api'
-import { authorityPrivateKey, freshLoginKey, randomHex } from './crypto'
+import { authorityPrivateKey } from './crypto'
+import { freshLoginKey, randomHex } from '../deviceTransfer'
 import { setEmailRecoveryEnrollment } from './store'
 import {
   BRC250_HOST,
