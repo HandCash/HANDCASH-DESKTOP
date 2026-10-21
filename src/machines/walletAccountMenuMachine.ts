@@ -1,4 +1,4 @@
-import { assign, setup } from 'xstate'
+import { assign, enqueueActions, setup } from 'xstate'
 import type { AccountMovePhase } from '../wallet/accountMoveMachine'
 
 type MenuError = string | null
@@ -12,7 +12,9 @@ type AfterSwitch = 'stay' | 'profile'
  * Choosing an account another install holds moves it here (`moving`, driven
  * by `accountMoveMachine`; no step asks the user) and then switches to it.
  * `DISPLACED` arrives when this install stops holding the active account:
- * another install took it, or asked for it and this one released it.
+ * another install took it, or asked for it and this one released it. An idle
+ * menu leaves the account at once; a busy one records it and asks for a fresh
+ * check (`recheckDisplacement`) the moment it settles, so it is never dropped.
  */
 export const walletAccountMenuMachine = setup({
   types: {
@@ -22,6 +24,8 @@ export const walletAccountMenuMachine = setup({
       /** Where a move here stands, for the row's status line. */
       movePhase: AccountMovePhase | null
       error: MenuError
+      /** A displacement arrived while busy and waits for the menu to settle. */
+      displacedWhileBusy: boolean
     },
     events: {} as
       | { type: 'TOGGLE' }
@@ -40,14 +44,24 @@ export const walletAccountMenuMachine = setup({
   actions: {
     /** Provided by the projection: navigate to Publish identity. */
     openProfile: () => {},
+    /** Provided by the projection: check again whether the open account is still held here. */
+    recheckDisplacement: () => {},
     /** Switch target after a displacement. */
     targetNextAccount: assign(({ event }) => ({
       targetAccountIndex: event.type === 'DISPLACED' ? event.nextAccountIndex : null,
       afterSwitch: 'stay' as const,
       movePhase: null,
       error: null,
+      displacedWhileBusy: false,
     })),
-    clearError: assign({ movePhase: null, error: null }),
+    clearError: assign({ movePhase: null, error: null, displacedWhileBusy: false }),
+    recordDisplacement: assign({ displacedWhileBusy: true }),
+    /** On settling, act on a displacement recorded while busy. */
+    settleDisplacement: enqueueActions(({ context, enqueue }) => {
+      if (!context.displacedWhileBusy) return
+      enqueue.assign({ displacedWhileBusy: false })
+      enqueue('recheckDisplacement')
+    }),
   },
   guards: {
     hasNextAccount: ({ event }) => event.type === 'DISPLACED' && event.nextAccountIndex != null,
@@ -60,9 +74,11 @@ export const walletAccountMenuMachine = setup({
     afterSwitch: 'stay',
     movePhase: null,
     error: null,
+    displacedWhileBusy: false,
   },
   states: {
     closed: {
+      entry: 'settleDisplacement',
       on: {
         TOGGLE: 'open',
         DISPLACED: [
@@ -72,6 +88,7 @@ export const walletAccountMenuMachine = setup({
       },
     },
     open: {
+      entry: 'settleDisplacement',
       on: {
         TOGGLE: 'closed',
         CLOSE: 'closed',
@@ -118,6 +135,7 @@ export const walletAccountMenuMachine = setup({
     },
     moving: {
       on: {
+        DISPLACED: { actions: 'recordDisplacement' },
         MOVE_PHASE: { actions: assign({ movePhase: ({ event }) => event.phase }) },
         MOVED: {
           target: 'switching',
@@ -135,6 +153,7 @@ export const walletAccountMenuMachine = setup({
     },
     switching: {
       on: {
+        DISPLACED: { actions: 'recordDisplacement' },
         SWITCHED: [
           {
             guard: ({ context }) => context.afterSwitch === 'profile',
@@ -154,6 +173,7 @@ export const walletAccountMenuMachine = setup({
     },
     creating: {
       on: {
+        DISPLACED: { actions: 'recordDisplacement' },
         CREATED: { target: 'closed', actions: assign({ error: null }) },
         FAIL: {
           target: 'open',

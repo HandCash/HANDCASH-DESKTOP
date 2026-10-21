@@ -85,7 +85,14 @@ export function WalletAccountMenu({
   onAccountSwitchStarted,
   onAccountSwitched,
 }: Props) {
-  const [snapshot, send, actor] = useMachine(accountMenuMachine)
+  /** Re-checks whether another install took the open account; set below. */
+  const displacementCheckRef = useRef<() => void>(() => {})
+  const [menuMachine] = useState(() =>
+    accountMenuMachine.provide({
+      actions: { recheckDisplacement: () => queueMicrotask(() => displacementCheckRef.current()) },
+    }),
+  )
+  const [snapshot, send, actor] = useMachine(menuMachine)
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -288,29 +295,44 @@ export function WalletAccountMenu({
   leaveRef.current = { performSwitch, performCreate, nextHeldAccount }
 
   // Another install took the active account: it no longer signs here, so leave it.
-  useEffect(() => {
-    const check = () => {
-      const active = activeAccount()
-      if (!active || displacedRef.current === active.identityKey) return
-      const store = readVaultAccounts(vaultIdentityKey(active.vaultMaster))
-      const account = store.accounts.find((a) => a.index === active.accountIndex)
-      if (!account || isHeldHere(account)) return
-      const { performSwitch: toAccount, performCreate: toNew, nextHeldAccount: next } = leaveRef.current
-      const nextAccountIndex = next(active.accountIndex)
-      if (!actor.getSnapshot().can({ type: 'DISPLACED', nextAccountIndex })) return
-      displacedRef.current = active.identityKey
-      const holding = holdingOf(account)
-      if (holding.kind === 'elsewhere' && holding.deviceId == null) {
-        toastSuccess('Wallet moved', 'Your other device asked for this wallet, so it moved there.')
-      } else {
-        toastError('Wallet moved', 'Another device now holds this wallet, so it no longer spends here.')
-      }
+  // A busy menu only records it; the chart asks for this check again once it settles.
+  displacementCheckRef.current = () => {
+    const active = activeAccount()
+    if (!active || displacedRef.current === active.identityKey) return
+    const store = readVaultAccounts(vaultIdentityKey(active.vaultMaster))
+    const account = store.accounts.find((a) => a.index === active.accountIndex)
+    if (!account || isHeldHere(account)) return
+    const { performSwitch: toAccount, performCreate: toNew, nextHeldAccount: next } = leaveRef.current
+    const nextAccountIndex = next(active.accountIndex)
+    const menu = actor.getSnapshot()
+    if (!menu.matches('closed') && !menu.matches('open')) {
       send({ type: 'DISPLACED', nextAccountIndex })
-      void (nextAccountIndex != null ? toAccount(nextAccountIndex) : toNew())
+      return
     }
-    check()
-    return subscribeVaultAccounts(check)
-  }, [actor, send])
+    displacedRef.current = active.identityKey
+    const holding = holdingOf(account)
+    if (holding.kind === 'elsewhere' && holding.deviceId == null) {
+      toastSuccess('Wallet moved', 'Your other device asked for this wallet, so it moved there.')
+    } else {
+      toastError('Wallet moved', 'Another device now holds this wallet, so it no longer spends here.')
+    }
+    send({ type: 'DISPLACED', nextAccountIndex })
+    void (nextAccountIndex != null ? toAccount(nextAccountIndex) : toNew())
+  }
+
+  useEffect(() => {
+    const check = () => displacementCheckRef.current()
+    window.addEventListener('focus', check)
+    const offAccounts = subscribeVaultAccounts(check)
+    return () => {
+      window.removeEventListener('focus', check)
+      offAccounts()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!busy) displacementCheckRef.current()
+  }, [busy, open])
 
   const current = accounts.find((account) => account.index === activeIndex)
 
