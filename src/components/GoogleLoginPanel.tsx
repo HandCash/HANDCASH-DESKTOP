@@ -15,6 +15,7 @@ import {
   type NewDeviceLogin,
   type VaultTransfer,
 } from '../wallet/brc250/login'
+import { openInSystemBrowser } from '../wallet/brc250/systemBrowser'
 import type { EmailRecoveryEnrollment } from '../wallet/brc250/types'
 import type { VaultMaster } from '../wallet/vaultMaster'
 
@@ -30,11 +31,6 @@ type Props = {
   onCancel: () => void
 }
 
-async function openSystemUrl(url: string): Promise<void> {
-  if (window.handcash?.openExternal) return window.handcash.openExternal(url)
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
 export function GoogleLoginPanel({ onRecovered, onCancel }: Props) {
   const [snapshot, send] = useMachine(emailRecoveryMachine)
   const login = useRef<NewDeviceLogin | null>(null)
@@ -47,7 +43,7 @@ export function GoogleLoginPanel({ onRecovered, onCancel }: Props) {
     try {
       const next = await beginNewDeviceGoogleLogin()
       login.current = next
-      await openSystemUrl(next.attempt.openUrl)
+      await openInSystemBrowser(next.attempt.openUrl)
       send({ type: 'BROWSER_OPENED' })
     } catch (error) {
       send({ type: 'FAIL', message: messageOf(error) })

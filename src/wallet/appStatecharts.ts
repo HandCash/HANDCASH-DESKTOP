@@ -1999,7 +1999,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'emailRecovery',
-    label: 'Google recovery',
+    label: 'HandCash Recovery',
     caption:
       'emailRecoveryMachine — Google proof · mailbox share confirmation · device approval · delayed recovery',
     source: EMAIL_RECOVERY,

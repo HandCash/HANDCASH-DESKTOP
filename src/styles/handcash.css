@@ -4047,6 +4047,55 @@ li[data-aeon-state='failed'] .history-progress-range {
   margin-top: 4px;
 }
 
+.recovery-methods {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recovery-method {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+}
+
+.recovery-method .settings-hint {
+  margin: 0;
+}
+
+.recovery-method-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.recovery-method-head strong {
+  font-size: var(--hc-text-md);
+  color: var(--hc-text);
+}
+
+.recovery-method-status {
+  font-size: var(--hc-text-sm);
+  color: var(--hc-muted);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+[data-aeon-part^='recovery-'][data-aeon-state='ok'] .recovery-method-status {
+  color: color-mix(in srgb, var(--hc-success) 78%, var(--hc-muted));
+}
+
+[data-aeon-part^='recovery-'][data-aeon-state='warn'] .recovery-method-status {
+  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+}
+
 .settings-check-label {
   align-items: flex-start;
 }

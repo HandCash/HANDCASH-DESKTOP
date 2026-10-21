@@ -25,7 +25,9 @@ import {
   RepeatIcon,
   TouchAppIcon,
 } from './icons'
+import { savedRecoveryStatuses } from '../features/recovery'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
+import { getEmailRecoveryEnrollment } from '../wallet/brc250/store'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
@@ -55,11 +57,6 @@ type SettingItem = {
 }
 
 const SECURITY_ITEMS: SettingItem[] = [
-  {
-    id: 'google-recovery',
-    label: 'Google recovery',
-    description: 'Recommended · email share + device approval',
-  },
   {
     id: 'backup',
     label: 'Recovery backup',
@@ -128,11 +125,36 @@ export function settingLabel(id: SettingId): string {
   if (id === 'labs') return 'Labs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
-  if (id === 'google-recovery') return 'Google recovery'
+  if (id === 'google-recovery') return 'HandCash Recovery'
   if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)
   if (item) return item.label
   return 'Setting'
+}
+
+const RECOVERY_METHODS = [
+  { method: 'google', label: 'Google' },
+  { method: 'email', label: 'Email' },
+] as const
+
+function RecoveryRows() {
+  const statuses = savedRecoveryStatuses(getEmailRecoveryEnrollment())
+  const { icon, tone } = settingIconFor('google-recovery')
+  return (
+    <ul className="settings-list">
+      {RECOVERY_METHODS.map(({ method, label }) => (
+        <SettingsNavRow
+          key={method}
+          label={label}
+          status={statuses[method].text}
+          statusTone={statuses[method].tone}
+          icon={icon}
+          iconTone={tone}
+          onClick={() => openSetting('google-recovery')}
+        />
+      ))}
+    </ul>
+  )
 }
 
 function SecurityRows() {
@@ -237,6 +259,10 @@ export function SettingsPanel() {
         <h2>Settings</h2>
       </div>
       <div className="settings-scroll-body">
+      <SettingsSection title="HandCash Recovery" part="handcash-recovery">
+        <RecoveryRows />
+      </SettingsSection>
+
       <SettingsSection title="Security" part="security">
         <SecurityRows />
       </SettingsSection>

@@ -20,7 +20,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
-import { GoogleRecoveryPanel } from './GoogleRecoveryPanel'
+import { HandCashRecoveryPanel } from './HandCashRecoveryPanel'
 
 type Props = {
   mnemonic: string
@@ -123,8 +123,8 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="create-keys-backup">
       <h2>Save your recovery backup</h2>
       <p className="auth-lede">
-        Recommended now: connect Google and email one recovery share to yourself. An offline
-        phrase or two manually stored slices remain available.
+        Recommended: HandCash Recovery, with Google and email. You can also keep a recovery phrase
+        or two key slices yourself.
       </p>
 
       <div className="actions" style={{ marginBottom: 12 }}>
@@ -135,7 +135,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
             setShareSet(null)
           }}
         >
-          <Button.Label>Google + email</Button.Label>
+          <Button.Label>HandCash Recovery</Button.Label>
         </Button.Root>
         <Button.Root variant="ghost"
           className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
@@ -156,7 +156,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         </Button.Root>
       </div>
 
-      {kind === 'google' ? <GoogleRecoveryPanel onReady={onDone} /> : null}
+      {kind === 'google' ? <HandCashRecoveryPanel onReady={onDone} /> : null}
 
       {kind === 'phrase' ? (
         <div className="split-backup-shares">
