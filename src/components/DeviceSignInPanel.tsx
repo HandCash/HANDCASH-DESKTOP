@@ -20,6 +20,7 @@ import {
 } from '../wallet/deviceSignin'
 import { formatComparisonCode, localDeviceLabel, type VaultTransfer } from '../wallet/deviceTransfer'
 import { firstSigninStep } from './auth/authModes'
+import { DeferredImage } from './DeferredImage'
 import {
   endScanLoginSession,
   scanLoginQrText,
@@ -219,7 +220,16 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
             network.
           </p>
           {qr ? (
-            <img className="scan-login-qr" src={qr} width={240} height={240} alt="Sign-in code for this device" />
+            <DeferredImage
+              className="scan-login-qr"
+              src={qr}
+              alt="Sign-in code for this device"
+              width={240}
+              height={240}
+              skeletonWidth={240}
+              skeletonHeight={240}
+              skeletonRadius="var(--hc-radius)"
+            />
           ) : (
             <div className="scan-login-qr" aria-busy="true" />
           )}
