@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.627] - 2026-10-21
+
+### Fixed
+
+- BNT token and item pictures are kept on this device. Activity shows them after a relaunch and after the asset is sent away, and each picture is built once instead of on every list.
+- Right after launch, an app asking for your BNT tokens while the wallet is busy gets a real read, not an empty list.
+- An app given access to all items sees them: the grant keeps the collections the prompt showed instead of saving an empty list.
+- A saved item grant that matches nothing asks again instead of hiding every item.
+- Item reads filtered by tag or id come from the wallet's storage, and a read by id includes the item's details.
+
+### Changed
+
+- A swap waiting on this wallet's signature says so on its Activity row and detail panel ("Unlocked until Thu 1:41 AM", or "Signing"), instead of a notice in the title bar.
+- Coin names no longer repeat the ticker ("Bitcoin SV", not "Bitcoin SV (BSV)"). The ticker shows once, in the held amount.
+- The ticker's coin selector looks like its menu rows: a 32 px mark, with the held amount and its dollar value on the right.
+
 ## [1.3.626] - 2026-10-20
 
 ### Fixed
