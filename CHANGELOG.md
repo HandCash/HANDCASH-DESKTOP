@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.631] - 2026-10-21
+
+### Changed
+
+- The BRC-250 draft (`docs/bsva/brcs/wallet/0250.md`) withdraws recovery with only your email: the recovery host keeps no share of your wallet and never releases one on Google sign-in. A device that signs in still needs approval on one of your signed-in devices. No app change.
+
 ## [1.3.630] - 2026-10-21
 
 ### Changed
