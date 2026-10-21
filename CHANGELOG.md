@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.629] - 2026-10-21
+
+### Added
+
+- New wallets choose what to accept: Just Bitcoin SV (the default) or Bitcoin SV and crypto. Change it in Settings, Preferences, Accept. Just Bitcoin SV hides other coins, the tokens they back and the Swap button; nothing is removed. Existing and restored wallets keep showing every coin.
+- Chat messages show the sender’s profile picture.
+
+### Fixed
+
+- Wallet data survives a full disk or a crash mid-save: the last saved copy is kept, a failed save retries on its own, and the app log says when the disk is full.
+- On start, the app clears files left by interrupted saves, keeping any that hold the only good copy.
+- A damaged wallet data file is kept aside and the previous version loads; a file the app can’t read is never overwritten.
+- Saving a key slice or the history backup to a file counts only once the file is written and reads back intact. Cancelling the save no longer reports it saved.
+- A damaged local history snapshot is refused instead of restored.
+
 ## [1.3.628] - 2026-10-21
 
 ### Added
