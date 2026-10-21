@@ -1,0 +1,293 @@
+{
+  "format": "chart-app/1",
+  "id": "message-box",
+  "name": "Message box",
+  "summary": "See what's waiting in your message box, clear it, and block senders.",
+  "version": "1.0.0",
+  "author": {
+    "identityKey": "02a1a56e723281cc9f9b74ab54504b5b6463f2fa910be76d84052698d8b60112f3",
+    "name": "HandCash"
+  },
+  "initial": "loading",
+  "fields": {
+    "inbox": {
+      "type": "messages"
+    },
+    "blocked": {
+      "type": "senders"
+    },
+    "selected": {
+      "type": "selection"
+    },
+    "opened": {
+      "type": "message"
+    },
+    "pickedSender": {
+      "type": "sender"
+    }
+  },
+  "effects": {
+    "list": {
+      "kind": "listMessages",
+      "boxes": [
+        "inbox"
+      ],
+      "result": "inbox",
+      "blocked": "blocked"
+    },
+    "ack": {
+      "kind": "acknowledgeMessages",
+      "messages": {
+        "field": "selected"
+      }
+    },
+    "ackOne": {
+      "kind": "acknowledgeMessages",
+      "messages": {
+        "field": "opened"
+      }
+    },
+    "clear": {
+      "kind": "deleteMessages",
+      "messages": {
+        "field": "selected"
+      }
+    },
+    "clearOne": {
+      "kind": "deleteMessages",
+      "messages": {
+        "field": "opened"
+      }
+    },
+    "block": {
+      "kind": "blockSender",
+      "sender": {
+        "field": "opened"
+      }
+    },
+    "unblock": {
+      "kind": "unblockSender",
+      "sender": {
+        "field": "pickedSender"
+      }
+    }
+  },
+  "states": {
+    "loading": {
+      "effect": "list",
+      "onDone": "inbox",
+      "onError": "failed"
+    },
+    "inbox": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Message box"
+        },
+        {
+          "block": "text",
+          "text": "{inbox.count} waiting. Tick messages to mark them handled or clear them, or open one."
+        },
+        {
+          "block": "list",
+          "field": "inbox",
+          "select": "selected",
+          "open": {
+            "event": "OPEN",
+            "field": "opened"
+          },
+          "empty": "Nothing waiting."
+        },
+        {
+          "block": "primaryButton",
+          "label": "Mark handled",
+          "event": "ACK"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Clear",
+          "event": "CLEAR"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Blocked senders",
+          "event": "BLOCKED"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Refresh",
+          "event": "REFRESH"
+        }
+      ],
+      "on": {
+        "ACK": {
+          "target": "acking",
+          "requires": [
+            "selected"
+          ]
+        },
+        "CLEAR": {
+          "target": "clearing",
+          "requires": [
+            "selected"
+          ]
+        },
+        "OPEN": "reading",
+        "BLOCKED": "blockedList",
+        "REFRESH": "loading"
+      }
+    },
+    "acking": {
+      "effect": "ack",
+      "onDone": "inbox",
+      "onError": "failed"
+    },
+    "clearing": {
+      "effect": "clear",
+      "onDone": "inbox",
+      "onError": "failed",
+      "onDecline": "inbox"
+    },
+    "reading": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "From {opened.sender}"
+        },
+        {
+          "block": "text",
+          "text": "{opened.kind} in {opened.box}, {opened.time}"
+        },
+        {
+          "block": "text",
+          "text": "{opened.text}"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Mark handled",
+          "event": "ACK"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Clear",
+          "event": "CLEAR"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Block sender",
+          "event": "BLOCK"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Back",
+          "event": "BACK"
+        }
+      ],
+      "on": {
+        "ACK": "ackingOne",
+        "CLEAR": "clearingOne",
+        "BLOCK": "blocking",
+        "BACK": "inbox"
+      }
+    },
+    "ackingOne": {
+      "effect": "ackOne",
+      "onDone": "inbox",
+      "onError": "failed"
+    },
+    "clearingOne": {
+      "effect": "clearOne",
+      "onDone": "inbox",
+      "onError": "failed",
+      "onDecline": "reading"
+    },
+    "blocking": {
+      "effect": "block",
+      "onDone": "loading",
+      "onError": "failed",
+      "onDecline": "reading"
+    },
+    "blockedList": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Blocked senders"
+        },
+        {
+          "block": "text",
+          "text": "{blocked.count} blocked. Their messages are cleared as they arrive."
+        },
+        {
+          "block": "list",
+          "field": "blocked",
+          "open": {
+            "event": "PICK",
+            "field": "pickedSender"
+          },
+          "empty": "No one is blocked."
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Back",
+          "event": "BACK"
+        }
+      ],
+      "on": {
+        "PICK": "sender",
+        "BACK": "inbox"
+      }
+    },
+    "sender": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "{pickedSender}"
+        },
+        {
+          "block": "text",
+          "text": "Blocked. Their messages are cleared as they arrive."
+        },
+        {
+          "block": "primaryButton",
+          "label": "Unblock",
+          "event": "UNBLOCK"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "Back",
+          "event": "BACK"
+        }
+      ],
+      "on": {
+        "UNBLOCK": "unblocking",
+        "BACK": "blockedList"
+      }
+    },
+    "unblocking": {
+      "effect": "unblock",
+      "onDone": "loading",
+      "onError": "failed"
+    },
+    "failed": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "That step stopped"
+        },
+        {
+          "block": "text",
+          "text": "Refresh to see what's waiting now."
+        },
+        {
+          "block": "primaryButton",
+          "label": "Refresh",
+          "event": "REFRESH"
+        }
+      ],
+      "on": {
+        "REFRESH": "loading"
+      }
+    }
+  },
+  "signature": "3045022100dcc0bebc08a1f5cb3c73a385a95828420cdca2456d6991fb0d9a60d6291168fd02200f7cdd3e6183fbba5bbea63e8caea2297319ec6cd7f1ffaa85a6fb836a0184b8"
+}

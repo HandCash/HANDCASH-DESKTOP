@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { SettingId } from '../../wallet/navStore'
 import {
   ActivityIcon,
+  AppsIcon,
   CloudUploadIcon,
   CodeIcon,
   DevicesIcon,
@@ -58,6 +59,8 @@ function iconFor(id: SettingId): SettingIconSpec {
       return { icon: <RefreshIcon size={ICON_SIZE} /> }
     case 'labs':
       return { icon: <CodeIcon size={ICON_SIZE} /> }
+    case 'chart-apps':
+      return { icon: <AppsIcon size={ICON_SIZE} /> }
     default:
       return { icon: <InfoIcon size={ICON_SIZE} /> }
   }

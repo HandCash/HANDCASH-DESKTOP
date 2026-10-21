@@ -1,0 +1,124 @@
+{
+  "format": "chart-app/1",
+  "id": "payment-request",
+  "name": "Payment request",
+  "summary": "Ask a friend for an amount of Bitcoin SV.",
+  "version": "1.0.0",
+  "author": {
+    "identityKey": "02a1a56e723281cc9f9b74ab54504b5b6463f2fa910be76d84052698d8b60112f3",
+    "name": "HandCash"
+  },
+  "initial": "compose",
+  "fields": {
+    "friend": {
+      "type": "friend"
+    },
+    "amount": {
+      "type": "amount",
+      "coin": "BSV"
+    },
+    "memo": {
+      "type": "text",
+      "maxLength": 80
+    }
+  },
+  "effects": {
+    "request": {
+      "kind": "requestPayment",
+      "coin": "BSV",
+      "networks": [
+        "mainnet",
+        "testnet"
+      ],
+      "from": {
+        "field": "friend"
+      },
+      "amount": {
+        "field": "amount"
+      },
+      "memo": {
+        "field": "memo"
+      }
+    }
+  },
+  "states": {
+    "compose": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Request a payment"
+        },
+        {
+          "block": "text",
+          "text": "Ask a friend for Bitcoin SV. They see the request in Messages and can pay it there."
+        },
+        {
+          "block": "friendPicker",
+          "field": "friend",
+          "label": "From"
+        },
+        {
+          "block": "amountInput",
+          "field": "amount",
+          "label": "Amount in sats"
+        },
+        {
+          "block": "textInput",
+          "field": "memo",
+          "label": "What for",
+          "placeholder": "Dinner, tickets"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Review request",
+          "event": "REQUEST"
+        }
+      ],
+      "on": {
+        "REQUEST": {
+          "target": "requesting",
+          "requires": [
+            "friend",
+            "amount"
+          ]
+        }
+      }
+    },
+    "requesting": {
+      "effect": "request",
+      "onDone": "sent",
+      "onError": "failed",
+      "onDecline": "compose"
+    },
+    "sent": {
+      "final": true,
+      "view": [
+        {
+          "block": "heading",
+          "text": "Request sent"
+        },
+        {
+          "block": "text",
+          "text": "{friend} has your request for {amount}. Its status is on its own row in Activity."
+        }
+      ]
+    },
+    "failed": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Request not sent"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Try again",
+          "event": "RETRY"
+        }
+      ],
+      "on": {
+        "RETRY": "compose"
+      }
+    }
+  },
+  "signature": "30450221008ad432f9d40eafeb8418e7f631eac72c41562c1f55888aa63a4efd010b07a7a4022051e5b16d1c15f3aa5031072fd9d190fc51f66709ea30f1b59c276fb8321ea6e5"
+}

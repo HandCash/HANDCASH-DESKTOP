@@ -88,6 +88,7 @@ import type { MarketCoin } from '../wallet/bsvMarket'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
+import { ChartAppsPanel } from './ChartAppsPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
@@ -727,6 +728,9 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'recover-tx' && (
                 <RecoverFromTxPanel />
+              )}
+              {stageChild.type === 'setting' && stageChild.settingId === 'chart-apps' && (
+                <ChartAppsPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'statecharts' && (
                 <StatechartsPanel />

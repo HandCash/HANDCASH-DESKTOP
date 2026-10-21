@@ -1,0 +1,128 @@
+{
+  "format": "chart-app/1",
+  "id": "split-bill",
+  "name": "Split the bill",
+  "summary": "Ask friends for an even share of a bill in Bitcoin SV.",
+  "version": "1.0.0",
+  "author": {
+    "identityKey": "02a1a56e723281cc9f9b74ab54504b5b6463f2fa910be76d84052698d8b60112f3",
+    "name": "HandCash"
+  },
+  "initial": "compose",
+  "fields": {
+    "what": {
+      "type": "text",
+      "maxLength": 60
+    },
+    "total": {
+      "type": "amount",
+      "coin": "BSV"
+    },
+    "friends": {
+      "type": "friends"
+    }
+  },
+  "effects": {
+    "request": {
+      "kind": "requestPayment",
+      "coin": "BSV",
+      "networks": [
+        "mainnet",
+        "testnet"
+      ],
+      "from": {
+        "field": "friends"
+      },
+      "amount": {
+        "field": "total",
+        "divideBy": {
+          "countOf": "friends",
+          "plus": 1
+        }
+      },
+      "memo": {
+        "field": "what"
+      }
+    }
+  },
+  "states": {
+    "compose": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Split the bill"
+        },
+        {
+          "block": "text",
+          "text": "The total splits evenly between the friends you pick and you. Each friend gets a request for their share."
+        },
+        {
+          "block": "textInput",
+          "field": "what",
+          "label": "What for",
+          "placeholder": "Dinner"
+        },
+        {
+          "block": "amountInput",
+          "field": "total",
+          "label": "Total in sats"
+        },
+        {
+          "block": "friendPicker",
+          "field": "friends",
+          "label": "Split with"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Review split",
+          "event": "SPLIT"
+        }
+      ],
+      "on": {
+        "SPLIT": {
+          "target": "requesting",
+          "requires": [
+            "total",
+            "friends"
+          ]
+        }
+      }
+    },
+    "requesting": {
+      "effect": "request",
+      "onDone": "sent",
+      "onError": "failed",
+      "onDecline": "compose"
+    },
+    "sent": {
+      "final": true,
+      "view": [
+        {
+          "block": "heading",
+          "text": "Requests sent"
+        },
+        {
+          "block": "text",
+          "text": "{friends.count} friends were asked for their share of {total}. Each request has its own row in Activity."
+        }
+      ]
+    },
+    "failed": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Requests not sent"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Try again",
+          "event": "RETRY"
+        }
+      ],
+      "on": {
+        "RETRY": "compose"
+      }
+    }
+  },
+  "signature": "3045022100b6a17565649506010dece7a2612182d924f3f4d4425930ca47fe65fe75d3d2570220154003f2a14d8a17adbd4ed67f476c14e8ba7393ea5b98b3798ac61a8460a24b"
+}

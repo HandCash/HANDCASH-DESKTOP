@@ -1,0 +1,153 @@
+{
+  "format": "chart-app/1",
+  "id": "tip-jar",
+  "name": "Tip jar",
+  "summary": "Tip a friend a set amount of Bitcoin SV.",
+  "version": "1.0.0",
+  "author": {
+    "identityKey": "02a1a56e723281cc9f9b74ab54504b5b6463f2fa910be76d84052698d8b60112f3",
+    "name": "HandCash"
+  },
+  "initial": "compose",
+  "fields": {
+    "friend": {
+      "type": "friend"
+    },
+    "amount": {
+      "type": "amount",
+      "coin": "BSV"
+    }
+  },
+  "effects": {
+    "tip": {
+      "kind": "sendPayment",
+      "coin": "BSV",
+      "networks": [
+        "mainnet",
+        "testnet"
+      ],
+      "to": {
+        "field": "friend"
+      },
+      "amount": {
+        "field": "amount"
+      }
+    }
+  },
+  "states": {
+    "compose": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Tip jar"
+        },
+        {
+          "block": "text",
+          "text": "Pick a friend, then a tip. You approve it before it goes."
+        },
+        {
+          "block": "friendPicker",
+          "field": "friend",
+          "label": "Tip"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "1,000 sats",
+          "event": "TIP_SMALL"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "5,000 sats",
+          "event": "TIP_MEDIUM"
+        },
+        {
+          "block": "secondaryButton",
+          "label": "20,000 sats",
+          "event": "TIP_LARGE"
+        },
+        {
+          "block": "amountInput",
+          "field": "amount",
+          "label": "Or your own amount in sats"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Tip this amount",
+          "event": "TIP"
+        }
+      ],
+      "on": {
+        "TIP_SMALL": {
+          "target": "tipping",
+          "requires": [
+            "friend"
+          ],
+          "assign": {
+            "amount": 1000
+          }
+        },
+        "TIP_MEDIUM": {
+          "target": "tipping",
+          "requires": [
+            "friend"
+          ],
+          "assign": {
+            "amount": 5000
+          }
+        },
+        "TIP_LARGE": {
+          "target": "tipping",
+          "requires": [
+            "friend"
+          ],
+          "assign": {
+            "amount": 20000
+          }
+        },
+        "TIP": {
+          "target": "tipping",
+          "requires": [
+            "friend",
+            "amount"
+          ]
+        }
+      }
+    },
+    "tipping": {
+      "effect": "tip",
+      "onDone": "thanked",
+      "onError": "failed",
+      "onDecline": "compose"
+    },
+    "thanked": {
+      "final": true,
+      "view": [
+        {
+          "block": "heading",
+          "text": "Tip on its way"
+        },
+        {
+          "block": "text",
+          "text": "{amount} to {friend}. Its status is on its own row in Activity."
+        }
+      ]
+    },
+    "failed": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Tip not sent"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Try again",
+          "event": "RETRY"
+        }
+      ],
+      "on": {
+        "RETRY": "compose"
+      }
+    }
+  },
+  "signature": "3044022011e6737c20b7aac9fea310478414a71e2ca3062d586a360031b2ca458200908702203facbc865f3e18c6c7766fee1be17bf864c1cd8d3ccb593372939c764b0b4304"
+}

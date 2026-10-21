@@ -29,6 +29,7 @@ import {
   type MessageboxMethod,
 } from './messageboxAuth'
 import { getFriendByIdentityKey } from './friends'
+import { isSenderBlocked } from './blockedSenders'
 import { openPeerMessage, sealPeerMessage } from './messageEnvelope'
 import {
   appendMessage,
@@ -894,7 +895,7 @@ function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }
   setDirectInboundHandler((sender, body) => {
     acceptDirectBody(sender, body, env.rootKeyHex)
   })
-  installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey))
+  installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey) && !isSenderBlocked(identityKey))
   installSignalSender((to, body) => postToPeerBox(env.rootKeyHex, to, MESSAGES_BOX, body))
   if (signalPoller?.identity === self) return
   signalPoller?.poller.stop()
@@ -1180,6 +1181,7 @@ export function openFromSelf(rootKeyHex: string, body: string): string | null {
 }
 
 function acceptDirectBody(sender: string, body: string, rootKeyHex: string): void {
+  if (isSenderBlocked(sender)) return
   const inner = plaintextFromPeer(body, rootKeyHex, sender)
   if (inner == null || inner.startsWith(LEGACY_SESSION_OFFER_PREFIX)) return
   if (isIdentityCardControl(inner)) {
@@ -1398,6 +1400,10 @@ export async function pollInboundTipHints(args: {
     }
     for (const m of list) {
       const senderKey = listedSender(m)
+      if (senderKey && isSenderBlocked(senderKey)) {
+        if (m.messageId) ackIds.push(String(m.messageId))
+        continue
+      }
       const inner = plaintextFromPeer(m.body, args.rootKeyHex, senderKey)
       if (inner == null) continue
       if (inner.startsWith(LEGACY_SESSION_OFFER_PREFIX)) {
@@ -1780,6 +1786,104 @@ export async function acknowledgeMessageIds(
   messagebox?: string | null,
 ): Promise<void> {
   return acknowledgeMessages(messageIds, rootKeyHex, messagebox)
+}
+
+export type ReviewedMessageKind =
+  | 'message'
+  | 'payment-request'
+  | 'payment-notice'
+  | 'tip'
+  | 'file'
+  | 'identity-card'
+  | 'market'
+  | 'unreadable'
+
+export type ReviewedMessage = {
+  messageId: string
+  messageBox: string
+  sender: string
+  createdAt: number
+  kind: ReviewedMessageKind
+  text: string
+  /** Payment notices: the txid the notice names. */
+  txid?: string
+}
+
+function reviewKind(inner: string | null): { kind: ReviewedMessageKind; text: string; txid?: string } {
+  if (inner == null) return { kind: 'unreadable', text: '' }
+  if (isIdentityCardControl(inner)) return { kind: 'identity-card', text: '' }
+  if (decodeMarketSettlementWire(inner)) return { kind: 'market', text: '' }
+  if (inner.startsWith(LEGACY_SESSION_OFFER_PREFIX)) return { kind: 'unreadable', text: '' }
+  const decoded = decodeMessageBody(inner)
+  const txid = decoded.meta?.txid?.trim().toLowerCase()
+  const text = decoded.text.slice(0, 280)
+  switch (decoded.kind) {
+    case 'pay-request':
+      return { kind: 'payment-request', text }
+    case 'pay-sent':
+      return { kind: 'payment-notice', text, txid }
+    case 'tip':
+      return { kind: 'tip', text, txid }
+    case 'file':
+      return { kind: 'file', text }
+    default:
+      return { kind: 'message', text }
+  }
+}
+
+/**
+ * What waits in one of this identity's boxes on its messagebox host, opened
+ * and classified, without acting on or acknowledging any of it. Throws when
+ * the host does not answer.
+ */
+export async function reviewOwnBox(
+  rootKeyHex: string,
+  messageBox: string,
+  messagebox?: string | null,
+): Promise<ReviewedMessage[]> {
+  const box = normalizeMessageboxBase(messagebox)
+  const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/listMessages`, {
+    method: 'POST',
+    headers: signedMessageboxHeaders(rootKeyHex, 'listMessages', {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }, box, messageBox),
+    body: JSON.stringify({ messageBox }),
+  })
+  if (!res.ok) throw new Error(`The message box host refused the list (${res.status})`)
+  const data = (await res.json()) as { messages?: ListedMessage[] }
+  const list = Array.isArray(data.messages) ? data.messages : []
+  return list.map((m) => {
+    const sender = listedSender(m)
+    const inner = sender ? plaintextFromPeer(m.body, rootKeyHex, sender) : null
+    return {
+      messageId: String(m.messageId ?? ''),
+      messageBox,
+      sender,
+      createdAt: Number(m.createdAt) || 0,
+      ...reviewKind(inner),
+    }
+  })
+}
+
+/** BRC-33 acknowledge (the host deletes them). Throws when the host refuses, unlike the poller's best-effort ack. */
+export async function clearOwnBoxMessages(
+  rootKeyHex: string,
+  messageBox: string,
+  messageIds: string[],
+  messagebox?: string | null,
+): Promise<void> {
+  if (!messageIds.length) return
+  const box = normalizeMessageboxBase(messagebox)
+  const res = await authenticatedMessageboxFetch(rootKeyHex, box, `${box}/acknowledgeMessage`, {
+    method: 'POST',
+    headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    }, box, messageBox),
+    body: JSON.stringify({ messageBox, messageIds }),
+  })
+  if (!res.ok) throw new Error(`The message box host refused to clear (${res.status})`)
 }
 
 async function acknowledgeMessages(

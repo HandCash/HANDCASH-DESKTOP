@@ -48,6 +48,7 @@ import {
   screenshotShortcutKeys,
 } from './settings'
 import { WalletHealthAlertBadge } from './settings/WalletHealthAlertBadge'
+import { CHART_APPS_DESCRIPTION } from '../apps/chartFormat'
 import {
   dependencyHealthAlert,
   getDependencyHealthSnapshot,
@@ -134,6 +135,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'wallet-health') return 'Wallet health'
   if (id === 'recover-tx') return 'Recover from transaction'
   if (id === 'labs') return 'Labs'
+  if (id === 'chart-apps') return 'Apps'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'google-recovery') return 'HandCash Recovery'
@@ -379,6 +381,17 @@ export function SettingsPanel() {
               </SettingsControlRow>
             </>
           ) : null}
+        </ul>
+      </SettingsSection>
+
+      <SettingsSection title="Apps" part="chart-apps">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="Apps"
+            description={CHART_APPS_DESCRIPTION}
+            icon={settingIconFor('chart-apps').icon}
+            onClick={() => openSetting('chart-apps')}
+          />
         </ul>
       </SettingsSection>
 

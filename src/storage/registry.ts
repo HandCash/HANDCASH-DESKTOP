@@ -213,6 +213,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  blockedSenders: defineStorage({
+    key: 'handcash.blockedSenders.v1',
+    owner: 'friends',
+    scope: 'wallet',
+    version: 1,
+  }),
   activitySeen: defineStorage({
     key: 'handcash.activitySeen.v2',
     owner: 'activity',

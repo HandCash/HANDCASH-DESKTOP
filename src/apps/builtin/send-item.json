@@ -1,0 +1,110 @@
+{
+  "format": "chart-app/1",
+  "id": "send-item",
+  "name": "Send an item",
+  "summary": "Send an item you hold to a friend.",
+  "version": "1.0.0",
+  "author": {
+    "identityKey": "02a1a56e723281cc9f9b74ab54504b5b6463f2fa910be76d84052698d8b60112f3",
+    "name": "HandCash"
+  },
+  "initial": "compose",
+  "fields": {
+    "item": {
+      "type": "item"
+    },
+    "friend": {
+      "type": "friend"
+    }
+  },
+  "effects": {
+    "send": {
+      "kind": "sendItem",
+      "coin": "BSV",
+      "networks": [
+        "mainnet",
+        "testnet"
+      ],
+      "to": {
+        "field": "friend"
+      },
+      "item": {
+        "field": "item"
+      }
+    }
+  },
+  "states": {
+    "compose": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Send an item"
+        },
+        {
+          "block": "text",
+          "text": "Pick an item you hold and the friend it goes to."
+        },
+        {
+          "block": "itemPicker",
+          "field": "item",
+          "label": "Item"
+        },
+        {
+          "block": "friendPicker",
+          "field": "friend",
+          "label": "To"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Review",
+          "event": "SEND"
+        }
+      ],
+      "on": {
+        "SEND": {
+          "target": "sending",
+          "requires": [
+            "item",
+            "friend"
+          ]
+        }
+      }
+    },
+    "sending": {
+      "effect": "send",
+      "onDone": "sent",
+      "onError": "failed",
+      "onDecline": "compose"
+    },
+    "sent": {
+      "final": true,
+      "view": [
+        {
+          "block": "heading",
+          "text": "Item on its way"
+        },
+        {
+          "block": "text",
+          "text": "{item} to {friend}. Its status is on its own row in Activity."
+        }
+      ]
+    },
+    "failed": {
+      "view": [
+        {
+          "block": "heading",
+          "text": "Item not sent"
+        },
+        {
+          "block": "primaryButton",
+          "label": "Try again",
+          "event": "RETRY"
+        }
+      ],
+      "on": {
+        "RETRY": "compose"
+      }
+    }
+  },
+  "signature": "30440220775775b0715a4932224101176a7a9d2f9b97678de1d04a919c655eff12ebffbf022018d6f0ba1a8378835b9b51c0d6e2c131154dda5ea989f27fa9dda429d15e8919"
+}
