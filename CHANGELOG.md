@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.3.634] - 2026-10-21
+
+### Changed
+
+- Settings › Apps runs five signed apps: payment request, tip jar, split the bill, send an item and message box. The wallet checks each app's signature and asks before it moves money, shares your identity, clears messages or blocks a sender.
+- Token holdings and the swap offer book open at once from what was last loaded, then refresh in the background.
+- Activity, inventory and token lists draw only the rows on screen, and item art decodes off the main thread, so long lists scroll smoothly.
+- The top-bar status names why it is syncing (Network slow, Catching up), and sends no longer show there.
+- New developer key wallets use HandCash wallet storage; existing keys stay where they were saved.
+- Sign-in and restore no longer lead to Google recovery. Touch ID and auto-unlock report their progress and failures.
+- The Aeon UI engine is updated to 1.10.0.
+
+### Fixed
+
+- A withdrawn swap offer stays gone, and a refreshed offer book always shows, even when it loads within the same millisecond as the last one.
+- A new device refuses a wallet sent before it showed its code to compare. A sign-in check that returns after you lock or switch wallets no longer shows the old wallet's requests.
+- Device sign-in keeps the sent wallet on the relay until this device has saved it, never installs it twice on a slow relay, and says when the network dropped.
+- Vault saves are read back from disk, and a mistyped recovery phrase names the wrong word.
+- Google recovery enrollment refuses a recovery email whose mail Google handles.
+- The activity feed no longer rebuilds every 5 seconds.
+- A send's new balance shows and is saved at once.
+- Losing the open wallet to another device is always noticed, even while the account menu is busy.
+
 ## [1.3.633] - 2026-10-21
 
 ### Changed
