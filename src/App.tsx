@@ -49,7 +49,6 @@ import {
 import { DISPLAY_BALANCE_REFRESH_EVENT, publishDisplayBalanceRefresh } from './wallet/displayBalanceRefresh'
 import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
 import { swapUnlockHold } from './wallet/swap/unlockHold'
-import { SwapUnlockNotice } from './components/SwapUnlockNotice'
 import { getPaymentProgress } from './wallet/paymentProgress'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
@@ -381,7 +380,6 @@ export function App() {
           <div className="titlebar-end" data-aeon-no-drag>
             {(snapshot.matches('ready') || snapshot.matches('sending')) && (
               <div className="titlebar-actions">
-                <SwapUnlockNotice />
                 <button
                   type="button"
                   className="titlebar-action-btn"

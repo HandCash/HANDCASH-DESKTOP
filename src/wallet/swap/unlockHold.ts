@@ -11,10 +11,20 @@ const NEEDS_THIS_WALLET: ReadonlySet<SettleWait> = new Set(['accept', 'presign',
 /** A swap mid-step with no deadline on record is held this long, then looked at again. */
 const STEP_HOLD_MS = 10 * 60_000
 
-function holdOf(r: SettleRecord, now: number): number | null {
-  if (r.phase === 'locking' || r.phase === 'claiming') return now + STEP_HOLD_MS
+/**
+ * Whether this swap's next move is this wallet's signature, and the deadline
+ * on record for it; `until` is null while a step runs with no deadline.
+ */
+export function signatureWait(r: SettleRecord): { until: number | null } | null {
+  if (r.phase === 'locking' || r.phase === 'claiming') return { until: null }
   if (!r.waiting || !NEEDS_THIS_WALLET.has(r.waiting.for)) return null
-  const until = r.waiting.until ?? now + STEP_HOLD_MS
+  return { until: r.waiting.until ?? null }
+}
+
+function holdOf(r: SettleRecord, now: number): number | null {
+  const wait = signatureWait(r)
+  if (!wait) return null
+  const until = wait.until ?? now + STEP_HOLD_MS
   return until > now ? until : null
 }
 

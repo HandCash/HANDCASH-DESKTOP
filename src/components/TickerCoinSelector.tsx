@@ -20,7 +20,7 @@ import { formatBsvSignificant } from '../wallet/session'
 import { formatUsd, formatUsdFromSats } from '../wallet/fx'
 
 /** What the wallet holds of `coin`, short, with its value at the ticker's quote; null when none. */
-function heldIn(
+export function heldIn(
   coin: MarketCoin,
   heldBsvSats: number | null,
   heldCoins: Record<CoinChain, bigint>,
@@ -98,7 +98,11 @@ export function TickerCoinSelector({
                     <span data-aeon-part="held-amount">{held.amount}</span>
                     {held.usd ? <span data-aeon-part="held-usd">{held.usd}</span> : null}
                   </span>
-                ) : null}
+                ) : (
+                  <span data-aeon-part="held">
+                    <span data-aeon-part="held-amount">{TICKER_COINS[coin].sym}</span>
+                  </span>
+                )}
               </ListRow.Root>
             </li>
           )

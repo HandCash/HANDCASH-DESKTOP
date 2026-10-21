@@ -1,7 +1,7 @@
 import type { ActivitySwap } from '../../wallet/appActivity'
 import { openSwapDetails } from '../../wallet/navStore'
 import { playWalletSound } from '../../wallet/soundService'
-import { SWAP_ROUTE_LABEL } from '../../wallet/swap/swapView'
+import { SWAP_ROUTE_LABEL, signatureWaitText } from '../../wallet/swap/swapView'
 import { ConfirmationBadge } from '../CoinDepositProgress'
 import { LoadingSpinner } from '../LoadingSpinner'
 import { SwapPairMark } from '../SwapVisuals'
@@ -34,6 +34,7 @@ export function SwapActivityRow({
   const refunding = moving && (swap.state === 'locktime' || swap.state === 'refunding')
   const ended = ENDED[swap.tone] ?? (refunding ? 'Refunding' : undefined)
   const subtitle = `${SWAP_ROUTE_LABEL[swap.route]} · ${swap.status}`
+  const signing = moving ? signatureWaitText(swap.signs, Date.now()) : null
   return (
     <li
       data-activity-key={rowKey}
@@ -78,6 +79,10 @@ export function SwapActivityRow({
                 needed={swap.confirming.needed}
                 label={swap.status}
               />
+            </span>
+          ) : signing ? (
+            <span className="history-when" data-aeon-part="row-state" data-aeon-state="signing" title="This swap needs this wallet to sign; auto-lock waits for it">
+              {signing}
             </span>
           ) : when ? (
             <span className="history-when" data-aeon-part="row-state">

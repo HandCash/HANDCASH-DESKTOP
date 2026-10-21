@@ -5,14 +5,11 @@ import { stateToAttr } from '@aeon-ui/core'
 import { tickerMachine } from '../machines/tickerMachine'
 import { useTickerCoin } from '../features/tickerCoin'
 import { useHeldCoins } from '../features/heldCoins'
-import { coinUsd } from '../wallet/heldValue'
-import { COIN_INFO, formatCoinShort, type CoinChain } from '../wallet/coins/coinChains'
-import { formatBsvSignificant } from '../wallet/session'
-import { formatUsd, formatUsdFromSats } from '../wallet/fx'
+import type { CoinChain } from '../wallet/coins/coinChains'
 import { setTickerCoin, TICKER_COIN_ORDER, TICKER_COINS } from '../wallet/tickerCoin'
 import { stepOnWheel } from './carouselWheel'
 import { playWalletSound } from '../wallet/soundService'
-import { TickerCoinMark, TickerCoinSelector } from './TickerCoinSelector'
+import { heldIn, TickerCoinMark, TickerCoinSelector } from './TickerCoinSelector'
 import { bsvLogoClassic, bsvLogoDefault } from '../assets/brand/bsvLogos'
 import { Skeleton, SkeletonLine } from './Skeleton'
 import { ExpandMoreIcon } from './icons'
@@ -89,18 +86,6 @@ function latestToast(items: ToastItem[]): ToastItem | null {
   return items[items.length - 1] ?? null
 }
 
-/** What the wallet holds of `coin` in words, valued at the ticker's own quote; null when it holds none. */
-function heldLabel(coin: MarketCoin, heldBsvSats: number | null, heldCoins: Record<CoinChain, bigint>, priceUsd: number | null): string | null {
-  if (coin !== 'bsv') {
-    const units = heldCoins[coin]
-    if (units === 0n) return null
-    const usd = coinUsd(coin, units, priceUsd)
-    return `${formatCoinShort(coin, units)} ${COIN_INFO[coin].ticker}${usd == null ? '' : ` · ${formatUsd(usd)}`}`
-  }
-  if (!heldBsvSats) return null
-  return `${formatBsvSignificant(heldBsvSats, 4)}${priceUsd == null ? '' : ` · ${formatUsdFromSats(heldBsvSats, priceUsd)}`}`
-}
-
 type SlideShared = {
   heldBsvSats: number | null
   heldCoins: Record<CoinChain, bigint>
@@ -138,7 +123,7 @@ function MarketSlide({
   const marketReady = Boolean(stats)
   const rangeLabel = BSV_CHART_RANGE_LABEL[chartRange]
   const shown = TICKER_COINS[coin]
-  const held = heldLabel(coin, heldBsvSats, heldCoins, stats?.priceUsd ?? null)
+  const held = heldIn(coin, heldBsvSats, heldCoins, stats?.priceUsd ?? null)
 
   return (
     <div
@@ -159,17 +144,17 @@ function MarketSlide({
         />
         <span className="bsv-logo-btn" aria-hidden>
           {coin !== 'bsv' ? (
-            <TickerCoinMark coin={coin} size={44} />
+            <TickerCoinMark coin={coin} size={32} />
           ) : !logosReady.normal ? (
-            <Skeleton className="bsv-logo-skeleton" width={44} height={44} radius={12} />
+            <Skeleton className="bsv-logo-skeleton" width={32} height={32} radius={8} />
           ) : (
             <span className="bsv-logo-stack">
               <img
                 className={`bsv-logo${classicLogo ? '' : ' is-shown'}`}
                 src={bsvLogoDefault}
                 alt=""
-                width={44}
-                height={44}
+                width={32}
+                height={32}
                 draggable={false}
               />
               {logosReady.classic ? (
@@ -177,8 +162,8 @@ function MarketSlide({
                   className={`bsv-logo${classicLogo ? ' is-shown' : ''}`}
                   src={bsvLogoClassic}
                   alt=""
-                  width={44}
-                  height={44}
+                  width={32}
+                  height={32}
                   draggable={false}
                 />
               ) : null}
@@ -192,8 +177,11 @@ function MarketSlide({
               <ExpandMoreIcon size={16} />
             </span>
           </span>
-          {held ? <span data-aeon-part="held">{held}</span> : null}
         </div>
+        <span data-aeon-part="held" aria-label={held ? `You hold ${held.amount}` : undefined}>
+          <span data-aeon-part="held-amount">{held?.amount ?? shown.sym}</span>
+          {held?.usd ? <span data-aeon-part="held-usd">{held.usd}</span> : null}
+        </span>
       </div>
 
       {marketReady ? (

@@ -36,6 +36,7 @@ function swapEntry(view: SwapView): ActivityEntry {
     status: view.status,
     receive: view.receive.toString(),
     ...(view.confirming ? { confirming: view.confirming } : {}),
+    ...(view.signs ? { signs: view.signs } : {}),
   }
   return {
     id: swapGroupOf(view),

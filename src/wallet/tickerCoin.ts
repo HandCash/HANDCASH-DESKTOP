@@ -6,7 +6,7 @@ type TickerCoinInfo = { name: string; sym: string; about: string; aboutTitle: st
 /** What the ticker says about each coin it can show. */
 export const TICKER_COINS: Record<MarketCoin, TickerCoinInfo> = {
   bsv: {
-    name: 'Bitcoin SV (BSV)',
+    name: 'Bitcoin SV',
     sym: 'BSV',
     aboutTitle: 'What is BSV?',
     about:
@@ -19,7 +19,7 @@ export const TICKER_COINS: Record<MarketCoin, TickerCoinInfo> = {
       return [
         chain,
         {
-          name: `${label} (${ticker})`,
+          name: label,
           sym: ticker,
           aboutTitle: `What is ${ticker}?`,
           about: `${label} is a separate blockchain. This wallet holds ${ticker} with its own key, on ${label} itself, and counts ${confirmations} ${label} confirmations before a received coin can be spent.`,

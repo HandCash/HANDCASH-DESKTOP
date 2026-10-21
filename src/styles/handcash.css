@@ -2080,7 +2080,7 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 .bsv-asset-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-shrink: 0;
 }
 
@@ -2110,15 +2110,15 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 .bsv-logo-stack {
   position: relative;
   display: block;
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--hc-radius);
   overflow: hidden;
 }
 
 .bsv-logo {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--hc-radius);
   display: block;
   object-fit: cover;
@@ -2143,8 +2143,10 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   min-width: 0;
 }
 
-.bsv-asset-text strong {
-  font-size: var(--hc-text-lg);
+.bsv-asset-text strong,
+[data-aeon-scope='ticker-coins'] [data-aeon-part='label'] {
+  font-size: var(--hc-text-md);
+  font-weight: 600;
   line-height: 1.2;
 }
 
@@ -2187,7 +2189,7 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 
 [data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger'] {
   position: absolute;
-  inset: -6px -10px -6px -6px;
+  inset: -8px -10px;
   margin: 0;
   padding: 0;
   border: 0;
@@ -2237,15 +2239,6 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 [data-aeon-scope='what-is-bsv'] .bsv-asset-row:has([data-aeon-part='coin-trigger']:hover) [data-aeon-part='caret'],
 [data-aeon-scope='what-is-bsv'] .bsv-asset-row:has([data-aeon-part='coin-trigger']:focus-visible) [data-aeon-part='caret'] {
   opacity: 1;
-}
-
-[data-aeon-scope='what-is-bsv'] [data-aeon-part='held'] {
-  font-size: var(--hc-text-xs);
-  color: var(--hc-muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 [data-aeon-scope='ticker-coins'] {
@@ -17782,22 +17775,26 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   background: var(--hc-text);
 }
 
-/* The coin menu shows what this wallet actually holds of each coin. */
-[data-aeon-scope='ticker-coins'] [data-aeon-part='held'] {
+/* The coin selector and its menu show what this wallet actually holds of each coin. */
+[data-aeon-scope='ticker-coins'] [data-aeon-part='held'],
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row [data-aeon-part='held'] {
   display: grid;
   justify-items: end;
   gap: 1px;
   margin-left: auto;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  pointer-events: none;
 }
 
-[data-aeon-scope='ticker-coins'] [data-aeon-part='held-amount'] {
+[data-aeon-scope='ticker-coins'] [data-aeon-part='held-amount'],
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row [data-aeon-part='held-amount'] {
   font-size: var(--hc-text-sm);
   font-weight: 600;
 }
 
-[data-aeon-scope='ticker-coins'] [data-aeon-part='held-usd'] {
+[data-aeon-scope='ticker-coins'] [data-aeon-part='held-usd'],
+[data-aeon-scope='what-is-bsv'] .bsv-asset-row [data-aeon-part='held-usd'] {
   font-size: var(--hc-text-xs);
   color: var(--hc-muted);
 }
@@ -17899,18 +17896,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   }
 }
 
-/* Auto-lock is waiting on a swap that needs this wallet to sign; the lock button beside it still locks at once. */
-.titlebar-hold {
-  display: inline-flex;
-  align-items: center;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+/* Auto-lock waits on this swap: it needs this wallet to sign. */
+[data-aeon-scope='activity-row'][data-aeon-part='swap'] [data-aeon-part='row-state'][data-aeon-state='signing'],
+[data-aeon-scope='swap-detail'] [data-aeon-part='signing'] .wallet-detail-value {
   color: var(--hc-accent);
-  font-size: var(--hc-text-xs);
   font-weight: 600;
-  white-space: nowrap;
 }
 
 /* The phone's amount pad: twelve big keys under the amount, in place of the system keyboard. */

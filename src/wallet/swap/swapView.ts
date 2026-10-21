@@ -3,6 +3,10 @@ import type { SwapRecord } from './exolixSwap'
 import { takerTotals, type SwapRole } from './settle'
 import type { SettleRecord, SettleState } from './settleStore'
 import { describeSwap, type LockConfirming } from './settleView'
+import { signatureWait } from './unlockHold'
+
+/** `until`: the deadline auto-lock waits to (unix ms); null while a step runs with no deadline on record. */
+export type SignatureWait = { until: number | null }
 
 /**
  * One swap as every surface shows it, whichever way it runs: wallet to wallet
@@ -41,6 +45,8 @@ export type SwapView = {
   status: string
   /** A direct swap waiting on a lock to be buried: which, and how deep it is. */
   confirming?: LockConfirming
+  /** A direct swap whose next move is this wallet's signature: auto-lock waits for it. */
+  signs?: SignatureWait
   legs: SwapLeg[]
   createdAt: number
   updatedAt: number
@@ -105,6 +111,14 @@ export function exolixStatusText(record: SwapRecord): string {
   }
 }
 
+/** "Unlocked until Thu 1:41 AM" while this wallet's signature is next, "Signing" mid-step; null once the deadline has passed. */
+export function signatureWaitText(signs: SignatureWait | undefined, now: number): string | null {
+  if (!signs) return null
+  if (signs.until === null) return 'Signing'
+  if (signs.until <= now) return null
+  return `Unlocked until ${new Date(signs.until).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`
+}
+
 const isTxid = (value: string | undefined): value is string => !!value && /^[0-9a-f]{64}$/i.test(value)
 
 function legsOf(entries: ReadonlyArray<[SwapLegRole, SwapAsset, string | undefined]>): SwapLeg[] {
@@ -144,6 +158,7 @@ export function exolixSwapView(record: SwapRecord): SwapView {
 
 export function directSwapView(record: SettleRecord): SwapView {
   const row = describeSwap(record)
+  const signs = swapTone(row.state) === 'moving' ? signatureWait(record) : null
   const { offer } = record.terms
   const taker = record.role === 'taker'
   const pay = taker ? takerTotals(record.terms).pays : BigInt(record.terms.receive)
@@ -163,6 +178,7 @@ export function directSwapView(record: SettleRecord): SwapView {
     title: title(from, pay, to, receive),
     status: row.status,
     ...(row.confirming ? { confirming: row.confirming } : {}),
+    ...(signs ? { signs } : {}),
     legs: legsOf([
       ['lock', from, record.outcome === 'unsent' ? undefined : (record.own.funding?.txid ?? record.own.prepared?.txid)],
       ['peer-lock', to, record.peer.funding?.txid],

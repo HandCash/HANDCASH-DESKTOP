@@ -140,6 +140,8 @@ export type ActivitySwap = {
   receive: string;
   /** The lock the swap waits on to be buried, counted toward the depth its reader needs. */
   confirming?: { chain: CoinChain | "bsv"; counted: number; needed: number };
+  /** This wallet's signature is the swap's next move: the deadline auto-lock waits to, null mid-step. */
+  signs?: { until: number | null };
 };
 
 function normalizeIdentityKeyField(value: unknown): string | undefined {

@@ -3,7 +3,7 @@ import { useSwapViews } from '../features/swap'
 import { openSwapFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { SWAP_ASSET_INFO, type SwapAsset } from '../wallet/swap/assets'
-import { SWAP_LEG_LABEL, SWAP_ROUTE_LABEL, type SwapLeg, type SwapView } from '../wallet/swap/swapView'
+import { SWAP_LEG_LABEL, SWAP_ROUTE_LABEL, signatureWaitText, type SwapLeg, type SwapView } from '../wallet/swap/swapView'
 import { coinTxExplorerUrl, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
@@ -59,6 +59,7 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
   }
   const exchangeId = view.route === 'exolix' ? view.id.slice('exolix:'.length) : null
   const steps = directSteps(view)
+  const signing = view.tone === 'moving' ? signatureWaitText(view.signs, Date.now()) : null
   const stepTxids = new Set(steps?.flatMap((step) => (step.leg ? [step.leg.txid] : [])))
   const otherLegs = view.legs.filter((leg) => !stepTxids.has(leg.txid))
   return (
@@ -114,6 +115,14 @@ export function SwapDetailPanel({ swapId, chain }: { swapId: string; chain: Chai
             <span>Status</span>
             <span className="wallet-detail-value">{view.status}</span>
           </div>
+          {signing ? (
+            <div className="wallet-detail" data-aeon-part="signing">
+              <span>Your signature</span>
+              <span className="wallet-detail-value" title="This swap needs this wallet to sign; auto-lock waits for it">
+                {signing}
+              </span>
+            </div>
+          ) : null}
           <div className="wallet-detail">
             <span>Route</span>
             <span className="wallet-detail-value" data-aeon-part="route">
