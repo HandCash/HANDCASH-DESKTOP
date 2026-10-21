@@ -101,6 +101,8 @@ type Props = {
 }
 
 
+const ALMOST_READY = { title: 'Almost ready', lede: 'Opening your wallet on this device.' }
+
 /** What a restore does to the install that held this vault before (`accountHolding.ts`). */
 type RestoreRole = 'replace' | 'keep'
 
@@ -143,7 +145,7 @@ export function AuthScreen({
   onBalanceRefreshed,
   onFail,
 }: Props) {
-  const [snapshot, send] = useMachine(unlockMachine)
+  const [snapshot, send, unlockActor] = useMachine(unlockMachine)
   const chain: Chain = 'main'
   const stateAttr = stateToAttr(snapshot.value)
   const [formMode, setFormMode] = useState<FormMode>(() => initialFormMode({ mode, recoveryOnly }))
@@ -155,15 +157,6 @@ export function AuthScreen({
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const [deviceStatus, setDeviceStatus] = useState<DeviceAuthStatus | null>(null)
-  const [deviceUnlockAttempted, setDeviceUnlockAttempted] = useState(false)
-  /**
-   * Synchronous twin of `deviceUnlockAttempted`.
-   *
-   * The state flag only bars a re-entry that happens after its commit, and the
-   * lock-screen effect can run again before then — which started a second
-   * Touch ID prompt and, behind it, a second unlock recompose.
-   */
-  const deviceUnlockStarted = useRef(false)
   const [pendingOnboard, setPendingOnboard] = useState<{
     profile: WalletProfile
     balanceSats: number
@@ -173,8 +166,11 @@ export function AuthScreen({
     step: 'keys-backup' | 'history' | 'accept' | 'protect'
     kind: 'create' | 'restore'
   } | null>(null)
-  /** Holds the create/unlock form off-screen while vault boots — avoids password flash. */
-  const [preparing, setPreparing] = useState<{ title: string; lede: string } | null>(null)
+  /** Holds the create/unlock form off-screen while the vault opens — avoids password flash. */
+  const preparing =
+    snapshot.matches('awaitingDevice') || snapshot.matches('opening')
+      ? snapshot.context.progress
+      : null
   const shareFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -198,109 +194,86 @@ export function AuthScreen({
     }
   }, [mode])
 
+  /**
+   * The chart is the only guard against a second attempt. An attempt outlives
+   * a re-run of the effect that started it (React StrictMode re-runs effects
+   * on mount), so a re-run resumes what the chart holds instead of starting
+   * over; a result that lands after the screen is gone is dropped.
+   */
+  const unlockScreenLive = () => unlockActor.getSnapshot().status !== 'stopped'
+
+  /** Touch ID, then open the wallet. `auto` is the lock screen's own prompt. */
+  const promptDevice = (auto: boolean) => {
+    void (async () => {
+      try {
+        const unlocked = await unlockVaultWithDevice('Unlock HandCash')
+        if (!unlockScreenLive()) return
+        send({ type: 'UNLOCKED' })
+        await finishUnlock(unlocked, null)
+      } catch (err) {
+        if (!unlockScreenLive()) return
+        const message = err instanceof Error ? err.message : String(err)
+        const cancelled = message === 'cancelled'
+        send({ type: 'FAIL', error: message, cancelled })
+        if (cancelled) return
+        playWalletSound('error')
+        if (!auto || !readVaultUnlockFactors().password) onFail(message)
+      }
+    })()
+  }
+
   useEffect(() => {
-    if (mode !== 'locked' || formMode !== 'unlock' || preparing) return
+    if (mode !== 'locked' || formMode !== 'unlock') return
     if (!shouldAutoUnlock()) return
     const secret = getOpenUnlockSecret()
     if (!secret) return
-    let cancelled = false
+    if (!unlockActor.getSnapshot().can({ type: 'OPEN_SECRET' })) return
     console.info('[unlock] factor=open-secret — device lock is off')
-    setDeviceUnlockAttempted(true)
-    send({ type: 'SUBMIT' })
-    setPreparing({ title: 'Opening', lede: 'Opening your wallet on this device.' })
+    send({ type: 'OPEN_SECRET' })
     void unlockVault(secret)
       .then((unlocked) => {
-        if (cancelled) return
+        if (!unlockScreenLive()) return
         return finishUnlock(unlocked, secret)
       })
       .catch((err) => {
-        if (cancelled) return
+        if (!unlockScreenLive()) return
         const message = err instanceof Error ? err.message : String(err)
-        setPreparing(null)
         send({ type: 'FAIL', error: message })
         onFail(message)
       })
-    return () => {
-      cancelled = true
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, formMode])
 
   useEffect(() => {
-    if (mode !== 'locked' || formMode !== 'unlock' || deviceUnlockAttempted || preparing) return
-    if (deviceUnlockStarted.current) return
+    if (mode !== 'locked' || formMode !== 'unlock') return
     if (shouldAutoUnlock()) return
-    const factors = readVaultUnlockFactors()
-    if (!factors.device) {
+    if (!readVaultUnlockFactors().device) {
       console.info('[unlock] factor=password — no device wrap in this vault')
       return
     }
-    console.info('[unlock] factor=device — prompting this device')
-
-    // Never Touch-ID prompt while the window is hidden (close / alt-tab). Wait
-    // until the user is looking at the lock screen again.
-    let cancelled = false
-    /**
-     * Hand the guard back when this run is torn down.
-     *
-     * Cleanup makes the in-flight attempt discard its own result, so whatever
-     * replaces this run has to be allowed to start — holding the guard past
-     * teardown leaves the wallet on the lock screen with no attempt alive.
-     * Only one OS prompt happens either way: `deviceAuthUnlock` single-flights,
-     * so the replacement joins the prompt already on screen.
-     */
-    const release = () => {
-      cancelled = true
-      deviceUnlockStarted.current = false
-    }
-    const run = () => {
-      if (cancelled) return
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+    const visible = () =>
+      typeof document === 'undefined' || document.visibilityState === 'visible'
+    if (!unlockActor.getSnapshot().matches('waitingForVisible')) {
+      const ask = { type: 'DEVICE', auto: true, visible: visible() } as const
+      if (!unlockActor.getSnapshot().can(ask)) return
+      console.info('[unlock] factor=device — prompting this device')
+      send(ask)
+      if (unlockActor.getSnapshot().matches('awaitingDevice')) {
+        promptDevice(true)
         return
       }
-      if (deviceUnlockStarted.current) return
-      deviceUnlockStarted.current = true
-      setDeviceUnlockAttempted(true)
-      ;(async () => {
-        send({ type: 'SUBMIT' })
-        setPreparing({
-          title: 'Unlocking',
-          lede: 'Confirm with this device…',
-        })
-        try {
-          const unlocked = await unlockVaultWithDevice('Unlock HandCash')
-          if (cancelled) return
-          await finishUnlock(unlocked, null)
-        } catch (err) {
-          if (cancelled) return
-          const message = err instanceof Error ? err.message : String(err)
-          setPreparing(null)
-          send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
-          if (message !== 'cancelled') {
-            playWalletSound('error')
-            if (!readVaultUnlockFactors().password) onFail(message)
-          }
-        }
-      })()
     }
-
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-      const onVis = () => {
-        if (document.visibilityState === 'visible') {
-          document.removeEventListener('visibilitychange', onVis)
-          run()
-        }
-      }
-      document.addEventListener('visibilitychange', onVis)
-      return () => {
-        release()
-        document.removeEventListener('visibilitychange', onVis)
-      }
+    // Never Touch-ID prompt while the window is hidden (close / alt-tab). Wait
+    // until the user is looking at the lock screen again.
+    const onVis = () => {
+      if (!visible()) return
+      document.removeEventListener('visibilitychange', onVis)
+      if (!unlockActor.getSnapshot().matches('waitingForVisible')) return
+      send({ type: 'VISIBLE' })
+      promptDevice(true)
     }
-
-    run()
-    return release
-    // Intentionally once per lock screen mount when device factor exists.
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, formMode])
 
@@ -333,19 +306,16 @@ export function AuthScreen({
     restoreDisposition: RestoreRole = restoreRole,
   ) => {
     if (kind === 'joined' || (kind === 'restore' && restoreDisposition === 'keep')) {
-      setPreparing({
-        title: 'Almost ready',
-        lede: 'Finding the wallets your other device holds…',
+      send({
+        type: 'PROGRESS',
+        progress: { title: 'Almost ready', lede: 'Finding the wallets your other device holds…' },
       })
       await prepareAddedDevice({ master: unlocked.master })
     } else if (kind === 'restore') {
       markVaultTakeover(unlocked.master)
     }
     if (masterKeyAlreadyBackedUp(kind)) markMasterKeyBackupConfirmed()
-    setPreparing({
-      title: 'Almost ready',
-      lede: 'Opening your wallet on this device.',
-    })
+    send({ type: 'PROGRESS', progress: ALMOST_READY })
     const active = await bootFromUnlocked(unlocked)
     // Never block create/restore on chain/cloud or the expensive unconfirmed-
     // change scan. A confirmed localState read gets a short head start;
@@ -359,7 +329,6 @@ export function AuthScreen({
     } catch {
       balanceSats = 0
     }
-    send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()
     const profile: WalletProfile = {
@@ -384,7 +353,7 @@ export function AuthScreen({
       }
       const device = await deviceAuthStatus().catch(() => null)
       const lock = await applyJoinedDeviceLock(pending.wrapPassword, Boolean(device?.available))
-      setPreparing(null)
+      send({ type: 'SUCCESS' })
       enterFromOnboard(pending, lock.sessionPassword)
       return
     }
@@ -398,7 +367,7 @@ export function AuthScreen({
         step,
         kind,
       })
-      setPreparing(null)
+      send({ type: 'SUCCESS' })
       if (password) setSessionBackupPassword(password)
       return
     }
@@ -419,14 +388,11 @@ export function AuthScreen({
       step,
       kind: 'restore',
     })
-    setPreparing(null)
+    send({ type: 'SUCCESS' })
   }
 
   const finishUnlock = async (unlocked: UnlockedVault, password: string | null) => {
-    setPreparing({
-      title: 'Almost ready',
-      lede: 'Opening your wallet on this device.',
-    })
+    send({ type: 'PROGRESS', progress: ALMOST_READY })
     const active = await bootFromUnlocked(unlocked)
     const cachedBalance = lastKnownBalance()
     const confirmedBalance = fetchBalanceRead(active.wallet, {
@@ -445,9 +411,9 @@ export function AuthScreen({
     }
     let recomposedBeforeEnter = false
     if (cachedBalance == null && balanceSats === 0) {
-      setPreparing({
-        title: 'Almost ready',
-        lede: 'Recovering wallet history…',
+      send({
+        type: 'PROGRESS',
+        progress: { title: 'Almost ready', lede: 'Recovering wallet history…' },
       })
       if (password) setSessionBackupPassword(password)
       const restored = await recomposeWallet({
@@ -471,7 +437,6 @@ export function AuthScreen({
     send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()
-    setPreparing(null)
     try {
       ensureHandCashServiceDefaults()
     } catch {
@@ -509,7 +474,7 @@ export function AuthScreen({
   const needsNewPassword = false
 
   const submit = async () => {
-    if (snapshot.matches('submitting') || preparing) return
+    if (preparing) return
     if (needsNewPassword) {
       const pwError = validatePassword(snapshot.context.password)
       if (pwError) {
@@ -535,23 +500,28 @@ export function AuthScreen({
       formMode === 'create' || isRestoreMethod(formMode) ? generateWrapSecret() : null
     const password =
       formMode === 'unlock' ? snapshot.context.password : wrapPassword
-    send({ type: 'SUBMIT' })
-    setPreparing(
+    const start =
       formMode === 'create'
-        ? {
-            title: 'Creating wallet',
-            lede: 'Generating keys and sealing them on this device.',
-          }
-        : isRestoreMethod(formMode)
-          ? {
-              title: 'Restoring wallet',
-              lede: 'Verifying your backup and sealing keys on this device.',
-            }
-          : {
-              title: 'Unlocking',
-              lede: 'Opening your wallet on this device.',
+        ? ({
+            type: 'START',
+            factor: 'create',
+            progress: {
+              title: 'Creating wallet',
+              lede: 'Generating keys and sealing them on this device.',
             },
-    )
+          } as const)
+        : isRestoreMethod(formMode)
+          ? ({
+              type: 'START',
+              factor: 'restore',
+              progress: {
+                title: 'Restoring wallet',
+                lede: 'Verifying your backup and sealing keys on this device.',
+              },
+            } as const)
+          : ({ type: 'SUBMIT' } as const)
+    if (!unlockActor.getSnapshot().can(start)) return
+    send(start)
     try {
       if (wrapPassword) {
         setOpenUnlockSecret(wrapPassword)
@@ -607,7 +577,6 @@ export function AuthScreen({
       await finishUnlock(unlocked, password)
     } catch (err) {
       const failure = classifyUnlockFailure(err)
-      setPreparing(null)
       if (failure.kind !== 'other') {
         // Chromium's own text is what support needs; the holder sees the translation.
         appendAppLog('warn', `Unlock failed (${failure.kind}): ${rawUnlockError(err)}`)
@@ -663,7 +632,7 @@ export function AuthScreen({
                   ? 'Unlock with this device, or your HandCash password.'
                   : 'Enter your HandCash password to unlock.'
 
-  const submitting = snapshot.matches('submitting')
+  const submitting = snapshot.matches('opening')
   const sharesFound = formMode === 'shares' ? extractBrc140Shares(sharesInput).length : 0
   const primaryLabel = isRestoreMethod(formMode)
     ? 'Restore'
@@ -691,17 +660,36 @@ export function AuthScreen({
     })
   }
 
-  const restoreGoogleVault = async (
+  /**
+   * Install a vault master that arrived whole: from a signed-in device that
+   * approved this one (sign-in), or from Google recovery (hidden).
+   */
+  const installReceivedVault = async (
     recovered:
       | GoogleRecoveredVault
       | (ApprovedVault & { recoveryKind: 'approved-device' }),
   ) => {
+    const joined = recovered.recoveryKind === 'approved-device'
+    send(
+      joined
+        ? {
+            type: 'START',
+            factor: 'approved',
+            progress: {
+              title: 'Signing in',
+              lede: 'Installing the wallet your other device approved.',
+            },
+          }
+        : {
+            type: 'START',
+            factor: 'restore',
+            progress: {
+              title: 'Restoring your vault',
+              lede: 'Installing the approved vault and its recovery settings.',
+            },
+          },
+    )
     try {
-      setPreparing({
-        title: 'Restoring your vault',
-        lede: 'Installing the approved vault and its recovery settings.',
-      })
-      const joined = recovered.recoveryKind === 'approved-device'
       const wrapPassword = generateWrapSecret()
       setOpenUnlockSecret(wrapPassword)
       setDeviceLockMode('none')
@@ -731,7 +719,7 @@ export function AuthScreen({
     } catch (restoreError) {
       const message =
         restoreError instanceof Error ? restoreError.message : String(restoreError)
-      setPreparing(null)
+      send({ type: 'FAIL', error: message })
       onFail(message)
     }
   }
@@ -811,20 +799,21 @@ export function AuthScreen({
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="signin">
         <DeviceSignInPanel
-          onSignedIn={(vault) => void restoreGoogleVault({ ...vault, recoveryKind: 'approved-device' })}
+          onSignedIn={(vault) => void installReceivedVault({ ...vault, recoveryKind: 'approved-device' })}
           onOtherWays={() => setFormMode(OTHER_SIGNIN_MODE)}
-          onRecovery={(way) => setFormMode(way === 'google' ? 'google' : 'phrase')}
+          onRecovery={() => setFormMode('phrase')}
           onCancel={() => setFormMode(initialFormMode({ mode, recoveryOnly }))}
         />
       </section>
     )
   }
 
+  // Nothing opens Google recovery while it is hidden; the panel stays for its return.
   if (formMode === 'google' && !preparing) {
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="google">
         <GoogleLoginPanel
-          onRecovered={(recovered) => void restoreGoogleVault(recovered)}
+          onRecovered={(recovered) => void installReceivedVault(recovered)}
           onCancel={() => setFormMode(formModeAfterGoogle({ mode, recoveryOnly }))}
         />
       </section>
@@ -899,16 +888,6 @@ export function AuthScreen({
             >
               Restore
             </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={false}
-              className="auth-mode-tab"
-              data-aeon-state="idle"
-              onClick={() => setFormMode('google')}
-            >
-              Google
-            </button>
           </div>
         ) : null}
 
@@ -927,16 +906,6 @@ export function AuthScreen({
                 {m.label}
               </button>
             ))}
-            <button
-              type="button"
-              role="tab"
-              aria-selected={false}
-              className="auth-mode-tab"
-              data-aeon-state="idle"
-              onClick={() => setFormMode('google')}
-            >
-              Google
-            </button>
           </div>
         ) : null}
 
@@ -1102,20 +1071,10 @@ export function AuthScreen({
               aria-label={`Unlock with ${deviceStatus?.label ?? 'Touch ID'}`}
               title={deviceStatus?.label ?? 'Touch ID'}
               onClick={() => {
-                setDeviceUnlockAttempted(true)
-                send({ type: 'SUBMIT' })
-                setPreparing({ title: 'Unlocking', lede: 'Confirm with this device…' })
-                void unlockVaultWithDevice('Unlock HandCash')
-                  .then((unlocked) => finishUnlock(unlocked, null))
-                  .catch((err) => {
-                    const message = err instanceof Error ? err.message : String(err)
-                    setPreparing(null)
-                    send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
-                    if (message !== 'cancelled') {
-                      playWalletSound('error')
-                      onFail(message)
-                    }
-                  })
+                const ask = { type: 'DEVICE', auto: false, visible: true } as const
+                if (!unlockActor.getSnapshot().can(ask)) return
+                send(ask)
+                promptDevice(false)
               }}
             >
               <FingerprintIcon size={26} />

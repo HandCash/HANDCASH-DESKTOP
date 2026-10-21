@@ -40,9 +40,10 @@ export type ApprovedVault = {
 
 type Props = {
   onSignedIn: (vault: ApprovedVault) => void
-  /** Google sign-in, HandCash Recovery, recovery phrase, shares or key. */
+  /** Recovery phrase, shares or key. */
   onOtherWays: () => void
-  onRecovery: (way: 'google' | 'phrase') => void
+  /** Recovery phrase, when no device can approve. */
+  onRecovery: () => void
   onCancel: () => void
 }
 
@@ -200,10 +201,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
 
   const recoveryChoices = (
     <div className="actions" data-aeon-part="recovery">
-      <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => onRecovery('google')}>
-        Use HandCash Recovery
-      </Button.Root>
-      <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => onRecovery('phrase')}>
+      <Button.Root variant="ghost" className="btn btn-ghost" onClick={onRecovery}>
         Use recovery phrase
       </Button.Root>
     </div>

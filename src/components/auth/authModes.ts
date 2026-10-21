@@ -12,7 +12,7 @@ export const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
 
 /**
  * An existing wallet on a new device signs in with its email code and approval
- * from a signed-in device. Google and recovery sit behind "Other ways to sign in".
+ * from a signed-in device. Recovery sits behind "Other ways to sign in".
  */
 export const EXISTING_WALLET_MODE: FormMode = 'signin'
 
@@ -37,7 +37,10 @@ export function initialFormMode(args: { mode: 'onboarding' | 'locked'; recoveryO
   return args.mode === 'locked' ? 'unlock' : 'create'
 }
 
-/** Leaving Google sign-in goes back to where the user came from. */
+/**
+ * Leaving Google sign-in goes back to where the user came from. Google
+ * recovery is hidden, so no screen offers the `google` mode today.
+ */
 export function formModeAfterGoogle(args: { mode: 'onboarding' | 'locked'; recoveryOnly: boolean }): FormMode {
   return args.mode === 'locked' && !args.recoveryOnly ? 'unlock' : OTHER_SIGNIN_MODE
 }
