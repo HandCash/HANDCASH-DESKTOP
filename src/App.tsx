@@ -258,7 +258,7 @@ export function App() {
   const pendingConnect = pendingPrompt?.kind === 'connect' ? pendingPrompt : null
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
-  const walletUnlocked = snapshot.matches('ready') || snapshot.matches('sending')
+  const walletUnlocked = snapshot.matches('ready')
   useEffect(() => {
     const { profile, balanceSats, balancePending } = snapshot.context
     if (!walletUnlocked || !profile || balancePending) return
@@ -377,7 +377,7 @@ export function App() {
         <header className="titlebar aeon-titlebar">
           <BrandLogo variant="green" />
           <div className="titlebar-end" data-aeon-no-drag>
-            {(snapshot.matches('ready') || snapshot.matches('sending')) && (
+            {snapshot.matches('ready') && (
               <div className="titlebar-actions">
                 <button
                   type="button"
@@ -447,7 +447,7 @@ export function App() {
             />
           )}
 
-          {(snapshot.matches('ready') || snapshot.matches('sending')) && snapshot.context.profile && (
+          {snapshot.matches('ready') && snapshot.context.profile && (
             <RenderProbe id="dashboard">
             <Dashboard
               key={snapshot.context.profile.identityKey}

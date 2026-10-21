@@ -23,7 +23,7 @@ const MASTER = `stateDiagram-v2
 
   appSession --> unlockForm : lock / onboarding
   appSession --> walletNav : ready
-  appSession --> sendPayment : OPEN_SEND
+  appSession --> sendPayment : Send panel / SENT balance
   appSession --> receiveFlow : OPEN_RECEIVE
   appSession --> wipeWallet : Settings wipe
   appSession --> qrReveal : show QR
@@ -104,17 +104,16 @@ const APP_SESSION = `stateDiagram-v2
   locked --> ready : UNLOCKED / CREATED
   ready --> ready : ACCOUNT_SWITCH_STARTED / balance pending
   ready --> ready : ACCOUNT_SWITCHED / exact balance
+  ready --> ready : SENT / REFRESHED exact balance
   ready --> locked : LOCK
-  ready --> sending : OPEN_SEND
-  sending --> ready : SENT
-  sending --> ready : CLOSE_SEND
-  failure --> boot : CLEAR_ERROR / BOOTSTRAPPED
+  failure --> locked : BOOTSTRAPPED\\nhas vault
+  failure --> onboarding : BOOTSTRAPPED\\nnew / restore-only
+  failure --> boot : CLEAR_ERROR
 
   boot : Boot
   onboarding : Onboarding
   locked : Locked
   ready : Ready
-  sending : Sending
   failure : Failure
 
   note right of ready
@@ -1713,7 +1712,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'appSession',
     label: 'Session',
-    caption: 'appSession — boot, lock, ready, send overlay',
+    caption: 'appSession — boot, lock, ready, failure',
     source: APP_SESSION,
   },
   {

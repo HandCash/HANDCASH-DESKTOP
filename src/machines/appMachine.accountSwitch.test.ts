@@ -41,15 +41,15 @@ describe('app wallet-account projection', () => {
     })
   })
 
-  it('leaves sending when an account switch starts', () => {
+  it('stays ready with the balance pending when a switch follows a send', () => {
     const actor = createActor(appMachine).start()
     actor.send({ type: 'BOOTSTRAPPED', hasVault: true, version: 'test' })
     actor.send({ type: 'UNLOCKED', profile: primary, balanceSats: 12_345 })
-    actor.send({ type: 'OPEN_SEND' })
+    actor.send({ type: 'SENT', balanceSats: 10_000 })
 
     actor.send({ type: 'ACCOUNT_SWITCH_STARTED', profile: secondary })
 
     expect(actor.getSnapshot().matches('ready')).toBe(true)
-    expect(actor.getSnapshot().context.balancePending).toBe(true)
+    expect(actor.getSnapshot().context).toMatchObject({ balanceSats: 0, balancePending: true })
   })
 })

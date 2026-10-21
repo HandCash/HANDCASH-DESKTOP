@@ -30,21 +30,38 @@ export type AppEvent =
   | { type: 'BRIDGE'; online: boolean }
   | { type: 'FAIL'; error: string }
   | { type: 'CLEAR_ERROR' }
-  | { type: 'OPEN_SEND' }
-  | { type: 'CLOSE_SEND' }
   | { type: 'SENT'; balanceSats: number }
   | { type: 'ACCOUNT_SWITCH_STARTED'; profile: WalletProfile }
   | { type: 'ACCOUNT_SWITCHED'; profile: WalletProfile; balanceSats: number }
 
+type Bootstrapped = Extract<AppEvent, { type: 'BOOTSTRAPPED' }>
+
 /**
  * Chart: appSession
- * States: boot → onboarding | locked | ready | sending | failure
- * Events: BOOTSTRAPPED, CREATED, UNLOCKED, LOCK, OPEN_SEND, CLOSE_SEND, SENT, FAIL…
+ * States: boot → onboarding | locked | ready | failure
+ * Events: BOOTSTRAPPED, CREATED, UNLOCKED, LOCK, SENT, REFRESHED, FAIL…
  */
 export const appMachine = setup({
   types: {
     context: {} as AppContext,
     events: {} as AppEvent,
+  },
+  guards: {
+    hasVault: ({ event }) => (event as Bootstrapped).hasVault,
+    orphanedToolbox: ({ event }) => Boolean((event as Bootstrapped).orphanedToolbox),
+  },
+  actions: {
+    bootToWallet: assign(({ event }) => ({
+      version: (event as Bootstrapped).version,
+      recoveryOnly: false,
+      error: null,
+    })),
+    bootToRestoreOnly: assign(({ event }) => ({
+      version: (event as Bootstrapped).version,
+      recoveryOnly: true,
+      error:
+        'This device has wallet data but missing unlock keys. Restore with a recovery phrase, BRC-140 shares, or emergency key — creating a new wallet is blocked.',
+    })),
   },
 }).createMachine({
   id: 'appSession',
@@ -67,34 +84,10 @@ export const appMachine = setup({
     boot: {
       on: {
         BOOTSTRAPPED: [
-          {
-            guard: ({ event }) => event.hasVault,
-            target: 'locked',
-            actions: assign({
-              version: ({ event }) => event.version,
-              recoveryOnly: false,
-              error: null,
-            }),
-          },
-          {
-            // IndexedDB has wallet users but durable vault is missing — restore only.
-            guard: ({ event }) => Boolean(event.orphanedToolbox),
-            target: 'onboarding',
-            actions: assign({
-              version: ({ event }) => event.version,
-              recoveryOnly: true,
-              error: () =>
-                'This device has wallet data but missing unlock keys. Restore with a recovery phrase, BRC-140 shares, or emergency key — creating a new wallet is blocked.',
-            }),
-          },
-          {
-            target: 'onboarding',
-            actions: assign({
-              version: ({ event }) => event.version,
-              recoveryOnly: false,
-              error: null,
-            }),
-          },
+          { guard: 'hasVault', target: 'locked', actions: 'bootToWallet' },
+          // IndexedDB has wallet users but durable vault is missing — restore only.
+          { guard: 'orphanedToolbox', target: 'onboarding', actions: 'bootToRestoreOnly' },
+          { target: 'onboarding', actions: 'bootToWallet' },
         ],
         FAIL: {
           target: 'failure',
@@ -158,44 +151,10 @@ export const appMachine = setup({
           target: 'locked',
           actions: assign({ profile: null, balanceSats: 0, balancePending: false }),
         },
-        OPEN_SEND: 'sending',
-        REFRESHED: {
-          actions: assign({
-            balanceSats: ({ event }) => event.balanceSats,
-            balancePending: false,
-          }),
-        },
-        ACCOUNT_SWITCH_STARTED: {
-          actions: assign({
-            profile: ({ event }) => event.profile,
-            balanceSats: 0,
-            balancePending: true,
-            error: null,
-          }),
-        },
-        ACCOUNT_SWITCHED: {
-          actions: assign({
-            profile: ({ event }) => event.profile,
-            balanceSats: ({ event }) => event.balanceSats,
-            balancePending: false,
-            error: null,
-          }),
-        },
-        FAIL: {
-          actions: assign({ error: ({ event }) => event.error }),
-        },
-        CLEAR_ERROR: {
-          actions: assign({ error: null }),
-        },
-      },
-    },
-    sending: {
-      on: {
-        CLOSE_SEND: 'ready',
         SENT: {
-          target: 'ready',
           actions: assign({
             balanceSats: ({ event }) => event.balanceSats,
+            balancePending: false,
             error: null,
           }),
         },
@@ -206,7 +165,6 @@ export const appMachine = setup({
           }),
         },
         ACCOUNT_SWITCH_STARTED: {
-          target: 'ready',
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: 0,
@@ -221,9 +179,6 @@ export const appMachine = setup({
             balancePending: false,
             error: null,
           }),
-        },
-        BRIDGE: {
-          actions: assign({ bridgeOnline: ({ event }) => event.online }),
         },
         FAIL: {
           actions: assign({ error: ({ event }) => event.error }),
@@ -235,7 +190,11 @@ export const appMachine = setup({
     },
     failure: {
       on: {
-        BOOTSTRAPPED: 'boot',
+        BOOTSTRAPPED: [
+          { guard: 'hasVault', target: 'locked', actions: 'bootToWallet' },
+          { guard: 'orphanedToolbox', target: 'onboarding', actions: 'bootToRestoreOnly' },
+          { target: 'onboarding', actions: 'bootToWallet' },
+        ],
         CLEAR_ERROR: {
           target: 'boot',
           actions: assign({ error: null }),
