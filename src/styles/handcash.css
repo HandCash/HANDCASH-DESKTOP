@@ -751,6 +751,10 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   cursor: pointer;
 }
 
+.wallet-setup-option:not(.is-selected):not(.is-disabled):hover {
+  border-color: color-mix(in srgb, var(--hc-text) 22%, hsl(var(--border)));
+}
+
 .wallet-setup-option.is-selected {
   border-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
   background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
@@ -857,6 +861,10 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.auth-mode-tab:not([data-aeon-state='selected']):hover {
+  color: var(--hc-text);
 }
 
 .auth-mode-tab[data-aeon-state='selected'] {
@@ -2918,6 +2926,12 @@ button.wallet-detail-value.is-copied {
   border-radius: var(--hc-radius);
   background: var(--hc-sunken);
   border: 1px solid var(--hc-border);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.auto-pay-field:focus-within {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
 }
 
 .auto-pay-field input {
@@ -3524,6 +3538,11 @@ button.wallet-detail-value.is-copied {
   display: grid;
   gap: 4px;
   transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.backup-choice:not([data-aeon-state='selected']):hover,
+.backup-subchoice:not([data-aeon-state='selected']):not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--hc-text) 22%, hsl(var(--border)));
 }
 
 .backup-choice[data-aeon-state='selected'] {
@@ -4165,6 +4184,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   /* Right padding keeps the caret clear of the copy control next door. */
   padding: 0 4px 0 8px;
   border: 0;
+  border-radius: var(--hc-radius);
   background: transparent;
   color: var(--hc-text);
   font: inherit;
@@ -4173,6 +4193,10 @@ li[data-aeon-state='failed'] .history-progress-range {
   line-height: 1.2;
   height: auto;
   cursor: pointer;
+}
+
+.wallet-hero-identity:hover {
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
 }
 
 .wallet-hero-identity span {
@@ -9405,6 +9429,11 @@ html[data-aeon-mode='light'] .shortcut-key {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.send-currency-opt:not([data-active]):hover,
+.receive-mode-opt:not([data-active]):hover {
+  color: var(--hc-text);
 }
 
 .send-currency-opt[data-active],
