@@ -1700,12 +1700,15 @@ export function clearInboundReceivePending(txid: string): void {
   if (entries.length !== prev.length) writeAll(entries);
 }
 
+/** How long a Verifying… receive may wait to internalize. */
+const STALE_INBOUND_MS = 120_000;
+
 /**
  * Drop Verifying… receives older than `maxAgeMs` that never internalized.
  * Stops Activity from spinning forever after a failed soft-latch ingest.
  */
 export function expireStaleInboundPending(
-  maxAgeMs = 120_000,
+  maxAgeMs = STALE_INBOUND_MS,
   now = Date.now()
 ): number {
   const prev = readAll();
@@ -1799,7 +1802,7 @@ function reportStuckOutbound(
  * it after the successful transaction row arrived. Drop that UI phantom.
  */
 export function expireStaleOutboundPending(
-  maxAgeMs = 90_000,
+  maxAgeMs = STALE_OUTBOUND_MS,
   now = Date.now(),
   opts?: { force?: boolean }
 ): number {
@@ -1850,6 +1853,99 @@ export function expireStaleOutboundPending(
     );
   }
   return expired;
+}
+
+/**
+ * When the next pending row outlives its window: a Verifying… receive at
+ * `at + 120s`, a Sending… row that never reached a txid at `at + 90s`.
+ */
+export function nextPendingExpiryAt(
+  entries: readonly ActivityEntry[]
+): number | null {
+  let next = Infinity;
+  for (const e of entries) {
+    if (e.status !== "pending") continue;
+    if (e.kind === "earned") next = Math.min(next, e.at + STALE_INBOUND_MS);
+    else if (e.kind === "spent" && !e.txid) {
+      next = Math.min(next, e.at + STALE_OUTBOUND_MS);
+    }
+  }
+  return Number.isFinite(next) ? next : null;
+}
+
+/**
+ * A priced Sending… row past its deadline waits while a spend holds priority,
+ * and a spend hold can lapse without telling anyone, so look again this soon.
+ */
+const EXPIRY_RECHECK_MS = 5_000;
+
+let expiryWatchers = 0;
+let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+let expiryDueAt = Infinity;
+let expiryRecheckAt = 0;
+let unsubExpiryWrites: (() => void) | null = null;
+const projectedStaleIds = new Set<string>();
+
+function clearExpiryTimer(): void {
+  if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+  expiryTimer = undefined;
+  expiryDueAt = Infinity;
+}
+
+function runActivityExpiry(): void {
+  clearExpiryTimer();
+  expiryRecheckAt = Date.now() + EXPIRY_RECHECK_MS;
+  expireStaleInboundPending(STALE_INBOUND_MS);
+  expireStaleOutboundPending(STALE_OUTBOUND_MS);
+  // A placeholder whose removal a full store refused is hidden at read time,
+  // which only shows once the feed recomposes.
+  const now = Date.now();
+  const unseen = readAll().filter(
+    (e) => isStaleApprovalPlaceholder(e, now) && !projectedStaleIds.has(e.id)
+  );
+  if (unseen.length > 0) {
+    for (const e of unseen) projectedStaleIds.add(e.id);
+    writeGeneration += 1;
+    for (const cb of listeners) cb();
+  }
+  armActivityExpiry();
+}
+
+function armActivityExpiry(): void {
+  if (expiryWatchers === 0) return;
+  const due = nextPendingExpiryAt(readAll());
+  if (due == null) {
+    clearExpiryTimer();
+    return;
+  }
+  const now = Date.now();
+  const at = due > now ? due : Math.max(now, expiryRecheckAt);
+  if (expiryTimer !== undefined && expiryDueAt === at) return;
+  clearExpiryTimer();
+  expiryDueAt = at;
+  expiryTimer = setTimeout(runActivityExpiry, at - now);
+}
+
+/**
+ * Expire pending rows at each row's own deadline while anyone watches the feed.
+ * Re-arms on every write and account switch; returns the release.
+ */
+export function watchActivityExpiry(): () => void {
+  expiryWatchers += 1;
+  if (expiryWatchers === 1) {
+    unsubExpiryWrites = subscribeAppActivity(armActivityExpiry);
+  }
+  armActivityExpiry();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    expiryWatchers -= 1;
+    if (expiryWatchers > 0) return;
+    unsubExpiryWrites?.();
+    unsubExpiryWrites = null;
+    clearExpiryTimer();
+  };
 }
 
 /**

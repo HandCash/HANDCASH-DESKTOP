@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const store = new Map<string, string>();
 const announceSpendCompleted = vi.hoisted(() => vi.fn());
@@ -43,6 +43,8 @@ import {
   archiveOversizedBulkSendDebris,
   expireStaleInboundPending,
   expireStaleOutboundPending,
+  nextPendingExpiryAt,
+  watchActivityExpiry,
   pruneMissingOnChainActivity,
   removeActivityById,
   removeFailedActivity,
@@ -1368,5 +1370,79 @@ describe("batchActivityWrites", () => {
     } finally {
       store.set = set;
     }
+  });
+});
+
+describe("pending row deadlines", () => {
+  const TX = "e".repeat(64);
+  let release: (() => void) | null = null;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    store.clear();
+    clearAppActivity();
+    const { resetWalletCoordinatorForTests } = await import("./walletCoordinator");
+    resetWalletCoordinatorForTests();
+  });
+
+  afterEach(() => {
+    release?.();
+    release = null;
+    vi.useRealTimers();
+  });
+
+  it("names the earliest deadline among Verifying… and unsigned Sending… rows", () => {
+    expect(
+      nextPendingExpiryAt([
+        entry({ id: "in", kind: "earned", status: "pending", at: 1_000 }),
+        entry({ id: "out", kind: "spent", status: "pending", at: 20_000 }),
+        entry({ id: "signed", kind: "spent", status: "pending", at: 0, txid: TX }),
+        entry({ id: "done", kind: "earned", at: 0 }),
+      ])
+    ).toBe(110_000);
+    expect(
+      nextPendingExpiryAt([entry({ kind: "spent", status: "pending", at: 0, txid: TX })])
+    ).toBeNull();
+  });
+
+  it("drops a Verifying… receive at its own deadline, without a timer before or after", () => {
+    release = watchActivityExpiry();
+    expect(vi.getTimerCount()).toBe(0);
+    noteInboundReceivePending({ txid: TX, item: true, itemName: "Fox", outpoint: `${TX}.0` });
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(119_999);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(listRecentActivity(10)).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("fails a priced Sending… row at its deadline once the spend lets go", async () => {
+    const { leaseSpendPriority } = await import("./walletCoordinator");
+    release = watchActivityExpiry();
+    const hold = leaseSpendPriority("send-collectable");
+    noteOutboundSendPending({
+      pendingId: "deadline",
+      sats: 1,
+      to: "1abc",
+      item: { name: "Fox", origin: `${TX}_0`, outpoint: `${TX}.0` },
+    });
+    vi.advanceTimersByTime(60_000);
+    hold.touch();
+    vi.advanceTimersByTime(30_000);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+    hold.release();
+    vi.advanceTimersByTime(5_000);
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("stops scheduling once nobody watches", () => {
+    const stop = watchActivityExpiry();
+    noteInboundReceivePending({ txid: TX, item: true, itemName: "Fox", outpoint: `${TX}.0` });
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(120_000);
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
   });
 });

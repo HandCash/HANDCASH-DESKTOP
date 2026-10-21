@@ -8,6 +8,8 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from "react";
@@ -46,8 +48,6 @@ import {
   coinActivityChain,
   coinPaymentChain,
   archiveOversizedBulkSendDebris,
-  expireStaleInboundPending,
-  expireStaleOutboundPending,
   getActivityWriteGeneration,
   isEventActivity,
   isItemActivity,
@@ -60,11 +60,12 @@ import {
   isUtxoHealActivity,
   listActivityFeed,
   subscribeAppActivity,
+  watchActivityExpiry,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
   type ActivitySwap,
 } from "../wallet/appActivity";
-import { getTxByTxid } from "../wallet/txStore";
+import { getTxByTxid, subscribeTxStore } from "../wallet/txStore";
 import {
   clearAllFailedSpends,
   countClearableFailedSpends,
@@ -219,7 +220,7 @@ function sameRows<T>(a: readonly T[], b: readonly T[]): boolean {
 /**
  * The previous array while its members are unchanged. The feed composes
  * thousands of import legs; a fresh array of the same rows re-ran that
- * composition on every live-action phase and every 5s tick.
+ * composition on every live-action phase.
  */
 function useStableRows<A extends readonly unknown[]>(rows: A): A {
   const ref = useRef(rows);
@@ -252,6 +253,40 @@ function formatWhen(at: number): string {
   const years = Math.floor(days / 365);
   if (years === 1) return "1 year ago";
   return `${years} years ago`;
+}
+
+/** Age labels move by the minute; one shared clock re-checks them all. */
+const WHEN_TICK_MS = 10_000;
+const whenListeners = new Set<() => void>();
+let whenTimer: ReturnType<typeof setInterval> | undefined;
+
+function subscribeWhenClock(listener: () => void): () => void {
+  whenListeners.add(listener);
+  whenTimer ??= setInterval(() => {
+    for (const l of whenListeners) l();
+  }, WHEN_TICK_MS);
+  return () => {
+    whenListeners.delete(listener);
+    if (whenListeners.size > 0 || whenTimer === undefined) return;
+    clearInterval(whenTimer);
+    whenTimer = undefined;
+  };
+}
+
+/** "N minutes ago" for `at`; re-renders its caller only when the text changes. */
+function useWhenLabel(at: number): string {
+  return useSyncExternalStore(subscribeWhenClock, () => formatWhen(at));
+}
+
+function WhenLabel({ at }: { at: number }) {
+  return <>{useWhenLabel(at)}</>;
+}
+
+function TimedSwapActivityRow({
+  whenAt,
+  ...row
+}: Omit<ComponentProps<typeof SwapActivityRow>, "when"> & { whenAt: number }) {
+  return <SwapActivityRow {...row} when={useWhenLabel(whenAt)} />;
 }
 
 /**
@@ -715,7 +750,7 @@ function HistoryRow({
             </span>
           ) : showWhen ? (
             <span className="history-when" data-aeon-part="row-state">
-              {(showPending || live) && stateLabel ? stateLabel : formatWhen(entry.at)}
+              {(showPending || live) && stateLabel ? stateLabel : <WhenLabel at={entry.at} />}
             </span>
           ) : null}
         </div>
@@ -871,12 +906,13 @@ function useActivityFeed(limit: number) {
     () => subscribeLiveActions(() => setLive(listLiveActions())),
     []
   );
+  useEffect(() => watchActivityExpiry(), []);
   useEffect(() => {
-    const refresh = (repaint: boolean) => {
+    // Writes move the generation, so the cache already misses for them. Apps
+    // and collectables feed the composition without a write; they rebuild.
+    const refresh = (repaint: boolean, rebuild = false) => {
       archiveOversizedBulkSendDebris()
-      expireStaleInboundPending();
-      expireStaleOutboundPending();
-      invalidateActivityFeed(limit);
+      if (rebuild) invalidateActivityFeed(limit);
       const snapshot = readActivityFeed(limit);
       setEntries((prev) => (sameRows(prev, snapshot.entries) ? prev : snapshot.entries));
       setOrigins((prev) =>
@@ -887,7 +923,7 @@ function useActivityFeed(limit: number) {
       );
       if (repaint) setRepaint((n) => n + 1);
     };
-    refresh(false);
+    refresh(false, true);
     // Recompose writes rows back to back; one feed rebuild per burst.
     let writeTimer = 0;
     const refreshAfterWrites = () => {
@@ -898,29 +934,33 @@ function useActivityFeed(limit: number) {
       }, 120);
     };
     const unsubActivity = subscribeAppActivity(refreshAfterWrites);
-    const unsubApps = subscribeConnectedApps(() => refresh(true));
+    const unsubApps = subscribeConnectedApps(() => refresh(true, true));
     let assetTimer = 0;
     const refreshAfterAssetPaint = () => {
       // Authenticity, icon, and encoding upgrades can arrive in short bursts.
       // The feed only needs their settled projection; rebuilding it for every
       // intermediate cache paint used to interrupt foreground input.
       window.clearTimeout(assetTimer);
-      assetTimer = window.setTimeout(() => refresh(true), 280);
+      assetTimer = window.setTimeout(() => refresh(true, true), 280);
     };
     const unsubItems = subscribeCollectables(refreshAfterAssetPaint);
-    // Activity writes usually happen while spend priority is held, which makes
-    // stale-row expiry correctly yield. Without a later tick there may be no
-    // event after the spend releases, so an old approval placeholder can stay
-    // painted forever beside the successful transaction row. The tick also
-    // ages "N minutes ago" and picks up tx-store confirmation labels.
-    const staleTimer = window.setInterval(() => refresh(true), 5_000);
+    // Confirmation labels read the tx store at paint; repaint, don't rebuild.
+    let txTimer = 0;
+    let txSubscribed = false;
+    const unsubTx = subscribeTxStore(() => {
+      if (!txSubscribed) return;
+      window.clearTimeout(txTimer);
+      txTimer = window.setTimeout(() => setRepaint((n) => n + 1), 280);
+    });
+    txSubscribed = true;
     return () => {
       window.clearTimeout(assetTimer);
       window.clearTimeout(writeTimer);
-      window.clearInterval(staleTimer);
+      window.clearTimeout(txTimer);
       unsubActivity();
       unsubApps();
       unsubItems();
+      unsubTx();
     };
   }, [limit]);
 
@@ -1335,14 +1375,25 @@ export function ActivityFeed({
           />
         ) : null}
         {visibleRecords.map((record, index) => record.subject.swap ? (
-          <SwapActivityRow
-            key={recordKeys[windowed.start + index] ?? record.key}
-            rowKey={recordKeys[windowed.start + index] ?? record.key}
-            swap={record.subject.swap}
-            amount={swapAmountLabel(record.subject.swap, currency, usdPerBsv, coinPrices)}
-            when={showWhen ? formatWhen(record.entries.reduce((at, leg) => Math.max(at, leg.at), 0)) : null}
-            newest={windowed.start === 0 && index === 0}
-          />
+          showWhen ? (
+            <TimedSwapActivityRow
+              key={recordKeys[windowed.start + index] ?? record.key}
+              rowKey={recordKeys[windowed.start + index] ?? record.key}
+              swap={record.subject.swap}
+              amount={swapAmountLabel(record.subject.swap, currency, usdPerBsv, coinPrices)}
+              whenAt={record.entries.reduce((at, leg) => Math.max(at, leg.at), 0)}
+              newest={windowed.start === 0 && index === 0}
+            />
+          ) : (
+            <SwapActivityRow
+              key={recordKeys[windowed.start + index] ?? record.key}
+              rowKey={recordKeys[windowed.start + index] ?? record.key}
+              swap={record.subject.swap}
+              amount={swapAmountLabel(record.subject.swap, currency, usdPerBsv, coinPrices)}
+              when={null}
+              newest={windowed.start === 0 && index === 0}
+            />
+          )
         ) : (
           <HistoryRow
             key={recordKeys[windowed.start + index] ?? record.key}
