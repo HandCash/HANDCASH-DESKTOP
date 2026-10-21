@@ -65,6 +65,7 @@ import { PasswordField } from './PasswordField'
 import { FingerprintIcon } from './icons'
 import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
+import { OnboardAcceptPanel } from './OnboardAcceptPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 import { GoogleLoginPanel, type GoogleRecoveredVault } from './GoogleLoginPanel'
 import { DeviceSignInPanel, type ApprovedVault } from './DeviceSignInPanel'
@@ -166,7 +167,7 @@ export function AuthScreen({
     wrapPassword: string
     mnemonic: string | null
     rootKeyHex: string
-    step: 'keys-backup' | 'history' | 'protect'
+    step: 'keys-backup' | 'history' | 'accept' | 'protect'
     kind: 'create' | 'restore'
   } | null>(null)
   /** Holds the create/unlock form off-screen while vault boots — avoids password flash. */
@@ -363,7 +364,7 @@ export function AuthScreen({
       address: active.address,
       chain: unlocked.record.chain,
     }
-    // Linear onboarding: backup (create) or history (restore), then protect.
+    // Linear onboarding: backup then what it accepts (create), or history (restore); then protect.
     if (kind === 'create') {
       setPendingOnboard({
         profile,
@@ -371,7 +372,7 @@ export function AuthScreen({
         wrapPassword: password ?? '',
         mnemonic: unlocked.mnemonic,
         rootKeyHex: unlocked.master.keyHex,
-        step: unlocked.mnemonic ? 'keys-backup' : 'protect',
+        step: unlocked.mnemonic ? 'keys-backup' : 'accept',
         kind,
       })
       setPreparing(null)
@@ -751,6 +752,18 @@ export function AuthScreen({
         <CreateKeysBackupPanel
           mnemonic={pendingOnboard.mnemonic}
           rootKeyHex={pendingOnboard.rootKeyHex}
+          onDone={() => {
+            setPendingOnboard({ ...pendingOnboard, step: 'accept' })
+          }}
+        />
+      </section>
+    )
+  }
+
+  if (pendingOnboard?.step === 'accept') {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="accept">
+        <OnboardAcceptPanel
           onDone={() => {
             setPendingOnboard({ ...pendingOnboard, step: 'protect' })
           }}

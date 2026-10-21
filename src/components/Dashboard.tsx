@@ -14,7 +14,8 @@ import {
   subscribeUsdRate,
 } from '../wallet/fx'
 import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
-import { COIN_CHAINS, COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
+import { useShownCoinChains } from '../features/acceptedCoins'
+import { COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
 import { coinUsd, holdingShares } from '../wallet/heldValue'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import {
@@ -310,7 +311,8 @@ export function Dashboard({
   const coinPrices = useCoinPrices()
   const tickerCoin = useTickerCoin()
   const bsvUsd = usdPerBsv == null ? null : satsToUsd(balanceSats, usdPerBsv)
-  const heldChains = COIN_CHAINS.filter((chain) => heldCoins[chain] > 0n)
+  const shownChains = useShownCoinChains()
+  const heldChains = shownChains.filter((chain) => heldCoins[chain] > 0n)
   const heldCoinUsd = heldChains.map((chain) => ({ coin: chain as MarketCoin, ticker: COIN_INFO[chain].ticker, usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]) }))
   // Holding other coins, the total is valued in every coin and the second line is the split.
   const splitParts =
@@ -350,7 +352,7 @@ export function Dashboard({
         : { coin: share.coin, text: share.pct, unit: share.ticker, title: `${share.pct} ${share.ticker}` },
     ) ?? null
   // A coin picked in the ticker but not held still shows, named, beside the total.
-  const pickedEmpty = COIN_CHAINS.find((chain) => chain === tickerCoin && !(heldCoins[chain] > 0n))
+  const pickedEmpty = shownChains.find((chain) => chain === tickerCoin && !(heldCoins[chain] > 0n))
   const emptyPart: BalancePart | null = pickedEmpty
     ? {
         coin: pickedEmpty as MarketCoin,
@@ -874,16 +876,18 @@ export function Dashboard({
                 <SendIcon size={22} />
                 <span className="wallet-action-label">Send</span>
               </Button.Root>
-              <Button.Root variant="ghost"
-                className="btn btn-ghost btn-icon wallet-action--swap"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSwapFlow()
-                }}
-              >
-                <SwapIcon size={22} />
-                <span className="wallet-action-label">Swap</span>
-              </Button.Root>
+              {shownChains.length > 0 ? (
+                <Button.Root variant="ghost"
+                  className="btn btn-ghost btn-icon wallet-action--swap"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    openSwapFlow()
+                  }}
+                >
+                  <SwapIcon size={22} />
+                  <span className="wallet-action-label">Swap</span>
+                </Button.Root>
+              ) : null}
               <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 onClick={() => {

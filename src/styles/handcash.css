@@ -7846,6 +7846,12 @@ html[data-aeon-mode='light']
   display: block;
 }
 
+.accepted-coins-glyphs {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+
 html[data-aeon-mode='light'] .settings-icon-toggle {
   background: color-mix(in srgb, var(--hc-text) 8%, transparent);
 }

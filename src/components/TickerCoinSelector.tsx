@@ -12,8 +12,9 @@ import {
   subscribeBsvMarket,
   type MarketCoin,
 } from '../wallet/bsvMarket'
-import { TICKER_COINS, TICKER_COIN_ORDER } from '../wallet/tickerCoin'
+import { TICKER_COINS } from '../wallet/tickerCoin'
 import { useHeldCoins } from '../features/heldCoins'
+import { useShownMarketCoins } from '../features/acceptedCoins'
 import { coinUsd } from '../wallet/heldValue'
 import { COIN_INFO, formatCoinShort, type CoinChain } from '../wallet/coins/coinChains'
 import { formatBsvSignificant } from '../wallet/session'
@@ -62,6 +63,7 @@ export function TickerCoinSelector({
   onPick: (coin: MarketCoin) => void
 }) {
   const heldCoins = useHeldCoins()
+  const coins = useShownMarketCoins()
   const [, priced] = useReducer((n: number) => n + 1, 0)
   useEffect(() => {
     const unsub = subscribeBsvMarket(priced)
@@ -72,7 +74,7 @@ export function TickerCoinSelector({
   return (
     <div data-aeon-scope="ticker-coins">
       <ul data-aeon-part="list" role="listbox" aria-label="Show in ticker">
-        {TICKER_COIN_ORDER.map((coin) => {
+        {coins.map((coin) => {
           const stats = getCachedBsvMarket(coin)
           const held = heldIn(coin, heldBsvSats, heldCoins, stats?.priceUsd ?? null)
           return (

@@ -14,7 +14,7 @@ import {
   type MarketSwapCurrency,
 } from '../wallet/marketSwap'
 import { DeferredImage } from './DeferredImage'
-import { AssetPicker, NETWORK_OPTIONS, swapCoinOption } from './NetworkPicker'
+import { AssetPicker, NETWORK_OPTIONS, swapCoinOption, useNetworkOptions } from './NetworkPicker'
 import { SkeletonQr } from './Skeleton'
 import { CoinDepositProgress } from './CoinDepositProgress'
 import { useCoinDeposits } from '../features/coinDeposits'
@@ -48,6 +48,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [viaId, setViaId] = useState('bsv')
   const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
+  const networkOptions = useNetworkOptions()
   const [coinAddress, setCoinAddress] = useState<{ chain: string; address: string } | null>(null)
   const coin = isCoinChain(viaId) ? viaId : null
   const coinInfo = coin ? COIN_INFO[coin] : null
@@ -146,12 +147,12 @@ export function ReceivePanel({ address, identityKey }: Props) {
         label="Coin"
         value={viaId}
         options={[
-          ...NETWORK_OPTIONS.map((o) =>
+          ...networkOptions.map((o) =>
             isCoinChain(o.value)
               ? { ...o, detail: `${COIN_INFO[o.value].confirmations} confirmations` }
               : { ...o, detail: NATIVE_BSV_ETA },
           ),
-          ...swapCoins
+          ...(networkOptions.length > 1 ? swapCoins : [])
             .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code))
             .map((c) => swapCoinOption(c, `Swap · ${c.eta}`)),
         ]}

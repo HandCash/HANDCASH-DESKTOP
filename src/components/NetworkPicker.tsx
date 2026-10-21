@@ -5,6 +5,7 @@ import { TickerCoinMark } from './TickerCoinSelector'
 import { DeferredImage } from './DeferredImage'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import { COIN_CHAINS, COIN_INFO } from '../wallet/coins/coinChains'
+import { useShownCoinChains } from '../features/acceptedCoins'
 import type { MarketSwapCurrency } from '../wallet/marketSwap'
 
 const MARK_SIZE = 22
@@ -28,6 +29,13 @@ export const NETWORK_OPTIONS: readonly AssetOption[] = [
     mark: <TickerCoinMark coin={chain} size={MARK_SIZE} />,
   })),
 ]
+
+const BSV_NETWORK_ONLY: readonly AssetOption[] = NETWORK_OPTIONS.slice(0, 1)
+
+/** Bitcoin SV, then the other coins the wallet accepts. */
+export function useNetworkOptions(): readonly AssetOption[] {
+  return useShownCoinChains().length > 0 ? NETWORK_OPTIONS : BSV_NETWORK_ONLY
+}
 
 /** A coin from the market swap catalog, by its own icon or its ticker's initial. */
 export function swapCoinOption(coin: MarketSwapCurrency, detail: string): AssetOption {
@@ -116,7 +124,7 @@ type CoinSelectProps = {
 
 /** A dropdown of every chain by logo, name and ticker; BSV first. */
 export function CoinSelect({ value, onChange, labelledBy, disabled, detail, unavailable, anchorRef }: CoinSelectProps) {
-  const options = NETWORK_OPTIONS.map((o) => ({
+  const options = useNetworkOptions().map((o) => ({
     ...o,
     detail: detail?.(o.value as MarketCoin),
     disabled: unavailable?.(o.value as MarketCoin) ?? false,
@@ -160,11 +168,12 @@ export function AssetPicker({
 
 /** Which chain a send uses, chosen from a dropdown by name and logo; BSV is first and the default. */
 export function NetworkPicker({ value, onChange, disabled }: { value: MarketCoin; onChange: (next: MarketCoin) => void; disabled?: boolean }) {
+  const options = useNetworkOptions()
   return (
     <AssetPicker
       label="Network"
       value={value}
-      options={NETWORK_OPTIONS}
+      options={options}
       onChange={(next) => onChange(next as MarketCoin)}
       disabled={disabled}
     />

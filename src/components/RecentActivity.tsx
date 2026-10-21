@@ -121,6 +121,8 @@ import {
 import { refreshMarketBoard } from "../wallet/bsvMarket";
 import { coinActivityUsdLabel, coinUsd } from "../wallet/heldValue";
 import { useCoinPrices } from "../features/heldCoins";
+import { useAcceptedCoins } from "../features/acceptedCoins";
+import { isChainShown } from "../wallet/acceptedCoins";
 import { COIN_CHAINS, COIN_INFO, formatCoinShort, type CoinChain } from "../wallet/coins/coinChains";
 import {
   getDisplayCurrency,
@@ -1062,6 +1064,7 @@ export function ActivityFeed({
     ACTIVITY_COMPOSE_WINDOW,
   );
   const coinPrices = useCoinPrices();
+  const acceptedCoins = useAcceptedCoins();
   const shownCoins = currency === "usd"
     ? COIN_CHAINS.filter((chain) => entries.some((e) => e.item?.backedBy === chain)).join(",")
     : "";
@@ -1103,15 +1106,18 @@ export function ActivityFeed({
   const filtering = showFilters && filtersActive;
   const filtered = useMemo(() => {
     const jobIds = new Set(jobIdKey ? jobIdKey.split("\0") : []);
+    const accepted = entries.filter((entry) =>
+      isChainShown(coinActivityChain(entry) ?? entry.item?.backedBy, acceptedCoins),
+    );
     const settled =
       jobIds.size > 0
-        ? entries.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
-        : entries;
+        ? accepted.filter((entry) => !(entry.sendGroupId && jobIds.has(entry.sendGroupId)))
+        : accepted;
     const shown = showFilters ? filterPaymentActivity(settled, filters) : settled;
     // One record per swap, its transactions folded under it; a filtered feed
     // keeps a swap when one of its transactions passed.
     return foldSwapActivity(shown, swaps, { onlyWithLegs: filtering });
-  }, [entries, jobIdKey, filters, showFilters, filtering, swaps]);
+  }, [entries, jobIdKey, filters, showFilters, filtering, swaps, acceptedCoins]);
   // One transaction is one record: a listing and the item it created, a purchase
   // and what it bought, a sale and its proceeds.
   const records = useMemo(

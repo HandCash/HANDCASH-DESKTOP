@@ -6,7 +6,8 @@ import { tickerMachine } from '../machines/tickerMachine'
 import { useTickerCoin } from '../features/tickerCoin'
 import { useHeldCoins } from '../features/heldCoins'
 import type { CoinChain } from '../wallet/coins/coinChains'
-import { setTickerCoin, TICKER_COIN_ORDER, TICKER_COINS } from '../wallet/tickerCoin'
+import { setTickerCoin, TICKER_COINS } from '../wallet/tickerCoin'
+import { useShownMarketCoins } from '../features/acceptedCoins'
 import { stepOnWheel } from './carouselWheel'
 import { playWalletSound } from '../wallet/soundService'
 import { heldIn, TickerCoinMark, TickerCoinSelector } from './TickerCoinSelector'
@@ -240,6 +241,7 @@ function MarketSlide({
 export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) {
   const coin = useTickerCoin()
   const heldCoins = useHeldCoins()
+  const order = useShownMarketCoins()
   const [ticker, sendTicker] = useMachine(tickerMachine)
   const [chartRange, setChartRange] = useState<BsvChartRange>('24h')
   const [classicLogo, setClassicLogo] = useState(() => getBsvLogoClassic())
@@ -281,7 +283,7 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   const tone: ToastTone | null = toast?.tone ?? null
   const showingToast = Boolean(toast)
   const choosing = ticker.matches('choosing')
-  const index = Math.max(0, TICKER_COIN_ORDER.indexOf(coin))
+  const index = Math.max(0, order.indexOf(coin))
 
   // A coin picked elsewhere (the menu, a dot) brings its slide into view; one
   // reached by swiping is already there.
@@ -299,8 +301,8 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   useEffect(() => {
     const track = trackRef.current
     if (!track || choosing) return
-    return stepOnWheel(track, TICKER_COIN_ORDER.length)
-  }, [choosing])
+    return stepOnWheel(track, order.length)
+  }, [choosing, order.length])
 
   const settle = () => {
     const track = trackRef.current
@@ -308,7 +310,7 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
     const at = track.scrollLeft / track.clientWidth
     // Picking a coin re-renders the dashboard and nav; done between slides, that render lands under the snap animation.
     if (Math.abs(at - Math.round(at)) > 0.02) return
-    const next = TICKER_COIN_ORDER[Math.round(at)]
+    const next = order[Math.round(at)]
     if (next && next !== coin) {
       swipedTo.current = next
       playWalletSound('soft')
@@ -329,9 +331,9 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
 
   const go = (next: number) => {
     const track = trackRef.current
-    const target = TICKER_COIN_ORDER[(next + TICKER_COIN_ORDER.length) % TICKER_COIN_ORDER.length]
+    const target = order[(next + order.length) % order.length]
     if (!track || !target) return
-    track.scrollTo({ left: TICKER_COIN_ORDER.indexOf(target) * track.clientWidth, behavior: 'smooth' })
+    track.scrollTo({ left: order.indexOf(target) * track.clientWidth, behavior: 'smooth' })
   }
 
   const shared: SlideShared = {
@@ -381,21 +383,23 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
               e.preventDefault()
             }}
           >
-            {TICKER_COIN_ORDER.map((c) => (
+            {order.map((c) => (
               <MarketSlide key={c} coin={c} active={c === coin} {...shared} />
             ))}
           </div>
-          <div className="bsv-carousel-dots" data-aeon-part="dots">
-            {TICKER_COIN_ORDER.map((c, i) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={`Show ${TICKER_COINS[c].name}`}
-                aria-current={c === coin ? 'true' : undefined}
-                onClick={() => go(i)}
-              />
-            ))}
-          </div>
+          {order.length > 1 ? (
+            <div className="bsv-carousel-dots" data-aeon-part="dots">
+              {order.map((c, i) => (
+                <button
+                  key={c}
+                  type="button"
+                  aria-label={`Show ${TICKER_COINS[c].name}`}
+                  aria-current={c === coin ? 'true' : undefined}
+                  onClick={() => go(i)}
+                />
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
 

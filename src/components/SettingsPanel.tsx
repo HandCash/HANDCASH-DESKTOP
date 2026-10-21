@@ -1,5 +1,5 @@
 import { Button } from '@aeon-ui/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
@@ -19,12 +19,20 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import {
   BlockIcon,
+  CoinGlyphIcon,
   DarkModeIcon,
   LightModeIcon,
   MonitorIcon,
   RepeatIcon,
   TouchAppIcon,
 } from './icons'
+import { useAcceptedCoins } from '../features/acceptedCoins'
+import {
+  ACCEPTED_COINS_CHOICES,
+  acceptedCoinsChoice,
+  setAcceptedCoins,
+  type AcceptedCoins,
+} from '../wallet/acceptedCoins'
 import { savedRecoveryStatuses } from '../features/recovery'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { getEmailRecoveryEnrollment } from '../wallet/brc250/store'
@@ -137,6 +145,16 @@ export function settingLabel(id: SettingId): string {
   return 'Setting'
 }
 
+const ACCEPTED_COINS_ICONS: Record<AcceptedCoins, ReactNode> = {
+  bitcoin: <CoinGlyphIcon coin="bsv" size={16} />,
+  all: (
+    <span className="accepted-coins-glyphs">
+      <CoinGlyphIcon coin="bsv" size={12} />
+      <CoinGlyphIcon coin="ltc" size={12} />
+    </span>
+  ),
+}
+
 const RECOVERY_METHODS = [
   { method: 'google', label: 'Google' },
   { method: 'email', label: 'Email' },
@@ -200,6 +218,7 @@ export function SettingsPanel() {
   const checking = context.phase === 'checking'
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
+  const accepted = useAcceptedCoins()
   const [, setStatusTick] = useState(0)
   const [healthSnap, setHealthSnap] = useState<DependencyHealthSnapshot>(() =>
     getDependencyHealthSnapshot(),
@@ -296,6 +315,26 @@ export function SettingsPanel() {
                 { value: 'dark', label: 'Dark', icon: <DarkModeIcon size={16} /> },
                 { value: 'light', label: 'Light', icon: <LightModeIcon size={16} /> },
               ]}
+            />
+          </SettingsControlRow>
+
+          <SettingsControlRow
+            icon={<CoinGlyphIcon coin="bsv" size={20} />}
+            label="Accept"
+            description={`${acceptedCoinsChoice(accepted).title}. ${acceptedCoinsChoice(accepted).description}`}
+          >
+            <SettingsIconToggle
+              ariaLabel="Accept"
+              value={accepted}
+              onChange={(next) => {
+                playWalletSound('soft')
+                setAcceptedCoins(next)
+              }}
+              options={ACCEPTED_COINS_CHOICES.map((choice) => ({
+                value: choice.id,
+                label: choice.title,
+                icon: ACCEPTED_COINS_ICONS[choice.id],
+              }))}
             />
           </SettingsControlRow>
 

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { AssetPicker, NETWORK_OPTIONS, swapCoinOption } from './NetworkPicker'
+import { AssetPicker, NETWORK_OPTIONS, swapCoinOption, useNetworkOptions } from './NetworkPicker'
 import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { coinUsd as coinUnitsUsd } from '../wallet/heldValue'
@@ -190,13 +190,16 @@ export function SendPanel({
       }
   const destReady = coin !== null || destIsNative
   /** Every coin this wallet sends natively, with what it holds of each, then coins a recipient gets through a swap. */
+  const networkOptions = useNetworkOptions()
   const nativeTickers = new Set(NETWORK_OPTIONS.map((o) => o.sym))
   const coinOptions = [
-    ...NETWORK_OPTIONS.map((o) => ({
+    ...networkOptions.map((o) => ({
       ...o,
       detail: o.value === 'bsv' ? formatBsvSignificant(balanceSats, 4).replace(/\s*BSV$/, '') : isCoinChain(o.value) ? formatCoinShort(o.value, heldCoins[o.value]) : undefined,
     })),
-    ...swapCoins.filter((c) => !nativeTickers.has(c.code)).map((c) => ({ ...swapCoinOption(c, `Swap · ${c.eta}`), value: `swap:${c.code}` })),
+    ...(networkOptions.length > 1 ? swapCoins : [])
+      .filter((c) => !nativeTickers.has(c.code))
+      .map((c) => ({ ...swapCoinOption(c, `Swap · ${c.eta}`), value: `swap:${c.code}` })),
   ]
   const coinValue = destIsNative ? network : `swap:${destAssetId}`
 
