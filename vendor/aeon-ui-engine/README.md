@@ -176,6 +176,39 @@ function AsyncSurface() {
 
 See [docs/PRIMITIVE_COVERAGE.md](./docs/PRIMITIVE_COVERAGE.md).
 
+## App data: one store
+
+Each app keeps its data in one `createAeonStore`: every entity once, by id, in its slice. Components never copy it. They read through selectors and show state through `data-aeon-*` attributes. Every change is an event sent to the store.
+
+```tsx
+import { createAeonStore, defineSlice, entityAttrs, queryAttrs, webStorageAdapter } from '@aeon-ui/primitives'
+import { useAeonQuery, useAeonSelector } from '@aeon-ui/react'
+
+export const store = createAeonStore({
+  id: 'wallet-app',
+  slices: { payments: defineSlice<Payment>({ idOf: (p) => p.id, load: (query) => api.payments(query), ttl: 30_000 }) },
+  persist: { adapter: webStorageAdapter(), version: 1 },
+  sync: (send) => api.onPayment((p) => send({ type: 'ENTITY.UPSERT', slice: 'payments', entities: [p] })),
+})
+
+function Payments() {
+  const result = useAeonQuery(store, 'payments', 'recent') // loads once per key, shared by every reader
+  return <ul {...queryAttrs(result)}>{result.entities.map((p) => <PaymentRow key={p.id} id={p.id} />)}</ul>
+}
+
+function PaymentRow({ id }: { id: string }) {
+  const payment = useAeonSelector(store, (s) => s.slices.payments.byId[id]) // re-renders only when this payment changes
+  const slice = useAeonSelector(store, (s) => s.slices.payments)
+  return <li {...entityAttrs(slice, 'payments', id)}>{payment?.amount}</li>
+}
+```
+
+- **Writes:** `ENTITY.UPSERT`, `ENTITY.PATCH` and `ENTITY.REMOVE` change entities directly. `WRITE.BEGIN` applies a change at once and marks it `pending` until `WRITE.CONFIRM`, or until `WRITE.ROLLBACK` puts the old value back and marks the entity `failed`.
+- **Queries:** `QUERY.FETCH`, `QUERY.REFRESH` and `QUERY.INVALIDATE { query | tag }` run on the chart cache's states (`idle`, `loading`, `ready`, `stale`, `refreshing`, `failed`). `STORE.INVALIDATE` reloads every watched query (for reconnect or window focus). `STORE.CLEAR` drops all data, running loads and the saved copy (for lock or account switch).
+- **Persistence:** only confirmed values are saved, after a short quiet delay. A `version` bump runs `migrate`; without one, older saved data is dropped. Data written during start-up wins over the saved copy. Slices with `persist: false` stay in memory.
+- **Charts:** invoke `store.actor` with `input: { select }` to get `STORE.UPDATE` whenever the selection changes. Store events sent to it are forwarded to the store.
+- **Never stored:** store ids, slice names and entity fields at any depth that name secrets, keys, seeds, passwords or spend are refused.
+
 ## Example
 
 ```tsx

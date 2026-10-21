@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-10-21
+
+### Added
+
+- **App store (`@aeon-ui/primitives`).** `createAeonStore({ id, slices, persist?, sync? })` keeps an app's data in one place: each entity once, by id, in its slice (`defineSlice({ idOf, load?, ttl?, tags? })`). Every change is an event: `ENTITY.UPSERT`, `ENTITY.PATCH` and `ENTITY.REMOVE`, plus optimistic `WRITE.BEGIN`, which marks entities pending until `WRITE.CONFIRM` or `WRITE.ROLLBACK` (restores the old value and marks it failed). Queries run on the chart cache (`QUERY.FETCH`, `QUERY.REFRESH`, `QUERY.INVALIDATE`, `STORE.INVALIDATE`). `select`, `query` and `entity` return the same object until their data changes. `queryAttrs` and `entityAttrs` project state onto `data-aeon-state`. Persistence saves only confirmed values through an adapter (`memoryAdapter`, `webStorageAdapter`), with `version` and `migrate`. `sync` feeds server pushes in as events, and `STORE.CLEAR` wipes memory, running loads and the saved copy. Charts read it by invoking `store.actor`. Store ids, slice names and entity fields that name secrets, keys or spend decisions are refused.
+- **`useAeonSelector` and `useAeonQuery` (`@aeon-ui/react`).** Read the store; a component re-renders only when the value it selects changes.
+
 ## [1.9.0] - 2026-10-21
 
 ### Added
