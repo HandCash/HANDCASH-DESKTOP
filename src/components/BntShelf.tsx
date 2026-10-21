@@ -2,14 +2,15 @@ import { Button, Field } from '@aeon-ui/react'
 import { startTransition, useEffect, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
-import { fromPromise, type SnapshotFrom } from 'xstate'
+import type { SnapshotFrom } from 'xstate'
 import { bntHoldingsMachine } from '../machines/bntHoldingsMachine'
+import { bntHoldingsCache, openWalletCacheKey } from '../wallet/walletCaches'
 import { subscribeAppActivity } from '../features/activity'
 import { asyncActionError, useAsyncAction } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { burnBntAsset, listBntAssets, preflightBntBurn, transferBntAsset, type BntAssetSummary } from '../wallet/bnt/wallet'
+import { burnBntAsset, preflightBntBurn, transferBntAsset, type BntAssetSummary } from '../wallet/bnt/wallet'
 import { formatTokenAmount, parseTokenAmount } from '../wallet/amounts'
 import { resolvePinnedHandle } from '../wallet/friends'
 import { playWalletSound } from '../wallet/soundService'
@@ -18,21 +19,22 @@ import type { CollectionView } from '../wallet/collectionView'
 
 const IDENTITY_KEY = /^0[23][0-9a-f]{64}$/i
 
-const holdingsMachine = bntHoldingsMachine.provide({
-  // A backed token never leaves its issuer, and Litecoin is held natively, so one here is a retired wLTC record, not value.
-  actors: { load: fromPromise(async () => (await listBntAssets()).assets.filter((a) => !a.backedBy)) },
-})
+const holdingsMachine = bntHoldingsMachine.provide({ actors: { holdings: bntHoldingsCache.actor } })
 
 export type Holdings = {
   snapshot: SnapshotFrom<typeof bntHoldingsMachine>
   send: ReturnType<typeof useMachine<typeof holdingsMachine>>[1]
 }
 
-/** One holdings chart per Collectables view; any wallet activity (issue, send, receive) reloads it. */
+/**
+ * One holdings chart per Collectables view, served from the shared holdings
+ * cache. Any wallet activity (issue, send, receive, account switch)
+ * revalidates it under the account open now.
+ */
 export function useBntHoldings(): Holdings {
-  const [snapshot, send] = useMachine(holdingsMachine)
+  const [snapshot, send] = useMachine(holdingsMachine, { input: { key: openWalletCacheKey() } })
   useEffect(
-    () => subscribeAppActivity(() => startTransition(() => send({ type: 'REFRESH' }))),
+    () => subscribeAppActivity(() => startTransition(() => send({ type: 'REFRESH', key: openWalletCacheKey() }))),
     [send],
   )
   return { snapshot, send }
@@ -128,7 +130,7 @@ export function BntShelf({
   ungrouped: readonly BntAssetSummary[]
 }) {
   const { snapshot, send } = holdings
-  const { assets, composing, error } = snapshot.context
+  const { assets, composing, error, cache } = snapshot.context
   const open = composing ? assets.find((a) => a.assetId === composing) ?? null : null
   const failed = snapshot.matches('failed')
   if (!failed && !open && ungrouped.length === 0) return null
@@ -145,7 +147,13 @@ export function BntShelf({
         </div>
       ) : null}
       {ungrouped.length > 0 ? (
-        <section className="collect-tokens-section" aria-label="BNT assets without an issuer">
+        <section
+          className="collect-tokens-section"
+          aria-label="BNT assets without an issuer"
+          aria-busy={cache === 'refreshing'}
+          data-aeon-part="holdings"
+          data-aeon-state={stateToAttr(cache)}
+        >
           <h3 className="collect-section-title">BNT assets without an issuer</h3>
           <ul className="token-strip" role="list" data-aeon-part="token-strip" data-aeon-state={view}>
             {ungrouped.map((asset) => (

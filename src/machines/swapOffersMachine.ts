@@ -1,4 +1,5 @@
-import { and, assign, fromPromise, setup } from 'xstate'
+import { and, assign, fromCallback, fromPromise, sendTo, setup, stateIn } from 'xstate'
+import type { CacheCommand, CacheState, CacheUpdate } from '@aeon-ui/primitives'
 import { offerRoom, type SignedSwapOffer } from '../wallet/swap/offer'
 import type { OfferBookPage } from '../wallet/swap/offerBook'
 import { previewTake } from '../wallet/swap/settle'
@@ -6,6 +7,12 @@ import { previewTake } from '../wallet/swap/settle'
 type Context = {
   /** This wallet's identity key: its offers are the ones it may cancel, and the ones it may not take. */
   self: string | null
+  /** The open account and network the book is cached under. */
+  key: string
+  /** Where the cached book stands; while `refreshing` the last book stays shown. */
+  cache: CacheState
+  /** When the shown book was loaded; a cache update with the same time carries no new offers. */
+  loadedAt: number | null
   offers: SignedSwapOffer[]
   /** What the book says is taken of each part-fillable offer, by nonce. */
   filled: ReadonlyMap<string, bigint>
@@ -25,6 +32,7 @@ type Event =
   | { type: 'AMOUNT'; pay: bigint | null }
   | { type: 'BACK' }
   | { type: 'CONFIRM' }
+  | CacheUpdate<OfferBookPage, string>
 
 export type TakeInput = { offer: SignedSwapOffer; pay: bigint }
 
@@ -42,10 +50,14 @@ export function amountFits(context: Context): boolean {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
+const update = (event: Event) => (event.type === 'CACHE.UPDATE' ? event : null)
+
 /**
  * Browsing the swap offer book (Swap › Offers). Every listed offer is
- * verified in the wallet before it reaches `ready`. CANCEL withdraws one of
- * this wallet's own offers (it signs the withdrawal) and reloads the book.
+ * verified in the wallet before it reaches `ready`. The book is read through
+ * the shared offer book cache, so reopening Offers shows it at once; REFRESH,
+ * a cancel or a take revalidates it while the last book stays shown. CANCEL
+ * withdraws one of this wallet's own offers (it signs the withdrawal).
  * REVIEW shows what taking someone else's offer locks and returns, all of
  * what is left of it by default; AMOUNT picks a part of an offer that can be
  * filled in parts. Only CONFIRM sends the take, and only for an amount that
@@ -54,10 +66,15 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * refunded.
  */
 export const swapOffersMachine = setup({
-  types: { context: {} as Context, events: {} as Event, input: {} as { self: string | null } },
+  types: { context: {} as Context, events: {} as Event, input: {} as { self: string | null; key: string } },
   actors: {
-    load: fromPromise<OfferBookPage, void>(async () => {
-      throw new Error('offer book loading is not provided')
+    book: fromCallback<CacheCommand<string>, { key: string }>(({ input, sendBack }) => {
+      sendBack({
+        type: 'CACHE.UPDATE',
+        cache: 'swap-offer-book',
+        key: input.key,
+        view: { state: 'failed', data: undefined, error: 'offer book loading is not provided', loadedAt: null },
+      } satisfies CacheUpdate<OfferBookPage, string>)
     }),
     cancel: fromPromise<void, string>(async () => {
       throw new Error('offer cancelling is not provided')
@@ -73,22 +90,52 @@ export const swapOffersMachine = setup({
       event.type === 'REVIEW' && !!context.self && context.offers.some((o) => o.nonce === event.nonce && o.maker !== context.self && o.expiresAt > Date.now()),
     stillListed: ({ context }) => context.offers.some((o) => o.nonce === context.taking && o.expiresAt > Date.now()),
     amountFits: ({ context }) => amountFits(context),
+    otherKey: ({ context, event }) => update(event)?.key !== context.key,
+    listed: ({ event }) => update(event)?.view.loadedAt != null,
+    newBook: ({ context, event }) => update(event)?.view.loadedAt !== context.loadedAt,
+    refused: ({ event }) => update(event)?.view.state === 'failed',
+  },
+  actions: {
+    take: assign(({ event }) => {
+      const view = update(event)!.view
+      return { offers: view.data!.offers, filled: view.data!.filled, loadedAt: view.loadedAt, cache: view.state }
+    }),
+    note: assign(({ event }) => ({ cache: update(event)!.view.state })),
+    revalidate: sendTo('book', { type: 'CACHE.INVALIDATE' }),
   },
 }).createMachine({
   id: 'swapOffers',
   initial: 'loading',
-  context: ({ input }) => ({ self: input.self, offers: [], filled: new Map(), pay: null, cancelling: null, taking: null, failure: null }),
+  context: ({ input }) => ({
+    self: input.self,
+    key: input.key,
+    cache: 'idle',
+    loadedAt: null,
+    offers: [],
+    filled: new Map(),
+    pay: null,
+    cancelling: null,
+    taking: null,
+    failure: null,
+  }),
+  invoke: { id: 'book', src: 'book', input: ({ context }) => ({ key: context.key }) },
+  on: {
+    'CACHE.UPDATE': [
+      { guard: 'otherKey' },
+      { guard: and(['listed', stateIn('loading')]), target: '.ready', actions: ['take', assign({ failure: null })] },
+      { guard: and(['listed', stateIn('failed')]), target: '.ready', actions: ['take', assign({ failure: null })] },
+      { guard: and(['listed', 'newBook']), actions: 'take' },
+      { guard: 'listed', actions: 'note' },
+      { guard: 'refused', target: '.failed', actions: ['note', assign(({ event }) => ({ failure: update(event)!.view.error }))] },
+      { guard: stateIn('failed'), target: '.loading', actions: 'note' },
+      { actions: 'note' },
+    ],
+  },
   states: {
-    loading: {
-      invoke: {
-        src: 'load',
-        onDone: { target: 'ready', actions: assign(({ event }) => ({ offers: event.output.offers, filled: event.output.filled, failure: null })) },
-        onError: { target: 'failed', actions: assign(({ event }) => ({ failure: message(event.error) })) },
-      },
-    },
+    loading: {},
     ready: {
       on: {
-        REFRESH: 'loading',
+        REFRESH: { actions: 'revalidate' },
         CANCEL: { guard: 'own', target: 'cancelling', actions: assign(({ event }) => ({ cancelling: event.nonce, failure: null })) },
         REVIEW: {
           guard: 'takeable',
@@ -104,7 +151,10 @@ export const swapOffersMachine = setup({
       invoke: {
         src: 'cancel',
         input: ({ context }) => context.cancelling as string,
-        onDone: { target: 'loading', actions: assign({ cancelling: null }) },
+        onDone: {
+          target: 'ready',
+          actions: [assign(({ context }) => ({ offers: context.offers.filter((o) => o.nonce !== context.cancelling), cancelling: null })), 'revalidate'],
+        },
         onError: { target: 'ready', actions: assign(({ event }) => ({ cancelling: null, failure: message(event.error) })) },
       },
     },
@@ -123,11 +173,11 @@ export const swapOffersMachine = setup({
       invoke: {
         src: 'take',
         input: ({ context }) => ({ offer: reviewed(context) as SignedSwapOffer, pay: context.pay as bigint }),
-        onDone: { target: 'taken' },
+        onDone: { target: 'taken', actions: 'revalidate' },
         onError: { target: 'reviewing', actions: assign(({ event }) => ({ failure: message(event.error) })) },
       },
     },
-    taken: { on: { REFRESH: { target: 'loading', actions: assign({ taking: null, pay: null }) } } },
-    failed: { on: { REFRESH: 'loading' } },
+    taken: { on: { REFRESH: { target: 'ready', actions: [assign({ taking: null, pay: null }), 'revalidate'] } } },
+    failed: { on: { REFRESH: { actions: 'revalidate' } } },
   },
 })

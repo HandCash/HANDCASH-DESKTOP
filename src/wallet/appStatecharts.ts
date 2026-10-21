@@ -641,11 +641,11 @@ const SWAP = `stateDiagram-v2
 const SWAP_OFFERS = `stateDiagram-v2
   direction LR
   [*] --> loading
-  loading --> ready : offers listed with signed fills · each verified here (shape, maker signature, not expired, room left)
+  loading --> ready : offers listed with signed fills · each verified here (shape, maker signature, not expired, room left) · served from the offer book cache when cached
   loading --> failed : offer book unavailable
-  ready --> loading : REFRESH
+  ready --> ready : REFRESH (cache revalidates; the last book stays shown)
   ready --> cancelling : CANCEL (own offer only; signs the withdrawal)
-  cancelling --> loading : withdrawn
+  cancelling --> ready : withdrawn (offer dropped; cache revalidates)
   cancelling --> ready : refused (named)
   ready --> reviewing : REVIEW (someone else's offer, still listed; amount = all that is left)
   reviewing --> reviewing : AMOUNT (offers filled in parts; minGet ≤ amount ≤ left)
@@ -655,7 +655,7 @@ const SWAP_OFFERS = `stateDiagram-v2
   reviewing --> ready : CONFIRM after expiry (named)
   taking --> taken : take sent (balance checked first)
   taking --> reviewing : refused (named)
-  taken --> loading : REFRESH
+  taken --> ready : REFRESH (cache revalidates)
   failed --> loading : REFRESH
   note right of taking
     The take moves no coin itself. The

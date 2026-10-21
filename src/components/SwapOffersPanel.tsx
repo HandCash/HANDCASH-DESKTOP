@@ -9,9 +9,9 @@ import { openSwapDetails, openSwapFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { decimalToUnits, SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from '../wallet/swap/assets'
 import { fillOffer, fillsInParts, type SignedSwapOffer } from '../wallet/swap/offer'
-import { browseSwapOfferBook, withOwnTakes } from '../wallet/swap/offerBook'
 import { MAKER_FUND_WITHIN_S, previewTake } from '../wallet/swap/settle'
-import { cancelOwnSwapOffer, ownTakenOf, takeSwapOffer } from '../wallet/swap/settleRunner'
+import { cancelOwnSwapOffer, takeSwapOffer } from '../wallet/swap/settleRunner'
+import { openWalletCacheKey, swapOfferBookCache } from '../wallet/walletCaches'
 import { useRecentSwaps } from '../features/swap'
 import { SwapPairMark, SwapStatusPill, SwapSummary } from './SwapVisuals'
 import { AmountPad, amountInputProps, useAmountPad } from './AmountPad'
@@ -55,7 +55,7 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
     () =>
       swapOffersMachine.provide({
         actors: {
-          load: fromPromise(async () => withOwnTakes(await browseSwapOfferBook(), ownTakenOf())),
+          book: swapOfferBookCache.actor,
           cancel: fromPromise(({ input }) => cancelOwnSwapOffer(input)),
           take: fromPromise(async ({ input }) => {
             await takeSwapOffer(input.offer, input.pay)
@@ -64,8 +64,9 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
       }),
     [],
   )
-  const [snap, send] = useMachine(machine, { input: { self: identityKey } })
-  const { offers, cancelling, taking, failure } = snap.context
+  const [snap, send] = useMachine(machine, { input: { self: identityKey, key: openWalletCacheKey() } })
+  const { offers, cancelling, taking, failure, cache } = snap.context
+  const reading = snap.matches('loading') || cache === 'refreshing'
   const swaps = useRecentSwaps('direct')
   const now = Date.now()
 
@@ -183,7 +184,7 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
             </section>
           ) : null}
 
-          <section data-aeon-part="offers" aria-label="Open offers" aria-busy={snap.matches('loading')}>
+          <section data-aeon-part="offers" data-aeon-state={stateToAttr(cache)} aria-label="Open offers" aria-busy={reading}>
             <span data-aeon-part="leg-label">Open offers</span>
             {snap.matches('loading') && offers.length === 0 ? (
               <p data-aeon-part="empty">Loading offers…</p>
@@ -236,7 +237,7 @@ export function SwapOffersPanel({ identityKey }: { identityKey: string }) {
             <Button.Root
               className="btn btn-ghost"
               variant="ghost"
-              status={snap.matches('loading') ? 'pending' : 'idle'}
+              status={reading ? 'pending' : 'idle'}
               disabled={!snap.matches('ready') && !snap.matches('failed')}
               onClick={() => send({ type: 'REFRESH' })}
             >

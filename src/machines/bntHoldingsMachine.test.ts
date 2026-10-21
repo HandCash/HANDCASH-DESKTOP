@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { createActor, fromPromise, waitFor } from 'xstate'
+import { createActor, waitFor } from 'xstate'
+import { createChartCache } from '@aeon-ui/primitives'
 import { bntHoldingsMachine } from './bntHoldingsMachine'
 import type { BntAssetSummary } from '../wallet/bnt/wallet'
 import { parseTokenAmount } from '../wallet/amounts'
@@ -17,15 +18,68 @@ const asset = (assetId: string, kind: 'token' | 'item' = 'token'): BntAssetSumma
   deploy: `${'a'.repeat(64)}_0`,
 })
 
-function start(loads: Array<() => Promise<BntAssetSummary[]>>) {
+function holdingsCache(loads: Array<(key: string) => Promise<BntAssetSummary[]>>) {
   let n = 0
-  const machine = bntHoldingsMachine.provide({
-    actors: { load: fromPromise(() => loads[Math.min(n++, loads.length - 1)]()) },
+  const calls: string[] = []
+  const cache = createChartCache<BntAssetSummary[]>({
+    id: 'bnt-holdings',
+    load: (key) => {
+      calls.push(key)
+      return loads[Math.min(n++, loads.length - 1)]!(key)
+    },
+    ttl: 60_000,
   })
-  return createActor(machine).start()
+  return { cache, calls }
+}
+
+function chart(cache: ReturnType<typeof holdingsCache>['cache'], key = 'alice:main') {
+  return createActor(bntHoldingsMachine.provide({ actors: { holdings: cache.actor } }), { input: { key } }).start()
+}
+
+function start(loads: Array<() => Promise<BntAssetSummary[]>>) {
+  return chart(holdingsCache(loads).cache)
 }
 
 describe('bntHoldingsMachine', () => {
+  it('serves a remounted chart from the cache without reading the baskets again', async () => {
+    const { cache, calls } = holdingsCache([async () => [asset('1'.repeat(40))]])
+    const first = chart(cache)
+    await waitFor(first, (s) => s.matches('ready'))
+    first.stop()
+
+    const second = chart(cache)
+    expect(second.getSnapshot().matches({ ready: 'browsing' })).toBe(true)
+    expect(second.getSnapshot().context.assets).toHaveLength(1)
+    expect(calls).toEqual(['alice:main'])
+  })
+
+  it('keeps the list shown while activity revalidates it', async () => {
+    let release!: (assets: BntAssetSummary[]) => void
+    const { cache } = holdingsCache([async () => [asset('1'.repeat(40))], () => new Promise((resolve) => (release = resolve))])
+    const actor = chart(cache)
+    await waitFor(actor, (s) => s.matches('ready'))
+
+    actor.send({ type: 'REFRESH', key: 'alice:main' })
+    expect(actor.getSnapshot().matches('ready')).toBe(true)
+    expect(actor.getSnapshot().context).toMatchObject({ cache: 'refreshing', assets: [expect.anything()] })
+
+    release([asset('1'.repeat(40)), asset('2'.repeat(40))])
+    await waitFor(actor, (s) => s.context.cache === 'ready')
+    expect(actor.getSnapshot().context.assets).toHaveLength(2)
+  })
+
+  it('moves to the open account on a switch and never shows the last account\'s list', async () => {
+    const { cache, calls } = holdingsCache([async (key) => (key === 'alice:main' ? [asset('1'.repeat(40))] : [])])
+    const actor = chart(cache)
+    await waitFor(actor, (s) => s.matches('ready'))
+
+    actor.send({ type: 'REFRESH', key: 'bob:main' })
+    expect(actor.getSnapshot().context.assets).toEqual([])
+    await waitFor(actor, (s) => s.matches('ready'))
+    expect(actor.getSnapshot().context.assets).toEqual([])
+    expect(calls).toEqual(['alice:main', 'bob:main'])
+  })
+
   it('loads, opens a held asset and refuses one it does not hold', async () => {
     const actor = start([async () => [asset('1'.repeat(40))]])
     await waitFor(actor, (s) => s.matches('ready'))
@@ -43,7 +97,7 @@ describe('bntHoldingsMachine', () => {
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'OPEN', assetId: id })
     actor.send({ type: 'REFRESH' })
-    await waitFor(actor, (s) => s.matches('ready'))
+    await waitFor(actor, (s) => s.context.cache === 'ready')
     expect(actor.getSnapshot().matches({ ready: 'composing' })).toBe(true)
   })
 
@@ -53,7 +107,7 @@ describe('bntHoldingsMachine', () => {
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'OPEN', assetId: id })
     actor.send({ type: 'REFRESH' })
-    await waitFor(actor, (s) => s.matches('ready'))
+    await waitFor(actor, (s) => s.context.cache === 'ready')
     expect(actor.getSnapshot().matches({ ready: 'browsing' })).toBe(true)
     expect(actor.getSnapshot().context.composing).toBeNull()
   })

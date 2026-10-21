@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { createActor, fromPromise, waitFor } from 'xstate'
 import { BigNumber, ECDSA, KeyDeriver, PrivateKey, Utils } from '@bsv/sdk'
 import { swapMachine } from '../../machines/swapMachine'
+import { createChartCache } from '@aeon-ui/primitives'
 import { swapOffersMachine } from '../../machines/swapOffersMachine'
+import type { OfferBookPage } from './offerBook'
 import { decimalToUnits, unitsToDecimal } from './assets'
 import { fetchExolixQuote, type ExolixQuote } from './exolix'
 import { fillOffer, MAX_OFFER_TTL_MS, signSwapOffer, swapOfferDigest, verifySwapOffer, type SwapOffer } from './offer'
@@ -483,16 +485,17 @@ describe('swapMachine', () => {
 })
 
 describe('swapOffersMachine', () => {
+  const bookCache = (load: () => Promise<OfferBookPage>) => createChartCache<OfferBookPage>({ id: 'swap-offer-book', load, ttl: 60_000 }).actor
   const mine = signSwapOffer(offer(), maker)
   const theirs = signSwapOffer(offer({}, taker), taker)
 
   it('loads verified offers and cancels only its own', async () => {
     const cancel = vi.fn(async () => undefined)
     let book = [mine, theirs]
-    const load = fromPromise(async () => ({ offers: book, filled: new Map<string, bigint>() }))
+    const load = async (): Promise<OfferBookPage> => ({ offers: book, filled: new Map<string, bigint>() })
     const actor = createActor(
-      swapOffersMachine.provide({ actors: { load, cancel: fromPromise(async ({ input }: { input: string }) => { await cancel(input); book = book.filter((o) => o.nonce !== input) }) } }),
-      { input: { self: maker.toPublicKey().toString() } },
+      swapOffersMachine.provide({ actors: { book: bookCache(load), cancel: fromPromise(async ({ input }: { input: string }) => { await cancel(input); book = book.filter((o) => o.nonce !== input) }) } }),
+      { input: { self: maker.toPublicKey().toString(), key: 'k' } },
     ).start()
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'CANCEL', nonce: theirs.nonce })
@@ -507,8 +510,8 @@ describe('swapOffersMachine', () => {
   it('takes only someone else\'s offer, and only on CONFIRM after review', async () => {
     const take = vi.fn(async () => undefined)
     const actor = createActor(
-      swapOffersMachine.provide({ actors: { load: fromPromise(async () => ({ offers: [mine, theirs], filled: new Map<string, bigint>() })), take: fromPromise(async ({ input }) => take(input)) } }),
-      { input: { self: maker.toPublicKey().toString() } },
+      swapOffersMachine.provide({ actors: { book: bookCache(async () => ({ offers: [mine, theirs], filled: new Map<string, bigint>() })), take: fromPromise(async ({ input }) => take(input)) } }),
+      { input: { self: maker.toPublicKey().toString(), key: 'k' } },
     ).start()
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'REVIEW', nonce: mine.nonce })
@@ -529,9 +532,9 @@ describe('swapOffersMachine', () => {
     const take = vi.fn(async () => undefined)
     const actor = createActor(
       swapOffersMachine.provide({
-        actors: { load: fromPromise(async () => ({ offers: [parts], filled: new Map([[parts.nonce, 30_000_000n]]) })), take: fromPromise(async ({ input }) => take(input)) },
+        actors: { book: bookCache(async () => ({ offers: [parts], filled: new Map([[parts.nonce, 30_000_000n]]) })), take: fromPromise(async ({ input }) => take(input)) },
       }),
-      { input: { self: maker.toPublicKey().toString() } },
+      { input: { self: maker.toPublicKey().toString(), key: 'k' } },
     ).start()
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'REVIEW', nonce: parts.nonce })
@@ -551,13 +554,13 @@ describe('swapOffersMachine', () => {
     const actor = createActor(
       swapOffersMachine.provide({
         actors: {
-          load: fromPromise(async () => ({ offers: [theirs], filled: new Map<string, bigint>() })),
+          book: bookCache(async () => ({ offers: [theirs], filled: new Map<string, bigint>() })),
           take: fromPromise(async () => {
             throw new Error('Not enough LTC to lock for this swap.')
           }),
         },
       }),
-      { input: { self: maker.toPublicKey().toString() } },
+      { input: { self: maker.toPublicKey().toString(), key: 'k' } },
     ).start()
     await waitFor(actor, (s) => s.matches('ready'))
     actor.send({ type: 'REVIEW', nonce: theirs.nonce })
@@ -568,11 +571,11 @@ describe('swapOffersMachine', () => {
 
   it('fails with the reason and recovers on REFRESH', async () => {
     let up = false
-    const load = fromPromise(async () => {
+    const load = async (): Promise<OfferBookPage> => {
       if (!up) throw new Error('offer book unavailable: HTTP 503')
       return { offers: [], filled: new Map<string, bigint>() }
-    })
-    const actor = createActor(swapOffersMachine.provide({ actors: { load } }), { input: { self: null } }).start()
+    }
+    const actor = createActor(swapOffersMachine.provide({ actors: { book: bookCache(load) } }), { input: { self: null, key: 'k' } }).start()
     const failed = await waitFor(actor, (s) => s.matches('failed'))
     expect(failed.context.failure).toBe('offer book unavailable: HTTP 503')
     up = true
