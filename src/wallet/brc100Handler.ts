@@ -732,10 +732,9 @@ export async function handleBrc100Request(
   try {
     const result = await handleCoinAliasOrInner(event, runtime, method, args)
     if (runtime && !runtimeIsCurrent(runtime)) {
-      return {
-        status: 409,
-        body: JSON.stringify({ error: 'Wallet account changed during request' }),
-      }
+      const changed = 'Wallet account changed during request'
+      reportActionPhases(event.request_id, method, false, changed)
+      return { status: 409, body: JSON.stringify({ error: changed }) }
     }
     const ok = result.status >= 200 && result.status < 300
     reportActionPhases(event.request_id, method, ok, ok ? null : result.body)

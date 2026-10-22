@@ -233,11 +233,13 @@ async function localAtomicBeefForHint(txid: string): Promise<number[] | undefine
 }
 
 const hintPathSeen = new Map<string, string>()
+const HINT_PATH_SEEN_MAX = 2_000
 
 /** Each hint logs where it waits, once per change — skips used to be silent. */
 function noteHintPath(txid: string, path: string): void {
   const id = txid.trim().toLowerCase()
   if (hintPathSeen.get(id) === path) return
+  if (hintPathSeen.size >= HINT_PATH_SEEN_MAX) hintPathSeen.clear()
   hintPathSeen.set(id, path)
   console.info(`[tip-ingest] hint ${id.slice(0, 12)} ${path}`)
 }

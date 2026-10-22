@@ -1900,9 +1900,10 @@ function runActivityExpiry(): void {
   // A placeholder whose removal a full store refused is hidden at read time,
   // which only shows once the feed recomposes.
   const now = Date.now();
-  const unseen = readAll().filter(
-    (e) => isStaleApprovalPlaceholder(e, now) && !projectedStaleIds.has(e.id)
-  );
+  const stale = readAll().filter((e) => isStaleApprovalPlaceholder(e, now));
+  const staleIds = new Set(stale.map((e) => e.id));
+  for (const id of projectedStaleIds) if (!staleIds.has(id)) projectedStaleIds.delete(id);
+  const unseen = stale.filter((e) => !projectedStaleIds.has(e.id));
   if (unseen.length > 0) {
     for (const e of unseen) projectedStaleIds.add(e.id);
     writeGeneration += 1;
