@@ -132,8 +132,6 @@ import { durableForgetCached } from './durableStorage'
 import {
   defaultDevWalletStorageUrl,
   derivedDevKey,
-  DevKeyRefused,
-  devSignEligibility,
   devWalletStatus,
   exportDevKeyConfig,
   feeShortfall,
@@ -270,7 +268,19 @@ function ledgerKey(): string {
   return [...store.keys()].find((k) => k.startsWith('handcash.serverWallet'))!
 }
 
-const walletKey = () => generateDevKey(runtime, { sign: false, wallet: true })
+const walletKey = () => generateDevKey(runtime)
+
+/** A Sign key made before they stopped being issued. */
+function legacySignKey(seq: number, withWallet = false): number {
+  const n = walletKey()
+  const ledger = JSON.parse(store.get(ledgerKey())!)
+  const record = ledger.keys.find((k: { n: number }) => k.n === n)
+  record.material = { kind: 'bap', bapId: BAP_ID, seq }
+  if (!withWallet) record.wallet = null
+  store.set(ledgerKey(), JSON.stringify(ledger))
+  durableForgetCached()
+  return n
+}
 
 beforeEach(() => {
   h.lifecycle?.dispose?.(runtime, 'locked')
@@ -286,8 +296,13 @@ beforeEach(() => {
 })
 
 describe('generate', () => {
-  it('needs at least one capability', () => {
-    expect(() => generateDevKey(runtime, { sign: false, wallet: false })).toThrow(DevKeyRefused)
+  it('never hands out the identity signing key, even with a published identity', () => {
+    present(2)
+    const n = walletKey()
+    const env = exportDevKeyConfig(runtime, n)
+    expect(env).not.toContain(bapKey(master, 2).toHex())
+    expect(env).not.toContain('BAP_ID=')
+    expect(listDevKeys(runtime)[0]).toMatchObject({ sign: null, wallet: { storageHost: expect.any(String) } })
   })
 
   it('numbers keys and never reuses a number', async () => {
@@ -340,10 +355,10 @@ describe('generate', () => {
   })
 })
 
-describe('sign capability', () => {
-  it('carries the current identity key, never the master or root', () => {
+describe('existing sign keys', () => {
+  it('carries the identity key it was made with, never the master or root', () => {
     present(2)
-    const n = generateDevKey(runtime, { sign: true, wallet: false })
+    const n = legacySignKey(2)
     const env = exportDevKeyConfig(runtime, n)
     expect(env).toBe(`SERVER_PRIVATE_KEY=${bapKey(master, 2).toHex()}\nBSV_NETWORK=main\nBAP_ID=${BAP_ID}\n`)
     expect(env).not.toContain(master.toHex())
@@ -351,9 +366,9 @@ describe('sign capability', () => {
     expect(listDevKeys(runtime)[0]).toMatchObject({ sign: { seq: 2, state: 'active' }, wallet: null })
   })
 
-  it('lets one key both sign and hold a wallet', async () => {
+  it('still opens a key that both signs and holds a wallet', async () => {
     present(1)
-    const n = generateDevKey(runtime, { sign: true, wallet: true })
+    const n = legacySignKey(1, true)
     fakeServerWallet(bapKey(master, 1))
     expect(exportDevKeyConfig(runtime, n)).toContain('WALLET_STORAGE_URL=')
     expect(exportDevKeyConfig(runtime, n)).toContain(`BAP_ID=${BAP_ID}`)
@@ -361,26 +376,15 @@ describe('sign capability', () => {
     expect(h.built[0]!.identityKey).toBe(bapKey(master, 1).toPublicKey().toString())
   })
 
-  it('refuses without a published BAP identity, after its revocation, and for the root', () => {
-    expect(devSignEligibility(runtime)).toMatchObject({ kind: 'refused', reason: 'not-published' })
-    present(1, { revoked: true })
-    expect(devSignEligibility(runtime)).toMatchObject({ kind: 'refused', reason: 'revoked' })
-    present(0)
-    expect(() => generateDevKey(runtime, { sign: true, wallet: false })).toThrow(DevKeyRefused)
-  })
-
-  it('is held by one key until a rotation retires it', async () => {
+  it('cannot be removed until a rotation retires it', async () => {
     present(1)
-    const first = generateDevKey(runtime, { sign: true, wallet: false })
-    expect(devSignEligibility(runtime)).toMatchObject({ kind: 'refused', reason: 'sign-key-held' })
-    await expect(removeDevKey(runtime, first)).rejects.toMatchObject({ reason: 'still-signing' })
+    const n = legacySignKey(1)
+    await expect(removeDevKey(runtime, n)).rejects.toMatchObject({ reason: 'still-signing' })
 
     present(2)
     expect(listDevKeys(runtime)[0]).toMatchObject({ sign: { seq: 1, state: 'retired' } })
-    const second = generateDevKey(runtime, { sign: true, wallet: false })
-    expect(listDevKeys(runtime).map((k) => k.sign?.state)).toEqual(['retired', 'active'])
-    await removeDevKey(runtime, first)
-    expect(listDevKeys(runtime).map((k) => k.n)).toEqual([second])
+    await removeDevKey(runtime, n)
+    expect(listDevKeys(runtime)).toEqual([])
   })
 })
 
@@ -490,7 +494,7 @@ describe('migration', () => {
     const testnet = { ...active, chain: 'test' } as ActiveWallet
     walletKey()
     const mainKey = ledgerKey()
-    generateDevKey({ instance: testnet } as unknown as WalletRuntime, { sign: false, wallet: true })
+    generateDevKey({ instance: testnet } as unknown as WalletRuntime)
     const testKey = [...store.keys()].find((k) => k.startsWith('handcash.serverWallet') && k !== mainKey)!
     store.set(mainKey, JSON.stringify({ v: 2, generation: 2, pendingFunds: [], pendingRecover: null }))
     store.set(testKey, JSON.stringify({ v: 1, generation: 2, outputs: [], pendingRecover: null }))

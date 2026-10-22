@@ -1,12 +1,13 @@
 /**
- * Developer keys — keys this account hands to a developer's server, each with
- * the capabilities chosen when it was generated: sign, wallet, or both.
+ * Developer keys — keys this account hands to a developer's server. A new key
+ * is a server wallet only.
  *
- * Sign: the key is `identity-<seq>` of the identity this account presents, a
- * BRC-42 `self` child of the identity master under `[1,'sigma']`. It reveals
- * neither the master nor any funds key. BAP allows one current signing key per
- * identity, so one key at a time can sign; rotating on Identity retires it and
- * frees the slot. The root (`identity-0`) never leaves the wallet.
+ * Sign (existing keys only, never issued again): the key is `identity-<seq>`
+ * of the presented identity, a BRC-42 `self` child of the identity master
+ * under `[1,'sigma']`. Each BAP rotation is signed by the outgoing key, so a
+ * server holding it can rotate the identity away from this wallet; rotating
+ * on Identity first retires it. The root (`identity-0`) never leaves the
+ * wallet.
  *
  * Wallet: the server runs a stock Toolbox wallet from `SERVER_PRIVATE_KEY` +
  * `WALLET_STORAGE_URL`; this wallet opens the same key against the same
@@ -178,11 +179,6 @@ function hostOf(url: string): string {
 }
 
 export type DevKeyRefusal =
-  | 'no-capability'
-  | 'not-published'
-  | 'revoked'
-  | 'root-key'
-  | 'sign-key-held'
   | 'unreachable'
   | 'still-signing'
   | 'not-empty'
@@ -368,41 +364,6 @@ function requireKey(runtime: WalletRuntime, record: DevKeyRecord): PrivateKey {
   return key
 }
 
-/** The identity signing key a new Sign key would carry, or why there is none. */
-export type DevSignEligibility =
-  | { kind: 'ready'; bapId: string; name: string; seq: number }
-  | { kind: 'refused'; reason: DevKeyRefusal; message: string }
-
-function signEligibility(runtime: WalletRuntime, keys: DevKeyRecord[]): DevSignEligibility {
-  const material = presentedBapMaterial(runtime)
-  if (material.kind === 'none') {
-    return { kind: 'refused', reason: 'not-published', message: 'Publish the shared profile to BAP to sign.' }
-  }
-  if (material.kind === 'revoked') {
-    return { kind: 'refused', reason: 'revoked', message: 'The shared profile’s BAP identity is revoked.' }
-  }
-  const current = material.identity.keys.at(-1)
-  if (!current || current.seq < 1) {
-    return { kind: 'refused', reason: 'root-key', message: 'The identity root key never leaves the wallet.' }
-  }
-  const { bapId, name } = material.identity
-  const holder = keys.find(
-    (k) => k.material.kind === 'bap' && k.material.bapId === bapId && k.material.seq === current.seq,
-  )
-  if (holder) {
-    return {
-      kind: 'refused',
-      reason: 'sign-key-held',
-      message: `Key ${holder.n} already holds ${name}’s signing key — an identity signs with one key at a time. Give another server Key ${holder.n}’s config, or rotate the identity key to issue a new one.`,
-    }
-  }
-  return { kind: 'ready', bapId, name, seq: current.seq }
-}
-
-export function devSignEligibility(runtime: WalletRuntime): DevSignEligibility {
-  return signEligibility(runtime, readDevKeyLedger(runtime.instance).keys)
-}
-
 function signOf(runtime: WalletRuntime, material: Extract<DevKeyMaterial, { kind: 'bap' }>) {
   const presented = presentedBapMaterial(runtime)
   const identity = presented.kind !== 'none' && presented.identity.bapId === material.bapId ? presented.identity : null
@@ -415,21 +376,10 @@ function signOf(runtime: WalletRuntime, material: Extract<DevKeyMaterial, { kind
   }
 }
 
-export function generateDevKey(
-  runtime: WalletRuntime,
-  capabilities: { sign: boolean; wallet: boolean },
-): number {
-  if (!capabilities.sign && !capabilities.wallet) {
-    refuse('no-capability', 'Choose what the key can do.')
-  }
+/** A new server wallet key; the identity signing key is never handed out. */
+export function generateDevKey(runtime: WalletRuntime): number {
   const active = runtime.instance
   const ledger = readDevKeyLedger(active)
-  let material: DevKeyMaterial = { kind: 'derived' }
-  if (capabilities.sign) {
-    const sign = signEligibility(runtime, ledger.keys)
-    if (sign.kind === 'refused') refuse(sign.reason, sign.message)
-    material = { kind: 'bap', bapId: sign.bapId, seq: sign.seq }
-  }
   const n = ledger.next
   writeLedger(accountKeyScopeFor(active), {
     v: 3,
@@ -438,17 +388,13 @@ export function generateDevKey(
       ...ledger.keys,
       {
         n,
-        material,
-        wallet: capabilities.wallet
-          ? { storageUrl: defaultDevWalletStorageUrl(active.chain), pendingFunds: [], pendingRecover: null }
-          : null,
+        material: { kind: 'derived' },
+        wallet: { storageUrl: defaultDevWalletStorageUrl(active.chain), pendingFunds: [], pendingRecover: null },
         createdAt: Date.now(),
       },
     ],
   })
-  console.info(
-    `[dev-key] generated key=${n}${capabilities.sign ? ' sign' : ''}${capabilities.wallet ? ' wallet' : ''}`,
-  )
+  console.info(`[dev-key] generated key=${n} wallet`)
   return n
 }
 
