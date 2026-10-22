@@ -6833,6 +6833,65 @@ a.connected-app-host:hover {
 }
 
 .connected-app-usd-secondary {
+.connected-app-access,
+.connected-app-seen {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--hc-text-xs);
+  line-height: 1.35;
+}
+
+.connected-app-access {
+  color: var(--hc-text);
+}
+
+.connected-app-seen {
+  color: var(--hc-muted);
+}
+
+.connected-app-manage {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.connected-app-row .connected-app-main {
+  align-items: start;
+}
+
+.connected-app-row .connected-app-main .app-avatar {
+  margin-top: 2px;
+}
+
+/* Narrow: spend moves under the app so name, access and actions keep their width. */
+@container connected-apps (max-width: 439px) {
+  .connected-app-row .connected-app-row-live {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .connected-app-row .connected-app-stats {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    border-left: 0;
+    border-top: 1px solid hsl(var(--border));
+  }
+
+  .connected-app-manage {
+    width: 40px;
+    padding: 0;
+  }
+
+  .connected-app-manage-label {
+    display: none;
+  }
+}
+
   color: var(--hc-text);
   font-weight: 500;
   font-size: var(--hc-text-xs);
@@ -7243,6 +7302,11 @@ html[data-aeon-mode='light']
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+.collection-grid-card .connected-app-card-actions > .connected-app-manage {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 
 .app-money-cell strong {
   color: var(--hc-accent-deep);
@@ -8512,14 +8576,14 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 .friend-row:hover {
-  background: color-mix(in srgb, var(--hc-accent) 6%, var(--hc-surface));
+  background: var(--hc-hover);
 }
 
 .friend-row-main {
   appearance: none;
   width: 100%;
   margin: 0;
-  padding: 10px 8px;
+  padding: 10px;
   border: 0;
   border-radius: var(--hc-radius);
   background: transparent;
@@ -8528,7 +8592,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   text-align: left;
   cursor: pointer;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -8542,6 +8606,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   border-radius: 50%;
   background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
   color: var(--hc-accent);
+  border: 1px solid hsl(var(--border));
   font-family: var(--hc-display);
   font-size: var(--hc-text-lg);
   font-weight: 700;
@@ -8568,6 +8633,18 @@ html[data-aeon-mode='light'] .shortcut-key {
   align-items: center;
   padding: 3px 6px;
   border-radius: 999px;
+.friend-row-since {
+  color: var(--hc-muted);
+  font-size: var(--hc-text-2xs);
+  white-space: nowrap;
+}
+
+@container friends (max-width: 439px) {
+  .friend-row-since {
+    display: none;
+  }
+}
+
   background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
   color: color-mix(in srgb, var(--hc-accent) 82%, var(--hc-text));
   font-size: var(--hc-text-2xs);
@@ -8631,21 +8708,39 @@ html[data-aeon-mode='light'] .shortcut-key {
   font-size: var(--hc-text-md);
 }
 
-.friends-panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+/* List screens (Apps, Friends): title row, then the search, one rule under both. */
+.list-panel-top {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid hsl(var(--border));
 }
 
-.friends-panel-head > h2 {
-  display: inline-flex;
-  align-items: center;
+.list-panel-top > .list-panel-head {
+  flex-wrap: nowrap;
+  margin: 0;
+  padding: 0;
+  border-bottom: 0;
+  min-height: 28px;
+}
+
+.list-panel-head > h2 {
   gap: 8px;
   margin: 0;
 }
 
-.friends-count {
+.list-panel-search > .panel-filter {
+  position: relative;
+  width: 100%;
+}
+
+.nav-section-scroll-body > .empty-state {
+  min-height: 220px;
+}
+
+.list-panel-count {
   display: inline-grid;
   place-items: center;
   min-width: 20px;
@@ -8660,22 +8755,25 @@ html[data-aeon-mode='light'] .shortcut-key {
   letter-spacing: 0;
 }
 
-.friends-panel-head > .connected-panel-head-actions,
-.friends-panel-head > .friends-panel-head-actions {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  justify-content: flex-end;
-}
-
 .panel-icon-toolbar {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
 }
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.list-panel-actions {
+  margin-left: auto;
+}
+
+.list-panel-search {
+  min-width: 0;
+}
+
+.list-panel-search > .root-search {
 
 .panel-icon-btn {
   appearance: none;

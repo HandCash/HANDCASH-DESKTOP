@@ -3,8 +3,13 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { SkeletonAppCard, SkeletonAppRow } from './Skeleton'
-import { appDisplayName, appHomepage } from '../wallet/appIdentity'
-import type { ConnectedApp } from '../wallet/permissions'
+import { appDisplayName, appHomepage, grantedPermissionScopes } from '../wallet/appIdentity'
+import {
+  acceptsIncomingFunds,
+  getItemAccess,
+  getTokenAccess,
+  type ConnectedApp,
+} from '../wallet/permissions'
 import {
   formatPrimaryFromSats,
   getCachedUsdPerBsv,
@@ -30,12 +35,14 @@ import {
   type CollectionView,
 } from '../wallet/collectionView'
 import { isCompactLayout, subscribeCompactLayout } from '../wallet/layoutViewport'
+import { appAccessText, appSeenText, filterConnectedApps } from '../wallet/listPanelText'
 import { openAppDetails, openDevKeys } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
-import { AppsIcon, CodeIcon, SettingsIcon, ViewGridIcon } from './icons'
+import { AppsIcon, CodeIcon, SearchIcon, SettingsIcon, ViewGridIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import { AppsSearchBar, appsSearchAddress, canOpenAppAddresses } from './AppsSearchBar'
+import { ListPanelHead } from './ListPanelHead'
 
 type Props = {
   apps: ConnectedApp[]
@@ -83,6 +90,18 @@ type AppCardProps = {
   app: ConnectedApp
   currency: DisplayCurrency
   usdPerBsv: number | null
+  now: number
+}
+
+function appAccess(origin: string): string {
+  return appAccessText(
+    grantedPermissionScopes({
+      acceptIncomingFunds: acceptsIncomingFunds(origin),
+      itemAccess: getItemAccess(origin),
+      tokenAccess: getTokenAccess(origin),
+      autoPayEnabled: getAutoPaySettings(origin)?.enabled === true,
+    }),
+  )
 }
 
 function AppCardMain({
@@ -90,12 +109,14 @@ function AppCardMain({
   name,
   ready,
   size,
+  now,
   onReady,
 }: {
   app: ConnectedApp
   name: string
   ready: boolean
   size: 'sm' | 'md'
+  now: number
   onReady: () => void
 }) {
   return (
@@ -116,6 +137,12 @@ function AppCardMain({
           </strong>
           <span className={`${size === 'sm' ? 'connected-app-host' : 'collection-grid-host'} mono`}>
             {app.origin}
+          </span>
+          <span className="connected-app-access" data-aeon-part="access">
+            {appAccess(app.origin)}
+          </span>
+          <span className="connected-app-seen" data-aeon-part="seen">
+            {appSeenText(app.connectedAt, getAppLastActivityAt(app.origin), now)}
           </span>
         </span>
       </button>
@@ -142,12 +169,16 @@ function AppCardActions({ app, name }: { app: ConnectedApp; name: string }) {
     <div className="connected-app-card-actions">
       <Button.Root
         variant="ghost"
-        className="btn btn-ghost btn-icon connected-app-icon-action"
-        aria-label={`Manage ${name}`}
-        title={`Manage ${name}`}
-        onClick={() => openAppDetails(app)}
+        className="btn btn-ghost connected-app-manage"
+        aria-label={`Manage or disconnect ${name}`}
+        title={`Manage or disconnect ${name}`}
+        onClick={() => {
+          playWalletSound('soft')
+          openAppDetails(app)
+        }}
       >
-        <SettingsIcon size={17} />
+        <SettingsIcon size={16} />
+        <span className="connected-app-manage-label">Manage</span>
       </Button.Root>
       {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
     </div>
@@ -162,7 +193,14 @@ function AppListItem(props: AppCardProps) {
       {!ready ? <SkeletonAppRow /> : null}
       {/* Keep in DOM (not display:none) so favicon can load under the skeleton. */}
       <div className={ready ? 'connected-app-row-live' : 'media-preload'}>
-        <AppCardMain app={props.app} name={name} ready={ready} size="sm" onReady={() => setReady(true)} />
+        <AppCardMain
+          app={props.app}
+          name={name}
+          ready={ready}
+          size="sm"
+          now={props.now}
+          onReady={() => setReady(true)}
+        />
         <AppCardStats {...props} />
         <AppCardActions app={props.app} name={name} />
       </div>
@@ -178,12 +216,82 @@ function AppGridItem(props: AppCardProps) {
       {!ready ? <SkeletonAppCard /> : null}
       <div className={ready ? 'collection-grid-live' : 'media-preload'}>
         <div className="collection-grid-main">
-          <AppCardMain app={props.app} name={name} ready={ready} size="md" onReady={() => setReady(true)} />
+          <AppCardMain
+            app={props.app}
+            name={name}
+            ready={ready}
+            size="md"
+            now={props.now}
+            onReady={() => setReady(true)}
+          />
           <AppCardStats {...props} />
           <AppCardActions app={props.app} name={name} />
         </div>
       </div>
     </li>
+  )
+}
+
+type ResultsProps = {
+  apps: ConnectedApp[]
+  query: string
+  view: CollectionView
+  currency: DisplayCurrency
+  usdPerBsv: number | null
+  now: number
+  /** True when the typed text is a web address the search bar offers to open. */
+  opensAddress: boolean
+  canOpen: boolean
+}
+
+/** What sits under the search: the empty state, no matches, or the app list or grid. */
+export function ConnectedAppsResults({
+  apps,
+  query,
+  view,
+  currency,
+  usdPerBsv,
+  now,
+  opensAddress,
+  canOpen,
+}: ResultsProps) {
+  if (apps.length === 0) {
+    return (
+      <EmptyState
+        icon={<AppsIcon size={28} />}
+        title="No apps connected"
+        body={
+          canOpen
+            ? 'Type a web address above to open an app. Apps you connect show up here with what they can reach.'
+            : 'Apps you connect show up here with what they can reach.'
+        }
+      />
+    )
+  }
+  const shown = filterConnectedApps(apps, query)
+  if (shown.length === 0) {
+    if (opensAddress) return null
+    return (
+      <EmptyState
+        icon={<SearchIcon size={28} />}
+        title="No apps found"
+        body={`Nothing matches “${query.trim()}”. Try another name or web address.`}
+      />
+    )
+  }
+  const card = { currency, usdPerBsv, now }
+  return view === 'grid' ? (
+    <ul className="collection-grid">
+      {shown.map((app) => (
+        <AppGridItem key={app.origin} app={app} {...card} />
+      ))}
+    </ul>
+  ) : (
+    <ul className="connected-app-list">
+      {shown.map((app) => (
+        <AppListItem key={app.origin} app={app} {...card} />
+      ))}
+    </ul>
   )
 }
 
@@ -210,20 +318,16 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       return b.connectedAt - a.connectedAt
     })
   }, [apps, tick])
+  const now = useMemo(() => {
+    void tick
+    return Date.now()
+  }, [tick, apps])
 
-  const filteredApps = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return orderedApps
-    return orderedApps.filter((app) => {
-      const name = (app.name || appDisplayName(app.origin)).toLowerCase()
-      const origin = app.origin.toLowerCase()
-      const home = (appHomepage(app.origin) ?? '').toLowerCase()
-      return name.includes(q) || origin.includes(q) || home.includes(q)
-    })
-  }, [orderedApps, query])
-  const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
+  const topMatch = useMemo(() => filterConnectedApps(orderedApps, query)[0] ?? null, [orderedApps, query])
+  const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout, isCompactLayout)
   const canOpen = canOpenAppAddresses(compact)
   const address = appsSearchAddress(query, canOpen)
+  const showSearch = apps.length > 0 || canOpen
 
   return (
     <div
@@ -231,86 +335,71 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       data-aeon-scope="connected-apps"
       data-aeon-state={view}
     >
-      <div className="connected-panel-head">
-        <h2>Connected apps</h2>
-        <div className="connected-panel-head-actions">
-          <Button.Root
-            variant="ghost"
-            className="connected-app-tabs-button"
-            aria-label={`Show ${openTabCount} open web ${openTabCount === 1 ? 'page' : 'pages'}`}
-            title="Open web pages"
-            disabled={openTabCount === 0}
-            onClick={() => {
-              playWalletSound('soft')
-              onShowTabs()
-            }}
-          >
-            <ViewGridIcon size={16} />
-            <span>{openTabCount}</span>
-          </Button.Root>
-          <Button.Root
-            variant="ghost"
-            className="connected-app-tabs-button"
-            aria-label="Developer keys"
-            title="Developer keys"
-            onClick={() => {
-              playWalletSound('soft')
-              openDevKeys()
-            }}
-          >
-            <CodeIcon size={16} />
-          </Button.Root>
-          <CollectionViewToggle label="Connected apps view" scope="apps" />
-        </div>
-      </div>
+      <ListPanelHead
+        title="Connected apps"
+        count={apps.length}
+        countLabel={`${apps.length} connected ${apps.length === 1 ? 'app' : 'apps'}`}
+        actions={
+          <>
+            <Button.Root
+              variant="ghost"
+              className="connected-app-tabs-button"
+              aria-label={`Show ${openTabCount} open web ${openTabCount === 1 ? 'page' : 'pages'}`}
+              title="Open web pages"
+              disabled={openTabCount === 0}
+              onClick={() => {
+                playWalletSound('soft')
+                onShowTabs()
+              }}
+            >
+              <ViewGridIcon size={16} />
+              <span>{openTabCount}</span>
+            </Button.Root>
+            <button
+              type="button"
+              className="panel-icon-btn"
+              aria-label="Developer keys"
+              title="Developer keys"
+              onClick={() => {
+                playWalletSound('soft')
+                openDevKeys()
+              }}
+            >
+              <CodeIcon size={16} />
+            </button>
+            {apps.length > 0 ? <CollectionViewToggle label="Connected apps view" scope="apps" /> : null}
+          </>
+        }
+        search={
+          showSearch ? (
+            <AppsSearchBar query={query} onQueryChange={setQuery} topMatch={topMatch} canOpen={canOpen} />
+          ) : null
+        }
+      />
       {apps.length === 0 ? (
-        <>
-          {canOpen ? (
-            <AppsSearchBar query={query} onQueryChange={setQuery} topMatch={null} canOpen />
-          ) : null}
-          <EmptyState icon={<AppsIcon size={28} />} title="No apps connected" />
-        </>
+        <ConnectedAppsResults
+          apps={orderedApps}
+          query={query}
+          view={view}
+          currency={currency}
+          usdPerBsv={usdPerBsv}
+          now={now}
+          opensAddress={address !== null}
+          canOpen={canOpen}
+        />
       ) : (
-        <>
-          <AppsSearchBar
+        <div className="nav-section-scroll-body">
+          <ConnectedAppsResults
+            apps={orderedApps}
             query={query}
-            onQueryChange={setQuery}
-            topMatch={filteredApps[0] ?? null}
+            view={view}
+            currency={currency}
+            usdPerBsv={usdPerBsv}
+            now={now}
+            opensAddress={address !== null}
             canOpen={canOpen}
           />
-        <div className="nav-section-scroll-body">
-          {filteredApps.length === 0 ? (
-            address ? null : (
-            <div className="friends-empty">
-              <strong>No apps found</strong>
-              <span>Try another name or origin.</span>
-            </div>
-            )
-          ) : view === 'grid' ? (
-            <ul className="collection-grid">
-              {filteredApps.map((app) => (
-                <AppGridItem
-                  key={app.origin}
-                  app={app}
-                  currency={currency}
-                  usdPerBsv={usdPerBsv}
-                />
-              ))}
-            </ul>
-          ) : (
-            <ul className="connected-app-list">
-              {filteredApps.map((app) => (
-                <AppListItem
-                  key={app.origin}
-                  app={app}
-                  currency={currency}
-                  usdPerBsv={usdPerBsv}
-                />
-              ))}
-            </ul>
-          )}
         </div>
-        </>
       )}
     </div>
   )
