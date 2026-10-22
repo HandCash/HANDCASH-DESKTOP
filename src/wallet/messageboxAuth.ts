@@ -1,7 +1,8 @@
 /**
- * Interim messagebox identity proof (pre–BRC-103/104).
+ * Interim messagebox identity proof, for boxes that do not speak BRC-104.
  *
- * BRC-33 requires authenticated PeerServ sessions. Until BRC-103/104 is wired,
+ * BRC-33 requires authenticated PeerServ sessions. Boxes that serve the BRC-104
+ * handshake get BRC-103 sessions (`messageboxPeerAuth.ts`); for the rest,
  * clients prove possession of an identity key by ECDSA-signing a canonical
  * UTF-8 preimage (Bitcoin-style: SHA-256 then secp256k1). The messagebox binds
  * list/ack to that key (recipient) and send/files to that key (sender).
@@ -15,7 +16,6 @@
  * BRC-103 identity proof is signed locally. Fetch attaches `X-BRC103-*` only
  * to BRC-CLOUD (Allow-Headers already lists them). Other boxes keep
  * `X-BRC33-*` alone so Android WebView does not cache a CORS miss.
- * Full Authrite Peer sessions + certificates remain deferred.
  */
 import { BigNumber, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 

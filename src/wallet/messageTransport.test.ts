@@ -5,6 +5,9 @@ const cardShare = vi.hoisted(() => ({
   shareIdentityCardAfterDelivery: vi.fn(async () => {}),
 }))
 vi.mock('./identityCardShare', () => cardShare)
+vi.mock('./messageboxPeerAuth', () => ({
+  messageboxPeerFetch: (_root: string, _url: string, _init: RequestInit, interim: () => Promise<Response>) => interim(),
+}))
 
 import {
   decodeMessageBody,
