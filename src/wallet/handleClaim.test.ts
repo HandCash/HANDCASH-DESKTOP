@@ -11,6 +11,7 @@ import {
 useTestHandleCertifier()
 
 const OWN_KEY = testIdentityKey(21)
+const OWN_ROOT = (21).toString(16).padStart(64, '0')
 const store = new Map<string, string>()
 const acquireCertificate = vi.fn(async (_args: Record<string, unknown>) => ({ type: 'ok' }))
 const held: Array<{ serialNumber: string }> = []
@@ -32,6 +33,7 @@ vi.mock('./durableStorage', () => ({
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     identityKey: walletState.identityKey,
+    rootKeyHex: OWN_ROOT,
     wallet: { acquireCertificate, listCertificates, relinquishCertificate },
   }),
 }))
@@ -62,10 +64,13 @@ const resolveHandle = vi.fn(async (): Promise<Record<string, unknown>> => ({
   messagebox: null,
 }))
 
+const releaseHandle = vi.fn(async (_args: Record<string, unknown>) => ({ forwarding: null }))
+
 vi.mock('./handleResolve', () => ({
   HandleNotFoundError: class HandleNotFoundError extends Error {},
   claimHandle: (...args: unknown[]) => claimHandle(...(args as [])),
   resolveHandle: (...args: unknown[]) => resolveHandle(...(args as [])),
+  releaseHandle: (args: Record<string, unknown>) => releaseHandle(args),
 }))
 
 vi.mock('./migration', () => ({
@@ -93,6 +98,7 @@ beforeEach(() => {
   relinquishCertificate.mockClear()
   claimHandle.mockClear()
   resolveHandle.mockClear()
+  releaseHandle.mockClear()
   walletState.identityKey = OWN_KEY
 })
 
@@ -178,6 +184,38 @@ describe('claimCloudHandlePayload', () => {
     await expect(claimCloudHandlePayload({ handle: 'alice' })).rejects.toThrow(
       /claim ticket/i,
     )
+  })
+})
+
+describe('releaseCloudHandle', () => {
+  it('releases with a record this key signed, then drops the claim and its certificate', async () => {
+    const { claimCloudHandlePayload, readClaimedCloudHandle, releaseCloudHandle } = await import('./handleClaim')
+    const { verifiedForwarding } = await import('./handleForwarding')
+    await claimCloudHandlePayload({ handle: 'alice', claimTicket: 'ticket' })
+    held.push({ serialNumber: 'c2VyaWFs' })
+    const next = testIdentityKey(22)
+    resolveHandle.mockResolvedValueOnce({ handle: 'alice', domain: 'other.example', identityKey: next })
+
+    await releaseCloudHandle({ forwardTo: '@alice@other.example' })
+
+    const sent = releaseHandle.mock.calls[0]![0] as { handle: string; rootKeyHex: string; forwarding: unknown }
+    expect(sent.handle).toBe('alice')
+    expect(sent.rootKeyHex).toBe(OWN_ROOT)
+    expect(verifiedForwarding(sent.forwarding, OWN_KEY)).toMatchObject({
+      from: '@alice@brc-cloud.bcryderman.workers.dev',
+      toIdentityKey: next,
+      toHandle: '@alice@other.example',
+    })
+    expect(readClaimedCloudHandle()).toBeNull()
+    expect(relinquishCertificate).toHaveBeenCalledWith(expect.objectContaining({ serialNumber: 'c2VyaWFs' }))
+  })
+
+  it('keeps the claim when the host refuses the release', async () => {
+    const { claimCloudHandlePayload, readClaimedCloudHandle, releaseCloudHandle } = await import('./handleClaim')
+    await claimCloudHandlePayload({ handle: 'alice', claimTicket: 'ticket' })
+    releaseHandle.mockRejectedValueOnce(new Error('Handle release failed (503)'))
+    await expect(releaseCloudHandle()).rejects.toThrow(/503/)
+    expect(readClaimedCloudHandle()?.handle).toBe('alice')
   })
 })
 

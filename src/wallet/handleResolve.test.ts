@@ -2,13 +2,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   HandleNotFoundError,
+  HandleRevokedError,
   shouldResolveHandleInput,
   createHandleResolveDebouncer,
   resolveHandle,
   resolveHandleByIdentityKey,
   claimHandle,
+  releaseHandle,
 } from './handleResolve'
 import { HandleCertificateError } from './handleCertificate'
+import { signForwardingRecord } from './handleForwarding'
 import {
   signedHandleCertificate,
   testIdentityKey,
@@ -18,6 +21,7 @@ import {
 useTestHandleCertifier()
 
 const KEY_A = testIdentityKey(11)
+const ROOT_A = (11).toString(16).padStart(64, '0')
 const KEY_B = testIdentityKey(12)
 
 async function row(handle: string, identityKey: string, extra: Record<string, unknown> = {}) {
@@ -194,12 +198,96 @@ describe('resolveHandleByIdentityKey', () => {
 describe('claimHandle', () => {
   it('returns the verified certificate and refuses one for another key', async () => {
     answerWith({ ...(await row('alice', KEY_A)), display: '@alice@brc-cloud.bcryderman.workers.dev' })
-    const claimed = await claimHandle({ handle: 'alice', identityKey: KEY_A, claimTicket: 't' })
+    const claimed = await claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: ROOT_A, claimTicket: 't' })
     expect(claimed.certificate.subject).toBe(KEY_A)
 
     answerWith({ ...(await row('alice', KEY_B)) })
     await expect(
-      claimHandle({ handle: 'alice', identityKey: KEY_A, claimTicket: 't' }),
+      claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: ROOT_A, claimTicket: 't' }),
     ).rejects.toThrow(/different identity key/)
+  })
+
+  it('signs the claim with the key it binds', async () => {
+    const fetchMock = answerWith({ ...(await row('alice', KEY_A)) })
+    await claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: ROOT_A, claimTicket: 't' })
+    const headers = new Headers(fetchMock.mock.calls[0]![1]!.headers)
+    expect(headers.get('X-HandCash-Identity')).toBe(KEY_A)
+    expect(headers.get('X-HandCash-Request-Signature')).toBeTruthy()
+  })
+})
+
+describe('release and forwarding', () => {
+  const from = '@alice@brc-cloud.bcryderman.workers.dev'
+
+  it('carries the forwarding record of a released handle, only for the asked handle', async () => {
+    const forwarding = signForwardingRecord(ROOT_A, {
+      from,
+      toIdentityKey: KEY_B,
+      toHandle: '@alice@other.example',
+    })
+    answerWith({ error: { code: 'handle-revoked' }, revoked: true, forwarding }, 410)
+    const err = await resolveHandle('$alice').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(HandleRevokedError)
+    expect(err).toBeInstanceOf(HandleNotFoundError)
+    expect((err as HandleRevokedError).forwarding).toEqual(forwarding)
+
+    answerWith({ revoked: true, forwarding }, 410)
+    expect(((await resolveHandle('$bob').catch((e: unknown) => e)) as HandleRevokedError).forwarding).toBeNull()
+  })
+
+  it('releases with a signed request', async () => {
+    const forwarding = signForwardingRecord(ROOT_A, { from, toIdentityKey: KEY_B, toHandle: '@bob@other.example' })
+    const fetchMock = answerWith({ released: true, forwarding })
+    const out = await releaseHandle({ handle: 'alice', rootKeyHex: ROOT_A, forwarding })
+    expect(out.forwarding).toEqual(forwarding)
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toMatch(/\/v1\/handles\/release$/)
+    expect(new Headers(init!.headers).get('X-HandCash-Identity')).toBe(KEY_A)
+    expect(JSON.parse(String(init!.body))).toEqual({ handle: 'alice', forwarding })
+
+    answerWith({ error: { code: 'handle-not-found' } }, 404)
+    await expect(releaseHandle({ handle: 'alice', rootKeyHex: ROOT_A })).rejects.toThrow(/handle-not-found/)
+  })
+})
+
+describe('revocation outpoints', () => {
+  const outpoint = `${'ab'.repeat(32)}.1`
+
+  async function answerResolveThenSpent(status: string | null) {
+    const body = {
+      ...(await row('alice', KEY_A)),
+      certificate: await signedHandleCertificate('alice', KEY_A, undefined, undefined, outpoint),
+    }
+    const fetchMock = vi.fn(async (url: string) =>
+      url.includes('/v1/chain/spent/')
+        ? status == null
+          ? new Response('down', { status: 503 })
+          : new Response(JSON.stringify({ status }), { status: 200 })
+        : new Response(JSON.stringify(body), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  it('trusts an unspent outpoint and refuses a spent one', async () => {
+    const fetchMock = await answerResolveThenSpent('unspent')
+    expect((await resolveHandle('$alice')).identityKey).toBe(KEY_A)
+    expect(fetchMock.mock.calls.some(([u]) => u.includes(`/v1/chain/spent/${'ab'.repeat(32)}/1`))).toBe(true)
+
+    await answerResolveThenSpent('spent')
+    await expect(resolveHandle('$alice')).rejects.toBeInstanceOf(HandleRevokedError)
+  })
+
+  it('does not take an unreadable status as valid, nor clear the claim over it', async () => {
+    await answerResolveThenSpent(null)
+    const err = await resolveHandle('$alice').catch((e: unknown) => e)
+    expect(err).not.toBeInstanceOf(HandleNotFoundError)
+    expect(String(err)).toMatch(/Could not check whether/)
+  })
+
+  it('skips the chain for the null outpoint', async () => {
+    const fetchMock = answerWith(await row('alice', KEY_A))
+    await resolveHandle('$alice')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

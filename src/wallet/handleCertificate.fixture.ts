@@ -24,13 +24,14 @@ export async function signedHandleCertificate(
   identityKey: string,
   domain = HOME_HANDLE_DOMAIN,
   certifier: ProtoWallet = TEST_CERTIFIER,
+  revocationOutpoint = NULL_OUTPOINT,
 ): Promise<Record<string, unknown>> {
   const cert = new Certificate(
     BRC169_HANDLE_CERT_TYPE,
     Utils.toBase64(Array.from({ length: 32 }, (_, i) => (i * 7 + handle.length) & 0xff)),
     identityKey,
     '',
-    NULL_OUTPOINT,
+    revocationOutpoint,
     { domain: b64(domain), handle: b64(handle) },
   )
   await cert.sign(certifier)
