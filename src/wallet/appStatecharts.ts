@@ -38,6 +38,7 @@ const MASTER = `stateDiagram-v2
   appSession --> chainIngestChart : Refresh
   appSession --> messageboxChart : chat relay
   appSession --> callChart : friend calls
+  callChart --> callViewChart : on screen
   appSession --> accountHolding : unlock / switch / gap / holding channel
   accountHolding --> accountMove : open an account held elsewhere
 
@@ -90,6 +91,7 @@ const MASTER = `stateDiagram-v2
   chainIngestChart : Chain ingest
   messageboxChart : Messagebox
   callChart : Calls
+  callViewChart : Call view
   marketPurchase : Market purchase
   marketSellerSettlement : Market seller settlement
 `
@@ -1639,6 +1641,21 @@ const CALL_CHART = `stateDiagram-v2
   note left of active : TOGGLE_MUTE, CAMERA on/off, SHARE on/off (a screen or window in place of the camera) and REMOTE_STATE (their mute, camera and share) stay in place
 `
 
+const CALL_VIEW_CHART = `stateDiagram-v2
+  direction LR
+  [*] --> stage
+  stage --> pip : NAVIGATED (moving around the wallet) | SHRINK
+  pip --> stage : EXPAND (click the tile)
+  stage --> popped : ENTERED_SYSTEM_PIP (pop out)
+  pip --> popped : ENTERED_SYSTEM_PIP
+  popped --> stage : LEFT_SYSTEM_PIP
+  stage : Call bar, video above it
+  pip : Tile in a corner
+  popped : System picture-in-picture
+  note right of pip : MOVE keeps the corner the tile is dragged nearest, across calls; RESET (call over) returns to stage
+  note right of popped : The system window's mute, camera and hang-up act on the call
+`
+
 /**
  * Messagebox — BRC-33 store-and-forward vs HandCash convenience host.
  * Custody never depends on this chart.
@@ -1720,6 +1737,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Calls',
     caption: 'callMachine — friend calls over the direct session; WebRTC media; outcome on Activity',
     source: CALL_CHART,
+  },
+  {
+    id: 'callViewChart',
+    label: 'Call view',
+    caption: 'callViewMachine — the call over the wallet: bar, corner tile, or the system picture-in-picture window',
+    source: CALL_VIEW_CHART,
   },
   {
     id: 'appSession',

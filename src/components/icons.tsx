@@ -723,6 +723,33 @@ export function CameraSwitchIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `picture_in_picture_alt` */
+export function PictureInPictureIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `open_in_full` */
+export function OpenInFullIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 11V3h-8l3.29 3.29-10 10L3 13v8h8l-3.29-3.29 10-10z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `close_fullscreen` */
+export function CloseFullscreenIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M22 3.41 16.71 8.7 20 12h-8V4l3.29 3.29L20.59 2 22 3.41zM3.41 22l5.29-5.29L12 20v-8H4l3.29 3.29L2 20.59 3.41 22z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `screen_share` */
 export function ScreenShareIcon(props: IconProps) {
   return (
