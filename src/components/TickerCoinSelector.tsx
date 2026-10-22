@@ -42,17 +42,13 @@ export function heldIn(
 
 const COIN_MARKS = { ltc: LitecoinIcon, bch: BitcoinCashIcon, btc: BitcoinIcon, doge: DogecoinIcon } as const
 
-/** A coin's logo; its wrapper carries the coin so nearby accents can read `--coin-color`. */
 export function TickerCoinMark({ coin, size }: { coin: MarketCoin; size: number }) {
-  const Mark = coin === 'bsv' ? null : COIN_MARKS[coin]
+  if (coin !== 'bsv') {
+    const Mark = COIN_MARKS[coin]
+    return <Mark size={size} />
+  }
   return (
-    <span className="coin-mark" data-coin={coin} style={{ width: size, height: size }}>
-      {Mark ? (
-        <Mark size={size} />
-      ) : (
-        <DeferredImage src={bsvLogoDefault} width={size} height={size} skeletonRadius={size / 4} draggable={false} />
-      )}
-    </span>
+    <DeferredImage src={bsvLogoDefault} width={size} height={size} skeletonRadius={size / 4} draggable={false} />
   )
 }
 

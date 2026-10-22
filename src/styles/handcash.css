@@ -11971,13 +11971,6 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   --coin-color: var(--coin-doge);
 }
 
-.coin-mark {
-  display: inline-grid;
-  place-items: center;
-  flex-shrink: 0;
-  line-height: 0;
-}
-
 /* Coin deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
 [data-aeon-scope='coin-deposit'] [data-aeon-part='pips'] {
   display: inline-flex;
@@ -17982,6 +17975,10 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
+}
+
+.coin-holding-body > :first-child {
+  flex-shrink: 0;
 }
 
 .coin-holding-copy,
