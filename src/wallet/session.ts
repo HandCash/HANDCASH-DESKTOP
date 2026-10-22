@@ -349,6 +349,19 @@ async function flushDurablePropagation(runtime = getWalletRuntime()): Promise<vo
     flushPendingBrc29Outbox({ rootKeyHex: wallet.rootKeyHex, runtime }),
     flushPendingItemOutbox({ rootKeyHex: wallet.rootKeyHex, runtime }),
     flushTransactionTelemetry({ runtime }),
+    import('./accountSend')
+      .then(({ receiveAccountSends }) =>
+        receiveAccountSends({
+          identityKey: wallet.identityKey,
+          rootKeyHex: wallet.rootKeyHex,
+        }),
+      )
+      .catch((error: unknown) => {
+        console.warn(
+          '[account-send] receive deferred',
+          error instanceof Error ? error.message : String(error),
+        )
+      }),
   ])
 }
 
