@@ -6,7 +6,6 @@ import {
   OTHER_SIGNIN_MODE,
   RESTORE_METHODS,
   firstSigninStep,
-  formModeAfterGoogle,
   initialFormMode,
   isRestoreMethod,
 } from './authModes'
@@ -34,24 +33,18 @@ describe('auth screen defaults', () => {
 
   it('the restore methods never offer Google recovery', () => {
     expect(RESTORE_METHODS.map((m) => m.id)).toEqual(['phrase', 'shares', 'key'])
-    expect(isRestoreMethod('google')).toBe(false)
-  })
-
-  it('leaving the hidden Google panel still goes back to where the user came from', () => {
-    expect(formModeAfterGoogle({ mode: 'onboarding', recoveryOnly: false })).toBe(OTHER_SIGNIN_MODE)
-    expect(formModeAfterGoogle({ mode: 'locked', recoveryOnly: false })).toBe('unlock')
   })
 })
 
-describe('Google recovery stays hidden on the auth screens', () => {
+describe('Google recovery is gone from the auth screens', () => {
   const source = (file: string) =>
     fs.readFileSync(path.resolve(process.cwd(), 'src/components', file), 'utf8')
 
-  it('no tab or link on the auth screen opens the Google panel', () => {
+  it('the auth screen has no Google mode or panel', () => {
     const auth = source('AuthScreen.tsx')
-    expect(auth).not.toMatch(/setFormMode\(\s*['"]google['"]/)
-    expect(auth).not.toMatch(/>\s*Google\s*</)
-    expect(auth).toContain('<GoogleLoginPanel')
+    expect(auth).not.toMatch(/['"]google['"]/)
+    expect(auth).not.toMatch(/GoogleLoginPanel|>\s*Google\s*</)
+    expect(fs.existsSync(path.resolve(process.cwd(), 'src/components/GoogleLoginPanel.tsx'))).toBe(false)
   })
 
   it('sign-in offers only the recovery phrase when no device can approve', () => {

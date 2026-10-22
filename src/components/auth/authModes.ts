@@ -2,7 +2,7 @@
 
 /** Custody restore paths the vault can bootstrap from. */
 export type RestoreMethod = 'phrase' | 'shares' | 'key'
-export type FormMode = 'create' | 'unlock' | 'signin' | 'google' | RestoreMethod
+export type FormMode = 'create' | 'unlock' | 'signin' | RestoreMethod
 
 export const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
@@ -35,12 +35,4 @@ export function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
 export function initialFormMode(args: { mode: 'onboarding' | 'locked'; recoveryOnly: boolean }): FormMode {
   if (args.recoveryOnly) return 'phrase'
   return args.mode === 'locked' ? 'unlock' : 'create'
-}
-
-/**
- * Leaving Google sign-in goes back to where the user came from. Google
- * recovery is hidden, so no screen offers the `google` mode today.
- */
-export function formModeAfterGoogle(args: { mode: 'onboarding' | 'locked'; recoveryOnly: boolean }): FormMode {
-  return args.mode === 'locked' && !args.recoveryOnly ? 'unlock' : OTHER_SIGNIN_MODE
 }

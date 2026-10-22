@@ -7,15 +7,6 @@ import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { DevicesIcon } from '../icons'
 import { LoadingSpinner } from '../LoadingSpinner'
 import {
-  brc250OwnChallenge,
-  subscribeBrc250Approval,
-} from '../../wallet/brc250/deviceService'
-import {
-  approveDeviceLogin,
-  refuseDeviceLogin,
-  type PendingDeviceApproval,
-} from '../../wallet/brc250/login'
-import {
   approveSignin,
   openSigninDetail,
   refuseSigninFor,
@@ -24,15 +15,13 @@ import {
   type SigninRowView,
   type SigninSnapshot,
 } from '../../wallet/deviceSignin'
-import { signinRowView } from '../../wallet/deviceSignin/view'
-import { approvalComparisonCode, formatComparisonCode } from '../../wallet/deviceTransfer'
+import { formatComparisonCode } from '../../wallet/deviceTransfer'
 import {
   approveScanLogin,
   listScanLoginRows,
   refuseScanLoginFor,
   subscribeScanLogins,
 } from '../../wallet/scanLogin'
-import { getOrCreateDeviceId } from '../../wallet/deviceWallets'
 import { playWalletSound } from '../../wallet/soundService'
 
 export type SigninApprovalRow = {
@@ -42,51 +31,10 @@ export type SigninApprovalRow = {
   refuse: () => Promise<void>
 }
 
-const BRC250_CONTEXT_PREFIX = /^Sign in to HandCash on\s+/i
-
-/** A Google-path (BRC-250) approval, shown with the same row as an email sign-in. */
-export function brc250ApprovalRow(request: PendingDeviceApproval, deviceId: string): SigninApprovalRow {
-  const rB = brc250OwnChallenge(request.binding)
-  const claimed = rB != null && request.deviceId === deviceId
-  let code: string | null = null
-  if (claimed && request.state === 'revealed') {
-    try {
-      code = approvalComparisonCode(request, rB)
-    } catch {
-      code = null
-    }
-  }
-  const view = signinRowView(
-    {
-      binding: request.binding,
-      state: request.state,
-      label: request.context.replace(BRC250_CONTEXT_PREFIX, '') || 'a new device',
-      location: '',
-      loginKey: request.loginKey,
-      commitment: request.commitment,
-      rB: request.rB,
-      rA: request.rA,
-      deviceId: request.deviceId,
-      approverLabel: null,
-      createdAt: request.createdAt,
-      expiresAt: request.expiresAt,
-    },
-    { deviceId, claimed, code },
-  )
-  return {
-    view: { ...view, key: `brc250:${request.binding}` },
-    open: async () => undefined,
-    approve: () => approveDeviceLogin(request),
-    refuse: () => refuseDeviceLogin(request),
-  }
-}
-
 export function useSigninApprovals(): readonly SigninApprovalRow[] {
   const [signin, setSignin] = useState<SigninSnapshot>({ registered: null, rows: [] })
-  const [brc250, setBrc250] = useState<PendingDeviceApproval | null>(null)
   const [scans, setScans] = useState(() => listScanLoginRows())
   useEffect(() => subscribeDeviceSignin(setSignin), [])
-  useEffect(() => subscribeBrc250Approval(setBrc250), [])
   useEffect(() => subscribeScanLogins(() => setScans(listScanLoginRows())), [])
   return useMemo(() => {
     const local: SigninApprovalRow[] = scans.map((view) => ({
@@ -101,9 +49,8 @@ export function useSigninApprovals(): readonly SigninApprovalRow[] {
       approve: () => approveSignin(view.binding),
       refuse: () => refuseSigninFor(view.binding),
     }))
-    if (brc250) rows.unshift(brc250ApprovalRow(brc250, getOrCreateDeviceId()))
     return [...local, ...rows]
-  }, [signin, brc250, scans])
+  }, [signin, scans])
 }
 
 function timeOf(at: number): string {

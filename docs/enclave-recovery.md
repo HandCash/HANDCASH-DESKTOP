@@ -51,13 +51,13 @@ A single compromise can therefore reach at most one share: a Google account, an 
 
 ## Release
 
-1. The recovering device makes a fresh release key and asks both holders, sending a signed request (reusing `signedBrc250Fetch` and the worker's `verifyRequestSignature` and `used_nonces` replay guard).
+1. The recovering device makes a fresh release key and asks both holders, sending a signed request (reusing `signedFetch` and `walletAuthorityKey` in `src/wallet/signedRequest.ts`, and the worker's `verifyRequestSignature` and `used_nonces` replay guard).
 2. Each holder runs its own check, as described above.
 3. Before anything else, each holder writes a release record to Bitcoin SV: holder ID, the keyed account hash, a hash of the release key and the release time. The share is not released unless the transaction is accepted.
 4. Each holder alerts every signed-in device of the account (through the BRC-CLOUD message box and the device list) and the email address: "A recovery of your HandCash wallet starts on <date>. Not you? Cancel it."
 5. The release waits. It starts at 7 days (`RELEASE_WAIT_MS` in today's worker). It never shortens on its own, and a device seen recently restarts the wait (today's worker answers `device-returned` in that case).
 6. Any signed-in device, or the cancel link in the email, cancels the release on both holders. The cancellation is logged on Bitcoin SV too.
-7. When the wait ends, each holder checks again that the release wasn't cancelled and that no device has been seen since. It then returns its share sealed to the release key (reusing `sealToPublicKey` in `workers/brc250-google/src/protocol.js`: ECDH, HKDF, AES-GCM) and logs the release on Bitcoin SV.
+7. When the wait ends, each holder checks again that the release wasn't cancelled and that no device has been seen since. It then returns its share sealed to the release key (reusing `sealToPublicKey`, removed from `workers/brc250-google/src/protocol.js` in BRC-CLOUD 57e43b9 and recoverable from its parent: ECDH, HKDF, AES-GCM; the device opens it with `openSealedShare` in `src/wallet/sealedShare.ts`) and logs the release on Bitcoin SV.
 8. The device rebuilds the key locally (`recoverRootKeyFromBrc140Shares`), shows the recovery on its Activity row from start to finish, and asks the user to move the funds to a new key (see the refresh limits below).
 
 A release can't be approved twice. Each step moves the request forward once (the worker's guarded `UPDATE ... WHERE state = ...`), and a release key is good for one release only.
@@ -88,7 +88,10 @@ Only a new key, with the funds moved to it, fixes those. Desktop says so wheneve
 | BRC-154 server shape, `/info` lifecycle block | `BRC-CLOUD/src/trustholder.mjs` | rewrite routes to the published profile |
 | Email codes, hashed, rate limited | `BRC-CLOUD/src/emailOtp.js`, `src/otpChallenges.js` | Haste's check; `sendNoticeEmail` for alerts |
 | Signed requests, replay guard | `workers/brc250-google/src/protocol.js`, `index.js` | as is |
-| Seal a share to the device | `sealToPublicKey` in `protocol.js` | as is |
+| Signed requests from the wallet, authority key | `src/wallet/signedRequest.ts` | as is |
+| Seal a share to the device | `sealToPublicKey` (in `protocol.js` before 57e43b9) | restore from history |
+| Open a sealed share on the device | `openSealedShare` in `src/wallet/sealedShare.ts` | as is |
+| Saved Google recovery enrollments | `src/wallet/legacyGoogleRecovery.ts` | find users to move off the Google worker |
 | Release wait, device presence, refuse | `workers/brc250-google/src/index.js` (`release`, `presence`, `refuse`) | basis for wait and cancel |
 | Signed-in device list | `src/wallet/deviceSignin`, `src/wallet/scanLogin` | alert targets and cancel |
 

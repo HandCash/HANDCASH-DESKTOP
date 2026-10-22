@@ -1,6 +1,6 @@
 /** Scanned sign-in codes on the approving device, as Activity rows. */
 import { recordAddedDevice, type AddedDevice } from '../addedDevices'
-import { getEmailRecoveryEnrollment } from '../brc250/store'
+import { getLegacyGoogleEnrollment } from '../legacyGoogleRecovery'
 import { confirmPresence } from '../deviceSignin/approver'
 import type { SigninRowFace, SigninRowView } from '../deviceSignin/view'
 import { localDeviceLabel, vaultTransferOf, type VaultTransfer } from '../deviceTransfer'
@@ -35,7 +35,7 @@ const listeners = new Set<() => void>()
 let deps: Required<ScanLoginDeps> = {
   fetchImpl: (...args) => fetch(...args),
   label: () => localDeviceLabel(),
-  vault: () => vaultTransferOf(requireWalletRuntime().instance.vaultMaster, getEmailRecoveryEnrollment()),
+  vault: () => vaultTransferOf(requireWalletRuntime().instance.vaultMaster, getLegacyGoogleEnrollment()),
   confirm: confirmPresence,
   onApproved: (device) => recordAddedDevice(device),
 }
