@@ -18787,3 +18787,91 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   letter-spacing: 0.06em;
   user-select: text;
 }
+
+.call-dock-stage-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.call-dock-stage:hover > .call-dock-stage-tools,
+.call-dock-stage:focus-within > .call-dock-stage-tools {
+  opacity: 1;
+}
+
+.call-dock-stage-tools > .call-dock-btn {
+  width: 32px;
+  height: 32px;
+  background: var(--hc-bg-elevated);
+}
+
+.call-dock[data-view='pip'] {
+  top: auto;
+  right: 20px;
+  bottom: 20px;
+  left: auto;
+  transform: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  width: 280px;
+  padding: 8px;
+  border-radius: var(--hc-radius);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.call-dock[data-view='pip']:active {
+  cursor: grabbing;
+}
+
+.call-dock[data-view='pip'][data-corner='bottom-left'] {
+  right: auto;
+  left: 20px;
+}
+
+.call-dock[data-view='pip'][data-corner='top-right'] {
+  top: 20px;
+  bottom: auto;
+}
+
+.call-dock[data-view='pip'][data-corner='top-left'] {
+  top: 20px;
+  right: auto;
+  bottom: auto;
+  left: 20px;
+}
+
+.call-dock[data-view='pip'] .call-dock-mark {
+  display: none;
+}
+
+.call-dock[data-view='pip'] .call-dock-stage {
+  margin: 0;
+  max-height: none;
+}
+
+.call-dock[data-view='pip'] .call-dock-self {
+  right: 6px;
+  bottom: 6px;
+  width: 32%;
+}
+
+.call-dock[data-view='pip'] .call-dock-btn {
+  width: 32px;
+  height: 32px;
+}
+
+.call-dock[data-view='popped'] .call-dock-stage {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}

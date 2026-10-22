@@ -45,6 +45,8 @@ A call needs a live BRC-246 session (`webrtpay/1`) to the friend: the dial is th
 
 On top of DTLS-SRTP, every encoded audio and video frame is sealed again with AES-GCM (`calls/frameCrypto.ts`, in a `RTCRtpScriptTransform` worker, or insertable streams where that is missing). The keys come only from the two identity keys: each side takes `createHmac` under protocol `[2, 'handcash call media']`, keyID the call id, counterparty the friend. BRC-42's symmetric derivation gives both the same 32 bytes, and HKDF turns them into one key per direction (`calls/mediaKeys.ts`). Codec headers (the Opus TOC byte, 10 or 3 bytes of VP8, which video prefers) stay in clear as authenticated data. A call whose keys cannot be agreed fails rather than sending in clear. Once media connects, both sides show a 12-digit safety code, derived by HKDF from the same secret plus both DTLS fingerprints. The same digits on both screens mean the media is sealed to that friend and nothing sits between the two connections.
 
+The call stays on screen while the user moves around the wallet (`machines/callViewMachine.ts`). Navigating shrinks it to a tile in a corner, which can be dragged to any corner (remembered across calls) and expands with a click. The far side's video can also pop out to the system picture-in-picture window, whose mute, camera and hang-up buttons act on the call.
+
 ### Dev keys (not a messagebox client)
 
 Connected apps → Developer keys (the `</>` button) lists them. New key creates
