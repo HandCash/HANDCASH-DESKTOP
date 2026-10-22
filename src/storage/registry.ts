@@ -568,6 +568,12 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  handlePurchases: defineStorage({
+    key: 'handcash.handleMarket.purchases.v1',
+    owner: 'identity',
+    scope: 'wallet',
+    version: 1,
+  }),
   utxoHealCheckpoint: defineStorage({
     key: 'handcash.utxoHeal.checkpoint.v1',
     owner: 'local-state',
