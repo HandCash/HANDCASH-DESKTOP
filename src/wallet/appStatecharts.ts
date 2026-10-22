@@ -1318,29 +1318,6 @@ const BACKUP_PHRASE = `stateDiagram-v2
   copied : Copied
 `
 
-const EMAIL_RECOVERY = `stateDiagram-v2
-  direction LR
-  [*] --> idle
-  idle --> enrolling : ENROLL
-  enrolling --> ready : Google verified + mailbox share confirmed
-  idle --> login : LOGIN
-  ready --> login : LOGIN
-  login --> complete : approved vault or delayed 2-share restore
-  enrolling --> failed : FAIL
-  login --> failed : FAIL
-  failed --> enrolling : ENROLL
-  failed --> login : LOGIN
-  note right of enrolling
-    openingBrowser → waitingForGoogle → mailingShare
-    → confirmingMailbox → depositingHostShare
-  end note
-  note right of login
-    openingBrowser → waitingForGoogle
-    → waitingForChallenge → comparing → restoring
-    or delayedRecovery → awaitingMailbox → restoring
-  end note
-`
-
 const WIPE = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -1995,13 +1972,6 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Keys',
     caption: 'backupKeys — BRC-140 / BRC-157 / BRC-75 reveal',
     source: BACKUP_PHRASE,
-  },
-  {
-    id: 'emailRecovery',
-    label: 'HandCash Recovery',
-    caption:
-      'emailRecoveryMachine — Google proof · mailbox share confirmation · device approval · delayed recovery',
-    source: EMAIL_RECOVERY,
   },
   {
     id: 'wipeWallet',

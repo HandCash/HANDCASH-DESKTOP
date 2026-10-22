@@ -318,9 +318,6 @@ export function clearActiveWallet(): void {
   forgetVaultMasterCache()
   void import('./vaultAccountHolding').then(({ stopHoldingWatch }) => stopHoldingWatch())
   void import('./accountMove').then(({ stopHoldingService }) => stopHoldingService())
-  void import('./brc250/deviceService').then(({ stopBrc250DeviceService }) =>
-    stopBrc250DeviceService(true),
-  )
   void import('./deviceSignin/service').then(({ stopDeviceSigninService }) =>
     stopDeviceSigninService(true),
   )
@@ -535,9 +532,6 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   startMonitorOnce(wallet)
   // A newly selected account was not served before now: its first spend checks it.
   void import('./accountMove').then(({ startHoldingService }) => startHoldingService())
-  void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
-    startBrc250DeviceService(),
-  )
   void import('./deviceSignin/service').then(({ startDeviceSigninService }) =>
     startDeviceSigninService(),
   )

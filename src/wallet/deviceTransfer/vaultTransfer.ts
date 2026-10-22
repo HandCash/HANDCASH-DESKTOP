@@ -3,7 +3,7 @@
  * new device's one-time key. Whoever relays it holds only ciphertext.
  */
 import { EncryptedMessage, PrivateKey, PublicKey, Utils } from '@bsv/sdk'
-import type { EmailRecoveryEnrollment } from '../brc250/types'
+import type { LegacyGoogleEnrollment } from '../legacyGoogleRecovery'
 import { identityKeyForAccount, readVaultAccounts } from '../vaultAccounts'
 import type { VaultMaster } from '../vaultMaster'
 
@@ -11,14 +11,14 @@ export type VaultTransfer = {
   v: 1
   kind: 'handcash-brc250-vault'
   master: VaultMaster
-  enrollment: EmailRecoveryEnrollment | null
+  enrollment: LegacyGoogleEnrollment | null
   accounts: unknown
   sentAt: number
 }
 
 export function vaultTransferOf(
   master: VaultMaster,
-  enrollment: EmailRecoveryEnrollment | null,
+  enrollment: LegacyGoogleEnrollment | null,
 ): VaultTransfer {
   return {
     v: 1,

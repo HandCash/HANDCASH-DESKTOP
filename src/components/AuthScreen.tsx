@@ -68,23 +68,18 @@ import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
 import { OnboardAcceptPanel } from './OnboardAcceptPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
-import { GoogleLoginPanel, type GoogleRecoveredVault } from './GoogleLoginPanel'
 import { DeviceSignInPanel, type ApprovedVault } from './DeviceSignInPanel'
 import {
   EXISTING_WALLET_MODE,
   OTHER_SIGNIN_MODE,
   RESTORE_METHODS,
-  formModeAfterGoogle,
   initialFormMode,
   isRestoreMethod,
   type FormMode,
 } from './auth/authModes'
-import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
+import { setLegacyGoogleEnrollment } from '../wallet/legacyGoogleRecovery'
 import { setSigninEmail } from '../wallet/deviceSignin'
-import {
-  writeVaultAccounts,
-  type VaultAccountStore,
-} from '../wallet/vaultAccounts'
+import type { VaultAccountStore } from '../wallet/vaultAccounts'
 import { markMasterKeyBackupConfirmed } from '../wallet/backupStatus'
 import { firstOnboardStep, masterKeyAlreadyBackedUp, type OnboardRoute } from '../wallet/onboardSteps'
 import { applyJoinedDeviceLock } from '../wallet/applyOnboardLock'
@@ -660,63 +655,30 @@ export function AuthScreen({
     })
   }
 
-  /**
-   * Install a vault master that arrived whole: from a signed-in device that
-   * approved this one (sign-in), or from Google recovery (hidden).
-   */
-  const installReceivedVault = async (
-    recovered:
-      | GoogleRecoveredVault
-      | (ApprovedVault & { recoveryKind: 'approved-device' }),
-  ) => {
-    const joined = recovered.recoveryKind === 'approved-device'
-    send(
-      joined
-        ? {
-            type: 'START',
-            factor: 'approved',
-            progress: {
-              title: 'Signing in',
-              lede: 'Installing the wallet your other device approved.',
-            },
-          }
-        : {
-            type: 'START',
-            factor: 'restore',
-            progress: {
-              title: 'Restoring your vault',
-              lede: 'Installing the approved vault and its recovery settings.',
-            },
-          },
-    )
+  /** Install a vault master that arrived whole from a signed-in device that approved this one. */
+  const installApprovedVault = async (approved: ApprovedVault) => {
+    send({
+      type: 'START',
+      factor: 'approved',
+      progress: {
+        title: 'Signing in',
+        lede: 'Installing the wallet your other device approved.',
+      },
+    })
     try {
       const wrapPassword = generateWrapSecret()
       setOpenUnlockSecret(wrapPassword)
       setDeviceLockMode('none')
       const unlocked = await restoreVaultFromMaster({
-        master: recovered.master,
+        master: approved.master,
         chain,
         password: wrapPassword,
       })
-      if (recovered.enrollment) setEmailRecoveryEnrollment(recovered.enrollment)
-      if ('signinEmail' in recovered && recovered.signinEmail) setSigninEmail(recovered.signinEmail)
-      const accounts = recovered.accounts as VaultAccountStore | undefined
-      if (joined) {
-        installApproverAccounts(unlocked.master, accounts)
-      } else if (
-        accounts?.version === 1 &&
-        typeof accounts.masterIdentityKey === 'string' &&
-        Array.isArray(accounts.accounts)
-      ) {
-        writeVaultAccounts(accounts)
-      }
-      if ('acknowledge' in recovered) await recovered.acknowledge()
-      await finishCreated(
-        unlocked,
-        wrapPassword,
-        joined ? 'joined' : 'restore',
-        joined ? 'keep' : 'replace',
-      )
+      if (approved.enrollment) setLegacyGoogleEnrollment(approved.enrollment)
+      if (approved.signinEmail) setSigninEmail(approved.signinEmail)
+      installApproverAccounts(unlocked.master, approved.accounts as VaultAccountStore | undefined)
+      await approved.acknowledge()
+      await finishCreated(unlocked, wrapPassword, 'joined', 'keep')
     } catch (restoreError) {
       const message =
         restoreError instanceof Error ? restoreError.message : String(restoreError)
@@ -800,22 +762,10 @@ export function AuthScreen({
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="signin">
         <DeviceSignInPanel
-          onSignedIn={(vault) => void installReceivedVault({ ...vault, recoveryKind: 'approved-device' })}
+          onSignedIn={(vault) => void installApprovedVault(vault)}
           onOtherWays={() => setFormMode(OTHER_SIGNIN_MODE)}
           onRecovery={() => setFormMode('phrase')}
           onCancel={() => setFormMode(initialFormMode({ mode, recoveryOnly }))}
-        />
-      </section>
-    )
-  }
-
-  // Nothing opens Google recovery while it is hidden; the panel stays for its return.
-  if (formMode === 'google' && !preparing) {
-    return (
-      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="google">
-        <GoogleLoginPanel
-          onRecovered={(recovered) => void installReceivedVault(recovered)}
-          onCancel={() => setFormMode(formModeAfterGoogle({ mode, recoveryOnly }))}
         />
       </section>
     )

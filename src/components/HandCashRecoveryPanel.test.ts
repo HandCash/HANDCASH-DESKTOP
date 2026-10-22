@@ -90,12 +90,10 @@ describe('HandCash Recovery section', () => {
     expect(text(render())).toMatch(/24-word recovery phrase This wallet has no phrase/)
   })
 
-  it('hides Google and email recovery behind one line, and keeps their code', () => {
+  it('offers no Google or email recovery, only the coming enclave line', () => {
     const html = render()
     expect(text(html)).toContain('Secure enclave recovery is coming.')
     expect(html).not.toMatch(/recovery-google|recovery-email|Continue with Google|Google/)
-    const source = fs.readFileSync(path.join(__dirname, 'HandCashRecoveryPanel.tsx'), 'utf8')
-    expect(source).not.toContain('GoogleEmailRecoveryMethods')
-    expect(fs.existsSync(path.join(__dirname, 'GoogleEmailRecoveryMethods.tsx'))).toBe(true)
+    expect(fs.existsSync(path.join(__dirname, 'GoogleEmailRecoveryMethods.tsx'))).toBe(false)
   })
 })

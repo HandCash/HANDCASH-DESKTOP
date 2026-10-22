@@ -8,7 +8,7 @@
  */
 import { PrivateKey } from '@bsv/sdk'
 import { recordAddedDevice } from '../addedDevices'
-import { getEmailRecoveryEnrollment } from '../brc250/store'
+import { getLegacyGoogleEnrollment } from '../legacyGoogleRecovery'
 import { deviceAuthStatus, deviceAuthUnlock } from '../deviceAuth'
 import {
   approvalComparisonCode,
@@ -68,7 +68,7 @@ export async function approveSigninRequest(request: SigninRequest): Promise<void
   await confirmPresence(`approve sign-in on ${request.label}`)
   const active = requireWalletRuntime().instance
   const sealed = sealVaultTransfer(
-    vaultTransferOf(active.vaultMaster, getEmailRecoveryEnrollment()),
+    vaultTransferOf(active.vaultMaster, getLegacyGoogleEnrollment()),
     PrivateKey.fromRandom(),
     request.loginKey,
   )

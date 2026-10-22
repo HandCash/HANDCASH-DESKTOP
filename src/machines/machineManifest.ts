@@ -45,7 +45,6 @@ import { serverWalletRecoverMachine } from '../wallet/serverWalletRecoverMachine
 import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
-import { emailRecoveryMachine } from './emailRecoveryMachine'
 import { relaySigninMachine } from './relaySigninMachine'
 
 /**
@@ -100,7 +99,6 @@ export const machineManifest = Object.freeze({
   txLifecycle: txLifecycleMachine,
   walletCoordinator: walletCoordinatorMachine,
   accountMove: accountMoveMachine,
-  emailRecovery: emailRecoveryMachine,
   relaySignin: relaySigninMachine,
 })
 
