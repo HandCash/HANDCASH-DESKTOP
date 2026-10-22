@@ -6799,40 +6799,6 @@ a.connected-app-host:hover {
   color: var(--hc-accent);
 }
 
-.connected-app-usd {
-  display: grid;
-  justify-items: end;
-  justify-self: end;
-  gap: 2px;
-  margin: 0;
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-  min-width: 0;
-}
-
-.connected-app-usd-amounts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: baseline;
-  gap: 0 8px;
-  white-space: nowrap;
-}
-
-.connected-app-usd-primary {
-  color: var(--hc-text);
-  font-weight: 700;
-  font-size: var(--hc-text-md);
-}
-
-.connected-app-usd[data-currency='bsv'] .connected-app-usd-primary {
-  color: var(--hc-text);
-}
-
-.connected-app-usd-secondary {
 .connected-app-access,
 .connected-app-seen {
   display: block;
@@ -6892,6 +6858,40 @@ a.connected-app-host:hover {
   }
 }
 
+.connected-app-usd {
+  display: grid;
+  justify-items: end;
+  justify-self: end;
+  gap: 2px;
+  margin: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.connected-app-usd-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 0 8px;
+  white-space: nowrap;
+}
+
+.connected-app-usd-primary {
+  color: var(--hc-text);
+  font-weight: 700;
+  font-size: var(--hc-text-md);
+}
+
+.connected-app-usd[data-currency='bsv'] .connected-app-usd-primary {
+  color: var(--hc-text);
+}
+
+.connected-app-usd-secondary {
   color: var(--hc-text);
   font-weight: 500;
   font-size: var(--hc-text-xs);
@@ -7268,6 +7268,11 @@ html[data-aeon-mode='light']
   justify-content: center;
 }
 
+.collection-grid-card .connected-app-card-actions > .connected-app-manage {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .permission-modal .wallet-action-bar {
   position: sticky;
   bottom: 0;
@@ -7302,11 +7307,6 @@ html[data-aeon-mode='light']
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
-.collection-grid-card .connected-app-card-actions > .connected-app-manage {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
 
 .app-money-cell strong {
   color: var(--hc-accent-deep);
@@ -8572,6 +8572,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   display: grid;
   gap: 0;
   padding: 0;
+  border: 1px solid hsl(var(--border));
   border-radius: var(--hc-radius);
 }
 
@@ -8598,6 +8599,18 @@ html[data-aeon-mode='light'] .shortcut-key {
   min-width: 0;
 }
 
+.friend-row-since {
+  color: var(--hc-muted);
+  font-size: var(--hc-text-2xs);
+  white-space: nowrap;
+}
+
+@container friends (max-width: 439px) {
+  .friend-row-since {
+    display: none;
+  }
+}
+
 .friend-avatar {
   display: grid;
   place-items: center;
@@ -8606,7 +8619,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   border-radius: 50%;
   background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
   color: var(--hc-accent);
-  border: 1px solid hsl(var(--border));
   font-family: var(--hc-display);
   font-size: var(--hc-text-lg);
   font-weight: 700;
@@ -8633,18 +8645,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   align-items: center;
   padding: 3px 6px;
   border-radius: 999px;
-.friend-row-since {
-  color: var(--hc-muted);
-  font-size: var(--hc-text-2xs);
-  white-space: nowrap;
-}
-
-@container friends (max-width: 439px) {
-  .friend-row-since {
-    display: none;
-  }
-}
-
   background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
   color: color-mix(in srgb, var(--hc-accent) 82%, var(--hc-text));
   font-size: var(--hc-text-2xs);
@@ -8728,6 +8728,19 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .list-panel-head > h2 {
   gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.list-panel-actions {
+  margin-left: auto;
+}
+
+.list-panel-search {
+  min-width: 0;
+}
+
+.list-panel-search > .root-search {
   margin: 0;
 }
 
@@ -8761,19 +8774,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   gap: 6px;
   flex-shrink: 0;
 }
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.list-panel-actions {
-  margin-left: auto;
-}
-
-.list-panel-search {
-  min-width: 0;
-}
-
-.list-panel-search > .root-search {
 
 .panel-icon-btn {
   appearance: none;
