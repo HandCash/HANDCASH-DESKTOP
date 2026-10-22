@@ -10,6 +10,7 @@ import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
 import { bridgeDeadlineMessage, bridgeDeadlineMs, isSpendMethodPath } from './bridgeDeadline.js'
 import { SpendLedger, spendRequestKey, type BridgeReply } from './spendLedger.js'
 import { jsonRequestErrors } from './requestErrors.js'
+import { bridgeFailureDescription, walletFailureFor, withWalletFailure } from './walletFailure.js'
 import {
   bridgeConnectUnavailableMessage,
   bridgeCorsHeaders,
@@ -58,7 +59,7 @@ export function failPendingBridgeRequests(reason: string): void {
 
 function failAllPendingRequests(reason: string): void {
   spendLedger.loseAll(
-    bridgeErrorReply(`WALLET_BRIDGE_PENDING: the wallet stopped (${reason}) while a spend was in it — it may have completed; reconcile before retrying`),
+    bridgeErrorReply(`WALLET_BRIDGE_PENDING: the wallet stopped (${reason}) while a spend was in it — it may have completed; reconcile before retrying`, ''),
   )
   if (pendingRequests.size === 0) return
   for (const pending of pendingRequests.values()) {
@@ -75,23 +76,29 @@ function failAllPendingRequests(reason: string): void {
   pendingRequests.clear()
 }
 
-/** The JSON error body for a bridge failure, coded from its message prefix. */
-function bridgeErrorReply(message: string): BridgeReply {
+/**
+ * The JSON error body for a bridge failure, coded from its message prefix. The
+ * message itself goes to the log; the body carries plain words (BRC-326).
+ */
+function bridgeErrorReply(message: string, path: string): BridgeReply {
   const isBridgeUnavailable = message.includes('WALLET_BRIDGE_UNAVAILABLE')
   const isPending = message.includes('WALLET_BRIDGE_PENDING')
   const isTimeout = message.includes('WALLET_BRIDGE_TIMEOUT')
+  const code = isPending
+    ? 'WALLET_BRIDGE_PENDING'
+    : isTimeout
+      ? 'WALLET_BRIDGE_TIMEOUT'
+      : isBridgeUnavailable
+        ? 'WALLET_BRIDGE_UNAVAILABLE'
+        : 'HTTP_BRIDGE_ERROR'
+  const status = isBridgeUnavailable || isPending || isTimeout ? 503 : 500
   return {
-    status: isBridgeUnavailable || isPending || isTimeout ? 503 : 500,
+    status,
     body: JSON.stringify({
       status: 'error',
-      code: isPending
-        ? 'WALLET_BRIDGE_PENDING'
-        : isTimeout
-          ? 'WALLET_BRIDGE_TIMEOUT'
-          : isBridgeUnavailable
-            ? 'WALLET_BRIDGE_UNAVAILABLE'
-            : 'HTTP_BRIDGE_ERROR',
-      description: message,
+      code,
+      description: bridgeFailureDescription(code, message, path),
+      ...walletFailureFor(code, status, path),
     }),
   }
 }
@@ -140,13 +147,13 @@ function canWriteResponse(res: Response): boolean {
   return !res.writableEnded && !res.destroyed && res.writable
 }
 
-function sendReply(res: Response, reply: BridgeReply): void {
+function sendReply(res: Response, reply: BridgeReply, path: string): void {
   if (!canWriteResponse(res)) return
   setCorsHeaders(res)
   // The renderer hands us a serialized JSON body. Express would label a bare
   // string `text/html`, which a BRC-100 client is entitled to reject before
   // it ever parses the answer.
-  res.status(reply.status).type('application/json').send(reply.body)
+  res.status(reply.status).type('application/json').send(withWalletFailure(reply.status, reply.body, path))
 }
 
 /** Wait on a spend run another request started, under this request's own deadline. */
@@ -319,12 +326,12 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
         const begun = spendLedger.begin(spendRequestKey(headers.origin ?? headers.originator, req.path, body), request_id)
         if (begun.kind === 'replay') {
           log.warn(`[HTTP] request_id=${request_id} ${req.method} ${req.path} repeats a spend that already ran — answering with that run, not paying again`)
-          sendReply(res, begun.reply)
+          sendReply(res, begun.reply, req.path)
           return
         }
         if (begun.kind === 'join') {
           log.warn(`[HTTP] request_id=${request_id} ${req.method} ${req.path} repeats a spend still in the wallet — waiting on that run, not paying again`)
-          sendReply(res, await waitOnRun(begun, req, res))
+          sendReply(res, await waitOnRun(begun, req, res), req.path)
           return
         }
       }
@@ -417,7 +424,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
         spendLedger.orphan(request_id)
         return
       }
-      sendReply(res, httpResponse)
+      sendReply(res, httpResponse, req.path)
       spendLedger.done(request_id)
     } catch (error) {
       if (!dispatched) spendLedger.done(request_id)
@@ -425,7 +432,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('CLIENT_DISCONNECTED')) return
       log.warn(`[HTTP] bridge error: ${message}`)
-      sendReply(res, bridgeErrorReply(message))
+      sendReply(res, bridgeErrorReply(message, req.path), req.path)
     }
   })
 
