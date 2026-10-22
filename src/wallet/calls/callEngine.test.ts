@@ -47,6 +47,7 @@ function phone(id: string, opts: Partial<CallEngineDeps> & { friends?: string[];
     },
     now: () => Date.now(),
     log: () => undefined,
+    self: () => id,
     ...opts,
   })
   phones.set(id, p)
@@ -503,7 +504,6 @@ describe('screen sharing', () => {
 function fakeE2ee(id: string, opts: { refuse?: boolean } = {}) {
   const seen = { senders: [] as unknown[], receivers: [] as unknown[], closed: 0, unreadable: null as (() => void) | null }
   const deps: NonNullable<CallEngineDeps['e2ee']> = {
-    self: () => id,
     secret: async (peer, callId) => {
       if (opts.refuse) throw new Error('no account')
       const text = `${[id, peer].sort().join(' ')} ${callId}`
@@ -603,5 +603,132 @@ describe('end-to-end media keys', () => {
     expect(alice.engine.e2eProblem()).toBeNull()
     a.seen.unreadable!()
     expect(alice.engine.e2eProblem()).toMatch(/can\u2019t be decrypted/)
+  })
+})
+
+describe('group calls', () => {
+  async function threeWay(video = false): Promise<[Phone, Phone, Phone]> {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    const carol = phone(CAROL)
+    alice.engine.call(BOB, { video })
+    await flush()
+    await bob.engine.accept()
+    await flush()
+    await flush()
+    expect(alice.engine.invite(CAROL)).toBe(true)
+    await flush()
+    expect(state(carol)).toBe('incoming')
+    expect(carol.engine.getSnapshot().context.members).toEqual([ALICE, BOB])
+    await carol.engine.accept()
+    for (let i = 0; i < 4; i += 1) await flush()
+    return [alice, bob, carol]
+  }
+
+  function connected(p: Phone): string[] {
+    return p.engine
+      .participants()
+      .filter((x) => x.status === 'connected')
+      .map((x) => x.peer)
+      .sort()
+  }
+
+  it('links everyone to everyone, the smaller key dialling, with no server in between', async () => {
+    const [alice, bob, carol] = await threeWay()
+    for (const p of [alice, bob, carol]) expect(state(p)).toBe('active')
+    expect(connected(alice)).toEqual([BOB, CAROL].sort())
+    expect(connected(bob)).toEqual([ALICE, CAROL].sort())
+    expect(connected(carol)).toEqual([ALICE, BOB].sort())
+    expect(alice.pcs).toHaveLength(2)
+    expect(bob.pcs).toHaveLength(2)
+    expect(carol.pcs).toHaveLength(2)
+
+    const carolMic = carol.made[0]!.getAudioTracks()[0]!
+    const bobMic = bob.made[0]!.getAudioTracks()[0]!
+    expect(bob.engine.participants().find((x) => x.peer === CAROL)?.stream?.getTracks()).toContain(carolMic)
+    expect(carol.engine.participants().find((x) => x.peer === BOB)?.stream?.getTracks()).toContain(bobMic)
+
+    carol.engine.toggleMute()
+    await flush()
+    expect(bob.engine.participants().find((x) => x.peer === CAROL)?.state.muted).toBe(true)
+    expect(alice.engine.participants().find((x) => x.peer === CAROL)?.state.muted).toBe(true)
+    expect(bob.engine.getSnapshot().context.remoteMuted).toBe(false)
+  })
+
+  it('goes on without someone who leaves, and records who was on it', async () => {
+    const [alice, bob, carol] = await threeWay()
+    carol.engine.hangUp()
+    await flush()
+    expect(state(alice)).toBe('active')
+    expect(state(bob)).toBe('active')
+    expect(connected(alice)).toEqual([BOB])
+    expect(connected(bob)).toEqual([ALICE])
+    expect(carol.records[0]).toMatchObject({ outcome: 'finished', direction: 'in' })
+    expect(carol.records[0]!.peers.sort()).toEqual([ALICE, BOB].sort())
+
+    alice.engine.hangUp()
+    await flush()
+    expect(state(bob)).toBe('ended')
+    expect(alice.records[0]!.peers.sort()).toEqual([BOB, CAROL].sort())
+  })
+
+  it('keeps the others on when someone asked declines', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    const carol = phone(CAROL)
+    alice.engine.call(BOB)
+    await flush()
+    await bob.engine.accept()
+    await flush()
+    alice.engine.invite(CAROL)
+    await flush()
+    expect(alice.engine.participants().find((x) => x.peer === CAROL)?.status).toBe('ringing')
+    carol.engine.decline()
+    await flush()
+    expect(state(alice)).toBe('active')
+    expect(alice.engine.participants().map((x) => x.peer)).toEqual([BOB])
+  })
+
+  it('caps each video sender once there are more than two', async () => {
+    const [alice, , carol] = await threeWay(true)
+    const caps = () => alice.pcs.flatMap((pc) => pc.senders.filter((s) => s.track?.kind === 'video').map((s) => s.params.encodings[0]?.maxBitrate))
+    expect(caps()).toEqual([600_000, 600_000])
+    carol.engine.hangUp()
+    await flush()
+    const toBob = alice.pcs.find((pc) => pc.connectionState === 'connected')!
+    expect(alice.pcs.filter((pc) => pc.connectionState === 'closed')).toHaveLength(1)
+    expect(toBob.senders.find((s) => s.track?.kind === 'video')?.params.encodings[0]?.maxBitrate).toBeUndefined()
+  })
+
+  it('lets only the host ask people on, up to six on a call', async () => {
+    const extra = [4, 5, 6, 7, 8].map((n) => '02' + String(n).repeat(64))
+    const alice = phone(ALICE, { friends: [BOB, CAROL, ...extra] })
+    const bob = phone(BOB)
+    expect(alice.engine.invite(BOB)).toBe(false)
+    alice.engine.call(BOB)
+    expect(alice.engine.invite(ALICE)).toBe(false)
+    expect(alice.engine.invite('02' + 'd'.repeat(64))).toBe(false)
+    expect(alice.engine.invite(CAROL)).toBe(true)
+    expect(alice.engine.invite(CAROL)).toBe(false)
+    for (const key of extra.slice(0, 3)) expect(alice.engine.invite(key)).toBe(true)
+    expect(alice.engine.canInvite()).toBe(false)
+    expect(alice.engine.invite(extra[3]!)).toBe(false)
+    await flush()
+    expect(bob.engine.canInvite()).toBe(false)
+  })
+
+  it('ignores call frames from anyone not on the roster, and rosters from anyone but the host', async () => {
+    const [alice, bob, carol] = await threeWay()
+    const DAVE = '02' + 'd'.repeat(64)
+    const call = bob.engine.getSnapshot().context.callId!
+    bob.engine.ingest(DAVE, encodeCallFrame({ t: 'state', call, state: { muted: true, camera: false, sharing: false } }))
+    bob.engine.ingest(DAVE, encodeCallFrame({ t: 'hangup', call }))
+    carol.engine.ingest(BOB, encodeCallFrame({ t: 'roster', call, joined: [BOB, CAROL, DAVE] }))
+    await flush()
+    expect(bob.engine.getSnapshot().context.remote[DAVE]).toBeUndefined()
+    expect(carol.engine.getSnapshot().context.members).not.toContain(DAVE)
+    expect(carol.engine.inCall(DAVE)).toBe(false)
+    expect(bob.engine.inCall(CAROL)).toBe(true)
+    expect(state(alice)).toBe('active')
   })
 })

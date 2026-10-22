@@ -1,11 +1,12 @@
 /**
  * The call's safety code: a lock beside the friend's name opens twelve digits
  * both sides read to each other. The same digits mean the media is sealed to
- * this friend's identity and nothing sits between the two connections.
+ * this friend's identity and nothing sits between the two connections. On a
+ * group call each person has their own code, for the link to them.
  */
 import { LockIcon } from '../icons'
 
-export function SafetyCode({ code, peer }: { code: string | null; peer: string }) {
+export function SafetyCode({ code, peer, group = false }: { code: string | null; peer: string; group?: boolean }) {
   if (!code) return null
   return (
     <details className="call-dock-devices call-dock-safety" data-aeon-part="safety">
@@ -18,7 +19,9 @@ export function SafetyCode({ code, peer }: { code: string | null; peer: string }
           {code}
         </p>
         <p className="call-dock-share-note">
-          Read these numbers to {peer}. If theirs match, only the two of you can hear and see this call.
+          {group
+            ? `Read these numbers to ${peer}. If theirs match, nobody sits between the two of you.`
+            : `Read these numbers to ${peer}. If theirs match, only the two of you can hear and see this call.`}
         </p>
       </div>
     </details>

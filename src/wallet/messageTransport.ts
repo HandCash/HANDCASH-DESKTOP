@@ -69,7 +69,7 @@ import {
 import { MESSAGES_BOX } from './directSession/signal'
 import { createBoxPoller, type BoxPoller } from './directSession/boxPoller'
 import { getOrCreateDeviceId } from './deviceWallets'
-import { routeCallFrame } from './calls/callService'
+import { onCallWith, routeCallFrame } from './calls/callService'
 
 export { bytesToBase64 }
 
@@ -900,7 +900,7 @@ function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }
     if (routeCallFrame(sender, body)) return
     acceptDirectBody(sender, body, env.rootKeyHex)
   })
-  installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey) && !isSenderBlocked(identityKey))
+  installOfferPolicy((identityKey) => (!!getFriendByIdentityKey(identityKey) && !isSenderBlocked(identityKey)) || onCallWith(identityKey))
   installSignalSender((to, body) => postToPeerBox(env.rootKeyHex, to, MESSAGES_BOX, body))
   if (signalPoller?.identity === self) return
   signalPoller?.poller.stop()

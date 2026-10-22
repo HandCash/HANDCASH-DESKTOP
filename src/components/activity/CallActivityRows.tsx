@@ -3,7 +3,7 @@
  * missed or finished call of the last few days with a way to call back.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { callPeerLabel, useCall, useCallElapsed } from '../../features/calls/useCall'
+import { callMembersLabel, useCall, useCallElapsed } from '../../features/calls/useCall'
 import { callDurationText, callOutcomeText, subscribeCallRecords, type CallRecord } from '../../wallet/calls/callHistory'
 import { callEngine } from '../../wallet/calls/callService'
 import { CallIcon, CallMissedIcon } from '../icons'
@@ -62,7 +62,7 @@ export function LiveCallRow() {
 
 export function CallRecordRow({ record }: { record: CallRecord }) {
   const peer = record.peers[0] ?? null
-  const label = record.peers.map((p) => callPeerLabel(p)).join(', ')
+  const label = callMembersLabel(record.peers)
   const face = missed(record) ? 'missed' : record.outcome
   return (
     <li data-aeon-scope="call-activity" data-aeon-state={face} data-activity-key={`call:${record.id}`}>

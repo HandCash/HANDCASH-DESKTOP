@@ -1,4 +1,5 @@
 import { assign, setup } from 'xstate'
+import type { CallMediaState } from '../wallet/calls/callWire'
 
 /** How a call ended, as Activity and the far side read it. */
 export type CallOutcome =
@@ -20,7 +21,14 @@ export const CALL_ENDED_LINGER_MS = 2_500
 
 export type CallContext = {
   callId: string | null
+  /** The other side of a two-person call; on a group call, the host (or, for the host, who it dialled first). */
   peer: string | null
+  /** Everyone else asked onto this call, joined or not. */
+  members: string[]
+  /** Who this side has a live media leg with. */
+  joined: string[]
+  /** Each member's mute, camera and share, as it last said. */
+  remote: Record<string, CallMediaState>
   direction: CallDirection
   video: boolean
   muted: boolean
@@ -41,7 +49,10 @@ export type CallContext = {
 
 export type CallEvent =
   | { type: 'DIAL'; callId: string; peer: string; video: boolean; at: number }
-  | { type: 'INCOMING'; callId: string; peer: string; video: boolean; at: number }
+  | { type: 'INCOMING'; callId: string; peer: string; video: boolean; at: number; members?: string[] }
+  | { type: 'MEMBERS'; members: string[] }
+  | { type: 'JOINED'; peer: string }
+  | { type: 'LEFT'; peer: string }
   | { type: 'REACHED' }
   | { type: 'UNREACHABLE'; at: number }
   | { type: 'ACCEPT'; video: boolean }
@@ -55,12 +66,15 @@ export type CallEvent =
   | { type: 'TOGGLE_MUTE' }
   | { type: 'CAMERA'; on: boolean }
   | { type: 'SHARE'; on: boolean }
-  | { type: 'REMOTE_STATE'; muted: boolean; camera: boolean; sharing: boolean }
+  | { type: 'REMOTE_STATE'; peer: string; muted: boolean; camera: boolean; sharing: boolean }
   | { type: 'DISMISS' }
 
 const blank: CallContext = {
   callId: null,
   peer: null,
+  members: [],
+  joined: [],
+  remote: {},
   direction: 'out',
   video: false,
   muted: false,
@@ -106,6 +120,7 @@ export const callMachine = setup({
         ...blank,
         callId: event.callId,
         peer: event.peer,
+        members: event.type === 'INCOMING' && event.members?.length ? event.members : [event.peer],
         direction: event.type === 'DIAL' ? ('out' as const) : ('in' as const),
         video: event.video,
         camera: event.type === 'DIAL' && event.video,
@@ -121,9 +136,23 @@ export const callMachine = setup({
     })),
     reset: assign(() => ({ ...blank })),
     toggleMute: assign(({ context }) => ({ muted: !context.muted })),
-    remoteState: assign(({ event }) =>
-      event.type === 'REMOTE_STATE' ? { remoteMuted: event.muted, remoteCamera: event.camera, remoteSharing: event.sharing } : {},
+    remoteState: assign(({ context, event }) => {
+      if (event.type !== 'REMOTE_STATE') return {}
+      const state = { muted: event.muted, camera: event.camera, sharing: event.sharing }
+      const remote = { ...context.remote, [event.peer]: state }
+      return event.peer === context.peer
+        ? { remote, remoteMuted: event.muted, remoteCamera: event.camera, remoteSharing: event.sharing }
+        : { remote }
+    }),
+    members: assign(({ event }) => (event.type === 'MEMBERS' ? { members: event.members } : {})),
+    joined: assign(({ context, event }) =>
+      event.type === 'JOINED' && !context.joined.includes(event.peer) ? { joined: [...context.joined, event.peer] } : {},
     ),
+    left: assign(({ context, event }) => {
+      if (event.type !== 'LEFT') return {}
+      const { [event.peer]: _gone, ...remote } = context.remote
+      return { joined: context.joined.filter((k) => k !== event.peer), remote }
+    }),
     camera: assign(({ event }) => (event.type === 'CAMERA' ? { camera: event.on } : {})),
     share: assign(({ event }) => (event.type === 'SHARE' ? { sharing: event.on } : {})),
     acceptWith: assign(({ event }) => (event.type === 'ACCEPT' ? { camera: event.video } : {})),
@@ -146,6 +175,7 @@ export const callMachine = setup({
         FAIL: { target: 'ended', actions: endAs('failed') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
         CAMERA: { actions: 'camera' },
+        MEMBERS: { actions: 'members' },
       },
       states: {
         reaching: {
@@ -172,6 +202,7 @@ export const callMachine = setup({
       after: { ring: { target: 'ended', actions: endAs('missed') } },
       on: {
         ACCEPT: { target: 'connecting', actions: 'acceptWith' },
+        MEMBERS: { actions: 'members' },
         DECLINE: { target: 'ended', actions: endAs('declined') },
         REMOTE_HUNG_UP: { target: 'ended', actions: endAs('missed') },
       },
@@ -187,6 +218,9 @@ export const callMachine = setup({
         CAMERA: { actions: 'camera' },
         SHARE: { actions: 'share' },
         REMOTE_STATE: { actions: 'remoteState' },
+        MEMBERS: { actions: 'members' },
+        JOINED: { actions: 'joined' },
+        LEFT: { actions: 'left' },
       },
     },
     active: {
@@ -198,6 +232,9 @@ export const callMachine = setup({
         CAMERA: { actions: 'camera' },
         SHARE: { actions: 'share' },
         REMOTE_STATE: { actions: 'remoteState' },
+        MEMBERS: { actions: 'members' },
+        JOINED: { actions: 'joined' },
+        LEFT: { actions: 'left' },
       },
     },
     ended: {

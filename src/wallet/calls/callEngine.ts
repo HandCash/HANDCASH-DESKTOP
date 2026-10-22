@@ -2,14 +2,27 @@
  * Calls between friends: the call chart plus what it drives. Signalling is
  * call frames (`callWire.ts`) on the identity-authenticated direct session;
  * media is its own peer connection per leg (`mediaPeer.ts`), its frames sealed
- * under keys only the two identity keys can derive (`mediaKeys.ts`). Nothing
+ * under keys only the two identity keys of that leg can derive (`mediaKeys.ts`).
+ *
+ * A group call is a full mesh, one leg between every two people and no media
+ * server: the host asks people on and tells everyone who has joined (`roster`),
+ * and of each two members the one with the smaller identity key dials the
+ * other. Frames count only from people the host's roster names, and no call
+ * grows past `CALL_MAX_PARTICIPANTS`, which a home uplink carries. Nothing
  * here touches keys that spend, and nothing here moves funds.
  */
 
 import { createActor, type SnapshotFrom } from 'xstate'
 import { callMachine, type CallContext } from '../../machines/callMachine'
 import type { CallRecord } from './callHistory'
-import { encodeCallFrame, newCallId, parseCallFrame, type CallFrame } from './callWire'
+import {
+  CALL_MAX_PARTICIPANTS,
+  encodeCallFrame,
+  newCallId,
+  parseCallFrame,
+  type CallFrame,
+  type CallMediaState,
+} from './callWire'
 import type { FrameProtector } from './frameProtector'
 import { cameraConstraints, cameraFailureText, micConstraints } from './mediaDevices'
 import { callKeys, safetyCode, type CallKeys } from './mediaKeys'
@@ -20,6 +33,10 @@ export type CallSnapshot = SnapshotFrom<typeof callMachine>
 
 /** How long a connection may stay disconnected before the call counts as dropped. */
 export const CALL_DROP_MS = 10_000
+/** Each video sender's ceiling once a call has more than two people, so the mesh fits a home uplink. */
+export const GROUP_VIDEO_BITRATE = 600_000
+/** Signals kept for a member the roster has not named yet, or a leg not opened yet. */
+const SIGNALS_KEPT = 64
 
 export type CallEngineDeps = {
   /** Open, or find open, the authenticated direct session to `peer`; false when it does not open in time. */
@@ -34,6 +51,8 @@ export type CallEngineDeps = {
   record: (record: CallRecord) => void
   ring: (kind: RingKind | null) => void
   now: () => number
+  /** This identity: media keys run from it to each peer, and members of a group call order by it. */
+  self?: () => string
   /** The microphone and camera the user picked last; null is the system default. */
   devices?: () => { mic: string | null; camera: string | null }
   rememberDevice?: (kind: 'mic' | 'camera', deviceId: string) => void
@@ -41,25 +60,49 @@ export type CallEngineDeps = {
   captureScreen?: (sourceId: string) => Promise<MediaStream>
   screenFailureText?: (err: unknown) => string
   /**
-   * End-to-end media keys: this identity, the secret it shares with `peer` for
+   * End-to-end media keys: the secret this identity shares with `peer` for
    * one call, and what seals and opens frames with the keys made from it.
    * Absent, media rests on DTLS-SRTP alone.
    */
   e2ee?: {
-    self: () => string
     secret: (peer: string, callId: string) => Promise<Uint8Array>
     protector: (keys: CallKeys, onUnreadable: () => void) => FrameProtector
   }
   log?: (what: string, err?: unknown) => void
 }
 
+type Sealed = { secret: Uint8Array; protector: FrameProtector }
+
+/** The media leg to one other person. */
 type Leg = {
   peer: string
   media: MediaPeer | null
+  /** Waiting for this leg's keys before its media peer exists. */
+  opening: boolean
   /** Signals that arrived before this side made its media peer. */
   queued: MediaSignal[]
   senders: { audio?: RTCRtpSender; video?: RTCRtpSender }
+  remote: MediaStream | null
+  sealed: Promise<Sealed | null> | null
+  safety: string | null
+  /** Their frames stopped opening under this leg's keys. */
+  unreadable: boolean
+  dropTimer?: ReturnType<typeof setTimeout>
 }
+
+/** One other person on the call, as the dock shows them. */
+export type CallParticipant = {
+  peer: string
+  /** `ringing`: asked on by this side, not answered yet. */
+  status: 'ringing' | 'connecting' | 'connected'
+  stream: MediaStream | null
+  state: CallMediaState
+  safety: string | null
+}
+
+type InviteeStatus = 'ringing' | 'joined' | 'declined' | 'busy' | 'gone'
+
+const QUIET: CallMediaState = { muted: false, camera: false, sharing: false }
 
 function norm(key: string): string {
   return key.trim().toLowerCase()
@@ -73,36 +116,43 @@ export function micFailureText(err: unknown): string {
   return 'The microphone didn’t start'
 }
 
+function signalOf(frame: Extract<CallFrame, { t: 'sdp' | 'ice' }>): MediaSignal {
+  return frame.t === 'sdp' ? { kind: 'sdp', description: frame.description } : { kind: 'ice', candidate: frame.candidate }
+}
+
 export function createCallEngine(deps: CallEngineDeps) {
   const log = deps.log ?? ((what: string, err?: unknown) => console.info(`[calls] ${what}${err === undefined ? '' : ` — ${err instanceof Error ? err.message : String(err)}`}`))
   const actor = createActor(callMachine)
   const listeners = new Set<() => void>()
-  let leg: Leg | null = null
+  const legs = new Map<string, Leg>()
+  /** Who may send this call's frames: the other side, or everyone the host has named. */
+  const roster = new Set<string>()
+  /** The host's view of everyone it asked on. */
+  const invitees = new Map<string, InviteeStatus>()
+  /** Told this side they are off the call; nothing more goes to them. */
+  const gone = new Set<string>()
+  /** Signals from a member the host has not named yet. */
+  const stray = new Map<string, MediaSignal[]>()
   let local: MediaStream | null = null
-  let remote: MediaStream | null = null
   /** The far side already knows this call is over (it told us, or we told it). */
   let settled = false
   let finalized: string | null = null
   /** A dial dropped for glare: it ends without an Activity row. */
   let silent: string | null = null
-  let dropTimer: ReturnType<typeof setTimeout> | undefined
   let version = 0
-  /** The call whose state this side has announced since it went active. */
-  let announced: string | null = null
   /** Why the camera did not start, for the call bar; cleared when it does. */
   let cameraProblem: string | null = null
   let shareProblem: string | null = null
   /** The screen or window track being sent in place of the camera. */
   let screen: MediaStreamTrack | null = null
-  /** The current call's media secret and frame protector, made once per call. */
-  let secured: { callId: string; done: Promise<{ secret: Uint8Array; protector: FrameProtector } | null> } | null = null
-  let safety: string | null = null
-  /** The far side's frames stopped opening under this call's keys. */
-  let unreadable = false
   const devices = deps.devices ?? (() => ({ mic: null, camera: null }))
 
   function ctx(): CallContext {
     return actor.getSnapshot().context
+  }
+
+  function me(): string {
+    return norm(deps.self?.() ?? '')
   }
 
   function emit(): void {
@@ -122,41 +172,70 @@ export function createCallEngine(deps: CallEngineDeps) {
     local = null
   }
 
+  function legFor(peer: string): Leg {
+    let leg = legs.get(peer)
+    if (!leg) {
+      leg = { peer, media: null, opening: false, queued: [], senders: {}, remote: null, sealed: null, safety: null, unreadable: false }
+      legs.set(peer, leg)
+    }
+    return leg
+  }
+
+  function liveLegs(): Leg[] {
+    return [...legs.values()].filter((leg) => leg.media)
+  }
+
+  function closeLeg(leg: Leg): void {
+    clearTimeout(leg.dropTimer)
+    leg.media?.close()
+    void leg.sealed?.then((s) => s?.protector.close())
+  }
+
+  /** A new call starts with nobody named but `peer`. */
+  function startRoster(peer: string): void {
+    roster.clear()
+    invitees.clear()
+    gone.clear()
+    stray.clear()
+    roster.add(peer)
+  }
+
   function teardown(): void {
     screen = null
-    const ending = secured
-    secured = null
-    safety = null
-    unreadable = false
-    void ending?.done.then((s) => s?.protector.close())
-    clearTimeout(dropTimer)
-    leg?.media?.close()
-    leg = null
+    for (const leg of legs.values()) closeLeg(leg)
+    legs.clear()
+    stray.clear()
     stopLocal()
-    remote = null
+  }
+
+  /** Everyone still owed word that this side is leaving. */
+  function farSides(c: CallContext): string[] {
+    const out = new Set<string>()
+    if (c.peer) out.add(c.peer)
+    for (const peer of legs.keys()) out.add(peer)
+    for (const [peer, status] of invitees) if (status === 'ringing' || status === 'joined') out.add(peer)
+    return [...out].filter((peer) => !gone.has(peer))
   }
 
   function finalize(c: CallContext): void {
     if (!c.callId || finalized === c.callId) return
     finalized = c.callId
-    const peer = c.peer!
     if (!settled) {
       settled = true
       if (c.outcome === 'missed' || (c.direction === 'in' && c.outcome === 'declined')) {
-        void sendFrame(peer, { t: 'decline', call: c.callId, reason: c.outcome === 'missed' ? 'missed' : 'declined' })
+        if (!gone.has(c.peer!)) {
+          void sendFrame(c.peer!, { t: 'decline', call: c.callId, reason: c.outcome === 'missed' ? 'missed' : 'declined' })
+        }
       } else if (c.outcome !== 'unreachable') {
-        void sendFrame(peer, {
-          t: 'hangup',
-          call: c.callId,
-          reason: c.outcome === 'failed' ? 'failed' : c.outcome === 'finished' ? 'hung-up' : 'cancelled',
-        })
+        const reason = c.outcome === 'failed' ? 'failed' : c.outcome === 'finished' ? 'hung-up' : 'cancelled'
+        for (const peer of farSides(c)) void sendFrame(peer, { t: 'hangup', call: c.callId, reason })
       }
     }
     teardown()
     if (silent === c.callId) return
     deps.record({
       id: c.callId,
-      peers: [peer],
+      peers: c.members.length > 0 ? [...c.members] : [c.peer!],
       direction: c.direction,
       outcome: c.outcome ?? 'failed',
       video: c.video,
@@ -171,11 +250,6 @@ export function createCallEngine(deps: CallEngineDeps) {
     else if (snap.matches({ outgoing: 'ringing' })) deps.ring('ringback')
     else deps.ring(null)
     if (snap.matches('ended')) finalize(snap.context)
-    // Each side says once whether its camera is on, so the other knows what to show.
-    if (snap.matches('active') && announced !== snap.context.callId) {
-      announced = snap.context.callId
-      sendState()
-    }
     emit()
   })
   actor.start()
@@ -185,17 +259,21 @@ export function createCallEngine(deps: CallEngineDeps) {
     return !s.matches('idle') && !s.matches('ended')
   }
 
-  /** Start deriving this call's media keys; the same promise for the rest of the call. */
-  function secure(peer: string, callId: string) {
+  function accepted(): boolean {
+    const s = actor.getSnapshot()
+    return s.matches('connecting') || s.matches('active')
+  }
+
+  /** Start deriving this leg's media keys; the same promise for the rest of the leg. */
+  function secure(leg: Leg, callId: string): Promise<Sealed | null> | null {
     const e2ee = deps.e2ee
     if (!e2ee) return null
-    if (secured?.callId === callId) return secured.done
-    const done = (async () => {
-      const secret = await e2ee.secret(peer, callId)
-      const keys = await callKeys(secret, norm(e2ee.self()), peer, callId)
+    leg.sealed ??= (async () => {
+      const secret = await e2ee.secret(leg.peer, callId)
+      const keys = await callKeys(secret, me(), leg.peer, callId)
       const protector = e2ee.protector(keys, () => {
-        if (ctx().callId !== callId || unreadable) return
-        unreadable = true
+        if (ctx().callId !== callId || leg.unreadable) return
+        leg.unreadable = true
         emit()
       })
       return { secret, protector }
@@ -203,18 +281,92 @@ export function createCallEngine(deps: CallEngineDeps) {
       log('media keys not agreed', err)
       return null
     })
-    secured = { callId, done }
-    return done
+    return leg.sealed
   }
 
-  async function showSafetyCode(callId: string): Promise<void> {
-    const s = await secured?.done
-    const media = leg?.media
-    if (!s || !media || ctx().callId !== callId) return
-    const code = await safetyCode(s.secret, callId, [media.localFingerprint(), media.remoteFingerprint()])
-    if (ctx().callId !== callId) return
-    safety = code
+  async function showSafetyCode(leg: Leg, callId: string): Promise<void> {
+    const sealed = await leg.sealed
+    const media = leg.media
+    if (!sealed || !media || ctx().callId !== callId || legs.get(leg.peer) !== leg) return
+    const code = await safetyCode(sealed.secret, callId, [media.localFingerprint(), media.remoteFingerprint()])
+    if (ctx().callId !== callId || legs.get(leg.peer) !== leg) return
+    leg.safety = code
     emit()
+  }
+
+  /** Video stays within a home uplink once it goes to more than one person. */
+  function capVideo(): void {
+    const group = liveLegs().length > 1
+    for (const leg of liveLegs()) {
+      const sender = leg.senders.video
+      if (!sender || typeof sender.getParameters !== 'function') continue
+      const params = sender.getParameters()
+      const encoding = params.encodings?.[0]
+      if (!encoding) continue
+      const want = group ? GROUP_VIDEO_BITRATE : undefined
+      if (encoding.maxBitrate === want) continue
+      if (want === undefined) delete encoding.maxBitrate
+      else encoding.maxBitrate = want
+      void sender.setParameters(params).catch((err) => log('video bitrate not set', err))
+    }
+  }
+
+  /** People asked on who have not answered, or answered and are still setting up. */
+  function stillComing(): boolean {
+    return [...invitees.values()].some((s) => s === 'ringing' || s === 'joined') || [...legs.values()].some((leg) => leg.opening)
+  }
+
+  /** Nobody left to talk to: the call ends the way the chart reads it. */
+  function endIfAlone(failed: boolean): void {
+    if (!busy() || liveLegs().length > 0 || stillComing()) return
+    const s = actor.getSnapshot()
+    const at = deps.now()
+    if (s.matches('outgoing')) {
+      const answers = [...invitees.values()]
+      actor.send({ type: 'REMOTE_DECLINED', busy: answers.length > 0 && answers.every((a) => a === 'busy'), at })
+    } else if (failed && !s.matches('incoming')) {
+      actor.send({ type: 'FAIL', reason: 'The connection to them failed', at })
+    } else {
+      actor.send({ type: 'REMOTE_HUNG_UP', at })
+    }
+  }
+
+  /** `peer` is off this call: its leg closes, and the call goes on if anyone is left. */
+  function drop(peer: string, how: 'declined' | 'busy' | 'failed'): void {
+    gone.add(peer)
+    const was = invitees.get(peer)
+    if (was) invitees.set(peer, how === 'busy' ? 'busy' : was === 'ringing' ? 'declined' : 'gone')
+    stray.delete(peer)
+    const leg = legs.get(peer)
+    if (leg) {
+      closeLeg(leg)
+      legs.delete(peer)
+      if (ctx().joined.includes(peer)) actor.send({ type: 'LEFT', peer })
+      capVideo()
+    }
+    endIfAlone(how === 'failed')
+    emit()
+  }
+
+  /** One leg failed: with others still on, it goes alone; otherwise the call fails. */
+  function legFailed(peer: string, reason: string): void {
+    if (liveLegs().some((leg) => leg.peer !== peer)) {
+      log(`leg to ${peer.slice(0, 8)} dropped: ${reason}`)
+      if (!gone.has(peer)) void sendFrame(peer, { t: 'hangup', call: ctx().callId!, reason: 'failed' })
+      drop(peer, 'failed')
+      return
+    }
+    actor.send({ type: 'FAIL', reason, at: deps.now() })
+  }
+
+  function sendState(only?: string): void {
+    const s = actor.getSnapshot()
+    if (!s.matches('active') && !s.matches('connecting')) return
+    const { muted, camera, sharing, callId } = s.context
+    const state = { muted, camera: camera && !sharing, sharing }
+    for (const leg of liveLegs()) {
+      if (!only || leg.peer === only) void sendFrame(leg.peer, { t: 'state', call: callId!, state })
+    }
   }
 
   async function openLeg(peer: string, polite: boolean): Promise<void> {
@@ -224,21 +376,24 @@ export function createCallEngine(deps: CallEngineDeps) {
       return
     }
     const callId = ctx().callId!
-    const sealing = secure(peer, callId)
+    const current = legFor(peer)
+    if (current.media || current.opening) return
+    current.opening = true
+    const sealing = secure(current, callId)
     const sealed = sealing ? await sealing : undefined
-    if (ctx().callId !== callId || !busy()) return
+    current.opening = false
+    if (ctx().callId !== callId || !busy() || legs.get(peer) !== current) return
     if (sealed === null) {
-      actor.send({ type: 'FAIL', reason: 'Couldn’t agree the call’s encryption keys', at: deps.now() })
+      legFailed(peer, 'Couldn’t agree the call’s encryption keys')
       return
     }
-    const current = leg ?? { peer, media: null, queued: [], senders: {} }
-    leg = current
     const addLocal = () => {
       for (const track of local?.getTracks() ?? []) {
         const kind = track.kind === 'video' ? 'video' : 'audio'
         if (!current.senders[kind]) current.senders[kind] = current.media?.addTrack(track, local!)
       }
     }
+    const stale = () => ctx().callId !== callId || legs.get(peer) !== current
     current.media = createMediaPeer({
       rtc,
       iceServers: deps.iceServers(),
@@ -246,7 +401,7 @@ export function createCallEngine(deps: CallEngineDeps) {
       log,
       frames: sealed?.protector,
       send: (signal) => {
-        if (ctx().callId !== callId) return
+        if (stale()) return
         void sendFrame(
           peer,
           signal.kind === 'sdp'
@@ -255,23 +410,26 @@ export function createCallEngine(deps: CallEngineDeps) {
         )
       },
       onTrack: (track, stream) => {
-        if (ctx().callId !== callId) return
-        if (!remote) remote = stream ?? new MediaStream()
-        if (!remote.getTracks().includes(track)) remote.addTrack(track)
+        if (stale()) return
+        if (!current.remote) current.remote = stream ?? new MediaStream()
+        if (!current.remote.getTracks().includes(track)) current.remote.addTrack(track)
         emit()
       },
       onState: (state) => {
-        if (ctx().callId !== callId) return
-        clearTimeout(dropTimer)
+        if (stale()) return
+        clearTimeout(current.dropTimer)
         if (state === 'connected') {
+          actor.send({ type: 'JOINED', peer })
           actor.send({ type: 'MEDIA_CONNECTED', at: deps.now() })
-          if (!safety) void showSafetyCode(callId)
-        }
-        else if (state === 'failed') actor.send({ type: 'FAIL', reason: 'The connection to them failed', at: deps.now() })
-        else if (state === 'disconnected') {
+          sendState(peer)
+          capVideo()
+          if (!current.safety) void showSafetyCode(current, callId)
+        } else if (state === 'failed') {
+          legFailed(peer, 'The connection to them failed')
+        } else if (state === 'disconnected') {
           // A blip recovers by itself; a closed laptop on the far side does not.
-          dropTimer = setTimeout(() => {
-            if (ctx().callId === callId) actor.send({ type: 'FAIL', reason: 'The connection to them dropped', at: deps.now() })
+          current.dropTimer = setTimeout(() => {
+            if (!stale()) legFailed(peer, 'The connection to them dropped')
           }, CALL_DROP_MS)
         }
       },
@@ -279,13 +437,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     })
     if (!polite) addLocal()
     for (const signal of current.queued.splice(0)) void current.media.handle(signal)
-  }
-
-  function sendState(): void {
-    const s = actor.getSnapshot()
-    if (!s.matches('active') && !s.matches('connecting')) return
-    const { muted, camera, sharing, callId, peer } = s.context
-    void sendFrame(peer!, { t: 'state', call: callId!, state: { muted, camera: camera && !sharing, sharing } })
+    emit()
   }
 
   /** A camera that will not start leaves the call going as voice. */
@@ -330,7 +482,6 @@ export function createCallEngine(deps: CallEngineDeps) {
     return kind === 'audio' ? local?.getAudioTracks()[0] : local?.getVideoTracks()[0]
   }
 
-  /** Puts `track` in place of this side's current one of its kind, on the wire and in the preview. */
   /** Back from the shared screen to the camera, or to no video when the camera is off. */
   async function stopShare(): Promise<void> {
     if (!screen) return
@@ -347,6 +498,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     sendState()
   }
 
+  /** Puts `track` in place of this side's current one of its kind, in the preview and on every leg. */
   async function swapTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<void> {
     const old = localTrack(kind)
     if (old) {
@@ -354,9 +506,12 @@ export function createCallEngine(deps: CallEngineDeps) {
       old.stop()
     }
     if (track && local) local.addTrack(track)
-    const sender = leg?.senders[kind]
-    if (sender) await sender.replaceTrack(track).catch((err) => log('track not replaced', err))
-    else if (track && local && leg?.media) leg.senders[kind] = leg.media.addTrack(track, local)
+    for (const leg of liveLegs()) {
+      const sender = leg.senders[kind]
+      if (sender) await sender.replaceTrack(track).catch((err) => log('track not replaced', err))
+      else if (track && local && leg.media) leg.senders[kind] = leg.media.addTrack(track, local)
+    }
+    if (kind === 'video') capVideo()
     emit()
   }
 
@@ -364,7 +519,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     const peer = norm(peerKey)
     const callId = ctx().callId
     const live = () => ctx().callId === callId && busy()
-    void secure(peer, callId!)
+    void secure(legFor(peer), callId!)
     if (!(await openMedia()) || !live()) return
     const reached = await deps.connect(peer).catch((err) => {
       log('session did not open', err)
@@ -381,17 +536,51 @@ export function createCallEngine(deps: CallEngineDeps) {
     else actor.send({ type: 'UNREACHABLE', at: deps.now() })
   }
 
+  /** The host asks one more friend onto the call under way. */
+  async function ask(peer: string): Promise<void> {
+    const callId = ctx().callId
+    const live = () => ctx().callId === callId && busy() && invitees.get(peer) === 'ringing'
+    void secure(legFor(peer), callId!)
+    const reached = await deps.connect(peer).catch((err) => {
+      log('session did not open', err)
+      return false
+    })
+    if (!live()) return
+    const sent = reached
+      ? await sendFrame(peer, { t: 'invite', call: callId!, video: ctx().video, members: [...roster] })
+      : 'box'
+    if (live() && sent !== 'direct') drop(peer, 'declined')
+  }
+
+  /** Of two members, the smaller key dials: open a session to `peer` and offer it this side's media. */
+  async function link(peer: string): Promise<void> {
+    const callId = ctx().callId
+    void secure(legFor(peer), callId!)
+    const reached = await deps.connect(peer).catch((err) => {
+      log('session did not open', err)
+      return false
+    })
+    if (ctx().callId !== callId || !busy() || gone.has(peer)) return
+    if (!reached) {
+      log(`member ${peer.slice(0, 8)} not reached`)
+      return
+    }
+    await openLeg(peer, false)
+  }
+
   function onInvite(peer: string, frame: Extract<CallFrame, { t: 'invite' }>): void {
     if (!deps.mayRing(peer)) return
     const s = actor.getSnapshot()
     const c = s.context
     if (c.callId === frame.call) return
-    if (s.matches('outgoing') && c.peer === peer) {
+    const others = (frame.members ?? []).filter((k) => k !== peer && k !== me())
+    if (!frame.members && s.matches('outgoing') && c.peer === peer && invitees.size === 1) {
       // Both dialled at once: the larger call id yields and answers the other.
       if (c.callId! < frame.call) return
       silent = c.callId
       settled = true
       actor.send({ type: 'HANG_UP', at: deps.now() })
+      startRoster(peer)
       actor.send({ type: 'INCOMING', callId: frame.call, peer, video: frame.video, at: deps.now() })
       settled = false
       void accept()
@@ -401,7 +590,7 @@ export function createCallEngine(deps: CallEngineDeps) {
       void sendFrame(peer, { t: 'decline', call: frame.call, reason: 'busy' })
       deps.record({
         id: frame.call,
-        peers: [peer],
+        peers: [peer, ...others],
         direction: 'in',
         outcome: 'missed',
         video: frame.video,
@@ -413,7 +602,8 @@ export function createCallEngine(deps: CallEngineDeps) {
     }
     settled = false
     cameraProblem = null
-    actor.send({ type: 'INCOMING', callId: frame.call, peer, video: frame.video, at: deps.now() })
+    startRoster(peer)
+    actor.send({ type: 'INCOMING', callId: frame.call, peer, video: frame.video, at: deps.now(), members: [peer, ...others] })
   }
 
   /** Answer the ringing call; `video` defaults to how the caller called. */
@@ -421,7 +611,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     if (!actor.getSnapshot().matches('incoming')) return
     const { callId, peer, video } = ctx()
     actor.send({ type: 'ACCEPT', video: opts.video ?? video })
-    void secure(peer!, callId!)
+    void secure(legFor(peer!), callId!)
     if (!(await openMedia()) || ctx().callId !== callId) return
     await openLeg(peer!, true)
     if (ctx().callId !== callId || !busy()) return
@@ -431,6 +621,57 @@ export function createCallEngine(deps: CallEngineDeps) {
     }
   }
 
+  /** Host side: someone it asked on answered. */
+  function onAccept(peer: string): void {
+    if (ctx().direction !== 'out' || invitees.get(peer) !== 'ringing') return
+    invitees.set(peer, 'joined')
+    if (actor.getSnapshot().matches('outgoing')) actor.send({ type: 'REMOTE_ACCEPTED' })
+    if (!accepted()) return
+    void openLeg(peer, false)
+    const joined = [...invitees].filter(([, s]) => s === 'joined').map(([k]) => k)
+    if (joined.length < 2) return
+    for (const member of joined) void sendFrame(member, { t: 'roster', call: ctx().callId!, joined })
+  }
+
+  /** Member side: the host says who has joined; link up with anyone new. */
+  function onRoster(from: string, joined: string[]): void {
+    const c = ctx()
+    const self = me()
+    if (c.direction !== 'in' || from !== c.peer || !self || !accepted()) return
+    const added: string[] = []
+    for (const key of joined) {
+      if (key === self || key === from || roster.has(key) || gone.has(key)) continue
+      if (roster.size + 1 >= CALL_MAX_PARTICIPANTS) break
+      roster.add(key)
+      added.push(key)
+      const early = stray.get(key) ?? []
+      stray.delete(key)
+      const leg = legFor(key)
+      leg.queued.push(...early)
+      if (self < key) void link(key)
+      else if (early.length > 0) void openLeg(key, true)
+    }
+    if (added.length > 0) actor.send({ type: 'MEMBERS', members: [...new Set([...c.members, ...added])] })
+  }
+
+  function onSignal(peer: string, signal: MediaSignal): void {
+    const leg = legFor(peer)
+    if (leg.media) {
+      void leg.media.handle(signal)
+      return
+    }
+    if (leg.queued.length < SIGNALS_KEPT) leg.queued.push(signal)
+    // Between two members, the larger key answers the other's offer.
+    if (ctx().direction === 'in' && peer !== ctx().peer && accepted()) void openLeg(peer, true)
+  }
+
+  function keepStray(peer: string, signal: MediaSignal): void {
+    if (!stray.has(peer) && stray.size >= CALL_MAX_PARTICIPANTS) return
+    const kept = stray.get(peer) ?? []
+    if (kept.length < SIGNALS_KEPT) kept.push(signal)
+    stray.set(peer, kept)
+  }
+
   return {
     /** Start a call to a friend. False when another call is under way. */
     call(peerKey: string, opts: { video?: boolean } = {}): boolean {
@@ -438,6 +679,8 @@ export function createCallEngine(deps: CallEngineDeps) {
       const peer = norm(peerKey)
       settled = false
       cameraProblem = null
+      startRoster(peer)
+      invitees.set(peer, 'ringing')
       actor.send({ type: 'DIAL', callId: newCallId(), peer, video: opts.video === true, at: deps.now() })
       void dial(peer)
       return true
@@ -585,20 +828,69 @@ export function createCallEngine(deps: CallEngineDeps) {
     shareProblem(): string | null {
       return shareProblem
     },
-
-    /** Whether this call's media is sealed under the identity-bound keys. */
+    /** Whether every connected leg's media is sealed under identity-bound keys. */
     encrypted(): boolean {
-      return !!deps.e2ee && !!safety
+      const live = liveLegs()
+      return !!deps.e2ee && live.length > 0 && live.every((leg) => !!leg.safety)
     },
 
-    /** Twelve digits both sides can read to each other; null until media connects. */
+    /** The two-person call's safety code; null until media connects. Group calls carry one per participant. */
     safetyCode(): string | null {
-      return safety
+      const peer = ctx().peer
+      return peer ? (legs.get(peer)?.safety ?? null) : null
     },
 
-    /** Why the far side's audio and video are not playing, when its frames do not open. */
+    /** Why someone's audio and video are not playing, when their frames do not open. */
     e2eProblem(): string | null {
-      return unreadable ? 'Their audio and video can’t be decrypted' : null
+      return [...legs.values()].some((leg) => leg.unreadable) ? 'Their audio and video can’t be decrypted' : null
+    },
+
+    /** The host may ask another friend on while seats are left. */
+    canInvite(): boolean {
+      const s = actor.getSnapshot()
+      if (s.context.direction !== 'out' || !(s.matches('outgoing') || s.matches('connecting') || s.matches('active'))) return false
+      const seats = 1 + [...invitees.values()].filter((v) => v === 'ringing' || v === 'joined').length
+      return seats < CALL_MAX_PARTICIPANTS
+    },
+
+    /** Ask a friend onto this call (host only). False when it cannot take them. */
+    invite(peerKey: string): boolean {
+      const peer = norm(peerKey)
+      const status = invitees.get(peer)
+      if (!this.canInvite() || peer === me() || status === 'ringing' || status === 'joined' || !deps.mayRing(peer)) return false
+      gone.delete(peer)
+      roster.add(peer)
+      invitees.set(peer, 'ringing')
+      const members = ctx().members
+      if (!members.includes(peer)) actor.send({ type: 'MEMBERS', members: [...members, peer] })
+      void ask(peer)
+      emit()
+      return true
+    },
+
+    /** Everyone else on the call this side can show: joined, setting up, or (for the host) still ringing. */
+    participants(): CallParticipant[] {
+      const c = ctx()
+      const out: CallParticipant[] = []
+      for (const peer of c.members) {
+        if (gone.has(peer)) continue
+        const leg = legs.get(peer)
+        const status: CallParticipant['status'] | null = c.joined.includes(peer)
+          ? 'connected'
+          : leg?.media || leg?.opening || invitees.get(peer) === 'joined' || (c.direction === 'in' && peer === c.peer)
+            ? 'connecting'
+            : invitees.get(peer) === 'ringing'
+              ? 'ringing'
+              : null
+        if (!status) continue
+        out.push({ peer, status, stream: leg?.remote ?? null, state: c.remote[peer] ?? QUIET, safety: leg?.safety ?? null })
+      }
+      return out
+    },
+
+    /** Whether `key` is on the call under way, so its direct session may open even if it is no friend. */
+    inCall(key: string): boolean {
+      return busy() && roster.has(norm(key)) && !gone.has(norm(key))
     },
 
     dismiss(): void {
@@ -614,45 +906,31 @@ export function createCallEngine(deps: CallEngineDeps) {
         onInvite(peer, frame)
         return true
       }
-      const c = ctx()
-      if (c.callId !== frame.call || c.peer !== peer) return true
+      if (ctx().callId !== frame.call) return true
+      if (!roster.has(peer)) {
+        if ((frame.t === 'sdp' || frame.t === 'ice') && accepted()) keepStray(peer, signalOf(frame))
+        return true
+      }
       switch (frame.t) {
         case 'accept':
-          if (actor.getSnapshot().matches('outgoing')) {
-            actor.send({ type: 'REMOTE_ACCEPTED' })
-            void openLeg(peer, false)
-          }
+          onAccept(peer)
           break
         case 'decline':
-          settled = true
-          if (actor.getSnapshot().matches('outgoing')) {
-            actor.send({ type: 'REMOTE_DECLINED', busy: frame.reason === 'busy', at: deps.now() })
-          } else {
-            actor.send({ type: 'REMOTE_HUNG_UP', at: deps.now() })
-          }
+          drop(peer, frame.reason === 'busy' ? 'busy' : 'declined')
           break
         case 'hangup':
-          settled = true
-          if (frame.reason === 'failed' && !actor.getSnapshot().matches('incoming')) {
-            actor.send({ type: 'FAIL', reason: 'The connection to them failed', at: deps.now() })
-          } else if (actor.getSnapshot().matches('outgoing')) {
-            actor.send({ type: 'REMOTE_DECLINED', busy: false, at: deps.now() })
-          } else {
-            actor.send({ type: 'REMOTE_HUNG_UP', at: deps.now() })
-          }
+          drop(peer, frame.reason === 'failed' ? 'failed' : 'declined')
+          break
+        case 'roster':
+          onRoster(peer, frame.joined)
           break
         case 'state':
-          actor.send({ type: 'REMOTE_STATE', muted: frame.state.muted, camera: frame.state.camera, sharing: frame.state.sharing })
+          actor.send({ type: 'REMOTE_STATE', peer, ...frame.state })
           break
         case 'sdp':
-        case 'ice': {
-          const signal: MediaSignal =
-            frame.t === 'sdp' ? { kind: 'sdp', description: frame.description } : { kind: 'ice', candidate: frame.candidate }
-          if (!leg) leg = { peer, media: null, queued: [], senders: {} }
-          if (leg.media) void leg.media.handle(signal)
-          else leg.queued.push(signal)
+        case 'ice':
+          onSignal(peer, signalOf(frame))
           break
-        }
       }
       return true
     },
@@ -677,8 +955,10 @@ export function createCallEngine(deps: CallEngineDeps) {
       return local
     },
 
+    /** The other side's media on a two-person call (on a group call, the host's or the first to connect). */
     remoteStream(): MediaStream | null {
-      return remote
+      const peer = ctx().peer
+      return (peer ? legs.get(peer)?.remote : null) ?? liveLegs().find((leg) => leg.remote)?.remote ?? null
     },
 
     subscribe(listener: () => void): () => void {
