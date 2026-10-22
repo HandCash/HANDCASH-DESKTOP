@@ -43,6 +43,8 @@ Installs of one vault move accounts **device to device** (draft BRC-249). Each u
 
 A call needs a live BRC-246 session (`webrtpay/1`) to the friend: the dial is the usual signed knock / ring / offer / answer in box `webrtpay_messages`, with a knock that waits long enough for a hidden window's 20 s read, and an install that rang back a knock reads at the dialling cadence until the offer arrives. Call frames (`hc-call/1`: invite, accept, decline, sdp, ice, state, hangup; `src/wallet/calls/callWire.ts`) then ride only that identity-authenticated channel, never the box: a call is live or not at all. Media is its own WebRTC peer connection per leg, DTLS-SRTP end to end, with public STUN and an optional user-set TURN relay (Settings → Calls) that only ever carries ciphertext. Only friends who are not blocked ring. Outcomes (missed, finished, declined, …) are account-local Activity rows; nothing about a call touches custody or moves funds.
 
+On top of DTLS-SRTP, every encoded audio and video frame is sealed again with AES-GCM (`calls/frameCrypto.ts`, in a `RTCRtpScriptTransform` worker, or insertable streams where that is missing). The keys come only from the two identity keys: each side takes `createHmac` under protocol `[2, 'handcash call media']`, keyID the call id, counterparty the friend. BRC-42's symmetric derivation gives both the same 32 bytes, and HKDF turns them into one key per direction (`calls/mediaKeys.ts`). Codec headers (the Opus TOC byte, 10 or 3 bytes of VP8, which video prefers) stay in clear as authenticated data. A call whose keys cannot be agreed fails rather than sending in clear. Once media connects, both sides show a 12-digit safety code, derived by HKDF from the same secret plus both DTLS fingerprints. The same digits on both screens mean the media is sealed to that friend and nothing sits between the two connections.
+
 ### Dev keys (not a messagebox client)
 
 Connected apps → Developer keys (the `</>` button) lists them. New key creates
@@ -189,6 +191,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
 | Account move (vault link, box `account-holding`) | `vaultLink.ts` / `accountRelease.ts` / `accountMove.ts` / `accountHandover.ts` |
 | Friend calls (frames, media legs, chart) | `calls/callWire.ts` / `calls/mediaPeer.ts` / `calls/callEngine.ts` / `machines/callMachine.ts` |
+| Call media keys (identity-bound frame encryption, safety code) | `calls/mediaKeys.ts` / `calls/frameCrypto.ts` / `calls/frameProtector.ts` / `calls/frame.worker.ts` |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |
 | Charts | `appStatecharts.ts` |
 

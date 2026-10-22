@@ -11,6 +11,7 @@ import { callDurationText, callOutcomeText } from '../../wallet/calls/callHistor
 import { callEngine } from '../../wallet/calls/callService'
 import { readCallSettings } from '../../wallet/calls/callSettings'
 import { nextCamera, type CallDevice } from '../../wallet/calls/mediaDevices'
+import { SafetyCode } from './SafetyCode'
 import { ScreenSharePicker } from './ScreenSharePicker'
 import { CallEndIcon, CallIcon, CameraSwitchIcon, MicIcon, MicOffIcon, TuneIcon, VideocamIcon, VideocamOffIcon } from '../icons'
 
@@ -77,7 +78,7 @@ export function CallDock() {
   const switchTo = c.camera ? nextCamera(devices, camera) : null
   const remoteVideo = c.remoteCamera || c.remoteSharing
   const stage = live && (c.camera || c.sharing || remoteVideo)
-  const mediaProblem = live ? (engine.shareProblem() ?? engine.cameraProblem()) : null
+  const mediaProblem = live ? (engine.e2eProblem() ?? engine.shareProblem() ?? engine.cameraProblem()) : null
 
   const status = snapshot.matches({ outgoing: 'reaching' })
     ? 'Calling…'
@@ -133,7 +134,10 @@ export function CallDock() {
         {c.video ? <VideocamIcon size={18} /> : <CallIcon size={18} />}
       </span>
       <div className="call-dock-who" data-aeon-part="who">
-        <strong className="call-dock-name">{peerLabel}</strong>
+        <span className="call-dock-name-row">
+          <strong className="call-dock-name">{peerLabel}</strong>
+          <SafetyCode code={live ? engine.safetyCode() : null} peer={peerLabel} />
+        </span>
         <span className="call-dock-status" data-aeon-part="status" aria-live="polite">
           {snapshot.matches('incoming') ? (c.video ? 'Incoming video call' : 'Incoming call') : status}
           {c.remoteMuted && snapshot.matches('active') ? ' · they’re muted' : ''}

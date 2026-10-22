@@ -129,6 +129,8 @@ export class FakeMediaConnection {
   readonly senders: FakeSender[] = []
   readonly candidates: RTCIceCandidateInit[] = []
   private delivered = new Set<FakeTrack>()
+  /** One receiver per far sender, kept across replaced tracks as a transceiver's is. */
+  readonly receivers = new Map<FakeSender, { track: FakeTrack }>()
   private negotiationQueued = false
   private generation = 0
   closed = false
@@ -257,7 +259,10 @@ export class FakeMediaConnection {
     for (const sender of from.senders) {
       if (!sender.track || this.delivered.has(sender.track)) continue
       this.delivered.add(sender.track)
-      this.emit('track', { track: sender.track, streams: [sender.stream] })
+      if (!this.receivers.has(sender)) this.receivers.set(sender, { track: sender.track })
+      const receiver = this.receivers.get(sender)!
+      receiver.track = sender.track
+      this.emit('track', { track: sender.track, streams: [sender.stream], receiver })
     }
   }
 

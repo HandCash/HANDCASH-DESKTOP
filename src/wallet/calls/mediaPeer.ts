@@ -2,9 +2,13 @@
  * One media leg of a call: an RTCPeerConnection to one peer, negotiated over
  * the call frames with the "perfect negotiation" pattern, so either side may
  * add or drop a track at any time and a collision resolves itself (the callee
- * is the polite side and yields). Media is DTLS-SRTP end to end; the only
- * servers are STUN, and TURN when one is configured, which relays ciphertext.
+ * is the polite side and yields). Media is DTLS-SRTP end to end, and with
+ * `frames` each encoded frame is sealed again under the call's identity-bound
+ * keys; the only servers are STUN, and TURN when one is configured, which
+ * relays ciphertext.
  */
+
+import type { FrameProtector } from './frameProtector'
 
 export type MediaRtcConstructor = typeof RTCPeerConnection
 
@@ -26,6 +30,8 @@ export type MediaPeerOptions = {
    * instead of starting a second, colliding offer.
    */
   beforeAnswer?: () => void
+  /** Seals what this side sends and opens what it receives; every sender and receiver passes through it once. */
+  frames?: Pick<FrameProtector, 'config' | 'sender' | 'receiver'>
   log?: (what: string, err?: unknown) => void
 }
 
@@ -38,7 +44,8 @@ export function sdpFingerprint(sdp: string | undefined | null): string {
 
 export function createMediaPeer(opts: MediaPeerOptions) {
   const log = opts.log ?? (() => undefined)
-  const pc = new opts.rtc({ iceServers: opts.iceServers })
+  const pc = new opts.rtc({ iceServers: opts.iceServers, ...opts.frames?.config } as RTCConfiguration)
+  const protectedEnds = new WeakSet<object>()
   let makingOffer = false
   let ignoreOffer = false
   let closed = false
@@ -72,7 +79,12 @@ export function createMediaPeer(opts: MediaPeerOptions) {
   })
 
   pc.addEventListener('track', (event: RTCTrackEvent) => {
-    if (!closed) opts.onTrack(event.track, event.streams?.[0])
+    if (closed) return
+    if (opts.frames && event.receiver && !protectedEnds.has(event.receiver)) {
+      protectedEnds.add(event.receiver)
+      opts.frames.receiver(event.receiver)
+    }
+    opts.onTrack(event.track, event.streams?.[0])
   })
 
   pc.addEventListener('connectionstatechange', () => {
@@ -92,7 +104,12 @@ export function createMediaPeer(opts: MediaPeerOptions) {
     },
 
     addTrack(track: MediaStreamTrack, stream: MediaStream): RTCRtpSender {
-      return pc.addTrack(track, stream)
+      const sender = pc.addTrack(track, stream)
+      if (opts.frames && !protectedEnds.has(sender)) {
+        protectedEnds.add(sender)
+        opts.frames.sender(sender, pc)
+      }
+      return sender
     },
 
     async handle(signal: MediaSignal): Promise<void> {

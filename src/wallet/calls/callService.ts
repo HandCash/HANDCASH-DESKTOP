@@ -1,9 +1,11 @@
 /**
  * The app's one call engine, bound to the active wallet: direct sessions for
- * signalling, the browser's WebRTC and microphone for media, friends and
- * blocked senders for who may ring, Activity for the outcome.
+ * signalling, the browser's WebRTC and microphone for media, the account key
+ * for media keys shared with the friend, friends and blocked senders for who
+ * may ring, Activity for the outcome.
  */
 
+import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import { hasDirectSession, tryDirectDeliver } from '../directSession/session'
 import { isSenderBlocked } from '../blockedSenders'
 import { getFriendByIdentityKey } from '../friends'
@@ -12,6 +14,8 @@ import { recordCall } from './callHistory'
 import { createCallEngine, type CallEngine } from './callEngine'
 import { callIceServers, readCallSettings, writeCallSettings } from './callSettings'
 import { isCallFrameBody } from './callWire'
+import { createFrameProtector, frameEncryptionAvailable } from './frameProtector'
+import { callSecret } from './mediaKeys'
 import { startRinging, stopRinging } from './ringtone'
 import { captureScreen, screenFailureText, screenShareAvailable } from './screenCapture'
 
@@ -24,6 +28,13 @@ let engine: CallEngine | null = null
 
 function mayRing(peer: string): boolean {
   return !!getFriendByIdentityKey(peer) && !isSenderBlocked(peer)
+}
+
+/** The secret this account shares with `peer` for one call; the account key is used here and dropped. */
+function mediaSecret(peer: string, callId: string): Promise<Uint8Array> {
+  const wallet = getActiveWallet()
+  if (!wallet) return Promise.reject(new Error('No account is open'))
+  return callSecret(new ProtoWallet(PrivateKey.fromHex(wallet.rootKeyHex)), peer, callId)
 }
 
 async function connect(peer: string): Promise<boolean> {
@@ -66,6 +77,9 @@ export function callEngine(): CallEngine {
     rememberDevice: (kind, deviceId) => writeCallSettings({ [kind]: deviceId }),
     captureScreen: screenShareAvailable() ? captureScreen : undefined,
     screenFailureText,
+    e2ee: frameEncryptionAvailable()
+      ? { self: () => getActiveWallet()?.identityKey ?? '', secret: mediaSecret, protector: createFrameProtector }
+      : undefined,
   })
   return engine
 }
