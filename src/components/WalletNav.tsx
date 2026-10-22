@@ -712,7 +712,7 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'setting' && stageChild.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
-              {stageChild.type === 'setting' && stageChild.settingId === 'google-recovery' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'handcash-recovery' && (
                 <HandCashRecoveryPanel />
               )}
               {stageChild.type === 'setting' && stageChild.settingId === 'logs' && <LogViewerPanel />}

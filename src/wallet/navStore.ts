@@ -16,7 +16,7 @@ export type SettingId =
   | 'backup'
   | 'backup-phrase'
   | 'split-backup'
-  | 'google-recovery'
+  | 'handcash-recovery'
   | 'signin-email'
   | 'device-handoff'
   | 'history-backup'

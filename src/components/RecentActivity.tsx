@@ -1,4 +1,11 @@
 import { getActiveWallet } from '../wallet/session'
+import {
+  activityFeedCache,
+  composeActivityFeed,
+  openWalletCacheKey,
+  type ActivityFeedKey,
+  type ActivityFeedSnapshot,
+} from '../wallet/walletCaches'
 import { useActivityAction } from '../hooks/useAsyncAction'
 import { useBrc29NoticeDelivery } from '../hooks/useBrc29NoticeDelivery'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
@@ -58,7 +65,6 @@ import {
   activityFailureLabel,
   countFailedActivity,
   isUtxoHealActivity,
-  listActivityFeed,
   subscribeAppActivity,
   watchActivityExpiry,
   WALLET_ACTIVITY_ORIGIN,
@@ -109,7 +115,6 @@ import {
 import {
   DEFAULT_PAYMENT_FILTERS,
   filterPaymentActivity,
-  listPaymentOriginOptions,
   type PaymentFilters,
   type PaymentOriginOption,
 } from "../wallet/paymentFilters";
@@ -181,30 +186,14 @@ import { foldSwapActivity } from "../wallet/swap/swapActivity";
 /** Rows summarise; exact amounts live in the payment details. */
 const ROW_FIGURES = { significant: 4 } as const;
 
-type ActivityFeedSnapshot = {
-  generation: number;
-  entries: ActivityEntry[];
-  origins: PaymentOriginOption[];
-};
-
-const feedCache = new Map<number, ActivityFeedSnapshot>();
-
-function readActivityFeed(limit: number): ActivityFeedSnapshot {
-  const generation = getActivityWriteGeneration();
-  const hit = feedCache.get(limit);
-  if (hit && hit.generation === generation) return hit;
-  const snapshot = {
-    generation,
-    entries: listActivityFeed(limit),
-    origins: listPaymentOriginOptions(limit),
-  };
-  feedCache.set(limit, snapshot);
-  return snapshot;
+function currentActivityFeed(key: ActivityFeedKey): ActivityFeedSnapshot | undefined {
+  const cached = activityFeedCache.peek(key).data;
+  return cached && cached.generation === getActivityWriteGeneration() ? cached : undefined;
 }
 
-function invalidateActivityFeed(limit?: number): void {
-  if (limit == null) feedCache.clear();
-  else feedCache.delete(limit);
+/** First paint reads the cache, or composes the feed itself so the list never flashes empty. */
+function readActivityFeed(limit: number): ActivityFeedSnapshot {
+  return currentActivityFeed({ wallet: openWalletCacheKey(), limit }) ?? composeActivityFeed(limit);
 }
 
 function sameRows<T>(a: readonly T[], b: readonly T[]): boolean {
@@ -878,18 +867,15 @@ type FeedProps = {
 };
 
 function useActivityFeed(limit: number) {
-  const [entries, setEntries] = useState<ActivityEntry[]>(
-    () => readActivityFeed(limit).entries
-  );
+  const [firstFeed] = useState(() => readActivityFeed(limit));
+  const [entries, setEntries] = useState<ActivityEntry[]>(firstFeed.entries);
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() =>
     getCachedUsdPerBsv()
   );
   const [currency, setCurrency] = useState<DisplayCurrency>(() =>
     getDisplayCurrency()
   );
-  const [origins, setOrigins] = useState<PaymentOriginOption[]>(
-    () => readActivityFeed(limit).origins
-  );
+  const [origins, setOrigins] = useState<PaymentOriginOption[]>(firstFeed.origins);
   const [live, setLive] = useState<readonly LiveAction[]>(() =>
     listLiveActions()
   );
@@ -907,10 +893,7 @@ function useActivityFeed(limit: number) {
   useEffect(() => {
     // Writes move the generation, so the cache already misses for them. Apps
     // and collectables feed the composition without a write; they rebuild.
-    const refresh = (repaint: boolean, rebuild = false) => {
-      archiveOversizedBulkSendDebris()
-      if (rebuild) invalidateActivityFeed(limit);
-      const snapshot = readActivityFeed(limit);
+    const apply = (snapshot: ActivityFeedSnapshot) => {
       setEntries((prev) => (sameRows(prev, snapshot.entries) ? prev : snapshot.entries));
       setOrigins((prev) =>
         prev.length === snapshot.origins.length &&
@@ -918,6 +901,22 @@ function useActivityFeed(limit: number) {
           ? prev
           : snapshot.origins
       );
+    };
+    let watchedWallet: string | null = null;
+    let stopFeed = () => {};
+    const refresh = (repaint: boolean, rebuild = false) => {
+      archiveOversizedBulkSendDebris()
+      const key = { wallet: openWalletCacheKey(), limit };
+      if (key.wallet !== watchedWallet) {
+        stopFeed();
+        watchedWallet = key.wallet;
+        stopFeed = activityFeedCache.subscribe(key, (view) => {
+          if (view.data) apply(view.data);
+        });
+      }
+      const current = rebuild ? undefined : currentActivityFeed(key);
+      if (current) apply(current);
+      else activityFeedCache.invalidate({ key });
       if (repaint) setRepaint((n) => n + 1);
     };
     refresh(false, true);
@@ -954,6 +953,7 @@ function useActivityFeed(limit: number) {
       window.clearTimeout(assetTimer);
       window.clearTimeout(writeTimer);
       window.clearTimeout(txTimer);
+      stopFeed();
       unsubActivity();
       unsubApps();
       unsubItems();

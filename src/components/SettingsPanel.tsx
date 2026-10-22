@@ -138,7 +138,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'chart-apps') return 'Apps'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
-  if (id === 'google-recovery') return 'HandCash Recovery'
+  if (id === 'handcash-recovery') return 'HandCash Recovery'
   if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)
   if (item) return item.label
@@ -156,7 +156,7 @@ const ACCEPTED_COINS_ICONS: Record<AcceptedCoins, ReactNode> = {
 }
 
 function RecoveryRows() {
-  const { icon, tone } = settingIconFor('google-recovery')
+  const { icon, tone } = settingIconFor('handcash-recovery')
   return (
     <ul className="settings-list">
       <SettingsNavRow
@@ -164,7 +164,7 @@ function RecoveryRows() {
         description="Each device keeps a full copy"
         icon={icon}
         iconTone={tone}
-        onClick={() => openSetting('google-recovery')}
+        onClick={() => openSetting('handcash-recovery')}
       />
     </ul>
   )
