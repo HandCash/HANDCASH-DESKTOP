@@ -1709,6 +1709,9 @@ export async function serveBntBox(opts?: { force?: boolean }): Promise<void> {
     }
     if (acks.length) await acknowledgeOwnBox(active.rootKeyHex, BNT_BOX, acks).catch(() => {})
     for (const [asset, at] of needOpenAt) if (Date.now() - at > NEED_OPEN_MS) needOpenAt.delete(asset)
+    for (const sent of [needAskedAt, needServedAt]) {
+      for (const [key, at] of sent) if (Date.now() - at >= NEED_RESEND_MS) sent.delete(key)
+    }
     await flushOutbox(active).catch((err) => {
       console.warn('[bnt] outbox deferred', err instanceof Error ? err.message : String(err))
     })
