@@ -39,6 +39,10 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 Installs of one vault move accounts **device to device** (draft BRC-249). Each unlocked install keeps a **vault link** to the others: a BRC-246 session (`webrtpay/1`) on the vault identity (account 0), signalled in box **`vault-link`** (never `webrtpay_messages`, so chat sessions never answer it). The signed `release-request` / `release-accept` ride the link. Box **`account-holding`** on the account's own key carries them only when no link opens or a frame is not acked, and always carries `handover` parts sealed to self, so they wait for an offline holder. None of this is counterparty P2P, and it never gates a payment. A request that cannot reach the holder by either path fails the move, and nobody is asked to confirm one. Only the install holding an account acknowledges that account's messages.
 
+### Calls between friends
+
+A call needs a live BRC-246 session (`webrtpay/1`) to the friend: the dial is the usual signed knock / ring / offer / answer in box `webrtpay_messages`, with a knock that waits long enough for a hidden window's 20 s read, and an install that rang back a knock reads at the dialling cadence until the offer arrives. Call frames (`hc-call/1`: invite, accept, decline, sdp, ice, state, hangup; `src/wallet/calls/callWire.ts`) then ride only that identity-authenticated channel, never the box: a call is live or not at all. Media is its own WebRTC peer connection per leg, DTLS-SRTP end to end, with public STUN and an optional user-set TURN relay (Settings → Calls) that only ever carries ciphertext. Only friends who are not blocked ring. Outcomes (missed, finished, declined, …) are account-local Activity rows; nothing about a call touches custody or moves funds.
+
 ### Dev keys (not a messagebox client)
 
 Connected apps → Developer keys (the `</>` button) lists them. New key creates
@@ -184,6 +188,7 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 | Dev keys (sign and/or shared Toolbox storage, server-spent) | `devKeys.ts` / `serverWalletRecoverMachine.ts` |
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
 | Account move (vault link, box `account-holding`) | `vaultLink.ts` / `accountRelease.ts` / `accountMove.ts` / `accountHandover.ts` |
+| Friend calls (frames, media legs, chart) | `calls/callWire.ts` / `calls/mediaPeer.ts` / `calls/callEngine.ts` / `machines/callMachine.ts` |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |
 | Charts | `appStatecharts.ts` |
 

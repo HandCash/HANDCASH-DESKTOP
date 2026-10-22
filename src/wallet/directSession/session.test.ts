@@ -142,6 +142,29 @@ describe('draft BRC-246 sessions over webrtpay/1', () => {
     expect(mac!.mod.hasDirectSession(phone!.key, 'tablet')).toBe(false)
   })
 
+  it('reads at the dialling cadence after ringing a knock, until its offer arrives', async () => {
+    const [mac, phone] = await two()
+    await mac!.mod.requestDirectSession(phone!.key)
+    for (const s of phone!.box.splice(0)) await phone!.mod.ingestSessionSignal(s.sender, s.body)
+    expect(phone!.mod.hasActiveSessionDials()).toBe(true)
+    await settle([mac!, phone!])
+    expect(phone!.mod.hasDirectSession(mac!.key)).toBe(true)
+    expect(phone!.mod.hasActiveSessionDials()).toBe(false)
+  })
+
+  it('lets a dial wait longer for its ring when asked', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const [mac, phone] = await two()
+    const [, tablet] = await two()
+    expect(await mac!.mod.requestDirectSession(phone!.key)).toBe(true)
+    expect(await tablet!.mod.requestDirectSession(phone!.key, '', Date.now(), 30_000)).toBe(true)
+    vi.advanceTimersByTime(mac!.mod.SESSION_PRESENCE_MS + 100)
+    expect(mac!.mod.hasActiveSessionDials()).toBe(false)
+    expect(tablet!.mod.hasActiveSessionDials()).toBe(true)
+    vi.advanceTimersByTime(30_000)
+    expect(tablet!.mod.hasActiveSessionDials()).toBe(false)
+  })
+
   it('resolves simultaneous dials to one session', async () => {
     const [mac, phone] = await two()
     expect(await mac!.mod.requestDirectSession(phone!.key)).toBe(true)

@@ -9,5 +9,8 @@
     <!-- Under the hardened runtime, getUserMedia gets no camera without this (QR scanning). -->
     <key>com.apple.security.device.camera</key>
     <true/>
+    <!-- Calls: without this the hardened runtime hands getUserMedia a silent microphone. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
   </dict>
 </plist>

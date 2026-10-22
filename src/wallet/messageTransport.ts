@@ -69,6 +69,7 @@ import {
 import { MESSAGES_BOX } from './directSession/signal'
 import { createBoxPoller, type BoxPoller } from './directSession/boxPoller'
 import { getOrCreateDeviceId } from './deviceWallets'
+import { routeCallFrame } from './calls/callService'
 
 export { bytesToBase64 }
 
@@ -896,6 +897,7 @@ function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }
   const self = env.senderIdentityKey.trim().toLowerCase()
   setDirectSessionIdentity({ rootKeyHex: env.rootKeyHex, identityKey: self, device: getOrCreateDeviceId() })
   setDirectInboundHandler((sender, body) => {
+    if (routeCallFrame(sender, body)) return
     acceptDirectBody(sender, body, env.rootKeyHex)
   })
   installOfferPolicy((identityKey) => !!getFriendByIdentityKey(identityKey) && !isSenderBlocked(identityKey))
@@ -925,6 +927,18 @@ export function stopDirectSignalPolling(): void {
 
 async function dialDirectSession(identityKey: string): Promise<void> {
   if (await requestDirectSession(identityKey)) signalPoller?.poller.nudge()
+}
+
+/**
+ * Dial a friend's direct session for a call. The knock waits `presenceMs`
+ * for a ring, long enough for a hidden window's slower read of its box.
+ */
+export async function dialPeerForCall(
+  args: { rootKeyHex: string; senderIdentityKey: string; recipientIdentityKey: string },
+  presenceMs: number,
+): Promise<void> {
+  armDirectSession(args)
+  if (await requestDirectSession(args.recipientIdentityKey, '', Date.now(), presenceMs)) signalPoller?.poller.nudge()
 }
 
 /**

@@ -13,7 +13,8 @@ import { openAddFriend, openFriendDetails, openMessagesInbox } from '../wallet/n
 import { withSoftSound } from '../wallet/soundedAction'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
-import { MessagesIcon, PersonAddIcon, SearchIcon } from './icons'
+import { CallIcon, MessagesIcon, PersonAddIcon, SearchIcon } from './icons'
+import { callEngine } from '../wallet/calls/callService'
 import { ListPanelHead } from './ListPanelHead'
 import { FriendIdentityBlock } from './PeerIdentity'
 import { PanelFilter } from './PanelFilter'
@@ -47,6 +48,16 @@ function FriendListItem({ friend, chain, now }: { friend: Friend; chain: Chain; 
         <span className="friend-row-since" data-aeon-part="since">
           Added {sinceText(friend.createdAt, now)}
         </span>
+      </button>
+      <button
+        type="button"
+        className="friend-row-call"
+        data-aeon-part="call"
+        aria-label={`Call ${friend.label}`}
+        title="Call"
+        onClick={() => callEngine().call(friend.identityKey)}
+      >
+        <CallIcon size={18} />
       </button>
     </li>
   )

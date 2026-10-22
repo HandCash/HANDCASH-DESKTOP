@@ -37,6 +37,7 @@ const MASTER = `stateDiagram-v2
   appSession --> marketSellerSettlement : market sell
   appSession --> chainIngestChart : Refresh
   appSession --> messageboxChart : chat relay
+  appSession --> callChart : friend calls
   appSession --> accountHolding : unlock / switch / gap / holding channel
   accountHolding --> accountMove : open an account held elsewhere
 
@@ -88,6 +89,7 @@ const MASTER = `stateDiagram-v2
   spendSign : Sign / broadcast
   chainIngestChart : Chain ingest
   messageboxChart : Messagebox
+  callChart : Calls
   marketPurchase : Market purchase
   marketSellerSettlement : Market seller settlement
 `
@@ -1611,6 +1613,32 @@ const CHAIN_INGEST_CHART = `flowchart TB
 `
 
 /**
+ * Friend calls — `callMachine`. Call frames ride the identity-authenticated
+ * direct session (draft BRC-246); media is a WebRTC peer connection per leg.
+ */
+const CALL_CHART = `stateDiagram-v2
+  direction TB
+  [*] --> idle
+  idle --> outgoing : DIAL (call button, call back)
+  idle --> incoming : INCOMING (invite from a friend)
+  state outgoing {
+    [*] --> reaching
+    reaching --> ringing : REACHED (invite on the direct session)
+  }
+  reaching --> ended : UNREACHABLE / 40 s → unreachable
+  outgoing --> connecting : REMOTE_ACCEPTED
+  ringing --> ended : REMOTE_DECLINED → declined | busy · 45 s → no-answer
+  outgoing --> ended : HANG_UP → cancelled · FAIL (microphone) → failed
+  incoming --> connecting : ACCEPT (pointer only, never focused)
+  incoming --> ended : DECLINE → declined · REMOTE_HUNG_UP / 45 s → missed
+  connecting --> active : MEDIA_CONNECTED
+  connecting --> ended : FAIL / 20 s → failed · HANG_UP | REMOTE_HUNG_UP → cancelled
+  active --> ended : HANG_UP | REMOTE_HUNG_UP → finished · FAIL → failed
+  ended --> idle : 2.5 s | DISMISS
+  note right of ended : Activity gets one row per call (missed, finished, …)
+`
+
+/**
  * Messagebox — BRC-33 store-and-forward vs HandCash convenience host.
  * Custody never depends on this chart.
  */
@@ -1685,6 +1713,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Messagebox',
     caption: 'BRC-33 ideal vs BRC-CLOUD convenience — not custody',
     source: MESSAGEBOX_CHART,
+  },
+  {
+    id: 'callChart',
+    label: 'Calls',
+    caption: 'callMachine — friend calls over the direct session; WebRTC media; outcome on Activity',
+    source: CALL_CHART,
   },
   {
     id: 'appSession',

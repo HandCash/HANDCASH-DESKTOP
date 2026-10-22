@@ -15,12 +15,19 @@ describe('cameraPermissions', () => {
     expect(isCameraPermission('geolocation')).toBe(false)
   })
 
-  it('allows video-only media requests', () => {
+  it('allows camera and microphone requests for calls', () => {
     expect(allowsCameraMediaType(['video'])).toBe(true)
-    expect(allowsCameraMediaType(['audio'])).toBe(false)
+    expect(allowsCameraMediaType(['audio'])).toBe(true)
+    expect(allowsCameraMediaType(['audio', 'video'])).toBe(true)
+    expect(allowsCameraMediaType(['audio', 'screen'])).toBe(false)
     expect(allowsCameraMediaType(undefined, 'video')).toBe(true)
-    expect(allowsCameraMediaType(undefined, 'audio')).toBe(false)
+    expect(allowsCameraMediaType(undefined, 'audio')).toBe(true)
     expect(allowsCameraMediaType(undefined)).toBe(true)
+  })
+
+  it('names the microphone as a media permission', () => {
+    expect(isCameraPermission('microphone')).toBe(true)
+    expect(isCameraPermission('audio-capture')).toBe(true)
   })
 
   it('grants main-frame app camera on trusted URLs', () => {
