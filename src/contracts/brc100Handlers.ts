@@ -34,6 +34,7 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   claimCloudHandle: 'identity',
   getClaimedCloudHandle: 'identity',
   clearClaimedCloudHandle: 'identity',
+  issueHandle: 'identity',
   getVersion: 'wallet',
   getNetwork: 'wallet',
   isAuthenticated: 'wallet',

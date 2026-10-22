@@ -108,6 +108,18 @@ const BY_CODE: Record<string, WalletFailure> = {
 
   // The inputs are gone, possibly to an earlier run of this same payment.
   DOUBLE_SPENT: CHECK,
+
+  // issueHandle: every refusal below happens before the claim reaches BRC-CLOUD,
+  // or is BRC-CLOUD's own refusal; only a lost or failed claim may have bound it.
+  HANDLE_ISSUE_INVALID: INVALID,
+  HANDLE_ISSUE_WRONG_KEY: INVALID,
+  HANDLE_ISSUE_TICKET_REJECTED: INVALID,
+  HANDLE_ISSUE_REFUSED: DENIED,
+  HANDLE_ISSUE_GRANT_REVOKED: DENIED,
+  HANDLE_ISSUE_GRANT_EXPIRED: { class: 'permission-denied', fault: 'none', retry: 'safe' },
+  HANDLE_ISSUE_GRANT_USED: POLICY,
+  HANDLE_ISSUE_TAKEN: POLICY,
+  HANDLE_ISSUE_FAILED: CHECK,
 }
 
 const FAILURE_CLASSES = new Set<string>([

@@ -45,6 +45,8 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
 import type { IssuanceAttestation } from './identityIssuance'
+import { revokeHandleIssueGrants } from './handleIssuance'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatUsd } from './fx'
 import { coinBudgetSats, coinUsdValue } from './coins/budget'
 import { coinApprovalTitle, COIN_INFO, formatCoin, isCoinChain } from './coins/coinChains'
@@ -367,10 +369,12 @@ export function clearPermissionSession(origin?: string): void {
   if (!origin) {
     recentlyConnectedAt.clear()
     sessionApprovedProofs.clear()
+    revokeHandleIssueGrants()
     return
   }
   const key = normalizeOrigin(origin)
   recentlyConnectedAt.delete(key)
+  revokeHandleIssueGrants(key)
   for (const grant of [...sessionApprovedProofs]) {
     if (grant.startsWith(`${key}::`)) sessionApprovedProofs.delete(grant)
   }
@@ -871,6 +875,22 @@ export function summarizeAction(method: string, args: unknown): {
 } {
   const body = asRecord(args)
   const details: string[] = []
+
+  if (method === 'issueHandle') {
+    const handle = typeof body.handle === 'string' ? body.handle : ''
+    const identityKey = typeof body.identityKey === 'string' ? body.identityKey : ''
+    const display = `@${handle}@${HOME_HANDLE_DOMAIN}`
+    return {
+      title: 'Issue a handle',
+      summary: `Bind ${display} to your identity key`,
+      details: [
+        `Handle: ${display}`,
+        `Owner key: ${identityKey.slice(0, 8)}…${identityKey.slice(-8)}`,
+        'Spends the HandCash claim ticket the app holds for it',
+        'One use; this approval expires two minutes after you approve',
+      ],
+    }
+  }
 
   if (method === 'createAction' && isItemIssuanceArgs(method, args)) {
     const fungible = isTokenSpendArgs(method, args)

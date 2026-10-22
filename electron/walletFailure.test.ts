@@ -22,6 +22,17 @@ describe('walletFailureFor (BRC-326)', () => {
     })
   })
 
+  it('says check first only when a handle claim may have bound the handle', () => {
+    expect(walletFailureFor('HANDLE_ISSUE_FAILED', 502, '/issueHandle').retry).toBe('check-first')
+    expect(walletFailureFor('HANDLE_ISSUE_REFUSED', 403, '/issueHandle').class).toBe('permission-denied')
+    expect(walletFailureFor('HANDLE_ISSUE_GRANT_EXPIRED', 403, '/issueHandle')).toEqual({
+      class: 'permission-denied',
+      fault: 'none',
+      retry: 'safe',
+    })
+    expect(walletFailureFor('HANDLE_ISSUE_TICKET_REJECTED', 400, '/issueHandle').class).toBe('invalid-request')
+  })
+
   it('keeps a refusal by the user apart from one by a standing rule', () => {
     expect(walletFailureFor('PERMISSION_DENIED', 403, '/createAction')).toEqual({
       class: 'permission-denied',
