@@ -1,7 +1,7 @@
 import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { stateToAttr } from "@aeon-ui/core";
-import { MetricStrip, Switch } from "@aeon-ui/ui";
+import { MetricStrip } from "@aeon-ui/ui";
 import { useMachine } from "@xstate/react";
 import { useAsyncAction } from "../hooks/useAsyncAction";
 import { useDisplayCurrency } from "../hooks/useDisplayCurrency";
@@ -9,7 +9,6 @@ import { devKeysPanelMachine } from "../machines/devKeysPanelMachine";
 import { copyText } from "../wallet/clipboard";
 import {
   devKeysRevision,
-  devSignEligibility,
   devWalletHoldings,
   exportDevKeyConfig,
   fundDevWallet,
@@ -43,7 +42,7 @@ import { launchConnectedApp } from "../wallet/openAppInWalletBrowser";
 
 const BRC_WORKER_ORIGIN = "https://brc-cloud.bcryderman.workers.dev";
 import { Skeleton } from "./Skeleton";
-import { SettingsControlRow, SettingsNavRow } from "./settings";
+import { SettingsNavRow } from "./settings";
 
 type DevKeyAction =
   | "create"
@@ -108,22 +107,18 @@ function walletNote(
   }
 }
 
+const SIGN_RISK = (name: string) =>
+  `Whoever holds this key can rotate ${name}’s identity key and take the identity from you. Rotate the identity key on Identity to retire it.`;
+
 function signNote(key: DevKeyView): string {
   if (!key.publicKey) return "Present the identity it signs as to use it.";
-  if (key.sign?.state === "active") {
-    return `Your server signs as ${key.sign.name} with it. It holds no funds.`;
-  }
+  if (key.sign?.state === "active") return SIGN_RISK(key.sign.name ?? "this");
   return "An identity key rotation retired it. It no longer signs.";
 }
 
 function copyBody(key: DevKeyView): string {
   const signs = key.sign?.state === "active" ? key.sign.name : null;
-  if (signs && key.wallet) {
-    return `A server holding this key signs as ${signs} and spends what you fund it with. It cannot reveal your wallet keys. If it leaks, rotate the identity key and recover its money.`;
-  }
-  if (signs) {
-    return `A server holding this key signs as ${signs}. It holds no funds and cannot reveal your wallet keys, but it can sign a key rotation. If it leaks, rotate the identity key.`;
-  }
+  if (signs) return SIGN_RISK(signs);
   return "It can spend what you fund it with, and nothing else.";
 }
 
@@ -241,8 +236,8 @@ function Overview({
 }
 
 /**
- * Developer keys: keys handed to your server. Each is created with what it may
- * do — sign as your identity, hold a wallet your server spends, or both.
+ * Developer keys: keys handed to your server. A new key is a wallet your server
+ * spends; keys that sign as your identity are no longer issued.
  */
 export function DevKeysPanel() {
   useSyncExternalStore(subscribeDevKeys, devKeysRevision);
@@ -250,14 +245,9 @@ export function DevKeysPanel() {
   const [snapshot, send] = useMachine(devKeysPanelMachine);
   const currency = useDisplayCurrency();
   const action = useAsyncAction<DevKeyAction>();
-  const [capabilities, setCapabilities] = useState({
-    sign: false,
-    wallet: false,
-  });
   const [amount, setAmount] = useState("");
   const runtime = getWalletRuntime();
   const keys = runtime ? listDevKeys(runtime) : [];
-  const signing = runtime ? devSignEligibility(runtime) : null;
   const walletList = keys
     .filter((k) => k.wallet && k.publicKey)
     .map((k) => k.n)
@@ -270,9 +260,7 @@ export function DevKeysPanel() {
     }
   }, [runtime, walletList]);
 
-  if (!runtime || !signing) return null;
-  const canSign = signing.kind === "ready";
-  const chosen = (canSign && capabilities.sign) || capabilities.wallet;
+  if (!runtime) return null;
   const fundKey = snapshot.matches("funding") ? snapshot.context.fundKey : null;
   const fundSats = Math.trunc(Number(amount));
   const fundable = Number.isFinite(fundSats) && fundSats > 0;
@@ -299,11 +287,11 @@ export function DevKeysPanel() {
     return outcome.ok;
   };
 
-  const startCreate = () => {
-    playWalletSound("soft");
-    setCapabilities({ sign: false, wallet: false });
-    send({ type: "NEW" });
-  };
+  const create = () =>
+    void run("create", async () => {
+      const n = generateDevKey(requireWalletRuntime());
+      return `Key ${n} created`;
+    });
 
   const fundForm = (n: number) => (
     <div className="settings-form" data-aeon-part="fund">
@@ -556,9 +544,19 @@ export function DevKeysPanel() {
             >
               {walletNote(key.wallet.status, key.wallet.storageHost, currency)}
             </p>
+            {key.sign?.state === "active" && key.publicKey ? (
+              <p data-aeon-part="key-note" data-aeon-state="sign-risk">
+                {signNote(key)}
+              </p>
+            ) : null}
           </>
         ) : (
-          <p data-aeon-part="key-note" data-aeon-state="sign-only">
+          <p
+            data-aeon-part="key-note"
+            data-aeon-state={
+              key.sign?.state === "active" && key.publicKey ? "sign-risk" : "sign-only"
+            }
+          >
             {signNote(key)}
           </p>
         )}
@@ -585,77 +583,21 @@ export function DevKeysPanel() {
         />
       </ul>
       <p className="settings-hint">
-        Keys you give your own server. Each one can sign as your identity, hold
-        a wallet your server spends, or both. None of them can reveal your
-        wallet keys.
+        Keys you give your own server. Each one is a wallet your server
+        spends, funded from here. None of them can reveal your wallet keys or
+        sign as your identity.
       </p>
-      {snapshot.matches("creating") ? (
-        <div className="settings-form" data-aeon-part="create">
-          <ul className="settings-list" aria-label="What this key can do">
-            <SettingsControlRow
-              label={signing.kind === "ready" ? `Sign as ${signing.name}` : "Sign"}
-              description={
-                signing.kind === "ready"
-                  ? "Your server signs as this identity"
-                  : signing.message
-              }
-              icon={<KeyIcon size={20} />}
-            >
-              <Switch.Root
-                checked={canSign && capabilities.sign}
-                disabled={!canSign}
-                onCheckedChange={(sign: boolean) => setCapabilities((c) => ({ ...c, sign }))}
-                aria-label="Sign"
-              />
-            </SettingsControlRow>
-            <SettingsControlRow
-              label="Wallet"
-              description="Your server spends it; you fund and recover it here"
-              icon={<WalletScopeIcon size={20} />}
-            >
-              <Switch.Root
-                checked={capabilities.wallet}
-                onCheckedChange={(wallet: boolean) => setCapabilities((c) => ({ ...c, wallet }))}
-                aria-label="Wallet"
-              />
-            </SettingsControlRow>
-          </ul>
-          <div className="actions">
-            <Button.Root variant="outline"
-              className="btn"
-              disabled={action.busy}
-              onClick={() => send({ type: "CANCEL" })}
-            >
-              <Button.Label>Cancel</Button.Label>
-            </Button.Root>
-            <Button.Root variant="solid"
-              className="btn btn-primary"
-              disabled={action.busy || !chosen}
-              onClick={async () => {
-                const ok = await run("create", async () => {
-                  const n = generateDevKey(requireWalletRuntime(), {
-                    sign: canSign && capabilities.sign,
-                    wallet: capabilities.wallet,
-                  });
-                  return `Key ${n} created`;
-                });
-                if (ok) send({ type: "DONE" });
-              }}
-            >
-              <Button.Label>{action.running("create") ? "Creating…" : "Create key"}</Button.Label>
-            </Button.Root>
-          </div>
-        </div>
-      ) : keys.length === 0 ? (
+      {keys.length === 0 ? (
         <EmptyState
           title="No developer keys"
-          body="Create one to give a server its own identity signature or wallet."
+          body="Create one to give a server its own wallet."
           action={
             <Button.Root variant="solid"
               className="btn btn-primary"
-              onClick={startCreate}
+              disabled={action.busy}
+              onClick={create}
             >
-              <Button.Label>New key</Button.Label>
+              <Button.Label>{action.running("create") ? "Creating…" : "New key"}</Button.Label>
             </Button.Root>
           }
         />
@@ -666,9 +608,9 @@ export function DevKeysPanel() {
             <Button.Root variant="solid"
               className="btn btn-primary"
               disabled={action.busy || fundKey != null}
-              onClick={startCreate}
+              onClick={create}
             >
-              <Button.Label>New key</Button.Label>
+              <Button.Label>{action.running("create") ? "Creating…" : "New key"}</Button.Label>
             </Button.Root>
           </div>
           <ul data-aeon-part="keys" data-aeon-state={action.stateAttr}>

@@ -57,9 +57,10 @@ import { getActiveWallet } from './session'
  *   change between sub-accounts. State is per account, because each account
  *   has its own blob at `/v1/wallets/<identityKey>/wallet.brc39`: last upload,
  *   last error, the spend-down high-water and the crash watchdog.
- * - **Dev keys** → keys handed to a developer's server (`devKeys.ts`), each
- *   generated with Sign, Wallet or both. Sign = the presented identity's
- *   current BAP key (one key at a time; rotation retires it). Wallet = a stock
+ * - **Dev keys** → keys handed to a developer's server (`devKeys.ts`). New
+ *   keys are Wallet only; older Sign keys (the presented identity's current
+ *   BAP key, which can sign a rotation) still list until rotation retires
+ *   them. Wallet = a stock
  *   BRC-100 Toolbox wallet the server runs from that key; this wallet opens
  *   the same key against the same remote storage, so both read one set of
  *   outputs. Outside localState: never in the balance, never swept by
