@@ -72,19 +72,32 @@ Squirrel.Mac (ShipIt) in-app replace is safe. Until then, Mac “updates” open
 arch-matched DMG from GitHub Releases instead of ShipIt (unsigned ShipIt installs
 corrupt `HandCash.app`).
 
-Wire signing when the cert is available:
+The build is already set up for this: `build.mac` turns on the hardened runtime,
+notarization and `build/entitlements.mac.plist` (JIT plus the camera for QR
+scanning), and `release-mac.yml` signs as soon as these five repository secrets
+exist (Settings → Secrets and variables → Actions). Set all five or none; a
+partial set fails the run.
 
-```bash
-# CI / local secrets
-export CSC_LINK=...                 # .p12
-export CSC_KEY_PASSWORD=...
-export APPLE_ID=...
-export APPLE_APP_SPECIFIC_PASSWORD=...
-export APPLE_TEAM_ID=...
+| Secret | What it is |
+| --- | --- |
+| `CSC_LINK` | The **Developer ID Application** certificate and its private key, exported from Keychain Access as a `.p12`, then base64-encoded (`base64 -i cert.p12 \| pbcopy`). |
+| `CSC_KEY_PASSWORD` | The password chosen when exporting that `.p12`. |
+| `APPLE_ID` | Email of an Apple ID on the team, used to notarize. |
+| `APPLE_APP_SPECIFIC_PASSWORD` | An app-specific password for that Apple ID, made at account.apple.com → Sign-In and Security. |
+| `APPLE_TEAM_ID` | The 10-character Team ID shown at developer.apple.com → Membership. |
 
-# package.json build.mac — remove identity: null, set hardenedRuntime: true
-# then remove macShipItUnsafe() guard in electron/autoUpdate.ts
-```
+Only the Account Holder can create a Developer ID Application certificate
+(developer.apple.com → Certificates → "+" → Developer ID Application). With
+the secrets in place, the release run checks the Developer ID authority, team,
+hardened runtime, camera entitlement, stapled ticket and Gatekeeper before
+uploading, and the release notes drop the `xattr` step.
+
+To sign locally, export the same five variables before `npm run package:mac`.
+`HANDCASH_ALLOW_UNSIGNED=1` builds an ad-hoc copy for testing only.
+
+ShipIt stays off (`macShipItUnsafe()` in `electron/autoUpdate.ts`) until
+signed releases have reached users: an ad-hoc install cannot verify a signed
+update, so the first signed version still installs from the DMG.
 
 ### Fedora Atomic / Wayblue (no FUSE)
 

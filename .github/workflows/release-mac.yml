@@ -1,5 +1,6 @@
-# Build unsigned macOS dmg + zip on GitHub and publish to the matching GitHub Release
-# (latest-mac.yml + artifacts for electron-updater). Notarization is intentional later.
+# Build macOS dmg + zip on GitHub and publish to the matching GitHub Release
+# (latest-mac.yml + artifacts for electron-updater). Signed with Developer ID and
+# notarized when all five signing secrets are set; ad-hoc signed when none are.
 #
 # Triggers:
 #   - push of tag v* (after `npm run version:*` + `git push origin vX.Y.Z`)
@@ -63,6 +64,7 @@ jobs:
           echo "Building HandCash ${VERSION} → release ${TAG}"
 
       - name: Build macOS installers
+        id: build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -74,17 +76,29 @@ jobs:
           set -euo pipefail
           # package.json forces signing and notarization. Until the Developer ID
           # secrets exist the release is built through the explicit unsigned
-          # opt-out and flagged on the run, never silently.
-          if [[ -n "$CSC_LINK" && -n "$CSC_KEY_PASSWORD" && -n "$APPLE_ID" && -n "$APPLE_APP_SPECIFIC_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+          # opt-out and flagged on the run, never silently. A partial set is a
+          # setup mistake and fails rather than quietly shipping unsigned.
+          names=(CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID)
+          missing=()
+          for n in "${names[@]}"; do [[ -n "${!n}" ]] || missing+=("$n"); done
+          if [[ ${#missing[@]} -eq 0 ]]; then
             echo "Signing with Developer ID and notarizing"
-          else
-            echo "::warning title=Unsigned macOS release::Add the CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD and APPLE_TEAM_ID secrets to sign and notarize."
-            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          elif [[ ${#missing[@]} -eq ${#names[@]} ]]; then
+            echo "::warning title=Unsigned macOS release::Add the ${names[*]} secrets to sign and notarize."
+            unset "${names[@]}"
             export HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=Incomplete Mac signing secrets::Missing ${missing[*]}. Set all five or none."
+            exit 1
           fi
           npm run package:mac -- --publish never
 
       - name: Verify Mac package integrity
+        env:
+          SIGNED: ${{ steps.build.outputs.signed }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           fail=0
@@ -114,6 +128,16 @@ jobs:
             codesign --verify --deep --strict "$APP" || { echo "invalid code signature" >&2; fail=1; }
             codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Identifier=io.handcash.brc100" \
               || { echo "signature not bound to app bundle" >&2; fail=1; }
+            if [[ "$SIGNED" == "true" ]]; then
+              SIG="$(codesign -dv --verbose=4 "$APP" 2>&1)"
+              grep -q "^Authority=Developer ID Application:" <<<"$SIG" || { echo "not signed with a Developer ID Application certificate" >&2; fail=1; }
+              grep -q "^TeamIdentifier=$APPLE_TEAM_ID\$" <<<"$SIG" || { echo "signed by a team other than APPLE_TEAM_ID" >&2; fail=1; }
+              grep -q "(runtime)" <<<"$SIG" || { echo "hardened runtime missing" >&2; fail=1; }
+              codesign -d --entitlements - --xml "$APP" 2>/dev/null | grep -q "com.apple.security.device.camera" \
+                || { echo "camera entitlement missing; QR scanning would fail" >&2; fail=1; }
+              xcrun stapler validate "$APP" || { echo "notarization ticket not stapled" >&2; fail=1; }
+              spctl --assess --type execute -vv "$APP" || { echo "Gatekeeper rejects the app" >&2; fail=1; }
+            fi
             # electron-builder --mac dmg/zip should embed updater metadata
             if [[ ! -f "$APP/Contents/Resources/app-update.yml" ]]; then
               echo "WARN: app-update.yml missing in $APP — copying from build/" >&2
@@ -129,12 +153,17 @@ jobs:
       - name: Ensure GitHub Release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGNED: ${{ steps.build.outputs.signed }}
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
+          elif [[ "$SIGNED" == "true" ]]; then
+            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI, signed with HandCash's Developer ID and notarized by Apple. Drag to Applications and open it."
           else
             NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (ad-hoc signed, not yet notarized). Drag to Applications, then run: xattr -cr /Applications/HandCash.app — and open it. Clearing quarantine is needed because the build is not notarized; on macOS 15+ right-click to Open no longer bypasses Gatekeeper."
+          fi
+          if [[ -n "${NOTES:-}" ]]; then
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
