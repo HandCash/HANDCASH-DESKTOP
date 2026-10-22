@@ -41,16 +41,17 @@ Installs of one vault move accounts **device to device** (draft BRC-249). Each u
 
 ### Dev keys (not a messagebox client)
 
-Connected apps → Developer keys (the `</>` button) lists them. Each is created with the capabilities
-ticked: **Sign**, **Wallet**, or both.
+Connected apps → Developer keys (the `</>` button) lists them. New key creates
+a **Wallet** key in one press.
 
-- **Sign**: the key is the presented identity's current BAP key
-  (`identity-<seq>` under `[1,'sigma']`). BAP has one current signing key per
-  identity, so one dev key at a time can sign; rotating on Identity retires it.
-  The root (`identity-0`) never leaves the wallet.
-- **Wallet**: a stock BRC-100 Toolbox wallet the server runs from that key. A
-  key without Sign is derived from the account root
-  (`[2, 'handcash server wallet']`, keyID = key number, counterparty `self`).
+- **Wallet**: a stock BRC-100 Toolbox wallet the server runs from that key,
+  derived from the account root (`[2, 'handcash server wallet']`, keyID = key
+  number, counterparty `self`).
+- **Sign** (no longer issued): older keys may be the presented identity's
+  current BAP key (`identity-<seq>` under `[1,'sigma']`). Each BAP rotation is
+  signed by the outgoing key, so a server holding one can rotate the identity
+  away from this wallet. Such keys show that warning; rotating on Identity
+  first retires them. The root (`identity-0`) never leaves the wallet.
 
 "Copy" gives the server the BSVA template env:
 
@@ -58,7 +59,7 @@ ticked: **Sign**, **Wallet**, or both.
 SERVER_PRIVATE_KEY=<hex>
 WALLET_STORAGE_URL=https://handcash-wallet-storage.bcryderman.workers.dev   # Wallet only
 BSV_NETWORK=main
-BAP_ID=<bapId>                                                             # Sign only
+BAP_ID=<bapId>                                                             # older Sign keys only
 ```
 
 A new key's storage is HandCash's own Toolbox storage server (BRC-CLOUD
