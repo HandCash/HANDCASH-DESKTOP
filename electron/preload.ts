@@ -96,6 +96,11 @@ const handcash = {
   releasePromptFocus: () =>
     ipcRenderer.invoke('app:release-prompt-focus') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
+  listScreenSources: () =>
+    ipcRenderer.invoke('calls:list-screen-sources') as Promise<
+      { id: string; name: string; kind: 'screen' | 'window'; thumbnail: string }[]
+    >,
+  chooseScreenSource: (id: string) => ipcRenderer.invoke('calls:choose-screen-source', id) as Promise<boolean>,
   // This window enables `webviewTag`, so the core may host embedded app tabs.
   embeddedAppBrowser: true,
   getLogInfo: () =>

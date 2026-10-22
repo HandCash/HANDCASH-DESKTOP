@@ -4,7 +4,7 @@ import { CALL_RING_MS } from '../../machines/callMachine'
 import type { CallRecord } from './callHistory'
 import { createCallEngine, type CallEngine, type CallEngineDeps } from './callEngine'
 import { encodeCallFrame } from './callWire'
-import { FakeStream, fakeGetUserMedia, fakeMediaRtc, type FakeMediaConnection } from './fakeMedia.fixture'
+import { FakeStream, FakeTrack, fakeGetUserMedia, fakeMediaRtc, type FakeMediaConnection } from './fakeMedia.fixture'
 
 const ALICE = '02' + 'a'.repeat(64)
 const BOB = '03' + 'b'.repeat(64)
@@ -381,5 +381,119 @@ describe('video calls', () => {
       { audio: expect.objectContaining({ deviceId: { ideal: 'mic-usb' } }) },
       { video: expect.objectContaining({ deviceId: { ideal: 'cam-back' } }) },
     ])
+  })
+})
+
+describe('screen sharing', () => {
+  let screens: FakeTrack[]
+  const captureScreen = async (id: string) => {
+    const t = new FakeTrack('video', id)
+    screens.push(t)
+    return new FakeStream([t]) as unknown as MediaStream
+  }
+  beforeEach(() => {
+    screens = []
+  })
+
+  it('sends the screen in place of the camera, and stopping brings a fresh camera back', async () => {
+    const alice = phone(ALICE, { captureScreen })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    const senders = alice.pcs[0]!.getSenders().length
+    const cam = tracks(alice, 'video')[0]!
+    await alice.engine.shareScreen('screen:1:0')
+    await flush()
+    const screen = screens[0]!
+    expect(cam.readyState).toBe('ended')
+    expect(alice.pcs[0]!.getSenders()).toHaveLength(senders)
+    expect(alice.pcs[0]!.getSenders().map((x) => x.track)).toContain(screen)
+    expect(alice.engine.getSnapshot().context).toMatchObject({ sharing: true, camera: true })
+    expect(alice.engine.devicesInUse().camera).toBeNull()
+    expect(bob.engine.getSnapshot().context).toMatchObject({ remoteSharing: true, remoteCamera: false })
+
+    await alice.engine.stopSharing()
+    await flush()
+    const fresh = tracks(alice, 'video')[1]!
+    expect(screen.readyState).toBe('ended')
+    expect(fresh.readyState).toBe('live')
+    expect(alice.pcs[0]!.getSenders().map((x) => x.track)).toContain(fresh)
+    expect(bob.engine.getSnapshot().context).toMatchObject({ remoteSharing: false, remoteCamera: true })
+  })
+
+  it('a voice call can share a window, and stopping leaves it voice again', async () => {
+    const alice = phone(ALICE, { captureScreen })
+    const bob = phone(BOB)
+    alice.engine.call(BOB)
+    await flush()
+    await bob.engine.accept()
+    await flush()
+    await flush()
+    await alice.engine.shareScreen('window:42:0')
+    await flush()
+    await flush()
+    expect(bob.engine.remoteStream()?.getVideoTracks()).toContain(screens[0])
+    expect(bob.engine.getSnapshot().context.remoteSharing).toBe(true)
+
+    await alice.engine.stopSharing()
+    await flush()
+    expect(alice.engine.localStream()?.getVideoTracks()).toHaveLength(0)
+    expect(alice.made.flatMap((x) => x.getVideoTracks())).toHaveLength(0)
+    expect(bob.engine.getSnapshot().context).toMatchObject({ remoteSharing: false, remoteCamera: false })
+    expect(state(alice)).toBe('active')
+  })
+
+  it('stopping from the system ends the share like the button does', async () => {
+    const alice = phone(ALICE, { captureScreen })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    await alice.engine.shareScreen('screen:1:0')
+    await flush()
+    screens[0]!.end()
+    await flush()
+    expect(alice.engine.getSnapshot().context.sharing).toBe(false)
+    expect(bob.engine.getSnapshot().context.remoteSharing).toBe(false)
+    expect(alice.engine.localStream()?.getVideoTracks()[0]?.readyState).toBe('live')
+  })
+
+  it('turning the camera off while sharing keeps the share, and stopping then sends no video', async () => {
+    const alice = phone(ALICE, { captureScreen })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    await alice.engine.shareScreen('screen:1:0')
+    await flush()
+    await alice.engine.setCamera(false)
+    await flush()
+    expect(screens[0]!.readyState).toBe('live')
+    expect(alice.engine.getSnapshot().context).toMatchObject({ sharing: true, camera: false })
+    await alice.engine.stopSharing()
+    await flush()
+    expect(alice.engine.localStream()?.getVideoTracks()).toHaveLength(0)
+    expect(bob.engine.getSnapshot().context).toMatchObject({ remoteSharing: false, remoteCamera: false })
+  })
+
+  it('a refused share keeps the call and camera going and says why', async () => {
+    const alice = phone(ALICE, {
+      captureScreen: async () => {
+        throw new Error('NotAllowedError')
+      },
+      screenFailureText: () => 'HandCash isn\u2019t allowed to record the screen',
+    })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    await alice.engine.shareScreen('screen:1:0')
+    await flush()
+    expect(alice.engine.shareProblem()).toBe('HandCash isn\u2019t allowed to record the screen')
+    expect(alice.engine.getSnapshot().context.sharing).toBe(false)
+    expect(tracks(alice, 'video')[0]!.readyState).toBe('live')
+    expect(state(alice)).toBe('active')
+  })
+
+  it('offers nothing to share where capture is unavailable', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    expect(alice.engine.canShareScreen()).toBe(false)
+    await alice.engine.shareScreen('screen:1:0')
+    expect(alice.engine.getSnapshot().context.sharing).toBe(false)
   })
 })

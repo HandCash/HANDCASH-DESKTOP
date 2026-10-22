@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -74,6 +75,7 @@ import {
   shouldReloadAfterRendererGone,
 } from './appConnectGuardrails.js'
 import { grantsAppCameraPermission } from './cameraPermissions.js'
+import { createScreenPick, isScreenSourceId, toScreenSourceViews } from './screenShare.js'
 import { guardStdioWrites } from './brokenPipe.js'
 import { readOmarchyTheme, startOmarchyThemeWatch } from './omarchyTheme.js'
 
@@ -203,7 +205,26 @@ function cameraPermissionContext(webContentsId: number) {
   }
 }
 
+const screenPick = createScreenPick()
+
+/** Only the main app window, on a trusted app URL, may list or pick what to share. */
+function fromMainApp(sender: Electron.WebContents, frame: Electron.WebFrameMain | null | undefined): boolean {
+  return !!mainWindow && sender.id === mainWindow.webContents.id && !!frame && frame === sender.mainFrame && isAppUrl(frame.url)
+}
+
 function configureSessionCameraPermissions(sess: Session): void {
+  // A call's screen share gets exactly the source the user just picked in the app, else nothing.
+  sess.setDisplayMediaRequestHandler((request, callback) => {
+    const id = screenPick.take()
+    const frame = request.frame
+    const main = mainWindow?.webContents
+    if (!id || !request.videoRequested || !main || !frame || frame !== main.mainFrame || !isAppUrl(frame.url)) {
+      callback({})
+      return
+    }
+    callback({ video: { id, name: id } })
+  })
+
   sess.setPermissionRequestHandler((webContents, permission, callback, details) => {
     const media =
       permission === 'media' && 'mediaTypes' in details
@@ -845,6 +866,19 @@ ipcMain.handle('app:focus-window', () => {
 
 ipcMain.handle('app:release-prompt-focus', () => {
   releasePromptFocus()
+})
+
+ipcMain.handle('calls:list-screen-sources', async (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return []
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 } })
+  const own = BrowserWindow.getAllWindows().map((w) => w.getMediaSourceId())
+  return toScreenSourceViews(sources, own)
+})
+
+ipcMain.handle('calls:choose-screen-source', (event, id: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame) || !isScreenSourceId(id)) return false
+  screenPick.choose(id)
+  return true
 })
 
 ipcMain.handle('app:open-external', async (_event, url: unknown) => {

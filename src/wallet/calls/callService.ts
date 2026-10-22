@@ -13,6 +13,7 @@ import { createCallEngine, type CallEngine } from './callEngine'
 import { callIceServers, readCallSettings, writeCallSettings } from './callSettings'
 import { isCallFrameBody } from './callWire'
 import { startRinging, stopRinging } from './ringtone'
+import { captureScreen, screenFailureText, screenShareAvailable } from './screenCapture'
 
 /** How long a call's knock waits for a ring: a hidden window reads its box every 20 s. */
 export const CALL_KNOCK_PRESENCE_MS = 24_000
@@ -63,6 +64,8 @@ export function callEngine(): CallEngine {
       return { mic, camera }
     },
     rememberDevice: (kind, deviceId) => writeCallSettings({ [kind]: deviceId }),
+    captureScreen: screenShareAvailable() ? captureScreen : undefined,
+    screenFailureText,
   })
   return engine
 }

@@ -28,6 +28,9 @@ export type CallContext = {
   /** This side is sending camera video. */
   camera: boolean
   remoteCamera: boolean
+  /** This side is sending a screen or window instead of its camera. */
+  sharing: boolean
+  remoteSharing: boolean
   startedAt: number
   connectedAt: number | null
   endedAt: number | null
@@ -51,7 +54,8 @@ export type CallEvent =
   | { type: 'REMOTE_HUNG_UP'; at: number }
   | { type: 'TOGGLE_MUTE' }
   | { type: 'CAMERA'; on: boolean }
-  | { type: 'REMOTE_STATE'; muted: boolean; camera: boolean }
+  | { type: 'SHARE'; on: boolean }
+  | { type: 'REMOTE_STATE'; muted: boolean; camera: boolean; sharing: boolean }
   | { type: 'DISMISS' }
 
 const blank: CallContext = {
@@ -63,6 +67,8 @@ const blank: CallContext = {
   remoteMuted: false,
   camera: false,
   remoteCamera: false,
+  sharing: false,
+  remoteSharing: false,
   startedAt: 0,
   connectedAt: null,
   endedAt: null,
@@ -116,9 +122,10 @@ export const callMachine = setup({
     reset: assign(() => ({ ...blank })),
     toggleMute: assign(({ context }) => ({ muted: !context.muted })),
     remoteState: assign(({ event }) =>
-      event.type === 'REMOTE_STATE' ? { remoteMuted: event.muted, remoteCamera: event.camera } : {},
+      event.type === 'REMOTE_STATE' ? { remoteMuted: event.muted, remoteCamera: event.camera, remoteSharing: event.sharing } : {},
     ),
     camera: assign(({ event }) => (event.type === 'CAMERA' ? { camera: event.on } : {})),
+    share: assign(({ event }) => (event.type === 'SHARE' ? { sharing: event.on } : {})),
     acceptWith: assign(({ event }) => (event.type === 'ACCEPT' ? { camera: event.video } : {})),
   },
 }).createMachine({
@@ -178,6 +185,7 @@ export const callMachine = setup({
         REMOTE_HUNG_UP: { target: 'ended', actions: endAs('cancelled') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
         CAMERA: { actions: 'camera' },
+        SHARE: { actions: 'share' },
         REMOTE_STATE: { actions: 'remoteState' },
       },
     },
@@ -188,6 +196,7 @@ export const callMachine = setup({
         FAIL: { target: 'ended', actions: endAs('failed') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
         CAMERA: { actions: 'camera' },
+        SHARE: { actions: 'share' },
         REMOTE_STATE: { actions: 'remoteState' },
       },
     },

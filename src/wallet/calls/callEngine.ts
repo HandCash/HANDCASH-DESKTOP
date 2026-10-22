@@ -34,6 +34,9 @@ export type CallEngineDeps = {
   /** The microphone and camera the user picked last; null is the system default. */
   devices?: () => { mic: string | null; camera: string | null }
   rememberDevice?: (kind: 'mic' | 'camera', deviceId: string) => void
+  /** A screen or window the user just picked, as a stream; absent where sharing is not possible. */
+  captureScreen?: (sourceId: string) => Promise<MediaStream>
+  screenFailureText?: (err: unknown) => string
   log?: (what: string, err?: unknown) => void
 }
 
@@ -75,6 +78,9 @@ export function createCallEngine(deps: CallEngineDeps) {
   let announced: string | null = null
   /** Why the camera did not start, for the call bar; cleared when it does. */
   let cameraProblem: string | null = null
+  let shareProblem: string | null = null
+  /** The screen or window track being sent in place of the camera. */
+  let screen: MediaStreamTrack | null = null
   const devices = deps.devices ?? (() => ({ mic: null, camera: null }))
 
   function ctx(): CallContext {
@@ -99,6 +105,7 @@ export function createCallEngine(deps: CallEngineDeps) {
   }
 
   function teardown(): void {
+    screen = null
     clearTimeout(dropTimer)
     leg?.media?.close()
     leg = null
@@ -211,8 +218,8 @@ export function createCallEngine(deps: CallEngineDeps) {
   function sendState(): void {
     const s = actor.getSnapshot()
     if (!s.matches('active') && !s.matches('connecting')) return
-    const { muted, camera, callId, peer } = s.context
-    void sendFrame(peer!, { t: 'state', call: callId!, state: { muted, camera } })
+    const { muted, camera, sharing, callId, peer } = s.context
+    void sendFrame(peer!, { t: 'state', call: callId!, state: { muted, camera: camera && !sharing, sharing } })
   }
 
   /** A camera that will not start leaves the call going as voice. */
@@ -258,6 +265,22 @@ export function createCallEngine(deps: CallEngineDeps) {
   }
 
   /** Puts `track` in place of this side's current one of its kind, on the wire and in the preview. */
+  /** Back from the shared screen to the camera, or to no video when the camera is off. */
+  async function stopShare(): Promise<void> {
+    if (!screen) return
+    const callId = ctx().callId
+    screen = null
+    actor.send({ type: 'SHARE', on: false })
+    const cam = ctx().camera ? await openCamera(devices().camera, false) : null
+    if (ctx().callId !== callId || !busy()) {
+      cam?.stop()
+      return
+    }
+    if (ctx().camera && !cam) actor.send({ type: 'CAMERA', on: false })
+    await swapTrack('video', cam)
+    sendState()
+  }
+
   async function swapTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<void> {
     const old = localTrack(kind)
     if (old) {
@@ -379,6 +402,11 @@ export function createCallEngine(deps: CallEngineDeps) {
     async setCamera(on: boolean): Promise<void> {
       if (!busy() || actor.getSnapshot().matches('incoming') || ctx().camera === on) return
       const callId = ctx().callId
+      if (screen) {
+        // The share holds the video; the camera follows this choice when it stops.
+        actor.send({ type: 'CAMERA', on })
+        return
+      }
       if (!on) {
         actor.send({ type: 'CAMERA', on: false })
         await swapTrack('video', null)
@@ -400,7 +428,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     /** Use this camera from now on, switching to it at once when the camera is on. */
     async useCamera(deviceId: string): Promise<void> {
       deps.rememberDevice?.('camera', deviceId)
-      if (!busy() || !ctx().camera || localTrack('video')?.getSettings().deviceId === deviceId) return
+      if (!busy() || !ctx().camera || screen || localTrack('video')?.getSettings().deviceId === deviceId) return
       const callId = ctx().callId
       const track = await openCamera(deviceId, true)
       if (!track) return
@@ -437,12 +465,56 @@ export function createCallEngine(deps: CallEngineDeps) {
     devicesInUse(): { mic: string | null; camera: string | null } {
       return {
         mic: (localTrack('audio')?.getSettings().deviceId as string | undefined) ?? null,
-        camera: (localTrack('video')?.getSettings().deviceId as string | undefined) ?? null,
+        camera: screen ? null : ((localTrack('video')?.getSettings().deviceId as string | undefined) ?? null),
       }
     },
 
     cameraProblem(): string | null {
       return cameraProblem
+    },
+
+    canShareScreen(): boolean {
+      return !!deps.captureScreen
+    },
+
+    /** Send this screen or window in place of the camera until `stopSharing` or the source goes away. */
+    async shareScreen(sourceId: string): Promise<void> {
+      const s = actor.getSnapshot()
+      if (!deps.captureScreen || !local || (!s.matches('active') && !s.matches('connecting'))) return
+      const callId = ctx().callId
+      shareProblem = null
+      let track: MediaStreamTrack | undefined
+      try {
+        track = (await deps.captureScreen(sourceId)).getVideoTracks()[0]
+      } catch (err) {
+        log('screen share refused', err)
+        shareProblem = deps.screenFailureText?.(err) ?? 'Screen sharing didn’t start'
+        emit()
+        return
+      }
+      if (!track) return
+      if (ctx().callId !== callId || !busy() || !local) {
+        track.stop()
+        return
+      }
+      if ('contentHint' in track) track.contentHint = 'detail'
+      const shared = track
+      // Stopping from the system (or the window closing) ends the share like the button does.
+      shared.addEventListener('ended', () => {
+        if (screen === shared) void stopShare()
+      })
+      screen = shared
+      actor.send({ type: 'SHARE', on: true })
+      await swapTrack('video', shared)
+      sendState()
+    },
+
+    stopSharing(): Promise<void> {
+      return stopShare()
+    },
+
+    shareProblem(): string | null {
+      return shareProblem
     },
 
     dismiss(): void {
@@ -486,7 +558,7 @@ export function createCallEngine(deps: CallEngineDeps) {
           }
           break
         case 'state':
-          actor.send({ type: 'REMOTE_STATE', muted: frame.state.muted, camera: frame.state.camera })
+          actor.send({ type: 'REMOTE_STATE', muted: frame.state.muted, camera: frame.state.camera, sharing: frame.state.sharing })
           break
         case 'sdp':
         case 'ice': {
