@@ -1,5 +1,6 @@
 import { Hash, LockingScript, OP, Script, TransactionSignature, UnlockingScript, Utils, type ScriptChunk } from '@bsv/sdk'
 import { decodeScriptNumber, encodeScriptNumber } from '../scriptNumber'
+import { mintCovenantBody, mintCovenantLim } from './mintCovenant'
 
 /**
  * BRC-255 (BNT) scripts. Every form is parsed exactly and re-encoded: only
@@ -10,6 +11,7 @@ import { decodeScriptNumber, encodeScriptNumber } from '../scriptNumber'
  *   held:       <"bnt" ‖ asset id> <amount> OP_2DROP <clause>
  *   authority:  <"bnt" ‖ asset id> OP_0     OP_2DROP <clause>
  *   capped:     <"bnt" ‖ asset id> OP_0 <units issued> <members issued> OP_2DROP OP_2DROP <clause>
+ *   mint:       <"bnt" ‖ asset id> OP_0 <remaining, 4 bytes LE> OP_2DROP OP_DROP <covenant>
  *
  * A countersigned clause is BRC-253 (IPT) and writes `"ipt"` in place of `"bnt"`.
  */
@@ -44,6 +46,12 @@ export type BntOutput =
   | { form: 'deploy'; supply: bigint; payload: Uint8Array; clause: BntClause }
   | { form: 'held'; assetId: string; amount: bigint; clause: BntClause }
   | { form: 'authority'; assetId: string; clause: BntClause; issued?: BntIssued }
+  | BntMintOutput
+
+/** An open mint (§5a): no holder, the covenant decides who spends it. */
+export type BntMintOutput = { form: 'mint'; assetId: string; remaining: number; lim: bigint }
+/** A BNT output a holder key moves. */
+export type BntHeldOutput = Exclude<BntOutput, BntMintOutput>
 
 /** What a capped asset's authority has issued so far: units (the deploy's supply included) and collection members. */
 export type BntIssued = { units: bigint; members: bigint }
@@ -173,6 +181,23 @@ export function bntAuthorityLock(args: { assetId: string; clause: BntClause; iss
   return script.writeOpCode(OP.OP_2DROP).writeScript(bntClause(args.clause))
 }
 
+/** Most mints one mint output can count down: its counter is a positive 4-byte script number. */
+export const BNT_MAX_MINT_COUNTER = 0x7fffffff
+
+/** `<"bnt" ‖ asset id> OP_0 <remaining, 4 bytes LE> OP_2DROP OP_DROP <covenant>`: an open mint (§5a). */
+export function bntMintLock(args: { assetId: string; remaining: number; lim: bigint }): LockingScript {
+  if (!isBntAssetId(args.assetId)) throw new Error('An asset id is 20 bytes of hex')
+  const { remaining } = args
+  if (!Number.isInteger(remaining) || remaining < 1 || remaining > BNT_MAX_MINT_COUNTER) throw new Error('A mint has 1 to 2^31-1 mints left')
+  if (args.lim > BNT_MAX_AMOUNT) throw new Error('A mint writes 1 to 2^64-1 units')
+  const counter = [remaining & 0xff, (remaining >> 8) & 0xff, (remaining >> 16) & 0xff, (remaining >>> 24) & 0xff]
+  const script = new LockingScript()
+    .writeBin([...BNT_MARKER, ...Utils.toArray(args.assetId, 'hex')])
+    .writeOpCode(OP.OP_0)
+    .writeBin(counter)
+  return script.writeScript(mintCovenantBody(args.lim))
+}
+
 /** The beacon (countersigned mode): `OP_IF <issuer part> OP_ELSE <release part> OP_ENDIF`. */
 export function bntBeaconLock(rules: Extract<BntRules, { mode: 'countersign' }>): LockingScript {
   const error = bntRulesError(rules)
@@ -287,6 +312,18 @@ export function readBnt(script: Script | string): BntOutput | null {
     const assetId = Utils.toHex(head.slice(3))
     const amount = chunks[1] ? decodeScriptNumber(chunks[1]) : null
     if (amount == null) return null
+    if (amount === 0n && chunks[2]?.data?.length === 4 && chunks[3]?.op === OP.OP_2DROP && chunks[4]?.op === OP.OP_DROP) {
+      if (Utils.toHex(head.slice(0, 3)) !== '626e74') return null
+      const c = chunks[2].data
+      const remaining = (c[0]! | (c[1]! << 8) | (c[2]! << 16) | (c[3]! << 24)) >>> 0
+      const lim = mintCovenantLim(chunks.slice(3))
+      if (lim == null || remaining < 1 || remaining > BNT_MAX_MINT_COUNTER) return null
+      try {
+        return bntMintLock({ assetId, remaining, lim }).toHex() === hex ? { form: 'mint', assetId, remaining, lim } : null
+      } catch {
+        return null
+      }
+    }
     if (amount === 0n && chunks[2]?.op !== OP.OP_2DROP) {
       const units = chunks[2] ? decodeScriptNumber(chunks[2]) : null
       const members = chunks[3] ? decodeScriptNumber(chunks[3]) : null
