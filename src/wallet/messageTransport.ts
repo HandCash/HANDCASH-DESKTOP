@@ -9,9 +9,10 @@ import { getWalletRuntime } from './walletRuntime'
  * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
  * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
  *
- * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is `X-BRC33-*`
- * plus `X-BRC103-*` on BRC-CLOUD (other boxes skip extra headers to avoid
- * Android CORS misses). Bodies are BRC-169 §7 envelopes (BRC-78 content).
+ * BRC-33 wire: send/list/ack shapes + `status: success`. A box that speaks
+ * BRC-104 gets BRC-103 mutual auth (`messageboxPeerAuth.ts`); others get
+ * `X-BRC33-*`, plus `X-BRC103-*` on BRC-CLOUD (other boxes skip extra headers
+ * to avoid Android CORS misses). Bodies are BRC-169 §7 envelopes (BRC-78 content).
  * Legacy plaintext inbound still decodes. `/files` is a HandCash extension.
  *
  * A live draft-BRC-246 session (`webrtpay/1`) carries the same sealed body and
@@ -28,6 +29,7 @@ import {
   freshMessageboxAuthHeaders,
   type MessageboxMethod,
 } from './messageboxAuth'
+import { messageboxPeerFetch } from './messageboxPeerAuth'
 import { getFriendByIdentityKey } from './friends'
 import { isSenderBlocked } from './blockedSenders'
 import { openPeerMessage, sealPeerMessage } from './messageEnvelope'
@@ -751,9 +753,10 @@ function messageboxHostAllowsAuthrite(box: string): boolean {
 }
 
 function authenticatedMessageboxFetch(rootKeyHex: string, box: string, url: string, init: RequestInit): Promise<Response> {
-  return messageboxHostAllowsAuthrite(box)
-    ? signedIdentityFetch(rootKeyHex, 'messagebox', url, init)
-    : fetch(url, init)
+  return messageboxPeerFetch(rootKeyHex, url, init, () =>
+    messageboxHostAllowsAuthrite(box)
+      ? signedIdentityFetch(rootKeyHex, 'messagebox', url, init)
+      : fetch(url, init))
 }
 
 /** Sign-then-attach so retries cannot reuse a stale X-BRC33-Timestamp. */

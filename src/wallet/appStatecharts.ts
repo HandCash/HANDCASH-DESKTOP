@@ -1654,7 +1654,7 @@ const MESSAGEBOX_CHART = `flowchart TB
     RTC -->|ack within 1s| LOCAL2["messageStore friend thread"]
     RTC -.->|no ack| SEND2
     SEND2 --> FILES["optional chat attachments only\\nPOST /files → R2"]
-    HARD --> POLL["listMessages by recipient key\\nX-BRC33-* / X-BRC103-* on BRC-CLOUD"]
+    HARD --> POLL["listMessages by recipient key\\nBRC-104 session, else X-BRC33-*"]
     POLL --> LOCAL2
   end
 

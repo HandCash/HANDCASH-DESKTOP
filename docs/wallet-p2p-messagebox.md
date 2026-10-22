@@ -119,7 +119,7 @@ nothing rides the messagebox. Settings shows money (basket `default`), items
 ### Phase 2 — BRC-CLOUD box: converge on PeerServ
 
 1. [x] Align request/response shapes with BRC-33 (`status`, `sender`, `messageIds[]`).  
-2. [x] Identity auth: `X-BRC33-*` everywhere; `X-BRC103-*` on BRC-CLOUD. Full **Authrite Peer** sessions still deferred.
+2. [x] Identity auth: BRC-103 sessions over BRC-104 with boxes that serve `/.well-known/auth` (`messageboxPeerAuth.ts`, no certificates revealed); `X-BRC33-*` for the rest, plus `X-BRC103-*` on BRC-CLOUD. BRC-CLOUD's own messagebox does not serve BRC-104 yet.
 3. [x] Keep `/files` as a HandCash extension; advertise auth mode on box manifest.  
 4. [x] Resolve response already exposes `messagebox` — keep that as the federation hook.
 5. [x] BRC-169 §7 / BRC-78 sealed content. Chat also rides a WebRTC data channel (draft BRC-246) when the pair is online: IPv4 behind NAT, same LAN or IPv6, from the WebView on Desktop and Mobile with no native socket. The box is still the offline inbox.
