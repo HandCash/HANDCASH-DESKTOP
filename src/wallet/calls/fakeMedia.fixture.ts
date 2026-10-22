@@ -29,8 +29,19 @@ export class FakeTrack {
   getSettings(): Record<string, unknown> {
     return this.settings
   }
-  addEventListener(): void {}
-  removeEventListener(): void {}
+  private readonly listeners = new Map<string, Set<() => void>>()
+  addEventListener(type: string, fn: () => void): void {
+    if (!this.listeners.has(type)) this.listeners.set(type, new Set())
+    this.listeners.get(type)!.add(fn)
+  }
+  removeEventListener(type: string, fn: () => void): void {
+    this.listeners.get(type)?.delete(fn)
+  }
+  /** The source went away outside the app, as when the system's own "Stop sharing" is clicked. */
+  end(): void {
+    this.readyState = 'ended'
+    for (const fn of this.listeners.get('ended') ?? []) fn()
+  }
 }
 
 export class FakeStream {

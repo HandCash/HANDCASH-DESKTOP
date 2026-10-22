@@ -19,6 +19,8 @@ export type CallMediaState = {
   muted: boolean
   /** The sender's camera is on and sending. */
   camera: boolean
+  /** The sender is sharing a screen or window in place of its camera. */
+  sharing: boolean
 }
 
 export type CallFrame =
@@ -60,7 +62,7 @@ function parseCandidate(v: unknown): RTCIceCandidateInit | null {
 
 function parseState(v: unknown): CallMediaState | null {
   if (!isRecord(v) || typeof v.muted !== 'boolean') return null
-  return { muted: v.muted, camera: v.camera === true }
+  return { muted: v.muted, camera: v.camera === true, sharing: v.sharing === true }
 }
 
 /** A well-formed call frame, or null for anything else (including chat bodies). */

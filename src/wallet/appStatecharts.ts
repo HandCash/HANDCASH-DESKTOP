@@ -1636,7 +1636,7 @@ const CALL_CHART = `stateDiagram-v2
   active --> ended : HANG_UP | REMOTE_HUNG_UP → finished · FAIL → failed
   ended --> idle : 2.5 s | DISMISS
   note right of ended : Activity gets one row per call (missed, finished, …)
-  note left of active : TOGGLE_MUTE, CAMERA on/off and REMOTE_STATE (their mute and camera) stay in place
+  note left of active : TOGGLE_MUTE, CAMERA on/off, SHARE on/off (a screen or window in place of the camera) and REMOTE_STATE (their mute, camera and share) stay in place
 `
 
 /**

@@ -11,6 +11,7 @@ import { callDurationText, callOutcomeText } from '../../wallet/calls/callHistor
 import { callEngine } from '../../wallet/calls/callService'
 import { readCallSettings } from '../../wallet/calls/callSettings'
 import { nextCamera, type CallDevice } from '../../wallet/calls/mediaDevices'
+import { ScreenSharePicker } from './ScreenSharePicker'
 import { CallEndIcon, CallIcon, CameraSwitchIcon, MicIcon, MicOffIcon, TuneIcon, VideocamIcon, VideocamOffIcon } from '../icons'
 
 /** Pointer only: a click the keyboard produced (detail 0) does nothing. */
@@ -74,8 +75,9 @@ export function CallDock() {
   const mic = inUse.mic ?? saved.mic
   const camera = inUse.camera ?? saved.camera
   const switchTo = c.camera ? nextCamera(devices, camera) : null
-  const stage = live && (c.camera || c.remoteCamera)
-  const cameraProblem = live ? engine.cameraProblem() : null
+  const remoteVideo = c.remoteCamera || c.remoteSharing
+  const stage = live && (c.camera || c.sharing || remoteVideo)
+  const mediaProblem = live ? (engine.shareProblem() ?? engine.cameraProblem()) : null
 
   const status = snapshot.matches({ outgoing: 'reaching' })
     ? 'Calling…'
@@ -107,9 +109,10 @@ export function CallDock() {
             autoPlay
             playsInline
             muted
-            hidden={!c.remoteCamera}
+            data-sharing={c.remoteSharing ? 'on' : undefined}
+            hidden={!remoteVideo}
           />
-          {c.remoteCamera ? null : (
+          {remoteVideo ? null : (
             <span className="call-dock-stage-name" data-aeon-part="remote-off">
               {peerLabel}
             </span>
@@ -121,7 +124,8 @@ export function CallDock() {
             autoPlay
             playsInline
             muted
-            hidden={!c.camera}
+            data-sharing={c.sharing ? 'on' : undefined}
+            hidden={!c.camera && !c.sharing}
           />
         </div>
       ) : null}
@@ -133,7 +137,9 @@ export function CallDock() {
         <span className="call-dock-status" data-aeon-part="status" aria-live="polite">
           {snapshot.matches('incoming') ? (c.video ? 'Incoming video call' : 'Incoming call') : status}
           {c.remoteMuted && snapshot.matches('active') ? ' · they’re muted' : ''}
-          {cameraProblem ? ` · ${cameraProblem}` : ''}
+          {c.sharing && snapshot.matches('active') ? ' · you’re sharing your screen' : ''}
+          {c.remoteSharing && snapshot.matches('active') ? ' · they’re sharing their screen' : ''}
+          {mediaProblem ? ` · ${mediaProblem}` : ''}
         </span>
       </div>
       {snapshot.matches('incoming') ? (
@@ -188,7 +194,8 @@ export function CallDock() {
               <DevicePicker devices={devices} kind="videoinput" label="Camera" value={camera} />
             </div>
           </details>
-          {switchTo ? (
+          <ScreenSharePicker sharing={c.sharing} />
+          {switchTo && !c.sharing ? (
             <button
               type="button"
               className="call-dock-btn"
