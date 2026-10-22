@@ -128,6 +128,22 @@
   --hc-gold: #ffd983;
   --hc-gold-soft: #ffe3a0;
   --hc-claimed: #e0b35a;
+
+  /* Each coin's accent, one per TICKER_COIN_ORDER coin: a ring, bar or chip
+     beside its figures, never its type or a large fill. The five stay apart
+     from each other and from the status inks under deuteranopia, protanopia
+     and tritanopia; dark values keep 4.5:1 on black, light ones 3:1 on
+     #f3f5f3. --coin-*-mark is the logo disc under a white glyph (4:1 or
+     better), the same on both sheets. */
+  --coin-bsv: #57ff97;
+  --coin-ltc: #5a8fd6;
+  --coin-bch: #38c9b0;
+  --coin-btc: #f08a3c;
+  --coin-doge: #f3dd3a;
+  --coin-ltc-mark: #345d9d;
+  --coin-bch-mark: #078f69;
+  --coin-btc-mark: #b76d13;
+  --coin-doge-mark: #917c26;
 }
 
 /* White sheet — keep hsl(var(--*)) paths in lockstep with HANDCASH_LIGHT_PALETTE.
@@ -194,6 +210,12 @@ html[data-aeon-mode='light'] {
   --hc-gold: #8a5a00;
   --hc-gold-soft: #8a5b0a;
   --hc-claimed: #8a5a00;
+
+  --coin-bsv: #0a3d22;
+  --coin-ltc: #3f72c8;
+  --coin-bch: #13958a;
+  --coin-btc: #de6a10;
+  --coin-doge: #6e6200;
 }
 
 * {
@@ -11904,52 +11926,56 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 /* The Litecoin mark is drawn by the wallet, never from issuer art. */
 [data-chain-mark='ltc'] .chain-mark-disc {
-  fill: #345d9d;
-}
-
-[data-chain-mark='ltc'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-ltc-mark);
 }
 
 [data-chain-mark='bch'] .chain-mark-disc {
-  fill: #0ac18e;
-}
-
-[data-chain-mark='bch'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-bch-mark);
 }
 
 [data-chain-mark='btc'] .chain-mark-disc {
-  fill: #f7931a;
-}
-
-[data-chain-mark='btc'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-btc-mark);
 }
 
 [data-chain-mark='doge'] .chain-mark-disc {
-  fill: #c2a633;
+  fill: var(--coin-doge-mark);
 }
 
-[data-chain-mark='doge'] .chain-mark-glyph {
+[data-chain-mark] .chain-mark-glyph {
   fill: #fff;
 }
 
-/* Each native coin's colour, for views that tint by chain. */
-[data-chain='ltc'] {
-  --coin-color: #345d9d;
+/* Each coin's accent, for views that tint by coin or chain. */
+[data-chain='bsv'],
+[data-coin='bsv'] {
+  --coin-color: var(--coin-bsv);
 }
 
-[data-chain='bch'] {
-  --coin-color: #0ac18e;
+[data-chain='ltc'],
+[data-coin='ltc'] {
+  --coin-color: var(--coin-ltc);
 }
 
-[data-chain='btc'] {
-  --coin-color: #f7931a;
+[data-chain='bch'],
+[data-coin='bch'] {
+  --coin-color: var(--coin-bch);
 }
 
-[data-chain='doge'] {
-  --coin-color: #c2a633;
+[data-chain='btc'],
+[data-coin='btc'] {
+  --coin-color: var(--coin-btc);
+}
+
+[data-chain='doge'],
+[data-coin='doge'] {
+  --coin-color: var(--coin-doge);
+}
+
+.coin-mark {
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  line-height: 0;
 }
 
 /* Coin deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
@@ -17883,6 +17909,133 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 .balance-split-sep {
   font-weight: 300;
   opacity: 0.45;
+}
+
+/* Coins held, under the balance: a share bar, then a chip per coin. Rows stay
+   balanced from two to five coins (2, 3, 2+2, 3+2, each row centred), drop to
+   two a row on a narrow hero and one on a phone-width one; nothing scrolls
+   sideways. The coin's accent is only its ring and its bar segment. */
+.coin-holdings {
+  container: coin-holdings / inline-size;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+.coin-holdings-bar {
+  display: flex;
+  gap: 2px;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.coin-holdings-bar > span {
+  flex-basis: 0;
+  min-width: 3px;
+  background: var(--coin-color);
+}
+
+.coin-holdings-list {
+  --cols: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.coin-holdings[data-cols='1'] .coin-holdings-list {
+  --cols: 1;
+}
+
+.coin-holdings[data-cols='2'] .coin-holdings-list {
+  --cols: 2;
+}
+
+@container coin-holdings (max-width: 520px) {
+  .coin-holdings[data-cols='3'] .coin-holdings-list {
+    --cols: 2;
+  }
+}
+
+@container coin-holdings (max-width: 300px) {
+  .coin-holdings[data-cols] .coin-holdings-list {
+    --cols: 1;
+  }
+}
+
+.coin-holding {
+  container-type: inline-size;
+  flex: 0 1 calc((100% - (var(--cols) - 1) * 8px) / var(--cols));
+  min-width: 0;
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-text) 4%, transparent);
+}
+
+.coin-holding-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.coin-holding-copy,
+.coin-holding-value {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.coin-holding-copy {
+  flex: 1 1 auto;
+}
+
+.coin-holding-value {
+  flex: 0 0 auto;
+  justify-items: end;
+}
+
+.coin-holding-name,
+.coin-holding-pct {
+  font-size: var(--hc-text-2xs);
+  color: var(--hc-muted);
+}
+
+.coin-holding-name,
+.coin-holding-amount {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coin-holding-amount,
+.coin-holding-usd {
+  font-size: var(--hc-text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-text);
+  white-space: nowrap;
+}
+
+/* Too narrow for both figures, the dollar value and share go under the amount. */
+@container (max-width: 210px) {
+  .coin-holding-body {
+    flex-wrap: wrap;
+  }
+
+  .coin-holding-value {
+    flex-basis: 100%;
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 6px;
+    padding-left: 34px;
+  }
 }
 
 /* In BSV the headline wears the BSV mark, in its own colour, not the word. */
