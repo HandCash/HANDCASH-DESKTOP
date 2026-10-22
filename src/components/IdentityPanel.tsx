@@ -5,9 +5,11 @@ import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
 import {
   claimedHandleForIdentity,
+  releaseCloudHandle,
   subscribeClaimedCloudHandle,
   type ClaimedHandleState,
 } from '../wallet/handleClaim'
+import { useAsyncAction } from '../hooks/useAsyncAction'
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
@@ -41,6 +43,9 @@ export function IdentityPanel({ profile }: Props) {
   const [claimed, setClaimed] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
+  const action = useAsyncAction<'release'>()
+  const [releaseOpen, setReleaseOpen] = useState(false)
+  const [forwardTo, setForwardTo] = useState('')
   const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
   const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration)
   const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
@@ -107,6 +112,18 @@ export function IdentityPanel({ profile }: Props) {
     void window.handcash?.openExternal?.(CLAIM_HANDLE_URL)
   }
 
+  const release = async () => {
+    if (!handleLabel) return
+    const target = forwardTo.trim()
+    const outcome = await action.run('release', () => releaseCloudHandle({ forwardTo: target }))
+    if (outcome.ok) {
+      setReleaseOpen(false)
+      setForwardTo('')
+    } else if (outcome.error !== null) {
+      toastError('Release failed', outcome.error)
+    }
+  }
+
   return (
     <div
       className="nav-section-body identity-nav nav-section-with-scroll"
@@ -144,14 +161,60 @@ export function IdentityPanel({ profile }: Props) {
                 <div className="identity-field">
                   <span className="identity-field-label">Handle</span>
                   {handleLabel ? (
-                    <button
-                      type="button"
-                      className="identity-handle"
-                      title={`Click to copy ${handleLabel}`}
-                      onClick={() => void copyHandle()}
-                    >
-                      {handleLabel}
-                    </button>
+                    <div className="identity-handle-empty" data-aeon-part="handle" data-aeon-state={action.stateAttr}>
+                      <button
+                        type="button"
+                        className="identity-handle"
+                        title={`Click to copy ${handleLabel}`}
+                        onClick={() => void copyHandle()}
+                      >
+                        {handleLabel}
+                      </button>
+                      {releaseOpen ? (
+                        <>
+                          <p className="identity-handle-missing">
+                            Anyone can claim {handleLabel} after you release it, and payments to it stop reaching this
+                            wallet. A new handle you name here is signed by this wallet; friends still confirm it with
+                            you first.
+                          </p>
+                          <label className="field">
+                            <span className="field-label">Moving to another handle? (optional)</span>
+                            <input
+                              className="input"
+                              placeholder="@name@domain"
+                              autoComplete="off"
+                              spellCheck={false}
+                              value={forwardTo}
+                              disabled={action.busy}
+                              onChange={(e) => setForwardTo(e.target.value)}
+                            />
+                          </label>
+                          <div className="auth-actions">
+                            <Button.Root variant="ghost"
+                              className="btn btn-ghost identity-claim-btn"
+                              disabled={action.busy}
+                              onClick={() => void release()}
+                            >
+                              <Button.Label>{action.running('release') ? 'Releasing…' : 'Release'}</Button.Label>
+                            </Button.Root>
+                            <Button.Root variant="ghost"
+                              className="btn btn-ghost identity-claim-btn"
+                              disabled={action.busy}
+                              onClick={() => setReleaseOpen(false)}
+                            >
+                              <Button.Label>Cancel</Button.Label>
+                            </Button.Root>
+                          </div>
+                        </>
+                      ) : (
+                        <Button.Root variant="ghost"
+                          className="btn btn-ghost identity-claim-btn"
+                          onClick={() => setReleaseOpen(true)}
+                        >
+                          <Button.Label>Release handle</Button.Label>
+                        </Button.Root>
+                      )}
+                    </div>
                   ) : (
                     <div className="identity-handle-empty">
                       <p className="identity-handle-missing">

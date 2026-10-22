@@ -16,7 +16,8 @@ import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { accountLocalKey, accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
 
-import { claimHandle, HandleNotFoundError, resolveHandle } from './handleResolve'
+import { claimHandle, HandleNotFoundError, releaseHandle, resolveHandle } from './handleResolve'
+import { signForwardingRecord } from './handleForwarding'
 import { BRC169_HANDLE_CERT_TYPE, HANDLE_CERTIFIERS } from './handleCertificate'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
@@ -340,6 +341,7 @@ export async function claimCloudHandlePayload(args: {
     const result = await claimHandle({
       handle,
       identityKey: active.identityKey,
+      rootKeyHex: active.rootKeyHex,
       claimTicket,
     })
 
@@ -364,4 +366,34 @@ export async function claimCloudHandlePayload(args: {
   } finally {
     if (claimInFlight === pending) claimInFlight = null
   }
+}
+
+/**
+ * Give up this wallet's handle (BRC-169 §4.3) and relinquish its certificate
+ * (§4.6). With `forwardTo`, the handle's resolve also serves a record signed
+ * by this key naming where it went; friends who pinned this key can check it,
+ * and their wallets still ask before using it.
+ */
+export async function releaseCloudHandle(args: { forwardTo?: string } = {}): Promise<void> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Wallet locked')
+  const claimed = claimedHandleForIdentity(active.identityKey)
+  if (!claimed) throw new Error('This wallet holds no handle')
+
+  let forwarding = null
+  const forwardTo = args.forwardTo?.trim()
+  if (forwardTo) {
+    const target = await resolveHandle(forwardTo)
+    const from = `@${claimed.handle}@${HOME_HANDLE_DOMAIN}`
+    const toHandle = `@${target.handle}@${target.domain}`
+    if (toHandle === from) throw new Error('Forward to a different handle')
+    forwarding = signForwardingRecord(active.rootKeyHex, { from, toIdentityKey: target.identityKey, toHandle })
+  }
+
+  await releaseHandle({ handle: claimed.handle, rootKeyHex: active.rootKeyHex, forwarding })
+  if (getActiveWallet()?.identityKey !== active.identityKey) return
+  durableRemoveItem(accountLocalKey(STORAGE_KEY))
+  heldSerials.clear()
+  await syncHeldHandleCertificate(null)
+  notifyClaimListeners()
 }

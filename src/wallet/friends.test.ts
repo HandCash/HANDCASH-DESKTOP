@@ -16,7 +16,7 @@ vi.mock('./appActivity', () => ({
   WALLET_ACTIVITY_ORIGIN: 'handcash.wallet',
 }))
 
-const resolveAnswer = { identityKey: '' }
+const resolveAnswer: { identityKey: string; released?: { forwarding: unknown } } = { identityKey: '' }
 
 vi.mock('./handleResolve', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./handleResolve')>()
@@ -24,6 +24,9 @@ vi.mock('./handleResolve', async (importOriginal) => {
     ...actual,
     resolveHandle: vi.fn(async (raw: string) => {
       const parsed = actual.parseHandleInput(raw)!
+      if (resolveAnswer.released) {
+        throw new actual.HandleRevokedError(raw, resolveAnswer.released.forwarding as never)
+      }
       return {
         handle: parsed.handle,
         domain: parsed.domain ?? 'brc-cloud.bcryderman.workers.dev',
@@ -43,14 +46,18 @@ import {
   addressFromIdentityKey,
   friendHasFixedHandle,
   HandleKeyChangedError,
+  HandleMovedError,
   labelLooksLikeFixedHandle,
   listFriends,
   mergeFriends,
   refuseBoundHandleConflict,
   refuseHandleKeyChange,
   resolvePaymentRecipient,
+  resolvePinnedHandle,
   updateFriend,
 } from './friends'
+import { HandleRevokedError } from './handleResolve'
+import { signForwardingRecord } from './handleForwarding'
 
 describe('handle key pinning', () => {
   beforeEach(() => store.clear())
@@ -95,6 +102,37 @@ describe('handle key pinning', () => {
     await expect(resolvePaymentRecipient('$alice', 'main')).rejects.toThrow(HandleKeyChangedError)
     resolveAnswer.identityKey = saved
     await expect(resolvePaymentRecipient('$alice', 'main')).resolves.toEqual({ kind: 'identity', identityKey: saved })
+  })
+
+  it('reports a pinned friend\'s signed move without following it', async () => {
+    const root = PrivateKey.fromRandom()
+    addFriend({ label: '$alice', identityKey: root.toPublicKey().toString(), handle: '$alice' })
+    const forwarding = signForwardingRecord(root.toHex(), {
+      from: '@alice@brc-cloud.bcryderman.workers.dev',
+      toIdentityKey: freshIdentityKey(),
+      toHandle: '@alice@other.example',
+    })
+    try {
+      resolveAnswer.released = { forwarding }
+      const err = await resolvePinnedHandle('$alice').catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(HandleMovedError)
+      expect((err as HandleMovedError).forwarding.toHandle).toBe('@alice@other.example')
+      expect(String(err)).toMatch(/Nothing was sent/)
+
+      // Signed by anyone but the pinned key, the record is ignored.
+      resolveAnswer.released = {
+        forwarding: signForwardingRecord(PrivateKey.fromRandom().toHex(), {
+          from: forwarding.from,
+          toIdentityKey: forwarding.toIdentityKey,
+          toHandle: forwarding.toHandle,
+        }),
+      }
+      const unsigned = await resolvePinnedHandle('$alice').catch((e: unknown) => e)
+      expect(unsigned).not.toBeInstanceOf(HandleMovedError)
+      expect(unsigned).toBeInstanceOf(HandleRevokedError)
+    } finally {
+      resolveAnswer.released = undefined
+    }
   })
 
   it('checks the confirmed destination against the pin right before signing', () => {

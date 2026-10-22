@@ -3,10 +3,12 @@ import type { Chain } from './vault'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
+import { verifiedForwarding, type ForwardingRecord } from './handleForwarding'
 import { tryParsePeerPayUri } from './peerPayUri'
 import {
   createHandleResolveDebouncer,
   HANDLE_RESOLVE_DEBOUNCE_MS,
+  HandleRevokedError,
   parseHandleInput,
   resolveHandle,
   type HandleResolveDebouncer,
@@ -309,9 +311,42 @@ export function refuseHandleKeyChange(resolved: ResolvedHandle): void {
   }
 }
 
+/**
+ * A saved friend released this handle and, signing with the key the friend is
+ * pinned to, named where they went (BRC-169 §4.3). Nothing follows it: the
+ * user confirms with them and adds the new handle themselves.
+ */
+export class HandleMovedError extends Error {
+  readonly handle: string
+  readonly friendLabel: string
+  readonly forwarding: ForwardingRecord
+  constructor(handle: string, friendLabel: string, forwarding: ForwardingRecord) {
+    super(
+      `Your friend "${friendLabel}" released ${handle} and says they moved to ${forwarding.toHandle}. ` +
+        'Nothing was sent. Confirm with them, then add the new handle as a friend.',
+    )
+    this.name = 'HandleMovedError'
+    this.handle = handle
+    this.friendLabel = friendLabel
+    this.forwarding = forwarding
+  }
+}
+
 /** Resolve a handle and refuse it when a saved friend pins it to another key. */
 export async function resolvePinnedHandle(raw: string): Promise<ResolvedHandle> {
-  const resolved = await resolveHandle(raw)
+  let resolved: ResolvedHandle
+  try {
+    resolved = await resolveHandle(raw)
+  } catch (error) {
+    const parsed = error instanceof HandleRevokedError && error.forwarding ? parseHandleInput(raw) : null
+    if (parsed) {
+      const handle = formatHandCashHandle(parsed.handle, parsed.domain)
+      const pinned = friendPinningHandle(handle)
+      const forwarding = pinned && verifiedForwarding((error as HandleRevokedError).forwarding, pinned.identityKey)
+      if (pinned && forwarding) throw new HandleMovedError(handle, pinned.label, forwarding)
+    }
+    throw error
+  }
   refuseHandleKeyChange(resolved)
   return resolved
 }

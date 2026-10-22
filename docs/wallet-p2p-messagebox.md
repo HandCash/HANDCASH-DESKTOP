@@ -157,9 +157,10 @@ A handle is a convenience name for an identity key (grade C). The wallet trusts 
 - [x] BRC-CLOUD claims are first-writer-wins in one SQL statement (`handleClaimRow.js`). Re-claim by the same key and reclaim of a revoked handle still work.
 - [x] Certifier-signed BRC-52 certificates (BRC-169 §4.1, Appendix A.3 field encoding), verified in the client against the certifier key pinned per domain in `handleCertificate.ts`. Resolve, reverse lookup and claim fail closed on a placeholder, wrong certifier, wrong subject, mismatched fields or bad signature. BRC-CLOUD signs with the `HANDLE_CERTIFIER_KEY` secret and re-signs older rows on first read.
 - [x] `acquireCertificate` into the wallet (BRC-169 §4.6). The claim returns a subject-encrypted copy; the wallet holds exactly one current handle certificate and relinquishes the rest.
-- [ ] On-chain revocation outpoints. Today the outpoint is null and the resolver's `404`/`410` is the revocation channel.
-- [ ] Proof of key possession at claim, and single-use claim tickets.
-- [ ] Handle release and forwarding, and a BAP `ALIAS` cross-link.
+- [x] Revocation outpoints are checked (BRC-169 §4.2): a certificate whose outpoint is spent counts as revoked whatever the resolver says, and an unreadable status is refused, not trusted (`handleResolve.ts`). BRC-CLOUD still issues the null outpoint, so the resolver's `404`/`410` stays the revocation channel until the certifier funds revocation UTXOs.
+- [x] Proof of key possession at claim: the wallet signs `POST /v1/claim` with the key it binds (`handle-claim` scope) and BRC-CLOUD refuses another key. A claim ticket is spent by the first claim that presents it (`handle_claim_tickets`, migration 0017). Unsigned claims are accepted only while `LEGACY_CLIENT_AUTH` is on.
+- [x] Release and forwarding (§4.3): Identity → Release handle sends a signed `POST /v1/handles/release`, optionally with a forwarding record signed by this key (`handleForwarding.ts`), and relinquishes the certificate (§4.6). Resolve then answers `410` with the record. A saved friend whose pinned key signed the record shows where they moved (`HandleMovedError`); nothing follows it.
+- [ ] BAP `ALIAS` cross-link. BRC-169 does not define one; which profile field names the handle, and where a verified link is shown, is still open.
 
 ---
 

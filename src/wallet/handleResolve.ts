@@ -10,6 +10,9 @@ import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle } from './handleFormat'
 import { parseWalletProtocols } from './walletProtocols'
+import { cloudSpentStatus } from './chainProbeClient'
+import { parseForwardingRecord, type ForwardingRecord } from './handleForwarding'
+import { signedIdentityHeaders } from './identityRequestAuth'
 import {
   HandleCertificateError,
   verifyHandleCertificate,
@@ -55,6 +58,7 @@ async function certifiedHandle(
   const display = formatHandCashHandle(handle, domain, { fullyQualified: true })
   const verdict = await verifyHandleCertificate(row.certificate, { handle, domain, identityKey })
   if (verdict.kind === 'refused') throw new HandleCertificateError(display, verdict.reason)
+  await refuseRevokedCertificate(display, verdict.certificate)
   const messagebox =
     typeof row.messagebox === 'string' && row.messagebox.trim()
       ? row.messagebox.trim().replace(/\/+$/, '')
@@ -165,10 +169,58 @@ export function createHandleResolveDebouncer(
 
 /** The resolve host answered that no live binding exists; distinct from being unreachable. */
 export class HandleNotFoundError extends Error {
-  constructor(display: string) {
-    super(`Handle ${display} not found`)
+  constructor(display: string, message = `Handle ${display} not found`) {
+    super(message)
     this.name = 'HandleNotFoundError'
   }
+}
+
+/**
+ * The handle was released or revoked (BRC-169 §4.3). `forwarding` is the record
+ * the host served, not yet verified: only a key pinned for the old binding can
+ * check it (`verifiedForwarding`), and nothing follows it automatically.
+ */
+export class HandleRevokedError extends HandleNotFoundError {
+  readonly forwarding: ForwardingRecord | null
+  constructor(display: string, forwarding: ForwardingRecord | null = null) {
+    super(display, `Handle ${display} was released and no longer names anyone`)
+    this.name = 'HandleRevokedError'
+    this.forwarding = forwarding
+  }
+}
+
+const NULL_OUTPOINT = /^0{64}[.:_]0$/
+const OUTPOINT = /^([0-9a-f]{64})[.:_](\d{1,6})$/
+
+/**
+ * BRC-169 §4.2: a spent revocation outpoint revokes the certificate whatever
+ * the resolver says, and an unreadable status is not taken as valid. The null
+ * outpoint means the certifier funds none, so the resolver's 404/410 decides.
+ */
+async function refuseRevokedCertificate(display: string, certificate: HandleCertificate): Promise<void> {
+  const outpoint = certificate.revocationOutpoint.trim().toLowerCase()
+  if (NULL_OUTPOINT.test(outpoint)) return
+  const m = OUTPOINT.exec(outpoint)
+  if (!m) throw new HandleCertificateError(display, 'malformed')
+  const status = await cloudSpentStatus(m[1]!, Number(m[2]), 'main')
+  if (status === 'spent') throw new HandleRevokedError(display)
+  if (status !== 'unspent') {
+    throw new Error(`Could not check whether ${display} was revoked. Try again when the network is back.`)
+  }
+}
+
+async function revokedAnswer(
+  res: Response,
+  asked: { handle: string; domain: string | null },
+  display: string,
+): Promise<HandleRevokedError> {
+  const body = (await res.json().catch(() => null)) as { forwarding?: unknown } | null
+  const record = parseForwardingRecord(body?.forwarding)
+  const forHandle =
+    record != null &&
+    record.from.startsWith(`@${asked.handle}@`) &&
+    (asked.domain == null || record.from === `@${asked.handle}@${asked.domain}`)
+  return new HandleRevokedError(display, forHandle ? record : null)
 }
 
 export async function resolveHandle(
@@ -185,9 +237,9 @@ export async function resolveHandle(
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   })
-  if (res.status === 404 || res.status === 410) {
-    throw new HandleNotFoundError(formatHandCashHandle(parsed.handle, parsed.domain))
-  }
+  const display = formatHandCashHandle(parsed.handle, parsed.domain)
+  if (res.status === 410) throw await revokedAnswer(res, parsed, display)
+  if (res.status === 404) throw new HandleNotFoundError(display)
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 120)
     throw new Error(`Handle resolve failed (${res.status})${detail ? `: ${detail}` : ''}`)
@@ -254,22 +306,65 @@ export async function resolveHandleByIdentityKey(
   return settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
 }
 
+async function errorDetail(res: Response): Promise<string> {
+  const raw = await res.text().catch(() => '')
+  try {
+    const err = (JSON.parse(raw) as { error?: string | { code?: string } })?.error
+    return typeof err === 'string' ? err : String(err?.code || raw.slice(0, 160))
+  } catch {
+    return raw.slice(0, 160)
+  }
+}
+
+/** A JSON POST signed by the identity key, so the host knows who holds it. */
+async function signedPost(rootKeyHex: string, scope: string, url: string, body: unknown): Promise<Response> {
+  const init: RequestInit = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  }
+  return fetch(url, { ...init, headers: await signedIdentityHeaders(rootKeyHex, scope, url, init) })
+}
+
+/**
+ * Release a handle this wallet holds (BRC-169 §4.3). Its resolve then answers
+ * 410, with `forwarding` when given; the record must be signed by this key
+ * (`signForwardingRecord`). A forwarding record may also be added later, until
+ * someone else claims the handle.
+ */
+export async function releaseHandle(args: {
+  handle: string
+  rootKeyHex: string
+  forwarding?: ForwardingRecord | null
+  baseUrl?: string
+}): Promise<{ forwarding: ForwardingRecord | null }> {
+  const base = normalizeBase(args.baseUrl || DEFAULT_METANET_HANDLES_BASE_URL)
+  const res = await signedPost(args.rootKeyHex, 'handle-release', `${base}/v1/handles/release`, {
+    handle: args.handle,
+    ...(args.forwarding ? { forwarding: args.forwarding } : {}),
+  })
+  if (!res.ok) {
+    const detail = await errorDetail(res)
+    throw new Error(`Handle release failed (${res.status})${detail ? `: ${detail}` : ''}`)
+  }
+  const data = (await res.json().catch(() => null)) as { forwarding?: unknown } | null
+  return { forwarding: parseForwardingRecord(data?.forwarding) }
+}
+
 export async function claimHandle(args: {
   handle: string
   identityKey: string
-  /** Short-lived ticket from HandCash (items-market) — required in production. */
+  /** Signs the claim: the host binds only the key that proves it holds it. */
+  rootKeyHex: string
+  /** Short-lived ticket from HandCash (items-market) — required in production; spent by this claim. */
   claimTicket?: string
   baseUrl?: string
 }): Promise<{ display: string; certificate: HandleCertificate; walletCertificate: unknown }> {
   const base = normalizeBase(args.baseUrl || DEFAULT_METANET_HANDLES_BASE_URL)
-  const res = await fetch(`${base}/v1/claim`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      handle: args.handle,
-      identityKey: args.identityKey,
-      claimTicket: args.claimTicket,
-    }),
+  const res = await signedPost(args.rootKeyHex, 'handle-claim', `${base}/v1/claim`, {
+    handle: args.handle,
+    identityKey: args.identityKey,
+    claimTicket: args.claimTicket,
   })
   if (!res.ok) {
     const raw = await res.text().catch(() => '')
