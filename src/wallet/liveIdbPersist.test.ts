@@ -26,7 +26,8 @@ describe('dumpLiveWalletState', () => {
     try {
       const path = join(dir, 'live-idb.json')
       await dumpLiveWalletState(path)
-      expect(statSync(path).mode & 0o777).toBe(0o600)
+      // Windows has no POSIX mode bits; stat reports 0o666 for any writable file.
+      if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
       expect(readdirSync(dir)).toEqual(['live-idb.json'])
     } finally {
       rmSync(dir, { recursive: true, force: true })
