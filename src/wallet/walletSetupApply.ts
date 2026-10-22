@@ -1,6 +1,5 @@
 /**
- * Shared post-create / post-restore wallet setup prefs.
- * Keep AuthScreen and WalletSetupConfigPanel on the same apply path.
+ * Post-create / post-restore wallet setup prefs, applied from AuthScreen.
  *
  * HandCash cloud (BRC-CLOUD) is the default for history unless the user
  * explicitly chooses "no backup" or a custom history host.

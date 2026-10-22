@@ -23,6 +23,8 @@ const POLL_MS = 8_000
 type SnapshotListener = (cache: Map<string, DevicePeerSnapshot>) => void
 
 const snapshotCache = new Map<string, DevicePeerSnapshot>()
+/** The identity whose peers `snapshotCache` holds; another account's snapshots are never shown. */
+let snapshotIdentity: string | null = null
 const snapshotListeners = new Set<SnapshotListener>()
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let polling = false
@@ -77,6 +79,7 @@ async function refreshPeer(peer: DeviceWallet, identityKey: string, rootKeyHex: 
   })
   try {
     const snap = await fetchDevicePeerSnapshot(peer.peerBaseUrl, identityKey, rootKeyHex)
+    if (snapshotIdentity !== identityKey.toLowerCase()) return
     snapshotCache.set(peer.deviceId, snap)
     notifySnapshots()
     if (Array.isArray(snap.friends) && snap.friends.length > 0) {
@@ -107,6 +110,11 @@ export async function pollDeviceMeshOnce(): Promise<void> {
 
 /** Start background mesh while wallet is unlocked. */
 export function startDeviceMesh(identityKey: string): () => void {
+  if (snapshotIdentity !== identityKey.toLowerCase()) {
+    snapshotCache.clear()
+    snapshotIdentity = identityKey.toLowerCase()
+    notifySnapshots()
+  }
   void enrollLocalFromBridge(identityKey).then(() => pollDeviceMeshOnce())
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = setInterval(() => {
@@ -122,5 +130,6 @@ export function startDeviceMesh(identityKey: string): () => void {
 
 export function clearRemoteSnapshots(): void {
   snapshotCache.clear()
+  snapshotIdentity = null
   notifySnapshots()
 }

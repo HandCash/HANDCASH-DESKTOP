@@ -247,36 +247,20 @@ export function appHomepage(origin: string | undefined): string | null {
 }
 
 /**
- * Favicon candidates.
+ * Favicon candidates, served only by the app itself.
  *
- * Shared hosting domains return the platform's generic favicon for every app.
- * Only trust icons served by the app itself there; a missing icon should fall
- * back to our crisp vector app mark instead of a blurry Workers/Pages badge.
+ * A favicon proxy would tell a third party every app the user connects to, so
+ * a missing icon falls back to our vector app mark instead.
  */
 export function appFaviconCandidates(origin: string | undefined): string[] {
-  const host = normalizeAppHost(origin)
-  if (host === 'unknown-app') return []
-  const bare = host.split(':')[0] ?? host
   const home = appHomepage(origin)
-  const urls: string[] = []
-  if (home) {
-    urls.push(
-      `${home}/apple-touch-icon.png`,
-      `${home}/favicon.svg`,
-      `${home}/favicon.png`,
-      `${home}/favicon.ico`,
-    )
-  }
-  const sharedHost = APP_SUBDOMAIN_SUFFIXES.some(
-    (suffix) => bare === suffix || bare.endsWith(`.${suffix}`),
-  )
-  if (!sharedHost) {
-    urls.push(
-      `https://www.google.com/s2/favicons?domain=${encodeURIComponent(bare)}&sz=256`,
-      `https://icons.duckduckgo.com/ip3/${encodeURIComponent(bare)}.ico`,
-    )
-  }
-  return urls
+  if (!home) return []
+  return [
+    `${home}/apple-touch-icon.png`,
+    `${home}/favicon.svg`,
+    `${home}/favicon.png`,
+    `${home}/favicon.ico`,
+  ]
 }
 
 export function appInitials(origin: string | undefined): string {

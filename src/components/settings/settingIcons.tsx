@@ -34,7 +34,7 @@ function iconFor(id: SettingId): SettingIconSpec {
     case 'backup':
     case 'backup-phrase':
     case 'split-backup':
-    case 'google-recovery':
+    case 'handcash-recovery':
       return { icon: <EncryptIcon size={ICON_SIZE} /> }
     case 'history-backup':
       return { icon: <DownloadIcon size={ICON_SIZE} /> }
