@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.636] - 2026-10-22
+
+### Changed
+
+- Messageboxes that speak BRC-104, such as the BSV Association's MessageBox servers, now carry chat, payment and item notices over a mutually authenticated BRC-103 session, and every reply must be signed by the box's key. A box that fails the handshake or asks for identity certificates is refused. Other boxes, including HandCash's own, work as before.
+
+### Fixed
+
+- Only devices signed in to the same wallet can read its identity, balance, friends and items over the local network; websites and other machines get nothing.
+- A payment that outlives its wait is reported as still pending, never as not run, and retrying it joins that payment instead of paying twice.
+- Windows release builds no longer fail on the owner-only file check, which Windows can't report.
+
+## [1.3.635] - 2026-10-21
+
+### Fixed
+
+- Progress tracks, backup slice badges, the empty sparkline and trait chips stay visible in light mode.
+- Setup options, sign-in tabs, backup choices, the account switcher and the Send and Receive toggles show hover; auto-pay fields show focus.
+
 ## [1.3.634] - 2026-10-21
 
 ### Changed
