@@ -163,6 +163,8 @@ interface HandCashBridge {
     opts?: { allowVaultIdentityReplace?: boolean },
   ) => boolean
   safeStorageAvailable?: () => Promise<boolean>
+  /** Why the saved vault cannot be opened (a locked keyring), or null. */
+  vaultOpenError?: () => Promise<string | null>
   deviceAuthStatus?: () => Promise<{
     available: boolean
     enrolled: boolean

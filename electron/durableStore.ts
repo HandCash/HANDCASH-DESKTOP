@@ -234,13 +234,44 @@ function requiresCommittedWrite(key: string): boolean {
   return isVaultKey(key) || /^(?:handcash\.wallet\.(?:signedChequeArchive|pendingMinerOutbox|utxoLocks)|handcash\.brc29\.pendingOutbox|handcash\.item\.pendingOutbox|handcash\.brc100\.deviceDek|handcash\.createdBeef|handcash\.autoPayReservations|handcash\.toolboxDatabasePointer|handcash\.publicIdentities|handcash\.issuerIdentities|handcash\.custodyJournal)/.test(key)
 }
 
+/**
+ * Linux without a keyring falls back to `basic_text`, a key built into
+ * Chromium: it hides nothing, so new secrets are not sealed with it.
+ */
+function onBasicText(): boolean {
+  if (process.platform !== 'linux') return false
+  try {
+    return safeStorage.getSelectedStorageBackend() === 'basic_text'
+  } catch {
+    // Unknown before the app is ready: assume no keyring.
+    return true
+  }
+}
+
 function canSeal(): boolean {
   try {
-    return safeStorage.isEncryptionAvailable() &&
-      (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text')
+    return safeStorage.isEncryptionAvailable() && !onBasicText()
   } catch {
     return false
   }
+}
+
+/**
+ * Opening is wider than sealing: a vault an older version sealed with
+ * `basic_text` still opens, and is saved unsealed on its next write.
+ */
+function canUnseal(): boolean {
+  try {
+    return safeStorage.isEncryptionAvailable()
+  } catch {
+    return false
+  }
+}
+
+function keystoreUnavailableMessage(): string {
+  return process.platform === 'linux'
+    ? 'Wallet vault is sealed with the system keyring, which is not available. Unlock GNOME Keyring or KWallet, then restart HandCash.'
+    : 'Wallet vault is locked by the OS keychain and cannot be opened.'
 }
 
 const VAULT_SEAL_STATUS_KEY = 'handcash.brc100.vaultSealStatus'
@@ -276,16 +307,16 @@ function sealIfNeeded(key: string, value: string): string {
 function unsealIfNeeded(key: string, value: string): string {
   if (!key.startsWith('handcash.brc100.vault')) return value
   if (!value.startsWith(SEALED_PREFIX)) return value
-  if (!canSeal()) {
+  if (!canUnseal()) {
     log.error('Vault is OS-sealed but safeStorage is unavailable')
-    throw new Error('Wallet vault is locked by the OS keychain and cannot be opened.')
+    throw new Error(keystoreUnavailableMessage())
   }
   try {
     const b64 = value.slice(SEALED_PREFIX.length)
     return safeStorage.decryptString(Buffer.from(b64, 'base64'))
   } catch (err) {
     log.error('safeStorage unseal failed', err)
-    throw new Error('Could not decrypt wallet vault from OS keychain.')
+    throw new Error(onBasicText() ? keystoreUnavailableMessage() : 'Could not decrypt wallet vault from OS keychain.')
   }
 }
 
@@ -405,6 +436,22 @@ export function durableRemove(key: string): boolean {
 
 export function durableSafeStorageAvailable(): boolean {
   return canSeal()
+}
+
+/**
+ * Why the saved vault cannot be opened on this run, or null when it can or
+ * there is none. Reads of it answer null, so without this a locked keyring
+ * looks like a computer with no wallet.
+ */
+export function durableVaultOpenError(): string | null {
+  try {
+    const raw = readStore()[VAULT_KEY]
+    if (typeof raw !== 'string') return null
+    unsealIfNeeded(VAULT_KEY, raw)
+    return null
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
 }
 
 /**

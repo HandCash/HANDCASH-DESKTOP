@@ -341,7 +341,8 @@ export function AuthScreen({
     const step = firstOnboardStep(kind, Boolean(unlocked.mnemonic))
     if (step === null) {
       // Joined by approval: the vault master is already backed up and this
-      // install holds only a new wallet, so open it at once.
+      // install holds only a new wallet, so open it at once, asking only how
+      // to lock it when device unlock is not available.
       const pending = {
         profile,
         balanceSats,
@@ -354,7 +355,8 @@ export function AuthScreen({
       const device = await deviceAuthStatus().catch(() => null)
       const lock = await applyJoinedDeviceLock(pending.wrapPassword, Boolean(device?.available))
       send({ type: 'SUCCESS' })
-      enterFromOnboard(pending, lock.sessionPassword)
+      if (lock) enterFromOnboard(pending, lock.sessionPassword)
+      else setPendingOnboard(pending)
       return
     }
     if (kind === 'create') {

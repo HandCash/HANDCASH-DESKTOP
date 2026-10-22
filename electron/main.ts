@@ -35,6 +35,7 @@ import {
   durableGet,
   durableSafeStorageAvailable,
   durableSet,
+  durableVaultOpenError,
   durableWipeWallet,
   flushDurableStore,
 } from './durableStore.js'
@@ -870,6 +871,7 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
 })
 
 ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
+ipcMain.handle('storage:vault-open-error', () => durableVaultOpenError())
 
 ipcMain.handle('storage:wipe-wallet', () => {
   deviceAuthClear()

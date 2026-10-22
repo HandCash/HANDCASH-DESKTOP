@@ -128,6 +128,9 @@ export function App() {
           ? await window.handcash.getAppInfo()
           : { version: '1.0.0-web', name: 'HandCash', isPackaged: false, platform: 'web' }
         if (cancelled) return
+        const vaultOpenError = await window.handcash?.vaultOpenError?.()
+        if (vaultOpenError) throw new Error(vaultOpenError)
+        if (cancelled) return
         const orphanedToolbox = !hasVault() ? await hasOrphanedToolboxWallet() : false
         if (cancelled) return
         const vaultPresent = hasVault()
@@ -141,7 +144,9 @@ export function App() {
         if (vaultPresent && isVaultStoredUnsealed()) {
           showToast({
             title: 'Vault not OS-sealed',
-            body: 'This device could not seal the vault with the OS keychain. Your password still encrypts keys; keep the machine locked.',
+            body: shouldAutoUnlock()
+              ? 'This computer has no keyring and this wallet has no lock, so anyone who can read its files can open it. Add a password in Settings → Unlock.'
+              : 'This device could not seal the vault with the OS keychain. Your password still encrypts keys; keep the machine locked.',
             tone: 'error',
             durationMs: 9000,
           })
