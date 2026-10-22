@@ -12,28 +12,63 @@
  * transaction the wallet was still building. So spends get a longer budget, and
  * when even that passes they come back as `WALLET_BRIDGE_PENDING` — "may still
  * land, go and reconcile" — never as a plain failure.
+ *
+ * Only methods known to change nothing may be called off as not having run.
+ * Anything else, including a method added later, counts as a spend: a list of
+ * spends missed `sendCoins` and the BNT asset moves, and told their callers a
+ * payment that went on to land had not run.
  */
 
 export const BRIDGE_DEADLINE_MS = 120_000
 export const SPEND_DEADLINE_MS = 300_000
 
-/** Methods that sign or queue a transaction, so a timeout is not a rollback. */
-const SPEND_METHODS = new Set([
-  'createaction',
-  'signaction',
-  'internalizeaction',
-  'createmarketlistingadvert',
-  'createmarketpurchaseintent',
-  'purchasemarketlisting',
-  'createcancelmarketlistingadvert',
-])
+/** Methods that change nothing in the wallet, so a timeout means it did not run. */
+const READ_METHODS = new Set(
+  [
+    'health',
+    'getVersion',
+    'getNetwork',
+    'getHeight',
+    'getHeaderForHeight',
+    'isAuthenticated',
+    'waitForAuthentication',
+    'getPublicKey',
+    'listActions',
+    'listOutputs',
+    'getBalance',
+    'listCertificates',
+    'proveCertificate',
+    'discoverByIdentityKey',
+    'discoverByAttributes',
+    'revealCounterpartyKeyLinkage',
+    'revealSpecificKeyLinkage',
+    'encrypt',
+    'decrypt',
+    'createHmac',
+    'verifyHmac',
+    'createSignature',
+    'verifySignature',
+    'getLegacyAddress',
+    'listMigrationTxids',
+    'verifyMarketListingProvenance',
+    'getMarketSettlementReceipt',
+    'getMarketListingStatus',
+    'listBntAssets',
+    'getLtcDepositAddress',
+    'listLtcDeposits',
+    'getCoinAddress',
+    'listCoins',
+    'listAssetProfiles',
+    'getClaimedCloudHandle',
+  ].map((m) => m.toLowerCase()),
+)
 
 function methodOf(path: string): string {
   return path.trim().toLowerCase().replace(/^\/+/, '').replace(/\/+$/, '')
 }
 
 export function isSpendMethodPath(path: string): boolean {
-  return SPEND_METHODS.has(methodOf(path))
+  return !READ_METHODS.has(methodOf(path))
 }
 
 export function bridgeDeadlineMs(path: string): number {

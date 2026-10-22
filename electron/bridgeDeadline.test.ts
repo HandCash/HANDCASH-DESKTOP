@@ -24,6 +24,15 @@ describe('bridge deadlines', () => {
     expect(bridgeDeadlineCode('/listOutputs')).toBe('WALLET_BRIDGE_TIMEOUT')
   })
 
+  it('treats every method not known to be a read as one that may still land', () => {
+    for (const path of ['/sendCoins', '/withdrawLtc', '/transferBntAsset', '/mintBntAsset', '/relinquishOutput', '/someFutureMethod']) {
+      expect(bridgeDeadlineCode(path)).toBe('WALLET_BRIDGE_PENDING')
+    }
+    for (const path of ['/getPublicKey', '/listActions', '/getBalance', '/isAuthenticated']) {
+      expect(bridgeDeadlineCode(path)).toBe('WALLET_BRIDGE_TIMEOUT')
+    }
+  })
+
   it('matches the method regardless of slashes or case', () => {
     expect(isSpendMethodPath('/createAction')).toBe(true)
     expect(isSpendMethodPath('createaction')).toBe(true)
