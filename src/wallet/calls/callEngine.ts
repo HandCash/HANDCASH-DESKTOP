@@ -9,6 +9,7 @@ import { createActor, type SnapshotFrom } from 'xstate'
 import { callMachine, type CallContext } from '../../machines/callMachine'
 import type { CallRecord } from './callHistory'
 import { encodeCallFrame, newCallId, parseCallFrame, type CallFrame } from './callWire'
+import { cameraConstraints, cameraFailureText, micConstraints } from './mediaDevices'
 import { createMediaPeer, type MediaPeer, type MediaRtcConstructor, type MediaSignal } from './mediaPeer'
 import type { RingKind } from './ringtone'
 
@@ -30,6 +31,9 @@ export type CallEngineDeps = {
   record: (record: CallRecord) => void
   ring: (kind: RingKind | null) => void
   now: () => number
+  /** The microphone and camera the user picked last; null is the system default. */
+  devices?: () => { mic: string | null; camera: string | null }
+  rememberDevice?: (kind: 'mic' | 'camera', deviceId: string) => void
   log?: (what: string, err?: unknown) => void
 }
 
@@ -38,6 +42,7 @@ type Leg = {
   media: MediaPeer | null
   /** Signals that arrived before this side made its media peer. */
   queued: MediaSignal[]
+  senders: { audio?: RTCRtpSender; video?: RTCRtpSender }
 }
 
 function norm(key: string): string {
@@ -66,6 +71,11 @@ export function createCallEngine(deps: CallEngineDeps) {
   let silent: string | null = null
   let dropTimer: ReturnType<typeof setTimeout> | undefined
   let version = 0
+  /** The call whose state this side has announced since it went active. */
+  let announced: string | null = null
+  /** Why the camera did not start, for the call bar; cleared when it does. */
+  let cameraProblem: string | null = null
+  const devices = deps.devices ?? (() => ({ mic: null, camera: null }))
 
   function ctx(): CallContext {
     return actor.getSnapshot().context
@@ -131,6 +141,11 @@ export function createCallEngine(deps: CallEngineDeps) {
     else if (snap.matches({ outgoing: 'ringing' })) deps.ring('ringback')
     else deps.ring(null)
     if (snap.matches('ended')) finalize(snap.context)
+    // Each side says once whether its camera is on, so the other knows what to show.
+    if (snap.matches('active') && announced !== snap.context.callId) {
+      announced = snap.context.callId
+      sendState()
+    }
     emit()
   })
   actor.start()
@@ -147,10 +162,13 @@ export function createCallEngine(deps: CallEngineDeps) {
       return
     }
     const callId = ctx().callId!
-    const current = leg ?? { peer, media: null, queued: [] }
+    const current = leg ?? { peer, media: null, queued: [], senders: {} }
     leg = current
     const addLocal = () => {
-      for (const track of local?.getTracks() ?? []) current.media?.addTrack(track, local!)
+      for (const track of local?.getTracks() ?? []) {
+        const kind = track.kind === 'video' ? 'video' : 'audio'
+        if (!current.senders[kind]) current.senders[kind] = current.media?.addTrack(track, local!)
+      }
     }
     current.media = createMediaPeer({
       rtc,
@@ -190,30 +208,74 @@ export function createCallEngine(deps: CallEngineDeps) {
     for (const signal of current.queued.splice(0)) void current.media.handle(signal)
   }
 
-  async function openMic(): Promise<boolean> {
-    const callId = ctx().callId
+  function sendState(): void {
+    const s = actor.getSnapshot()
+    if (!s.matches('active') && !s.matches('connecting')) return
+    const { muted, camera, callId, peer } = s.context
+    void sendFrame(peer!, { t: 'state', call: callId!, state: { muted, camera } })
+  }
+
+  /** A camera that will not start leaves the call going as voice. */
+  async function openCamera(deviceId: string | null, exact: boolean): Promise<MediaStreamTrack | null> {
     try {
-      const stream = await deps.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
-      if (ctx().callId !== callId || !busy()) {
-        for (const track of stream.getTracks()) track.stop()
-        return false
-      }
-      local = stream
-      for (const track of stream.getAudioTracks()) track.enabled = !ctx().muted
+      const stream = await deps.getUserMedia({ video: cameraConstraints(deviceId, exact) })
+      return stream.getVideoTracks()[0] ?? null
+    } catch (err) {
+      log('camera refused', err)
+      cameraProblem = cameraFailureText(err)
       emit()
-      return true
+      return null
+    }
+  }
+
+  /** Opens the mic, and the camera when this side starts with it on. */
+  async function openMedia(): Promise<boolean> {
+    const callId = ctx().callId
+    const pref = devices()
+    let stream: MediaStream
+    try {
+      stream = await deps.getUserMedia({ audio: micConstraints(pref.mic) })
     } catch (err) {
       log('microphone refused', err)
       if (ctx().callId === callId) actor.send({ type: 'FAIL', reason: micFailureText(err), at: deps.now() })
       return false
     }
+    const cam = ctx().camera ? await openCamera(pref.camera, false) : null
+    if (ctx().callId !== callId || !busy()) {
+      for (const track of [...stream.getTracks(), ...(cam ? [cam] : [])]) track.stop()
+      return false
+    }
+    if (cam) stream.addTrack(cam)
+    else if (ctx().camera) actor.send({ type: 'CAMERA', on: false })
+    local = stream
+    for (const track of stream.getAudioTracks()) track.enabled = !ctx().muted
+    emit()
+    return true
+  }
+
+  function localTrack(kind: 'audio' | 'video'): MediaStreamTrack | undefined {
+    return kind === 'audio' ? local?.getAudioTracks()[0] : local?.getVideoTracks()[0]
+  }
+
+  /** Puts `track` in place of this side's current one of its kind, on the wire and in the preview. */
+  async function swapTrack(kind: 'audio' | 'video', track: MediaStreamTrack | null): Promise<void> {
+    const old = localTrack(kind)
+    if (old) {
+      local?.removeTrack(old)
+      old.stop()
+    }
+    if (track && local) local.addTrack(track)
+    const sender = leg?.senders[kind]
+    if (sender) await sender.replaceTrack(track).catch((err) => log('track not replaced', err))
+    else if (track && local && leg?.media) leg.senders[kind] = leg.media.addTrack(track, local)
+    emit()
   }
 
   async function dial(peerKey: string): Promise<void> {
     const peer = norm(peerKey)
     const callId = ctx().callId
     const live = () => ctx().callId === callId && busy()
-    if (!(await openMic()) || !live()) return
+    if (!(await openMedia()) || !live()) return
     const reached = await deps.connect(peer).catch((err) => {
       log('session did not open', err)
       return false
@@ -223,7 +285,7 @@ export function createCallEngine(deps: CallEngineDeps) {
       actor.send({ type: 'UNREACHABLE', at: deps.now() })
       return
     }
-    const sent = await sendFrame(peer, { t: 'invite', call: callId!, video: false })
+    const sent = await sendFrame(peer, { t: 'invite', call: callId!, video: ctx().video })
     if (!live() || !actor.getSnapshot().matches({ outgoing: 'reaching' })) return
     if (sent === 'direct') actor.send({ type: 'REACHED' })
     else actor.send({ type: 'UNREACHABLE', at: deps.now() })
@@ -260,14 +322,16 @@ export function createCallEngine(deps: CallEngineDeps) {
       return
     }
     settled = false
+    cameraProblem = null
     actor.send({ type: 'INCOMING', callId: frame.call, peer, video: frame.video, at: deps.now() })
   }
 
-  async function accept(): Promise<void> {
+  /** Answer the ringing call; `video` defaults to how the caller called. */
+  async function accept(opts: { video?: boolean } = {}): Promise<void> {
     if (!actor.getSnapshot().matches('incoming')) return
-    const { callId, peer } = ctx()
-    actor.send({ type: 'ACCEPT' })
-    if (!(await openMic()) || ctx().callId !== callId) return
+    const { callId, peer, video } = ctx()
+    actor.send({ type: 'ACCEPT', video: opts.video ?? video })
+    if (!(await openMedia()) || ctx().callId !== callId) return
     openLeg(peer!, true)
     const sent = await sendFrame(peer!, { t: 'accept', call: callId! })
     if (sent !== 'direct' && ctx().callId === callId) {
@@ -277,11 +341,12 @@ export function createCallEngine(deps: CallEngineDeps) {
 
   return {
     /** Start a call to a friend. False when another call is under way. */
-    call(peerKey: string): boolean {
+    call(peerKey: string, opts: { video?: boolean } = {}): boolean {
       if (busy()) return false
       const peer = norm(peerKey)
       settled = false
-      actor.send({ type: 'DIAL', callId: newCallId(), peer, video: false, at: deps.now() })
+      cameraProblem = null
+      actor.send({ type: 'DIAL', callId: newCallId(), peer, video: opts.video === true, at: deps.now() })
       void dial(peer)
       return true
     },
@@ -305,11 +370,79 @@ export function createCallEngine(deps: CallEngineDeps) {
     toggleMute(): void {
       if (!busy()) return
       actor.send({ type: 'TOGGLE_MUTE' })
-      const { muted, callId, peer } = ctx()
+      const { muted } = ctx()
       for (const track of local?.getAudioTracks() ?? []) track.enabled = !muted
-      if (actor.getSnapshot().matches('active') || actor.getSnapshot().matches('connecting')) {
-        void sendFrame(peer!, { t: 'state', call: callId!, state: { muted } })
+      sendState()
+    },
+
+    /** Turn this side’s camera on or off; off releases the camera, so its light goes out. */
+    async setCamera(on: boolean): Promise<void> {
+      if (!busy() || actor.getSnapshot().matches('incoming') || ctx().camera === on) return
+      const callId = ctx().callId
+      if (!on) {
+        actor.send({ type: 'CAMERA', on: false })
+        await swapTrack('video', null)
+        sendState()
+        return
       }
+      cameraProblem = null
+      const track = await openCamera(devices().camera, false)
+      if (!track) return
+      if (ctx().callId !== callId || !busy() || !local) {
+        track.stop()
+        return
+      }
+      actor.send({ type: 'CAMERA', on: true })
+      await swapTrack('video', track)
+      sendState()
+    },
+
+    /** Use this camera from now on, switching to it at once when the camera is on. */
+    async useCamera(deviceId: string): Promise<void> {
+      deps.rememberDevice?.('camera', deviceId)
+      if (!busy() || !ctx().camera || localTrack('video')?.getSettings().deviceId === deviceId) return
+      const callId = ctx().callId
+      const track = await openCamera(deviceId, true)
+      if (!track) return
+      if (ctx().callId !== callId || !ctx().camera) {
+        track.stop()
+        return
+      }
+      cameraProblem = null
+      await swapTrack('video', track)
+    },
+
+    /** Use this microphone from now on, switching to it at once during a call. */
+    async useMic(deviceId: string): Promise<void> {
+      deps.rememberDevice?.('mic', deviceId)
+      if (!local || localTrack('audio')?.getSettings().deviceId === deviceId) return
+      const callId = ctx().callId
+      let track: MediaStreamTrack | undefined
+      try {
+        track = (await deps.getUserMedia({ audio: micConstraints(deviceId, true) })).getAudioTracks()[0]
+      } catch (err) {
+        log('microphone not switched', err)
+        return
+      }
+      if (!track) return
+      if (ctx().callId !== callId || !local) {
+        track.stop()
+        return
+      }
+      track.enabled = !ctx().muted
+      await swapTrack('audio', track)
+    },
+
+    /** The devices this call is using now, by id. */
+    devicesInUse(): { mic: string | null; camera: string | null } {
+      return {
+        mic: (localTrack('audio')?.getSettings().deviceId as string | undefined) ?? null,
+        camera: (localTrack('video')?.getSettings().deviceId as string | undefined) ?? null,
+      }
+    },
+
+    cameraProblem(): string | null {
+      return cameraProblem
     },
 
     dismiss(): void {
@@ -353,13 +486,13 @@ export function createCallEngine(deps: CallEngineDeps) {
           }
           break
         case 'state':
-          actor.send({ type: 'REMOTE_STATE', muted: frame.state.muted })
+          actor.send({ type: 'REMOTE_STATE', muted: frame.state.muted, camera: frame.state.camera })
           break
         case 'sdp':
         case 'ice': {
           const signal: MediaSignal =
             frame.t === 'sdp' ? { kind: 'sdp', description: frame.description } : { kind: 'ice', candidate: frame.candidate }
-          if (!leg) leg = { peer, media: null, queued: [] }
+          if (!leg) leg = { peer, media: null, queued: [], senders: {} }
           if (leg.media) void leg.media.handle(signal)
           else leg.queued.push(signal)
           break

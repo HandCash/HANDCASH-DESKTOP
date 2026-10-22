@@ -10,6 +10,9 @@ export type CallRelay = { urls: string[]; username?: string; credential?: string
 
 export type CallSettings = {
   relay: CallRelay | null
+  /** The microphone and camera last picked, by device id; null is the system default. */
+  mic: string | null
+  camera: string | null
 }
 
 const STUN: RTCIceServer[] = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }]
@@ -28,18 +31,24 @@ function parseRelay(v: unknown): CallRelay | null {
   }
 }
 
+function deviceId(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 && v.length <= 256 ? v : null
+}
+
 export function readCallSettings(): CallSettings {
   try {
     const raw = durableGetItem(storageRegistry.callSettings.key)
     const v = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
-    return { relay: parseRelay(v.relay) }
+    return { relay: parseRelay(v.relay), mic: deviceId(v.mic), camera: deviceId(v.camera) }
   } catch {
-    return { relay: null }
+    return { relay: null, mic: null, camera: null }
   }
 }
 
-export function writeCallSettings(next: CallSettings): void {
-  const clean: CallSettings = { relay: parseRelay(next.relay) }
+/** Change some settings, keeping the rest. */
+export function writeCallSettings(change: Partial<CallSettings>): void {
+  const next = { ...readCallSettings(), ...change }
+  const clean: CallSettings = { relay: parseRelay(next.relay), mic: deviceId(next.mic), camera: deviceId(next.camera) }
   durableSetItem(storageRegistry.callSettings.key, JSON.stringify(clean))
   for (const listener of listeners) listener(clean)
 }

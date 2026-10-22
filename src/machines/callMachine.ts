@@ -25,6 +25,9 @@ export type CallContext = {
   video: boolean
   muted: boolean
   remoteMuted: boolean
+  /** This side is sending camera video. */
+  camera: boolean
+  remoteCamera: boolean
   startedAt: number
   connectedAt: number | null
   endedAt: number | null
@@ -38,7 +41,7 @@ export type CallEvent =
   | { type: 'INCOMING'; callId: string; peer: string; video: boolean; at: number }
   | { type: 'REACHED' }
   | { type: 'UNREACHABLE'; at: number }
-  | { type: 'ACCEPT' }
+  | { type: 'ACCEPT'; video: boolean }
   | { type: 'REMOTE_ACCEPTED' }
   | { type: 'DECLINE'; at: number }
   | { type: 'REMOTE_DECLINED'; busy: boolean; at: number }
@@ -47,7 +50,8 @@ export type CallEvent =
   | { type: 'HANG_UP'; at: number }
   | { type: 'REMOTE_HUNG_UP'; at: number }
   | { type: 'TOGGLE_MUTE' }
-  | { type: 'REMOTE_STATE'; muted: boolean }
+  | { type: 'CAMERA'; on: boolean }
+  | { type: 'REMOTE_STATE'; muted: boolean; camera: boolean }
   | { type: 'DISMISS' }
 
 const blank: CallContext = {
@@ -57,6 +61,8 @@ const blank: CallContext = {
   video: false,
   muted: false,
   remoteMuted: false,
+  camera: false,
+  remoteCamera: false,
   startedAt: 0,
   connectedAt: null,
   endedAt: null,
@@ -96,6 +102,8 @@ export const callMachine = setup({
         peer: event.peer,
         direction: event.type === 'DIAL' ? ('out' as const) : ('in' as const),
         video: event.video,
+        camera: event.type === 'DIAL' && event.video,
+        remoteCamera: event.type === 'INCOMING' && event.video,
         startedAt: event.at,
       }
     }),
@@ -107,7 +115,11 @@ export const callMachine = setup({
     })),
     reset: assign(() => ({ ...blank })),
     toggleMute: assign(({ context }) => ({ muted: !context.muted })),
-    remoteState: assign(({ event }) => (event.type === 'REMOTE_STATE' ? { remoteMuted: event.muted } : {})),
+    remoteState: assign(({ event }) =>
+      event.type === 'REMOTE_STATE' ? { remoteMuted: event.muted, remoteCamera: event.camera } : {},
+    ),
+    camera: assign(({ event }) => (event.type === 'CAMERA' ? { camera: event.on } : {})),
+    acceptWith: assign(({ event }) => (event.type === 'ACCEPT' ? { camera: event.video } : {})),
   },
 }).createMachine({
   id: 'call',
@@ -126,6 +138,7 @@ export const callMachine = setup({
         HANG_UP: { target: 'ended', actions: endAs('cancelled') },
         FAIL: { target: 'ended', actions: endAs('failed') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
+        CAMERA: { actions: 'camera' },
       },
       states: {
         reaching: {
@@ -151,7 +164,7 @@ export const callMachine = setup({
     incoming: {
       after: { ring: { target: 'ended', actions: endAs('missed') } },
       on: {
-        ACCEPT: 'connecting',
+        ACCEPT: { target: 'connecting', actions: 'acceptWith' },
         DECLINE: { target: 'ended', actions: endAs('declined') },
         REMOTE_HUNG_UP: { target: 'ended', actions: endAs('missed') },
       },
@@ -164,6 +177,7 @@ export const callMachine = setup({
         HANG_UP: { target: 'ended', actions: endAs('cancelled') },
         REMOTE_HUNG_UP: { target: 'ended', actions: endAs('cancelled') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
+        CAMERA: { actions: 'camera' },
         REMOTE_STATE: { actions: 'remoteState' },
       },
     },
@@ -173,6 +187,7 @@ export const callMachine = setup({
         REMOTE_HUNG_UP: { target: 'ended', actions: endAs('finished') },
         FAIL: { target: 'ended', actions: endAs('failed') },
         TOGGLE_MUTE: { actions: 'toggleMute' },
+        CAMERA: { actions: 'camera' },
         REMOTE_STATE: { actions: 'remoteState' },
       },
     },

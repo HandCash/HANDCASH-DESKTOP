@@ -22,7 +22,7 @@ type Phone = {
 
 const phones = new Map<string, Phone>()
 
-function phone(id: string, opts: Partial<CallEngineDeps> & { friends?: string[]; refuse?: string } = {}): Phone {
+function phone(id: string, opts: Partial<CallEngineDeps> & { friends?: string[]; refuse?: string; refuseVideo?: string } = {}): Phone {
   const made: FakeStream[] = []
   const pcs: FakeMediaConnection[] = []
   const p: Phone = { id, records: [], rings: [], made, pcs, online: true, engine: null as unknown as CallEngine }
@@ -37,7 +37,7 @@ function phone(id: string, opts: Partial<CallEngineDeps> & { friends?: string[];
     },
     rtc: () => fakeMediaRtc(pcs),
     iceServers: () => [],
-    getUserMedia: fakeGetUserMedia({ refuse: opts.refuse, made }),
+    getUserMedia: fakeGetUserMedia({ refuse: opts.refuse, refuseVideo: opts.refuseVideo, made }),
     mayRing: (peer) => friends.has(peer),
     record: (r) => p.records.push(r),
     ring: (kind) => {
@@ -251,5 +251,135 @@ describe('one-to-one voice calls', () => {
     await flush()
     expect(alice.records[0]?.outcome).toBe('finished')
     expect(state(alice)).toBe('ended')
+  })
+})
+
+function tracks(p: Phone, kind: 'audio' | 'video') {
+  return p.made.flatMap((s) => (kind === 'audio' ? s.getAudioTracks() : s.getVideoTracks()))
+}
+
+async function connectVideo(alice: Phone, bob: Phone, answer: { video?: boolean } = {}) {
+  alice.engine.call(BOB, { video: true })
+  await flush()
+  await bob.engine.accept(answer)
+  await flush()
+  await flush()
+}
+
+describe('video calls', () => {
+  it('a video call sends both cameras, and each side knows the other\u2019s is on', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    expect(state(alice)).toBe('active')
+    expect(bob.engine.getSnapshot().context).toMatchObject({ video: true, camera: true, remoteCamera: true })
+    expect(alice.engine.getSnapshot().context).toMatchObject({ camera: true, remoteCamera: true })
+    const aliceCam = tracks(alice, 'video')[0]!
+    const bobCam = tracks(bob, 'video')[0]!
+    expect(bob.engine.remoteStream()?.getVideoTracks()).toContain(aliceCam)
+    expect(alice.engine.remoteStream()?.getVideoTracks()).toContain(bobCam)
+  })
+
+  it('answering without video keeps the callee\u2019s camera closed', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    await connectVideo(alice, bob, { video: false })
+    expect(tracks(bob, 'video')).toHaveLength(0)
+    expect(bob.engine.getSnapshot().context.camera).toBe(false)
+    expect(alice.engine.getSnapshot().context.remoteCamera).toBe(false)
+    expect(bob.engine.getSnapshot().context.remoteCamera).toBe(true)
+  })
+
+  it('turning the camera off releases it and tells the far side; on again sends a fresh one', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    const first = tracks(alice, 'video')[0]!
+    await alice.engine.setCamera(false)
+    await flush()
+    expect(first.readyState).toBe('ended')
+    expect(alice.engine.localStream()?.getVideoTracks()).toHaveLength(0)
+    expect(bob.engine.getSnapshot().context.remoteCamera).toBe(false)
+
+    await alice.engine.setCamera(true)
+    await flush()
+    const second = tracks(alice, 'video')[1]!
+    expect(second.readyState).toBe('live')
+    expect(alice.engine.localStream()?.getVideoTracks()).toEqual([second])
+    expect(alice.pcs[0]!.getSenders().map((s) => s.track)).toContain(second)
+    expect(bob.engine.getSnapshot().context.remoteCamera).toBe(true)
+  })
+
+  it('a voice call can turn video on mid-call, renegotiating the new track over', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    alice.engine.call(BOB)
+    await flush()
+    await bob.engine.accept()
+    await flush()
+    await flush()
+    await bob.engine.setCamera(true)
+    await flush()
+    await flush()
+    const cam = tracks(bob, 'video')[0]!
+    expect(alice.engine.remoteStream()?.getVideoTracks()).toContain(cam)
+    expect(alice.engine.getSnapshot().context.remoteCamera).toBe(true)
+    expect(state(alice)).toBe('active')
+  })
+
+  it('switching camera and microphone swaps the sent tracks in place and remembers the choice', async () => {
+    const remembered: [string, string][] = []
+    const alice = phone(ALICE, { rememberDevice: (kind, id) => remembered.push([kind, id]) })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    const senders = alice.pcs[0]!.getSenders()
+    await alice.engine.useCamera('cam-back')
+    await alice.engine.useMic('mic-usb')
+    expect(alice.engine.devicesInUse()).toEqual({ mic: 'mic-usb', camera: 'cam-back' })
+    expect(alice.pcs[0]!.getSenders()).toHaveLength(senders.length)
+    expect(tracks(alice, 'video')[0]!.readyState).toBe('ended')
+    expect(tracks(alice, 'audio')[0]!.readyState).toBe('ended')
+    expect(remembered).toEqual([
+      ['camera', 'cam-back'],
+      ['mic', 'mic-usb'],
+    ])
+  })
+
+  it('a switched microphone stays muted when the call is muted', async () => {
+    const alice = phone(ALICE)
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    alice.engine.toggleMute()
+    await alice.engine.useMic('mic-usb')
+    expect(alice.engine.localStream()?.getAudioTracks()[0]?.enabled).toBe(false)
+  })
+
+  it('a camera that will not start leaves the call going as voice and says why', async () => {
+    const alice = phone(ALICE, { refuseVideo: 'NotReadableError' })
+    const bob = phone(BOB)
+    await connectVideo(alice, bob)
+    expect(state(alice)).toBe('active')
+    expect(alice.engine.getSnapshot().context.camera).toBe(false)
+    expect(alice.engine.cameraProblem()).toBe('The camera is in use by another app')
+    expect(bob.engine.getSnapshot().context.remoteCamera).toBe(false)
+  })
+
+  it('opens the remembered devices, preferred rather than required', async () => {
+    const asked: MediaStreamConstraints[] = []
+    const gum = fakeGetUserMedia()
+    const alice = phone(ALICE, {
+      devices: () => ({ mic: 'mic-usb', camera: 'cam-back' }),
+      getUserMedia: (c) => {
+        asked.push(c)
+        return gum(c)
+      },
+    })
+    phone(BOB)
+    alice.engine.call(BOB, { video: true })
+    await flush()
+    expect(asked).toEqual([
+      { audio: expect.objectContaining({ deviceId: { ideal: 'mic-usb' } }) },
+      { video: expect.objectContaining({ deviceId: { ideal: 'cam-back' } }) },
+    ])
   })
 })

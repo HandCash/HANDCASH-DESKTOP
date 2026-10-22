@@ -18363,7 +18363,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 
 /* Friend calls: the call button on a friend row, the call dock, and call rows on Activity. */
 
-.friend-row:has(> .friend-row-call) {
+.friend-row:has(> .friend-row-calls) {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
 }
@@ -18543,4 +18543,117 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   .call-dock[data-aeon-state='incoming'] .call-dock-mark {
     animation: none;
   }
+}
+
+.call-dock[data-video] {
+  width: min(560px, calc(100vw - 32px));
+  padding: 10px 10px 10px 14px;
+  border-radius: var(--hc-radius);
+}
+
+.call-dock-stage {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  max-height: calc(100vh - 160px);
+  margin: -4px -4px 0 -8px;
+  overflow: hidden;
+  border-radius: calc(var(--hc-radius) - 4px);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.call-dock-remote {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-dock-stage-name {
+  color: var(--hc-muted);
+  font-size: var(--hc-text-lg, 1.125rem);
+  font-weight: 600;
+}
+
+.call-dock-self {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 28%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--hc-radius) - 6px);
+  background: var(--hc-bg-elevated);
+  transform: scaleX(-1);
+}
+
+.call-dock-remote[hidden],
+.call-dock-self[hidden] {
+  display: none;
+}
+
+.call-dock-devices {
+  position: relative;
+}
+
+.call-dock-devices > summary {
+  list-style: none;
+}
+
+.call-dock-devices > summary::-webkit-details-marker {
+  display: none;
+}
+
+.call-dock-devices[open] > summary {
+  background: color-mix(in srgb, var(--hc-text) 12%, transparent);
+}
+
+.call-dock-devices-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  display: grid;
+  gap: 10px;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: var(--hc-bg-elevated);
+  box-shadow: var(--hc-shadow);
+}
+
+.call-dock-device {
+  display: grid;
+  gap: 4px;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-xs);
+}
+
+.call-dock-device select {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--hc-radius) - 6px);
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+  color: var(--hc-text);
+  font: inherit;
+  font-size: var(--hc-text-sm, 0.875rem);
+}
+
+.call-dock-btn[data-aeon-part='accept-voice'] {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--hc-tone-receive) 22%, transparent);
+  color: var(--hc-text);
+}
+
+.friend-row-calls {
+  display: inline-flex;
+  margin-right: 8px;
+}
+
+.friend-row-calls > .friend-row-call {
+  margin-right: 0;
 }
