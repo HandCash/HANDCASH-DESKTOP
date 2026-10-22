@@ -20,6 +20,7 @@ import { useAsyncAction } from '../hooks/useAsyncAction'
 import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CopyIcon, MessagesIcon } from './icons'
 import { PeerIdentityBlock, PeerIdentityLine } from './PeerIdentity'
+import { SendAccountPanel } from './SendAccountPanel'
 
 const MAX_CARD_FILE_BYTES = 400 * 1024
 
@@ -33,6 +34,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [label, setLabel] = useState(friend?.label ?? '')
   const [error, setError] = useState<string | null>(null)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
+  const [sendingWallet, setSendingWallet] = useState(false)
   const card = useAsyncAction<'ask' | 'import'>()
   const cardFile = useRef<HTMLInputElement>(null)
   const peer = usePeerIdentity(chain, friend?.identityKey, friend)
@@ -51,6 +53,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     setLabel(next?.label ?? '')
     setError(null)
     setConfirmingRemove(false)
+    setSendingWallet(false)
     card.reset()
   }, [friendId, card.reset])
 
@@ -219,6 +222,26 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             {error}
           </p>
         ) : null}
+
+        <section className="friend-send-account" data-aeon-part="send-account">
+          {sendingWallet ? (
+            <SendAccountPanel
+              recipientIdentityKey={friend.identityKey}
+              recipientLabel={friend.label}
+              onSent={() => setSendingWallet(false)}
+              onCancel={() => setSendingWallet(false)}
+            />
+          ) : (
+            <Button.Root
+              variant="ghost"
+              className="btn btn-ghost"
+              type="button"
+              onClick={withSoftSound(() => setSendingWallet(true))}
+            >
+              <Button.Label>Send a wallet</Button.Label>
+            </Button.Root>
+          )}
+        </section>
 
         <div className="actions friend-details-actions">
           <Button.Root

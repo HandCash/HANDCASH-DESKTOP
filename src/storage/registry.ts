@@ -953,6 +953,20 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  /** Sub-accounts this install sealed to another person's identity (never spend again). */
+  accountSendGifted: defineStorage({
+    key: 'handcash.account-send.gifted.v1',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
+  /** Account-send packages opened here and not yet installed as a vault. */
+  accountSendPending: defineStorage({
+    key: 'handcash.account-send.pending.v1',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
   collectionViewPrefix: defineStorage({
     key: 'handcash.brc100.collectionView',
     owner: 'shell',
