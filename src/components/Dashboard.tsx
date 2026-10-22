@@ -17,6 +17,8 @@ import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { useShownCoinChains } from '../features/acceptedCoins'
 import { COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
 import { coinUsd, holdingShares } from '../wallet/heldValue'
+import { coinHoldings, showsHoldings } from '../wallet/coinHoldings'
+import { CoinHoldings } from './CoinHoldings'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import {
   getDisplayCurrency,
@@ -369,9 +371,23 @@ export function Dashboard({
         parts: holdings.filter((part) => part !== focus && !(part === bsvPart && balanceSats === 0)),
         prefix: '+',
       }
+  // Two or more coins held, each gets a chip under the balance, so the line
+  // under the headline no longer lists them.
+  const coinsHeld = coinHoldings([
+    { coin: 'bsv', amount: bsvLabel, usd: bsvUsd, nonZero: balanceSats > 0 },
+    ...heldChains.map((chain) => ({
+      coin: chain as MarketCoin,
+      amount: `${formatCoinShort(chain, heldCoins[chain])} ${COIN_INFO[chain].ticker}`,
+      usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]),
+      nonZero: true,
+    })),
+  ])
+  const stripShown = showsHoldings(coinsHeld)
+  const listedParts = stripShown ? null : heldParts
   const secondaryParts = emptyPart
-    ? { parts: [emptyPart, ...(heldParts?.parts ?? [])], prefix: heldParts?.prefix ?? null }
-    : heldParts
+    ? { parts: [emptyPart, ...(listedParts?.parts ?? [])], prefix: listedParts?.prefix ?? null }
+    : listedParts
+  const secondaryText = stripShown && currency === 'usd' ? `Across ${coinsHeld.length} coins` : usdLabel
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
@@ -853,7 +869,7 @@ export function Dashboard({
                         {secondaryParts ? (
                           <BalanceParts {...secondaryParts} />
                         ) : (
-                          usdLabel
+                          secondaryText
                         )}
                       </span>
                       <span className="sr-only">
@@ -900,6 +916,7 @@ export function Dashboard({
               </Button.Root>
             </div>
           </div>
+          {stripShown && !balancePending ? <CoinHoldings holdings={coinsHeld} /> : null}
         </div>
 
         <RenderProbe id="nav">
