@@ -60,12 +60,12 @@ export async function enrollLocalFromBridge(identityKey: string): Promise<Device
   })
 }
 
-async function refreshPeer(peer: DeviceWallet, identityKey: string): Promise<void> {
+async function refreshPeer(peer: DeviceWallet, identityKey: string, rootKeyHex: string): Promise<void> {
   if (!peer.peerBaseUrl) {
     patchDeviceWallet(peer.deviceId, { online: false })
     return
   }
-  const health = await probeDevicePeer(peer.peerBaseUrl)
+  const health = await probeDevicePeer(peer.peerBaseUrl, rootKeyHex)
   if (!health || health.identityKey !== identityKey) {
     patchDeviceWallet(peer.deviceId, { online: false })
     return
@@ -76,7 +76,7 @@ async function refreshPeer(peer: DeviceWallet, identityKey: string): Promise<voi
     label: health.label || undefined,
   })
   try {
-    const snap = await fetchDevicePeerSnapshot(peer.peerBaseUrl, identityKey)
+    const snap = await fetchDevicePeerSnapshot(peer.peerBaseUrl, identityKey, rootKeyHex)
     snapshotCache.set(peer.deviceId, snap)
     notifySnapshots()
     if (Array.isArray(snap.friends) && snap.friends.length > 0) {
@@ -99,7 +99,7 @@ export async function pollDeviceMeshOnce(): Promise<void> {
         !w.isLocal &&
         w.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
     )
-    await Promise.all(peers.map((p) => refreshPeer(p, active.identityKey)))
+    await Promise.all(peers.map((p) => refreshPeer(p, active.identityKey, active.rootKeyHex)))
   } finally {
     polling = false
   }

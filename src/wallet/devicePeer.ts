@@ -6,6 +6,7 @@ import {
   type DevicePairPayload,
   parsePairPayload,
 } from './deviceWallets'
+import { DEVICE_PEER_AUTH_HEADER, createDeviceAuth, openFromPeer } from './devicePeerAuth'
 
 export type DevicePeerHealth = {
   ok: boolean
@@ -36,17 +37,35 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+/** GET a device-peer wallet route with a proof, and open the sealed answer. */
+async function getSealed<T>(
+  peerBaseUrl: string,
+  route: string,
+  rootKeyHex: string,
+  timeoutMs: number,
+): Promise<T> {
+  const { header, nonce } = await createDeviceAuth(rootKeyHex, 'GET', route)
+  const res = await fetch(joinUrl(peerBaseUrl, route), {
+    method: 'GET',
+    headers: { [DEVICE_PEER_AUTH_HEADER]: header, Accept: 'application/json' },
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 160)
+    throw new Error(`Peer ${route} failed (${res.status})${detail ? `: ${detail}` : ''}`)
+  }
+  const { sealed } = (await res.json()) as { sealed?: unknown }
+  if (typeof sealed !== 'string') throw new Error(`Peer ${route} answered unsealed`)
+  return openFromPeer<T>(rootKeyHex, nonce, sealed)
+}
+
 export async function probeDevicePeer(
   peerBaseUrl: string,
+  rootKeyHex: string,
   timeoutMs = 2500,
 ): Promise<DevicePeerHealth | null> {
   try {
-    const res = await fetch(joinUrl(peerBaseUrl, '/handcash-device/v1/health'), {
-      method: 'GET',
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    if (!res.ok) return null
-    const data = (await res.json()) as DevicePeerHealth
+    const data = await getSealed<DevicePeerHealth>(peerBaseUrl, '/handcash-device/v1/health', rootKeyHex, timeoutMs)
     if (!data?.ok || typeof data.identityKey !== 'string') return null
     return data
   } catch {
@@ -57,21 +76,10 @@ export async function probeDevicePeer(
 export async function fetchDevicePeerSnapshot(
   peerBaseUrl: string,
   expectedIdentityKey: string,
+  rootKeyHex: string,
   timeoutMs = 8000,
 ): Promise<DevicePeerSnapshot> {
-  const res = await fetch(joinUrl(peerBaseUrl, '/handcash-device/v1/snapshot'), {
-    method: 'GET',
-    headers: {
-      'X-HandCash-Identity': expectedIdentityKey,
-      Accept: 'application/json',
-    },
-    signal: AbortSignal.timeout(timeoutMs),
-  })
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 160)
-    throw new Error(`Peer snapshot failed (${res.status})${detail ? `: ${detail}` : ''}`)
-  }
-  const data = (await res.json()) as DevicePeerSnapshot
+  const data = await getSealed<DevicePeerSnapshot>(peerBaseUrl, '/handcash-device/v1/snapshot', rootKeyHex, timeoutMs)
   if (data.identityKey !== expectedIdentityKey) {
     throw new Error('Peer identity mismatch on snapshot')
   }
@@ -86,6 +94,7 @@ export async function fetchDevicePeerSnapshot(
 export async function verifyAndEnrichPair(
   raw: string,
   localIdentityKey: string,
+  localRootKeyHex?: string,
 ): Promise<DevicePairPayload & { online: boolean; address?: string }> {
   const payload = parsePairPayload(raw)
   if (payload.deviceId === getOrCreateDeviceId()) {
@@ -101,11 +110,11 @@ export async function verifyAndEnrichPair(
     assertPairBackupUrlCompatible(payload.backupBaseUrl)
   }
 
-  if (!payload.peerBaseUrl) {
+  if (!payload.peerBaseUrl || !localRootKeyHex) {
     return { ...payload, online: false }
   }
 
-  const health = await probeDevicePeer(payload.peerBaseUrl)
+  const health = await probeDevicePeer(payload.peerBaseUrl, localRootKeyHex)
   if (!health) {
     return { ...payload, online: false }
   }

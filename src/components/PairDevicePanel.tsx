@@ -216,7 +216,7 @@ export function PairDevicePanel() {
         return
       }
 
-      const enriched = await verifyAndEnrichPair(raw, wallet.identityKey)
+      const enriched = await verifyAndEnrichPair(raw, wallet.identityKey, wallet.rootKeyHex)
       upsertPeerDevice({
         deviceId: enriched.deviceId,
         label: enriched.label,

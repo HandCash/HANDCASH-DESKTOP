@@ -3,12 +3,12 @@
  * BRC-100 app bridge stays on 127.0.0.1:3321 / 2121.
  */
 import express, { type Request, type Response } from 'express'
-import cors from 'cors'
 import { ipcMain } from 'electron'
 import os from 'node:os'
 import log from 'electron-log'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { jsonRequestErrors } from './requestErrors.js'
+import { devicePeerCorsHeaders, devicePeerOriginAllowed } from './devicePeerOrigin.js'
 
 /** Keep in sync with src/wallet/deviceWallets.ts DEVICE_PEER_PORT */
 const DEVICE_PEER_PORT = 3340
@@ -38,9 +38,10 @@ let requestIdCounter = 1
 const pendingRequests = new Map<number, PendingRequest>()
 
 function setCorsHeaders(res: Response): void {
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Headers', '*')
-  res.header('Access-Control-Allow-Methods', '*')
+  const origin = res.req.headers.origin
+  for (const [key, value] of Object.entries(devicePeerCorsHeaders(origin))) {
+    res.header(key, value)
+  }
 }
 
 export function listLanIpv4Addresses(): string[] {
@@ -61,7 +62,14 @@ export async function startDevicePeerServer(windows: BridgeWindowSource): Promis
   stop: () => Promise<void>
 }> {
   const app = express()
-  app.use(cors({ origin: '*' }))
+  app.use((req, res, next) => {
+    if (devicePeerOriginAllowed(req.headers.origin)) {
+      next()
+      return
+    }
+    log.warn(`[device-peer] refused origin ${req.headers.origin}`)
+    res.status(403).json({ status: 'error', code: 'ORIGIN_REFUSED', description: 'Not a HandCash app' })
+  })
   app.use(express.json({ limit: '2mb' }))
 
   app.options('*', (_req, res) => {
