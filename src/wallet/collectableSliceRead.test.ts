@@ -65,6 +65,7 @@ const active = {
       const next = answers.shift()
       return next ? next() : { outputs: [] }
     }),
+    relinquishOutput: vi.fn(async () => ({ relinquished: true })),
   },
 }
 
@@ -98,6 +99,7 @@ beforeEach(() => {
   findOutputs.mockClear()
   active.wallet.storage = undefined
   active.wallet.listOutputs.mockClear()
+  active.wallet.relinquishOutput.mockClear()
 })
 
 describe('a Collect read under contention', () => {
@@ -125,6 +127,13 @@ describe('a Collect read under contention', () => {
 
     finish({ outputs: [] })
     await reading
+    // The foreign tips are released in the background; a release still running
+    // when the file ends fails the whole run at worker teardown.
+    let released = -1
+    while (released !== active.wallet.relinquishOutput.mock.calls.length) {
+      released = active.wallet.relinquishOutput.mock.calls.length
+      await new Promise((resolve) => setImmediate(resolve))
+    }
   })
 })
 
