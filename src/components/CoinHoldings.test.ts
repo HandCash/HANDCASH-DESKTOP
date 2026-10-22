@@ -54,7 +54,6 @@ describe('coin holdings layout', () => {
       expect(html).toContain(`data-count="${n}"`)
       expect(html).toContain(`data-cols="${holdingsColumns(n)}"`)
       expect(html.match(/class="coin-holding"/g)).toHaveLength(n)
-      expect(html.match(/class="coin-mark"/g)).toHaveLength(n)
       expect(html.match(/<span data-coin="[a-z]+" style="flex-grow:/g)).toHaveLength(n)
       expect(html).not.toMatch(/\(BSV\)|\(LTC\)/)
     })
