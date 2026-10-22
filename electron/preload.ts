@@ -126,6 +126,8 @@ const handcash = {
   ) => ipcRenderer.sendSync('storage:set-sync', key, value, opts) as boolean,
   safeStorageAvailable: () =>
     ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
+  vaultOpenError: () =>
+    ipcRenderer.invoke('storage:vault-open-error') as Promise<string | null>,
   deviceAuthStatus: () =>
     ipcRenderer.invoke('device-auth:status') as Promise<{
       available: boolean

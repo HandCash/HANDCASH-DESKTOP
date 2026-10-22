@@ -2,6 +2,7 @@ import { Button } from '@aeon-ui/react'
 import { useEffect, useState } from 'react'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import { applyOnboardLock } from '../wallet/applyOnboardLock'
+import { osKeyStorageAvailable, protectChoice } from '../wallet/defaultDeviceLock'
 import { type DeviceLockMode } from '../wallet/deviceLockPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { useAsyncAction } from '../hooks/useAsyncAction'
@@ -44,9 +45,13 @@ const OPTIONS: {
   },
 ]
 
+const NO_KEYSTORE = 'Needs a system keyring on this computer, or anyone who can read its files could open this wallet.'
+
 export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
   const [device, setDevice] = useState<DeviceAuthStatus | null>(null)
-  const [mode, setMode] = useState<DeviceLockMode>('none')
+  const [noneAllowed, setNoneAllowed] = useState(false)
+  /** Null until the device is known, so no choice shows before its default. */
+  const [mode, setMode] = useState<DeviceLockMode | null>(null)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   /** Synchronous choice/policy failures; the async failure lives in the chart. */
@@ -55,10 +60,12 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    void deviceAuthStatus().then((status) => {
+    void Promise.all([deviceAuthStatus(), osKeyStorageAvailable()]).then(([status, osKeyStorage]) => {
       if (cancelled) return
+      const choice = protectChoice({ deviceAvailable: status.available, osKeyStorage })
       setDevice(status)
-      if (status.available) setMode('device')
+      setNoneAllowed(choice.noneAllowed)
+      setMode(choice.defaultMode)
     })
     return () => {
       cancelled = true
@@ -71,6 +78,11 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
 
   const apply = async () => {
     setFormError(null)
+    if (!mode) return
+    if (mode === 'none' && !noneAllowed) {
+      setFormError(NO_KEYSTORE)
+      return
+    }
     if ((mode === 'device' || mode === 'both') && !deviceAvailable) {
       setFormError(`${deviceLabel} is not available on this device`)
       return
@@ -107,7 +119,8 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
 
       <div className="wallet-setup-options" role="radiogroup" aria-label="Device lock">
         {OPTIONS.map((opt) => {
-          const disabled = opt.needsDevice && !deviceAvailable
+          const noKeystore = opt.id === 'none' && !noneAllowed
+          const disabled = (opt.needsDevice && !deviceAvailable) || noKeystore
           const active = mode === opt.id
           const title = opt.id === 'device' || opt.id === 'both'
             ? opt.title.replace('Touch ID', deviceLabel)
@@ -136,9 +149,11 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
               <span className="wallet-setup-option-body">
                 <strong>{title}</strong>
                 <span>
-                  {disabled
-                    ? `${deviceLabel} is not available on this device`
-                    : opt.description}
+                  {noKeystore
+                    ? NO_KEYSTORE
+                    : disabled
+                      ? `${deviceLabel} is not available on this device`
+                      : opt.description}
                 </span>
               </span>
             </label>
@@ -183,7 +198,7 @@ export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
       >
         <Button.Root variant="solid"
           className="btn btn-primary auth-submit"
-          disabled={save.busy}
+          disabled={save.busy || !mode}
           onClick={() => void apply()}
         >
           <Button.Label>{save.busy ? 'Saving…' : 'Continue'}</Button.Label>

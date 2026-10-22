@@ -49,20 +49,20 @@ export async function applyOnboardLock(args: {
 }
 
 /**
- * A device joined by approval skips "Protect this device": it takes the
- * panel's default, device unlock where available, else no prompt. Settings
- * changes it later.
+ * A device joined by approval skips "Protect this device" when it can take
+ * device unlock. Otherwise (Windows, Linux, a Mac without Touch ID, or a
+ * cancelled prompt) it returns null and the holder chooses, so a joined
+ * device never opens without a prompt unless they pick that.
  */
 export async function applyJoinedDeviceLock(
   wrapPassword: string,
   deviceAvailable: boolean,
-): Promise<{ sessionPassword: string | null; mode: DeviceLockMode }> {
-  if (deviceAvailable) {
-    try {
-      return { ...(await applyOnboardLock({ wrapPassword, mode: 'device' })), mode: 'device' }
-    } catch (err) {
-      console.warn('[onboard] device unlock for a joined device failed', err)
-    }
+): Promise<{ sessionPassword: string | null; mode: DeviceLockMode } | null> {
+  if (!deviceAvailable) return null
+  try {
+    return { ...(await applyOnboardLock({ wrapPassword, mode: 'device' })), mode: 'device' }
+  } catch (err) {
+    console.warn('[onboard] device unlock for a joined device failed', err)
+    return null
   }
-  return { ...(await applyOnboardLock({ wrapPassword, mode: 'none' })), mode: 'none' }
 }
