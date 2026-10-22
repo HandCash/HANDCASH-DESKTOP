@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { firstOnboardStep, masterKeyAlreadyBackedUp } from './onboardSteps'
+import { firstOnboardStep, masterKeyAlreadyBackedUp, stepAfterAccept } from './onboardSteps'
 
 describe('onboarding route', () => {
   it('a new vault asks for its key backup, or goes to what it accepts without a phrase', () => {
     expect(firstOnboardStep('create', true)).toBe('keys-backup')
     expect(firstOnboardStep('create', false)).toBe('accept')
     expect(masterKeyAlreadyBackedUp('create')).toBe(false)
+  })
+
+  it('a new wallet asks for a sign-in email after what it accepts, unless it already has one', () => {
+    expect(stepAfterAccept(false)).toBe('email')
+    expect(stepAfterAccept(true)).toBe('protect')
   })
 
   it('a restore skips the key backup and starts at history', () => {

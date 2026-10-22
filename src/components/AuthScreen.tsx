@@ -67,6 +67,7 @@ import { FingerprintIcon } from './icons'
 import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
 import { OnboardAcceptPanel } from './OnboardAcceptPanel'
+import { OnboardEmailPanel } from './OnboardEmailPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 import { DeviceSignInPanel, type ApprovedVault } from './DeviceSignInPanel'
 import {
@@ -78,10 +79,16 @@ import {
   type FormMode,
 } from './auth/authModes'
 import { setLegacyGoogleEnrollment } from '../wallet/legacyGoogleRecovery'
-import { setSigninEmail } from '../wallet/deviceSignin'
+import { getSigninEmail, setSigninEmail } from '../wallet/deviceSignin'
 import type { VaultAccountStore } from '../wallet/vaultAccounts'
 import { markMasterKeyBackupConfirmed } from '../wallet/backupStatus'
-import { firstOnboardStep, masterKeyAlreadyBackedUp, type OnboardRoute } from '../wallet/onboardSteps'
+import {
+  firstOnboardStep,
+  masterKeyAlreadyBackedUp,
+  stepAfterAccept,
+  type OnboardRoute,
+  type OnboardStep,
+} from '../wallet/onboardSteps'
 import { applyJoinedDeviceLock } from '../wallet/applyOnboardLock'
 
 type Props = {
@@ -158,7 +165,7 @@ export function AuthScreen({
     wrapPassword: string
     mnemonic: string | null
     rootKeyHex: string
-    step: 'keys-backup' | 'history' | 'accept' | 'protect'
+    step: OnboardStep
     kind: 'create' | 'restore'
   } | null>(null)
   /** Holds the create/unlock form off-screen while the vault opens — avoids password flash. */
@@ -737,6 +744,18 @@ export function AuthScreen({
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="accept">
         <OnboardAcceptPanel
+          onDone={() => {
+            setPendingOnboard({ ...pendingOnboard, step: stepAfterAccept(Boolean(getSigninEmail())) })
+          }}
+        />
+      </section>
+    )
+  }
+
+  if (pendingOnboard?.step === 'email') {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="email">
+        <OnboardEmailPanel
           onDone={() => {
             setPendingOnboard({ ...pendingOnboard, step: 'protect' })
           }}
