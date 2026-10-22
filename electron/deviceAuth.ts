@@ -22,16 +22,9 @@ function canSeal(): boolean {
   }
 }
 
+/** The factor's name; `available` says whether it can be used. */
 function platformLabel(): string {
-  if (process.platform === 'darwin') {
-    try {
-      if (systemPreferences.canPromptTouchID()) return 'Touch ID'
-    } catch {
-      // ignore
-    }
-    return 'Device unlock unavailable'
-  }
-  return 'Device unlock unavailable'
+  return process.platform === 'darwin' ? 'Touch ID' : 'Device unlock'
 }
 
 async function promptPresence(reason: string): Promise<void> {

@@ -423,7 +423,7 @@ export function UnlockSettingsPanel() {
         <h3 className="confirm-password-title">Unlock</h3>
         <p className="confirm-password-lede">
           {isNoDeviceLock()
-            ? 'This device opens the wallet without a prompt. Add a password or Touch ID any time.'
+            ? `This device opens the wallet without a prompt. Add a password${deviceAvailable ? ` or ${deviceLabel}` : ''} any time.`
             : 'Use this device’s fingerprint or lock screen, a HandCash password, or both. Keep at least one.'}
         </p>
       </div>
