@@ -18743,3 +18743,47 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.call-dock-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.call-dock-safety-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--hc-muted);
+  cursor: pointer;
+}
+
+.call-dock-safety-mark:hover {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.call-dock-safety-mark:focus-visible {
+  outline: 2px solid var(--hc-accent);
+  outline-offset: 1px;
+}
+
+.call-dock-safety-menu {
+  right: auto;
+  left: 0;
+  width: 260px;
+  gap: 6px;
+}
+
+.call-dock-safety-code {
+  margin: 0;
+  font-size: var(--hc-text-lg);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  user-select: text;
+}

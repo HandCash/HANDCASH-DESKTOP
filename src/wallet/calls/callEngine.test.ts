@@ -21,6 +21,8 @@ type Phone = {
 }
 
 const phones = new Map<string, Phone>()
+/** Taken before fake timers go in: WebCrypto settles on the real event loop. */
+const realTimeout = globalThis.setTimeout
 
 function phone(id: string, opts: Partial<CallEngineDeps> & { friends?: string[]; refuse?: string; refuseVideo?: string } = {}): Phone {
   const made: FakeStream[] = []
@@ -495,5 +497,111 @@ describe('screen sharing', () => {
     expect(alice.engine.canShareScreen()).toBe(false)
     await alice.engine.shareScreen('screen:1:0')
     expect(alice.engine.getSnapshot().context.sharing).toBe(false)
+  })
+})
+
+function fakeE2ee(id: string, opts: { refuse?: boolean } = {}) {
+  const seen = { senders: [] as unknown[], receivers: [] as unknown[], closed: 0, unreadable: null as (() => void) | null }
+  const deps: NonNullable<CallEngineDeps['e2ee']> = {
+    self: () => id,
+    secret: async (peer, callId) => {
+      if (opts.refuse) throw new Error('no account')
+      const text = `${[id, peer].sort().join(' ')} ${callId}`
+      return Uint8Array.from({ length: 32 }, (_, i) => text.charCodeAt(i % text.length) ^ i)
+    },
+    protector: (_keys, onUnreadable) => {
+      seen.unreadable = onUnreadable
+      return {
+        config: {},
+        sender: (sender) => seen.senders.push(sender),
+        receiver: (receiver) => seen.receivers.push(receiver),
+        close: () => {
+          seen.closed += 1
+        },
+      }
+    },
+  }
+  return { seen, deps }
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i += 1) {
+    await new Promise((resolve) => realTimeout(resolve, 2))
+    await flush()
+  }
+}
+
+describe('end-to-end media keys', () => {
+  it('seals every sender and receiver under agreed keys, and both sides show the same safety code', async () => {
+    const a = fakeE2ee(ALICE)
+    const b = fakeE2ee(BOB)
+    const alice = phone(ALICE, { e2ee: a.deps })
+    const bob = phone(BOB, { e2ee: b.deps })
+    alice.engine.call(BOB, { video: true })
+    await settle()
+    await bob.engine.accept()
+    await settle()
+    expect(state(alice)).toBe('active')
+    const code = alice.engine.safetyCode()
+    expect(code).toMatch(/^\d{4} \d{4} \d{4}$/)
+    expect(bob.engine.safetyCode()).toBe(code)
+    expect(alice.engine.encrypted() && bob.engine.encrypted()).toBe(true)
+    expect(a.seen.senders).toEqual(alice.pcs[0]!.getSenders())
+    expect(b.seen.senders).toEqual(bob.pcs[0]!.getSenders())
+    expect(a.seen.senders).toHaveLength(2)
+    expect(a.seen.receivers).toHaveLength(2)
+    expect(b.seen.receivers).toHaveLength(2)
+
+    alice.engine.hangUp()
+    await settle()
+    expect(a.seen.closed).toBe(1)
+    expect(b.seen.closed).toBe(1)
+    expect(alice.engine.safetyCode()).toBeNull()
+  })
+
+  it('a camera turned on mid-call is sealed too, and a shared screen rides the same sealed sender', async () => {
+    const a = fakeE2ee(ALICE)
+    const alice = phone(ALICE, {
+      e2ee: a.deps,
+      captureScreen: async () => new FakeStream([new FakeTrack('video', 'screen')]) as unknown as MediaStream,
+    })
+    const bob = phone(BOB, { e2ee: fakeE2ee(BOB).deps })
+    alice.engine.call(BOB)
+    await settle()
+    await bob.engine.accept()
+    await settle()
+    expect(a.seen.senders).toHaveLength(1)
+    await alice.engine.setCamera(true)
+    await settle()
+    expect(a.seen.senders).toHaveLength(2)
+    await alice.engine.shareScreen('screen:1:0')
+    await settle()
+    expect(a.seen.senders).toHaveLength(2)
+    expect(alice.pcs[0]!.getSenders()).toHaveLength(2)
+  })
+
+  it('keys that cannot be agreed end the call instead of sending in the clear', async () => {
+    const alice = phone(ALICE, { e2ee: fakeE2ee(ALICE).deps })
+    const bob = phone(BOB, { e2ee: fakeE2ee(BOB, { refuse: true }).deps })
+    alice.engine.call(BOB)
+    await settle()
+    await bob.engine.accept()
+    await settle()
+    expect(bob.pcs).toHaveLength(0)
+    expect(bob.records[0]?.outcome).toBe('failed')
+    expect(state(alice)).toBe('ended')
+  })
+
+  it('says so when the far side\u2019s frames stop opening', async () => {
+    const a = fakeE2ee(ALICE)
+    const alice = phone(ALICE, { e2ee: a.deps })
+    const bob = phone(BOB, { e2ee: fakeE2ee(BOB).deps })
+    alice.engine.call(BOB)
+    await settle()
+    await bob.engine.accept()
+    await settle()
+    expect(alice.engine.e2eProblem()).toBeNull()
+    a.seen.unreadable!()
+    expect(alice.engine.e2eProblem()).toMatch(/can\u2019t be decrypted/)
   })
 })

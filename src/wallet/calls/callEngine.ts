@@ -1,15 +1,18 @@
 /**
  * Calls between friends: the call chart plus what it drives. Signalling is
  * call frames (`callWire.ts`) on the identity-authenticated direct session;
- * media is its own peer connection per leg (`mediaPeer.ts`). Nothing here
- * touches keys that spend, and nothing here moves funds.
+ * media is its own peer connection per leg (`mediaPeer.ts`), its frames sealed
+ * under keys only the two identity keys can derive (`mediaKeys.ts`). Nothing
+ * here touches keys that spend, and nothing here moves funds.
  */
 
 import { createActor, type SnapshotFrom } from 'xstate'
 import { callMachine, type CallContext } from '../../machines/callMachine'
 import type { CallRecord } from './callHistory'
 import { encodeCallFrame, newCallId, parseCallFrame, type CallFrame } from './callWire'
+import type { FrameProtector } from './frameProtector'
 import { cameraConstraints, cameraFailureText, micConstraints } from './mediaDevices'
+import { callKeys, safetyCode, type CallKeys } from './mediaKeys'
 import { createMediaPeer, type MediaPeer, type MediaRtcConstructor, type MediaSignal } from './mediaPeer'
 import type { RingKind } from './ringtone'
 
@@ -37,6 +40,16 @@ export type CallEngineDeps = {
   /** A screen or window the user just picked, as a stream; absent where sharing is not possible. */
   captureScreen?: (sourceId: string) => Promise<MediaStream>
   screenFailureText?: (err: unknown) => string
+  /**
+   * End-to-end media keys: this identity, the secret it shares with `peer` for
+   * one call, and what seals and opens frames with the keys made from it.
+   * Absent, media rests on DTLS-SRTP alone.
+   */
+  e2ee?: {
+    self: () => string
+    secret: (peer: string, callId: string) => Promise<Uint8Array>
+    protector: (keys: CallKeys, onUnreadable: () => void) => FrameProtector
+  }
   log?: (what: string, err?: unknown) => void
 }
 
@@ -81,6 +94,11 @@ export function createCallEngine(deps: CallEngineDeps) {
   let shareProblem: string | null = null
   /** The screen or window track being sent in place of the camera. */
   let screen: MediaStreamTrack | null = null
+  /** The current call's media secret and frame protector, made once per call. */
+  let secured: { callId: string; done: Promise<{ secret: Uint8Array; protector: FrameProtector } | null> } | null = null
+  let safety: string | null = null
+  /** The far side's frames stopped opening under this call's keys. */
+  let unreadable = false
   const devices = deps.devices ?? (() => ({ mic: null, camera: null }))
 
   function ctx(): CallContext {
@@ -106,6 +124,11 @@ export function createCallEngine(deps: CallEngineDeps) {
 
   function teardown(): void {
     screen = null
+    const ending = secured
+    secured = null
+    safety = null
+    unreadable = false
+    void ending?.done.then((s) => s?.protector.close())
     clearTimeout(dropTimer)
     leg?.media?.close()
     leg = null
@@ -162,13 +185,52 @@ export function createCallEngine(deps: CallEngineDeps) {
     return !s.matches('idle') && !s.matches('ended')
   }
 
-  function openLeg(peer: string, polite: boolean): void {
+  /** Start deriving this call's media keys; the same promise for the rest of the call. */
+  function secure(peer: string, callId: string) {
+    const e2ee = deps.e2ee
+    if (!e2ee) return null
+    if (secured?.callId === callId) return secured.done
+    const done = (async () => {
+      const secret = await e2ee.secret(peer, callId)
+      const keys = await callKeys(secret, norm(e2ee.self()), peer, callId)
+      const protector = e2ee.protector(keys, () => {
+        if (ctx().callId !== callId || unreadable) return
+        unreadable = true
+        emit()
+      })
+      return { secret, protector }
+    })().catch((err) => {
+      log('media keys not agreed', err)
+      return null
+    })
+    secured = { callId, done }
+    return done
+  }
+
+  async function showSafetyCode(callId: string): Promise<void> {
+    const s = await secured?.done
+    const media = leg?.media
+    if (!s || !media || ctx().callId !== callId) return
+    const code = await safetyCode(s.secret, callId, [media.localFingerprint(), media.remoteFingerprint()])
+    if (ctx().callId !== callId) return
+    safety = code
+    emit()
+  }
+
+  async function openLeg(peer: string, polite: boolean): Promise<void> {
     const rtc = deps.rtc()
     if (!rtc) {
       actor.send({ type: 'FAIL', reason: 'Calls aren’t available in this window', at: deps.now() })
       return
     }
     const callId = ctx().callId!
+    const sealing = secure(peer, callId)
+    const sealed = sealing ? await sealing : undefined
+    if (ctx().callId !== callId || !busy()) return
+    if (sealed === null) {
+      actor.send({ type: 'FAIL', reason: 'Couldn’t agree the call’s encryption keys', at: deps.now() })
+      return
+    }
     const current = leg ?? { peer, media: null, queued: [], senders: {} }
     leg = current
     const addLocal = () => {
@@ -182,6 +244,7 @@ export function createCallEngine(deps: CallEngineDeps) {
       iceServers: deps.iceServers(),
       polite,
       log,
+      frames: sealed?.protector,
       send: (signal) => {
         if (ctx().callId !== callId) return
         void sendFrame(
@@ -200,7 +263,10 @@ export function createCallEngine(deps: CallEngineDeps) {
       onState: (state) => {
         if (ctx().callId !== callId) return
         clearTimeout(dropTimer)
-        if (state === 'connected') actor.send({ type: 'MEDIA_CONNECTED', at: deps.now() })
+        if (state === 'connected') {
+          actor.send({ type: 'MEDIA_CONNECTED', at: deps.now() })
+          if (!safety) void showSafetyCode(callId)
+        }
         else if (state === 'failed') actor.send({ type: 'FAIL', reason: 'The connection to them failed', at: deps.now() })
         else if (state === 'disconnected') {
           // A blip recovers by itself; a closed laptop on the far side does not.
@@ -298,6 +364,7 @@ export function createCallEngine(deps: CallEngineDeps) {
     const peer = norm(peerKey)
     const callId = ctx().callId
     const live = () => ctx().callId === callId && busy()
+    void secure(peer, callId!)
     if (!(await openMedia()) || !live()) return
     const reached = await deps.connect(peer).catch((err) => {
       log('session did not open', err)
@@ -354,8 +421,10 @@ export function createCallEngine(deps: CallEngineDeps) {
     if (!actor.getSnapshot().matches('incoming')) return
     const { callId, peer, video } = ctx()
     actor.send({ type: 'ACCEPT', video: opts.video ?? video })
+    void secure(peer!, callId!)
     if (!(await openMedia()) || ctx().callId !== callId) return
-    openLeg(peer!, true)
+    await openLeg(peer!, true)
+    if (ctx().callId !== callId || !busy()) return
     const sent = await sendFrame(peer!, { t: 'accept', call: callId! })
     if (sent !== 'direct' && ctx().callId === callId) {
       actor.send({ type: 'FAIL', reason: 'Lost the connection to them', at: deps.now() })
@@ -517,6 +586,21 @@ export function createCallEngine(deps: CallEngineDeps) {
       return shareProblem
     },
 
+    /** Whether this call's media is sealed under the identity-bound keys. */
+    encrypted(): boolean {
+      return !!deps.e2ee && !!safety
+    },
+
+    /** Twelve digits both sides can read to each other; null until media connects. */
+    safetyCode(): string | null {
+      return safety
+    },
+
+    /** Why the far side's audio and video are not playing, when its frames do not open. */
+    e2eProblem(): string | null {
+      return unreadable ? 'Their audio and video can’t be decrypted' : null
+    },
+
     dismiss(): void {
       if (actor.getSnapshot().matches('ended')) actor.send({ type: 'DISMISS' })
     },
@@ -536,7 +620,7 @@ export function createCallEngine(deps: CallEngineDeps) {
         case 'accept':
           if (actor.getSnapshot().matches('outgoing')) {
             actor.send({ type: 'REMOTE_ACCEPTED' })
-            openLeg(peer, false)
+            void openLeg(peer, false)
           }
           break
         case 'decline':
