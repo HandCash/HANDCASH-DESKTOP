@@ -695,6 +695,43 @@ export function MicOffIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `videocam` */
+export function VideocamIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `videocam_off` */
+export function VideocamOffIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 6.5l-4 4V7c0-.55-.45-1-1-1H9.82L21 17.18V6.5zM3.27 2L2 3.27 4.73 6H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.21 0 .39-.08.54-.18L19.73 21 21 19.73 3.27 2z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `cameraswitch` */
+export function CameraSwitchIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M16 7h-1l-1-1h-4L9 7H8c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm-4 7c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" />
+      <path d="M8.57.51l4.48 4.48V2.04c4.72.47 8.48 4.23 8.95 8.95h2C23.34 3.02 15.49-1.59 8.57.51zm2.38 21.45c-4.72-.47-8.48-4.23-8.95-8.95H0c.66 7.97 8.51 12.58 15.43 10.48l-4.48-4.48v2.95z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `tune` */
+export function TuneIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `screenshot_monitor` */
 export function ScreenshotIcon(props: IconProps) {
   return (

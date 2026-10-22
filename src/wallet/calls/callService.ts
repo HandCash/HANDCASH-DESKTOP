@@ -10,7 +10,7 @@ import { getFriendByIdentityKey } from '../friends'
 import { getActiveWallet } from '../session'
 import { recordCall } from './callHistory'
 import { createCallEngine, type CallEngine } from './callEngine'
-import { callIceServers } from './callSettings'
+import { callIceServers, readCallSettings, writeCallSettings } from './callSettings'
 import { isCallFrameBody } from './callWire'
 import { startRinging, stopRinging } from './ringtone'
 
@@ -58,6 +58,11 @@ export function callEngine(): CallEngine {
     record: recordCall,
     ring: (kind) => (kind ? startRinging(kind) : stopRinging()),
     now: () => Date.now(),
+    devices: () => {
+      const { mic, camera } = readCallSettings()
+      return { mic, camera }
+    },
+    rememberDevice: (kind, deviceId) => writeCallSettings({ [kind]: deviceId }),
   })
   return engine
 }

@@ -3,6 +3,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import { getFriendByIdentityKey } from '../../wallet/friends'
 import { callEngine } from '../../wallet/calls/callService'
 import type { CallSnapshot } from '../../wallet/calls/callEngine'
+import { listCallDevices, subscribeDeviceChanges, type CallDevice } from '../../wallet/calls/mediaDevices'
 
 export type CallView = {
   snapshot: CallSnapshot
@@ -38,6 +39,29 @@ export function useCall(): CallView {
     local: engine.localStream(),
     remote: engine.remoteStream(),
   }
+}
+
+/**
+ * Microphones and cameras, listed again when one is plugged in or out, and
+ * when the call's own media opens (labels only show once a device was allowed).
+ */
+export function useCallDevices(active: boolean, revision: unknown): CallDevice[] {
+  const [devices, setDevices] = useState<CallDevice[]>([])
+  useEffect(() => {
+    if (!active) return
+    let live = true
+    const load = () =>
+      void listCallDevices().then((next) => {
+        if (live) setDevices(next)
+      })
+    load()
+    const stop = subscribeDeviceChanges(load)
+    return () => {
+      live = false
+      stop()
+    }
+  }, [active, revision])
+  return devices
 }
 
 /** Milliseconds on the call so far, ticking each second while it is connected. */

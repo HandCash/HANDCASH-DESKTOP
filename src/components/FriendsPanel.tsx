@@ -13,7 +13,7 @@ import { openAddFriend, openFriendDetails, openMessagesInbox } from '../wallet/n
 import { withSoftSound } from '../wallet/soundedAction'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
-import { CallIcon, MessagesIcon, PersonAddIcon, SearchIcon } from './icons'
+import { CallIcon, MessagesIcon, PersonAddIcon, SearchIcon, VideocamIcon } from './icons'
 import { callEngine } from '../wallet/calls/callService'
 import { ListPanelHead } from './ListPanelHead'
 import { FriendIdentityBlock } from './PeerIdentity'
@@ -49,16 +49,28 @@ function FriendListItem({ friend, chain, now }: { friend: Friend; chain: Chain; 
           Added {sinceText(friend.createdAt, now)}
         </span>
       </button>
-      <button
-        type="button"
-        className="friend-row-call"
-        data-aeon-part="call"
-        aria-label={`Call ${friend.label}`}
-        title="Call"
-        onClick={() => callEngine().call(friend.identityKey)}
-      >
-        <CallIcon size={18} />
-      </button>
+      <span className="friend-row-calls" data-aeon-part="calls">
+        <button
+          type="button"
+          className="friend-row-call"
+          data-aeon-part="video-call"
+          aria-label={`Video call ${friend.label}`}
+          title="Video call"
+          onClick={() => callEngine().call(friend.identityKey, { video: true })}
+        >
+          <VideocamIcon size={18} />
+        </button>
+        <button
+          type="button"
+          className="friend-row-call"
+          data-aeon-part="call"
+          aria-label={`Call ${friend.label}`}
+          title="Call"
+          onClick={() => callEngine().call(friend.identityKey)}
+        >
+          <CallIcon size={18} />
+        </button>
+      </span>
     </li>
   )
 }

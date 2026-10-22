@@ -17,6 +17,8 @@ export type CallHangupReason = 'hung-up' | 'cancelled' | 'failed'
 
 export type CallMediaState = {
   muted: boolean
+  /** The sender's camera is on and sending. */
+  camera: boolean
 }
 
 export type CallFrame =
@@ -58,7 +60,7 @@ function parseCandidate(v: unknown): RTCIceCandidateInit | null {
 
 function parseState(v: unknown): CallMediaState | null {
   if (!isRecord(v) || typeof v.muted !== 'boolean') return null
-  return { muted: v.muted }
+  return { muted: v.muted, camera: v.camera === true }
 }
 
 /** A well-formed call frame, or null for anything else (including chat bodies). */

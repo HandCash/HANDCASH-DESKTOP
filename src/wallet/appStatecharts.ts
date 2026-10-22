@@ -1629,13 +1629,14 @@ const CALL_CHART = `stateDiagram-v2
   outgoing --> connecting : REMOTE_ACCEPTED
   ringing --> ended : REMOTE_DECLINED → declined | busy · 45 s → no-answer
   outgoing --> ended : HANG_UP → cancelled · FAIL (microphone) → failed
-  incoming --> connecting : ACCEPT (pointer only, never focused)
+  incoming --> connecting : ACCEPT (pointer only, never focused; with or without video)
   incoming --> ended : DECLINE → declined · REMOTE_HUNG_UP / 45 s → missed
   connecting --> active : MEDIA_CONNECTED
   connecting --> ended : FAIL / 20 s → failed · HANG_UP | REMOTE_HUNG_UP → cancelled
   active --> ended : HANG_UP | REMOTE_HUNG_UP → finished · FAIL → failed
   ended --> idle : 2.5 s | DISMISS
   note right of ended : Activity gets one row per call (missed, finished, …)
+  note left of active : TOGGLE_MUTE, CAMERA on/off and REMOTE_STATE (their mute and camera) stay in place
 `
 
 /**

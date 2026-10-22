@@ -13,7 +13,8 @@ describe('call frames', () => {
       { t: 'decline', call, reason: 'busy' },
       { t: 'sdp', call, description: { type: 'offer', sdp: 'v=0\r\n' } },
       { t: 'ice', call, candidate: { candidate: 'candidate:1 1 udp 1 192.0.2.1 5000 typ host', sdpMid: '0', sdpMLineIndex: 0 } },
-      { t: 'state', call, state: { muted: true } },
+      { t: 'state', call, state: { muted: true, camera: false } },
+      { t: 'state', call, state: { muted: false, camera: true } },
       { t: 'hangup', call, reason: 'hung-up' },
     ]
     for (const frame of frames) {

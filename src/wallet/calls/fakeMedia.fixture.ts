@@ -62,20 +62,35 @@ export function asStream(s: FakeStream): MediaStream {
   return s as unknown as MediaStream
 }
 
-/** A getUserMedia stand-in: one audio track (and a video track when asked), or `refuse` thrown. */
-export function fakeGetUserMedia(opts: { refuse?: string; made?: FakeStream[] } = {}) {
+function askedDevice(c: boolean | MediaTrackConstraints | undefined, fallback: string): string {
+  const id = typeof c === 'object' ? c.deviceId : undefined
+  if (typeof id === 'string') return id
+  if (id && typeof id === 'object' && !Array.isArray(id)) {
+    const v = (id as ConstrainDOMStringParameters).exact ?? (id as ConstrainDOMStringParameters).ideal
+    if (typeof v === 'string') return v
+  }
+  return fallback
+}
+
+/**
+ * A getUserMedia stand-in: an audio and/or video track as asked, each
+ * reporting the device it was asked for, or `refuse` (or `refuseVideo` for
+ * the camera alone) thrown.
+ */
+export function fakeGetUserMedia(opts: { refuse?: string; refuseVideo?: string; made?: FakeStream[] } = {}) {
   return async (constraints: MediaStreamConstraints): Promise<MediaStream> => {
-    if (opts.refuse) {
+    const refusal = opts.refuse ?? (constraints.video ? opts.refuseVideo : undefined)
+    if (refusal) {
       const err = new Error('refused')
-      err.name = opts.refuse
+      err.name = refusal
       throw err
     }
     const tracks: FakeTrack[] = []
-    if (constraints.audio) tracks.push(new FakeTrack('audio'))
-    if (constraints.video) tracks.push(new FakeTrack('video'))
-    const stream = new FakeStream(tracks)
-    opts.made?.push(stream)
-    return asStream(stream)
+    if (constraints.audio) tracks.push(new FakeTrack('audio', undefined, { deviceId: askedDevice(constraints.audio, 'mic-default') }))
+    if (constraints.video) tracks.push(new FakeTrack('video', undefined, { deviceId: askedDevice(constraints.video, 'cam-default') }))
+    // `made` keeps what was opened, apart from the stream the caller may later add to or take from.
+    opts.made?.push(new FakeStream(tracks))
+    return asStream(new FakeStream(tracks))
   }
 }
 
