@@ -4,6 +4,7 @@
 
 ### Changed
 
+<<<<<<< HEAD
 - Messageboxes that speak BRC-104, such as the BSV Association's MessageBox servers, now carry chat, payment and item notices over a mutually authenticated BRC-103 session, and every reply must be signed by the box's key. A box that fails the handshake or asks for identity certificates is refused. Other boxes, including HandCash's own, work as before.
 
 ### Fixed
@@ -18,6 +19,9 @@
 
 - Progress tracks, backup slice badges, the empty sparkline and trait chips stay visible in light mode.
 - Setup options, sign-in tabs, backup choices, the account switcher and the Send and Receive toggles show hover; auto-pay fields show focus.
+=======
+- Patch release (every push must ship a new version).
+>>>>>>> 3f961950 (Release v1.3.636)
 
 ## [1.3.634] - 2026-10-21
 
