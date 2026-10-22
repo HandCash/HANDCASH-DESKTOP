@@ -166,6 +166,8 @@ import {
   WalletJobRow,
 } from "./activity/ActivityJobRows";
 import { SigninApprovalRowItem, useSigninApprovals } from "./activity/SigninApprovalRows";
+import { CallRecordRow, LiveCallRow, useRecentCalls } from "./activity/CallActivityRows";
+import { useCall } from "../features/calls/useCall";
 import { batchCountLabel } from "./activity/batchCountLabel";
 
 import { EmptyState } from "./EmptyState";
@@ -1130,6 +1132,9 @@ export function ActivityFeed({
   const jobs = useWalletJobs();
   const signins = useSigninApprovals();
   const swaps = useSwapViews();
+  const calls = useRecentCalls();
+  const call = useCall().snapshot;
+  const callUnderway = !call.matches("idle") && !call.matches("ended");
 
   // A job's own row speaks for it until it leaves; then its rows fold into one record.
   // Keyed on which jobs exist, not on their progress: a running import ticks
@@ -1339,7 +1344,12 @@ export function ActivityFeed({
   }, [origins, filters.origin]);
 
   const body =
-    filtered.length === 0 && !visiblePhraseImport && jobs.length === 0 && signins.length === 0 ? (
+    filtered.length === 0 &&
+    !visiblePhraseImport &&
+    jobs.length === 0 &&
+    signins.length === 0 &&
+    calls.length === 0 &&
+    !callUnderway ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : "Nothing matches"}
@@ -1355,6 +1365,10 @@ export function ActivityFeed({
       <ul className="history-list" ref={listRef}>
         {signins.map((row) => (
           <SigninApprovalRowItem key={row.view.key} row={row} />
+        ))}
+        <LiveCallRow />
+        {calls.map((record) => (
+          <CallRecordRow key={record.id} record={record} />
         ))}
         {jobs.map((job) => (
           <WalletJobRow key={job.id} job={job} />

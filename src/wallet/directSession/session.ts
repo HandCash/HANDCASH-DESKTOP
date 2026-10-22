@@ -112,6 +112,8 @@ export function createSessionTable(tag = 'direct-session') {
   let replay = new ReplayCache()
   let limiter = new InboundLimiter({ ...DEFAULT_INBOUND_LIMITS, maxConcurrent: 16 })
   let rejectedAt = 0
+  /** Last ring sent back to a knock: its offer follows within a dial window. */
+  let rangAt = 0
   const live = new Map<string, Live>()
   const dials = new Map<string, Dial>()
   /** Answered dials still connecting, by endpoint. */
@@ -313,11 +315,17 @@ export function createSessionTable(tag = 'direct-session') {
     const refusal = limiter.refusal(slot, undefined, { superseding: live.has(slot) })
     if (refusal === 'busy') return reject(s, 'busy')
     if (refusal) return
-    await post(s.from, { kind: 'ring', sid: s.sid, toDevice: s.fromDevice }).catch((err) => log('ring not posted', err))
+    await post(s.from, { kind: 'ring', sid: s.sid, toDevice: s.fromDevice }).then(
+      () => {
+        rangAt = Date.now()
+      },
+      (err) => log('ring not posted', err),
+    )
   }
 
   async function onOffer(s: MessageSignal): Promise<void> {
     if (!s.sdp || !(await admissible(s))) return
+    rangAt = 0
     const slot = endpointKey(s.from, s.fromDevice)
     if (answering.has(slot)) return
     const old = live.get(slot)
@@ -364,6 +372,7 @@ export function createSessionTable(tag = 'direct-session') {
     for (const link of answering.values()) link.close()
     answering.clear()
     dialedAt.clear()
+    rangAt = 0
     replay = new ReplayCache()
     limiter = new InboundLimiter({ ...DEFAULT_INBOUND_LIMITS, maxConcurrent: 16 })
   }
@@ -400,17 +409,24 @@ export function createSessionTable(tag = 'direct-session') {
 
     reset,
 
-    /** A dial waits on the box: read it at the dialling cadence. */
-    hasActiveDials(): boolean {
-      return dials.size > 0
+    /**
+     * A dial waits on the box, ours or one we just rang back: read it at the
+     * dialling cadence, so a hidden window still takes the offer in time.
+     */
+    hasActiveDials(now = Date.now()): boolean {
+      return dials.size > 0 || now - rangAt < SESSION_DIAL_MS
     },
 
     hasSession(identity: string, device?: string): boolean {
       return !!openSession(identity, device)
     },
 
-    /** Dial `identity` (one install of it, when `device` is set). True when a knock went out. */
-    async request(identity: string, device = '', now = Date.now()): Promise<boolean> {
+    /**
+     * Dial `identity` (one install of it, when `device` is set). True when a
+     * knock went out. `presenceMs` is how long the knock waits for a ring; a
+     * call waits long enough for a hidden window's slower read.
+     */
+    async request(identity: string, device = '', now = Date.now(), presenceMs = SESSION_PRESENCE_MS): Promise<boolean> {
       if (!ready()) return false
       const peer = norm(identity)
       if (peer === localIdentity && (!device || device === localDevice)) return false
@@ -439,8 +455,8 @@ export function createSessionTable(tag = 'direct-session') {
         return false
       }
       if (dial.done) return false
-      dial.timer = setTimeout(() => endDial(dial, 'peer_unreachable'), SESSION_PRESENCE_MS)
-      dial.total = setTimeout(() => endDial(dial, 'timeout'), CONNECT_MS)
+      dial.timer = setTimeout(() => endDial(dial, 'peer_unreachable'), presenceMs)
+      dial.total = setTimeout(() => endDial(dial, 'timeout'), Math.max(CONNECT_MS, presenceMs + SESSION_DIAL_MS))
       return true
     },
 

@@ -48,6 +48,7 @@ import {
   screenshotShortcutKeys,
 } from './settings'
 import { WalletHealthAlertBadge } from './settings/WalletHealthAlertBadge'
+import { CallRelayField } from './settings/CallRelayField'
 import { CHART_APPS_DESCRIPTION } from '../apps/chartFormat'
 import {
   dependencyHealthAlert,
@@ -382,6 +383,10 @@ export function SettingsPanel() {
             </>
           ) : null}
         </ul>
+      </SettingsSection>
+
+      <SettingsSection title="Calls" part="calls">
+        <CallRelayField />
       </SettingsSection>
 
       <SettingsSection title="Apps" part="chart-apps">

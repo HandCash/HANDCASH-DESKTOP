@@ -213,6 +213,18 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  callHistory: defineStorage({
+    key: 'handcash.calls.history.v1',
+    owner: 'calls',
+    scope: 'wallet',
+    version: 1,
+  }),
+  callSettings: defineStorage({
+    key: 'handcash.calls.settings.v1',
+    owner: 'calls',
+    scope: 'device',
+    version: 1,
+  }),
   blockedSenders: defineStorage({
     key: 'handcash.blockedSenders.v1',
     owner: 'friends',

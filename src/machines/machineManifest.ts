@@ -47,6 +47,7 @@ import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
 import { relaySigninMachine } from './relaySigninMachine'
 import { onboardEmailMachine } from './onboardEmailMachine'
+import { callMachine } from './callMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -102,6 +103,7 @@ export const machineManifest = Object.freeze({
   accountMove: accountMoveMachine,
   relaySignin: relaySigninMachine,
   onboardEmail: onboardEmailMachine,
+  call: callMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest

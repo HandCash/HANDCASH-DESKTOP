@@ -22,6 +22,8 @@ import {
   resetDirectSessions,
   setDirectSessionIdentity,
 } from './directSession/session'
+import { rebindCallRecords } from './calls/callHistory'
+import { endCalls } from './calls/callService'
 
 let lifecycleRegistered = false
 
@@ -35,6 +37,7 @@ function ensureLifecycleRegistered(): void {
       resetActivityLedgerForRuntime()
       paintSavedActivityLedger(runtime)
       scheduleActivityLedgerRefresh()
+      rebindCallRecords()
       applyWalletOutcome({
         type: 'AccountChanged',
         accountIndex: wallet.accountIndex,
@@ -76,6 +79,7 @@ function ensureLifecycleRegistered(): void {
       cancelPendingPermissions('wallet-runtime-disposed')
       clearPaymentProgress()
       clearVerificationProgress()
+      endCalls()
       resetDirectSessions()
       void import('./messageTransport').then(({ stopDirectSignalPolling }) => stopDirectSignalPolling())
       void import('./directPayments').then(({ stopDirectPayments }) => stopDirectPayments())

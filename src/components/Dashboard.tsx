@@ -70,6 +70,7 @@ import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 import { getWalletRuntime } from '../wallet/walletRuntime'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { whenRecomposeIdle } from '../wallet/recompose'
+import { CallDock } from './calls/CallDock'
 
 /**
  * Messagebox tip-hint poll — independent of the address-scan interval so a
@@ -933,6 +934,7 @@ export function Dashboard({
       <RenderProbe id="side">
         <DashboardSideColumn profile={profile} heldBsvSats={balancePending ? null : balanceSats} />
       </RenderProbe>
+      <CallDock />
     </section>
   )
 }
