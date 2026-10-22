@@ -113,6 +113,13 @@ class FakeSender {
   async replaceTrack(track: FakeTrack | null): Promise<void> {
     this.track = track
   }
+  params: { encodings: { maxBitrate?: number }[] } = { encodings: [{}] }
+  getParameters(): { encodings: { maxBitrate?: number }[] } {
+    return structuredClone(this.params)
+  }
+  async setParameters(params: { encodings: { maxBitrate?: number }[] }): Promise<void> {
+    this.params = structuredClone(params)
+  }
 }
 
 function fingerprintOf(sdp: string | undefined): string {

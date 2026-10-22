@@ -77,11 +77,15 @@ export function callEngine(): CallEngine {
     rememberDevice: (kind, deviceId) => writeCallSettings({ [kind]: deviceId }),
     captureScreen: screenShareAvailable() ? captureScreen : undefined,
     screenFailureText,
-    e2ee: frameEncryptionAvailable()
-      ? { self: () => getActiveWallet()?.identityKey ?? '', secret: mediaSecret, protector: createFrameProtector }
-      : undefined,
+    self: () => getActiveWallet()?.identityKey ?? '',
+    e2ee: frameEncryptionAvailable() ? { secret: mediaSecret, protector: createFrameProtector } : undefined,
   })
   return engine
+}
+
+/** Whether `peer` is on the call under way: a group call links members who need not be friends. */
+export function onCallWith(peer: string): boolean {
+  return !!engine?.inCall(peer) && !isSenderBlocked(peer)
 }
 
 /** A call frame from the direct session goes to the engine; anything else is chat. */

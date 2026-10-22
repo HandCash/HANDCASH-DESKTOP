@@ -4,11 +4,15 @@ import { callIceServers, parseRelayUrls } from './callSettings'
 import { encodeCallFrame, isCallFrameBody, newCallId, parseCallFrame, type CallFrame } from './callWire'
 
 const call = newCallId()
+const KEY_B = '03' + 'b'.repeat(64)
+const KEY_C = '02' + 'c'.repeat(64)
 
 describe('call frames', () => {
   it('round-trips every frame', () => {
     const frames: CallFrame[] = [
       { t: 'invite', call, video: false },
+      { t: 'invite', call, video: true, members: [KEY_B, KEY_C] },
+      { t: 'roster', call, joined: [KEY_B] },
       { t: 'accept', call },
       { t: 'decline', call, reason: 'busy' },
       { t: 'sdp', call, description: { type: 'offer', sdp: 'v=0\r\n' } },
@@ -32,6 +36,15 @@ describe('call frames', () => {
     const huge = { type: 'offer', sdp: 'x'.repeat(70_000) }
     expect(parseCallFrame(JSON.stringify({ p: 'hc-call/1', t: 'sdp', call, description: huge }))).toBeNull()
     expect(parseCallFrame('{"p":"hc-call/1",')).toBeNull()
+  })
+
+  it('takes a roster only of distinct identity keys, no more than a call has seats', () => {
+    const frame = (body: object) => parseCallFrame(encodeCallFrame({ t: 'roster', call, joined: [] }).replace('"joined":[]', JSON.stringify(body).slice(1, -1)))
+    expect(frame({ joined: [KEY_B.toUpperCase()] })).toEqual({ t: 'roster', call, joined: [KEY_B] })
+    expect(frame({ joined: [KEY_B, KEY_B] })).toBeNull()
+    expect(frame({ joined: ['not a key'] })).toBeNull()
+    expect(frame({ joined: Array.from({ length: 7 }, (_, i) => '02' + i.toString(16).repeat(64)) })).toBeNull()
+    expect(parseCallFrame(encodeCallFrame({ t: 'invite', call, video: false, members: [] }))).toBeNull()
   })
 
   it('makes 24-hex call ids', () => {

@@ -4,7 +4,8 @@
  * the video when either side's camera is on. Moving around the wallet shrinks
  * a live call to a tile in a corner (`callViewMachine`), dragged to any corner
  * and expanded with a click; the far side's video can also pop out to the
- * system picture-in-picture window. Answer buttons never take
+ * system picture-in-picture window. A group call shows a tile per person
+ * (`CallParticipants`) and lets the host add people. Answer buttons never take
  * keyboard focus and ignore keyboard clicks, so a key press meant for
  * something else can't answer a call.
  */
@@ -18,6 +19,8 @@ import { callEngine } from '../../wallet/calls/callService'
 import { readCallSettings } from '../../wallet/calls/callSettings'
 import { nextCamera, type CallDevice } from '../../wallet/calls/mediaDevices'
 import { getNavState, subscribeNav } from '../../wallet/navStore'
+import { AddPeople } from './AddPeople'
+import { CallParticipants } from './CallParticipants'
 import { SafetyCode } from './SafetyCode'
 import { ScreenSharePicker } from './ScreenSharePicker'
 import {
@@ -97,10 +100,10 @@ function DevicePicker({ devices, kind, label, value }: { devices: CallDevice[]; 
 }
 
 export function CallDock() {
-  const { snapshot, state, peerLabel, local, remote } = useCall()
+  const { snapshot, state, peerLabel, group, participants, local, remote } = useCall()
   const c = snapshot.context
   const elapsed = useCallElapsed(c.connectedAt, c.endedAt)
-  const audioRef = useStreamOn<HTMLAudioElement>(remote)
+  const audioRef = useStreamOn<HTMLAudioElement>(group ? null : remote)
   const remoteVideoRef = useStreamOn<HTMLVideoElement>(remote)
   const selfRef = useStreamOn<HTMLVideoElement>(local)
   const live = !snapshot.matches('idle') && !snapshot.matches('ended') && !snapshot.matches('incoming')
@@ -112,7 +115,7 @@ export function CallDock() {
   const pip = live && view.matches('pip')
   const popped = view.matches('popped')
   const drag = useRef<{ x: number; y: number; pointer: number; moved: boolean } | null>(null)
-  const remoteShown = live && (c.remoteCamera || c.remoteSharing)
+  const remoteShown = live && !group && (c.remoteCamera || c.remoteSharing)
 
   useEffect(() => {
     if (!live) return
@@ -201,8 +204,8 @@ export function CallDock() {
   const mic = inUse.mic ?? saved.mic
   const camera = inUse.camera ?? saved.camera
   const switchTo = c.camera ? nextCamera(devices, camera) : null
-  const remoteVideo = c.remoteCamera || c.remoteSharing
-  const stage = live && (c.camera || c.sharing || remoteVideo)
+  const remoteVideo = !group && (c.remoteCamera || c.remoteSharing)
+  const stage = live && (group || c.camera || c.sharing || remoteVideo)
   const mediaProblem = live ? (engine.e2eProblem() ?? engine.shareProblem() ?? engine.cameraProblem()) : null
 
   const status = snapshot.matches({ outgoing: 'reaching' })
@@ -233,7 +236,8 @@ export function CallDock() {
     >
       <audio ref={audioRef} autoPlay data-aeon-part="remote-audio" />
       {stage ? (
-        <div className="call-dock-stage" data-aeon-part="stage">
+        <div className="call-dock-stage" data-aeon-part="stage" data-group={group ? 'on' : undefined}>
+          {group ? <CallParticipants people={participants} /> : null}
           <video
             ref={remoteVideoRef}
             className="call-dock-remote"
@@ -244,7 +248,7 @@ export function CallDock() {
             data-sharing={c.remoteSharing ? 'on' : undefined}
             hidden={!remoteVideo}
           />
-          {remoteVideo ? null : (
+          {remoteVideo || group ? null : (
             <span className="call-dock-stage-name" data-aeon-part="remote-off">
               {peerLabel}
             </span>
@@ -293,13 +297,13 @@ export function CallDock() {
       <div className="call-dock-who" data-aeon-part="who">
         <span className="call-dock-name-row">
           <strong className="call-dock-name">{peerLabel}</strong>
-          <SafetyCode code={live ? engine.safetyCode() : null} peer={peerLabel} />
+          <SafetyCode code={live && !group ? engine.safetyCode() : null} peer={peerLabel} />
         </span>
         <span className="call-dock-status" data-aeon-part="status" aria-live="polite">
           {snapshot.matches('incoming') ? (c.video ? 'Incoming video call' : 'Incoming call') : status}
-          {c.remoteMuted && snapshot.matches('active') ? ' · they’re muted' : ''}
+          {c.remoteMuted && !group && snapshot.matches('active') ? ' · they’re muted' : ''}
           {c.sharing && snapshot.matches('active') ? ' · you’re sharing your screen' : ''}
-          {c.remoteSharing && snapshot.matches('active') ? ' · they’re sharing their screen' : ''}
+          {c.remoteSharing && !group && snapshot.matches('active') ? ' · they’re sharing their screen' : ''}
           {mediaProblem ? ` · ${mediaProblem}` : ''}
         </span>
       </div>
@@ -370,6 +374,7 @@ export function CallDock() {
                 </div>
               </details>
               <ScreenSharePicker sharing={c.sharing} />
+              <AddPeople onCall={c.members} />
               {switchTo && !c.sharing ? (
                 <button
                   type="button"

@@ -1639,6 +1639,7 @@ const CALL_CHART = `stateDiagram-v2
   ended --> idle : 2.5 s | DISMISS
   note right of ended : Activity gets one row per call (missed, finished, …)
   note left of active : TOGGLE_MUTE, CAMERA on/off, SHARE on/off (a screen or window in place of the camera) and REMOTE_STATE (their mute, camera and share) stay in place
+  note right of connecting : Group calls (up to 6, a full mesh with no media server). MEMBERS (the host adds people), JOINED and LEFT (one person connected or gone) stay in place, and the call only ends once nobody else is left
 `
 
 const CALL_VIEW_CHART = `stateDiagram-v2

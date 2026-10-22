@@ -7,10 +7,13 @@
  */
 
 export const CALL_PROTOCOL = 'hc-call/1'
+/** Most people on one call, this side included: every pair has its own media leg. */
+export const CALL_MAX_PARTICIPANTS = 6
 
 const SDP_MAX = 64 * 1024
 const CANDIDATE_MAX = 2 * 1024
 const CALL_ID = /^[0-9a-f]{24}$/
+const IDENTITY_KEY = /^0[23][0-9a-f]{64}$/
 
 export type CallDeclineReason = 'declined' | 'busy' | 'missed'
 export type CallHangupReason = 'hung-up' | 'cancelled' | 'failed'
@@ -24,7 +27,10 @@ export type CallMediaState = {
 }
 
 export type CallFrame =
-  | { t: 'invite'; call: string; video: boolean }
+  /** `members`: everyone the host has asked onto a group call, apart from the host; absent for two people. */
+  | { t: 'invite'; call: string; video: boolean; members?: string[] }
+  /** From the host to everyone on a group call: who has joined so far, apart from the host. */
+  | { t: 'roster'; call: string; joined: string[] }
   | { t: 'accept'; call: string }
   | { t: 'decline'; call: string; reason: CallDeclineReason }
   | { t: 'sdp'; call: string; description: { type: 'offer' | 'answer'; sdp: string } }
@@ -60,6 +66,14 @@ function parseCandidate(v: unknown): RTCIceCandidateInit | null {
   return out
 }
 
+/** Distinct identity keys, at most one per seat a call has; anything else is not a roster. */
+function parseKeys(v: unknown): string[] | null {
+  if (!Array.isArray(v) || v.length > CALL_MAX_PARTICIPANTS) return null
+  const keys = v.map((k) => (typeof k === 'string' ? k.toLowerCase() : ''))
+  if (!keys.every((k) => IDENTITY_KEY.test(k)) || new Set(keys).size !== keys.length) return null
+  return keys
+}
+
 function parseState(v: unknown): CallMediaState | null {
   if (!isRecord(v) || typeof v.muted !== 'boolean') return null
   return { muted: v.muted, camera: v.camera === true, sharing: v.sharing === true }
@@ -77,8 +91,16 @@ export function parseCallFrame(body: string): CallFrame | null {
   if (!isRecord(v) || v.p !== CALL_PROTOCOL || typeof v.call !== 'string' || !CALL_ID.test(v.call)) return null
   const call = v.call
   switch (v.t) {
-    case 'invite':
-      return typeof v.video === 'boolean' ? { t: 'invite', call, video: v.video } : null
+    case 'invite': {
+      if (typeof v.video !== 'boolean') return null
+      if (v.members === undefined) return { t: 'invite', call, video: v.video }
+      const members = parseKeys(v.members)
+      return members && members.length > 0 ? { t: 'invite', call, video: v.video, members } : null
+    }
+    case 'roster': {
+      const joined = parseKeys(v.joined)
+      return joined ? { t: 'roster', call, joined } : null
+    }
     case 'accept':
       return { t: 'accept', call }
     case 'decline':
