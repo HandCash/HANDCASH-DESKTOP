@@ -979,8 +979,8 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-danger[data-selected]:not(:disabled) {
-  border-color: #991b1b;
-  background: #991b1b;
+  border-color: var(--hc-danger);
+  background: var(--hc-danger);
   color: #fff;
 }
 
@@ -994,7 +994,7 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-danger[data-selected]:not(:disabled):hover {
-  background: #991b1b;
+  background: var(--hc-danger);
   color: #fff;
 }
 
@@ -1065,8 +1065,8 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
-  border-color: #991b1b;
-  background: #991b1b;
+  border-color: var(--hc-danger);
+  background: var(--hc-danger);
 }
 
 /*
