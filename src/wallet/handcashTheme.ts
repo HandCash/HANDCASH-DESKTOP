@@ -60,7 +60,7 @@ export const HANDCASH_LIGHT_PALETTE: BrandPaletteInput = {
   muted: '#4a524c',
   accent: '#0c8f3e',
   accentDim: 'rgba(12, 143, 62, 0.11)',
-  danger: '#dc2626',
+  danger: '#b91c1c',
   ...FONTS,
 }
 

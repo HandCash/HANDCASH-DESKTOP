@@ -99,13 +99,32 @@
   --hc-hover: rgba(255, 255, 255, 0.04);
   --hc-deep: #000000;
 
+  /* Ink on an accent fill (send button, unread badge, primary card button).
+     Neon takes near-black type; the light sheet's deep green takes white. */
+  --hc-on-accent: #04140a;
+  /* Filled primary control states. Neon lifts towards white on hover and
+     sinks on press; the light sheet's black primary does the same in grey. */
+  --hc-primary-hover: color-mix(in srgb, hsl(var(--primary)) 84%, #ffffff);
+  --hc-primary-press: color-mix(in srgb, hsl(var(--primary)) 86%, #000000);
+  --hc-destructive-hover: color-mix(in srgb, hsl(var(--destructive)) 88%, #000000);
+  --hc-destructive-press: color-mix(in srgb, hsl(var(--destructive)) 78%, #000000);
+
   /* Status inks. These were literal pastels tuned for black; as *text* they
-     collapse to ~2:1 on paper, so the light sheet re-darkens them. */
-  --hc-warn: #d4a017;
-  --hc-error: #e25555;
+     collapse to ~2:1 on paper, so the light sheet re-darkens them. One red
+     (the palette's danger) for every error and failure, one amber for every
+     warning, so status never competes with the brand green. */
+  --hc-warn: #e3b341;
+  --hc-error: var(--hc-danger);
   --hc-down: #ff8e8e;
-  --hc-fail: #f07178;
-  --hc-info: #b7d4ff;
+  --hc-fail: var(--hc-danger);
+  --hc-info: #8ab4f8;
+
+  /* Filled activity marks carrying a white glyph, the same in both sheets:
+     each keeps 4:1 or better against its glyph. */
+  --hc-tone-send: #2f6fc4;
+  --hc-tone-receive: #1e8a57;
+  --hc-tone-amber: #b06f12;
+  --hc-tone-fail: #c23b3b;
   --hc-gold: #ffd983;
   --hc-gold-soft: #ffe3a0;
   --hc-claimed: #e0b35a;
@@ -163,15 +182,18 @@ html[data-aeon-mode='light'] {
   --hc-accent-dim: color-mix(in srgb, var(--hc-accent-deep) 14%, transparent);
 
   --hc-success: var(--hc-accent-deep);
+  --hc-on-accent: #ffffff;
+  --hc-primary-hover: hsl(0 0% 22%);
+  --hc-primary-press: #000000;
 
-  --hc-warn: #9a6700;
-  --hc-error: #b91c1c;
-  --hc-down: #dc2626;
-  --hc-fail: #b91c1c;
+  /* Every status ink keeps 4.5:1 on the raised paper step (#f3f5f3), not
+     only on white cards. */
+  --hc-warn: #8a5a00;
+  --hc-down: #b91c1c;
   --hc-info: #1d4ed8;
-  --hc-gold: #9a6700;
+  --hc-gold: #8a5a00;
   --hc-gold-soft: #8a5b0a;
-  --hc-claimed: #9a6700;
+  --hc-claimed: #8a5a00;
 }
 
 * {
@@ -609,7 +631,7 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   display: grid;
   gap: 0.75rem;
   padding: 0.85rem 0.95rem;
-  border: 1px solid color-mix(in srgb, var(--hc-border, #444) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
   border-radius: var(--hc-radius);
   background: color-mix(in srgb, var(--hc-accent) 5%, transparent);
 }
@@ -746,7 +768,7 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   gap: 0.65rem;
   align-items: start;
   padding: 0.75rem 0.85rem;
-  border: 1px solid color-mix(in srgb, var(--hc-border, #444) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
   border-radius: var(--hc-radius);
   cursor: pointer;
 }
@@ -1142,8 +1164,12 @@ button.link-btn:hover {
   animation: pulse-glow 2.8s ease-in-out infinite;
 }
 
-.btn-primary:hover {
-  filter: brightness(1.05);
+.btn-primary:hover:not(:disabled) {
+  background: var(--hc-primary-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: var(--hc-primary-press);
 }
 
 .btn-ghost {
@@ -1183,7 +1209,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 
 .wallet-actions .btn:hover,
 .wallet-actions .btn-ghost:hover,
-.wallet-actions .btn-primary:hover {
+.wallet-actions .btn-primary:hover,
+.wallet-actions .btn-primary:active:not(:disabled) {
   background: color-mix(in srgb, var(--hc-accent) 14%, var(--hc-surface));
   border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
   color: var(--hc-text);
@@ -1200,8 +1227,12 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   border-color: transparent;
 }
 
-.btn-danger:hover {
-  filter: brightness(1.06);
+.btn-danger:hover:not(:disabled) {
+  background: var(--hc-destructive-hover);
+}
+
+.btn-danger:active:not(:disabled) {
+  background: var(--hc-destructive-press);
 }
 
 .btn-danger:disabled {
@@ -1847,7 +1878,7 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
   margin: 0;
   padding: 12px 14px;
   border-top: 1px solid color-mix(in srgb, var(--hc-accent) 22%, transparent);
-  background: color-mix(in srgb, var(--hc-bg, #0b1210) 55%, transparent);
+  background: color-mix(in srgb, var(--hc-bg) 55%, transparent);
   justify-content: stretch;
   gap: 8px;
 }
@@ -3807,7 +3838,7 @@ li[data-aeon-state='done'] .history-progress-range {
 }
 
 li[data-aeon-state='failed'] .history-progress-range {
-  background: color-mix(in srgb, var(--hc-danger, #e35) 80%, var(--hc-accent));
+  background: color-mix(in srgb, var(--hc-danger) 80%, var(--hc-accent));
 }
 
 /* Activity — one long wallet job (walletJobMachine): import run, balance heal */
@@ -3851,7 +3882,7 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 [data-aeon-scope='wallet-job'][data-aeon-state='failed'] .history-when {
-  color: var(--hc-danger, #e35);
+  color: var(--hc-danger);
 }
 
 /* Import browser — the background run, in place of a parked dock */
@@ -4112,7 +4143,7 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 [data-aeon-part^='recovery-'][data-aeon-state='warn'] .recovery-method-status {
-  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-warn) 70%, var(--hc-muted));
 }
 
 .settings-check-label {
@@ -4241,7 +4272,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   padding: 8px;
   border-radius: var(--hc-radius);
   border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
-  background: var(--hc-panel, var(--hc-bg, #111));
+  background: var(--hc-panel, var(--hc-bg));
   box-shadow: 0 10px 28px color-mix(in srgb, #000 35%, transparent);
 }
 
@@ -4861,8 +4892,8 @@ button.identity-qr-copy:focus-visible {
 [data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="revoked"],
 [data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="imported"],
 [data-aeon-scope="public-identities"] [data-aeon-part="chip"][data-aeon-state="unlinked"] {
-  border-color: color-mix(in srgb, #f5a524 45%, transparent);
-  color: #f5a524;
+  border-color: color-mix(in srgb, var(--hc-warn) 45%, transparent);
+  color: var(--hc-warn);
 }
 
 .public-identity-actions {
@@ -5262,8 +5293,8 @@ button.identity-qr-copy:focus-visible {
 }
 
 .identity-network[data-network='test'] {
-  border-color: color-mix(in srgb, var(--hc-warn, #ffc857) 40%, hsl(var(--border)));
-  background: color-mix(in srgb, var(--hc-warn, #ffc857) 10%, transparent);
+  border-color: color-mix(in srgb, var(--hc-warn) 40%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--hc-warn) 10%, transparent);
 }
 
 .identity-key {
@@ -5476,7 +5507,7 @@ button.identity-qr-copy:focus-visible {
 
 .wallet-health-trailing .wallet-health-alert {
   cursor: default;
-  color: var(--hc-warn, #ffc857);
+  color: var(--hc-warn);
   background: rgb(255 200 87 / 14%);
   box-shadow: inset 0 0 0 1px rgb(255 200 87 / 42%);
 }
@@ -5742,7 +5773,7 @@ button.identity-qr-copy:focus-visible {
 
 @keyframes history-fresh-in {
   0% {
-    background: color-mix(in srgb, var(--hc-accent, #57ff97) 22%, transparent);
+    background: color-mix(in srgb, var(--hc-accent) 22%, transparent);
   }
   100% {
     background: transparent;
@@ -5911,19 +5942,19 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-action-badge.is-send {
-  background: #4d88d8;
+  background: var(--hc-tone-send);
 }
 
 .history-action-badge.is-receive {
-  background: #2da76f;
+  background: var(--hc-tone-receive);
 }
 
 .history-action-badge.is-mint {
-  background: #c9852a;
+  background: var(--hc-tone-amber);
 }
 
 .history-action-badge.is-burn {
-  background: #c9852a;
+  background: var(--hc-tone-amber);
 }
 
 /* Market family shares the accent; the glyph, not the colour, names the action. */
@@ -5935,7 +5966,7 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-action-badge.is-failed {
-  background: #c44747;
+  background: var(--hc-tone-fail);
   font-size: var(--hc-text-2xs);
   font-weight: 700;
   line-height: 1;
@@ -6002,7 +6033,7 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-row.is-failed .history-title,
 .history-row.is-failed .history-amount {
-  color: #c44747;
+  color: var(--hc-fail);
 }
 
 .history-row.is-failed .history-when {
@@ -6169,7 +6200,7 @@ button.payment-details-item-thumb-btn:hover {
   border: 2px solid hsl(var(--background));
   border-radius: 999px;
   background: var(--hc-accent);
-  color: #0a120e;
+  color: var(--hc-on-accent);
   font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
@@ -6570,7 +6601,7 @@ strong.middle-ellipsis {
   padding: 24px 18px;
   border: 1px solid color-mix(in srgb, var(--hc-border) 72%, transparent);
   border-radius: var(--hc-radius);
-  background: color-mix(in srgb, var(--hc-panel) 82%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 82%, transparent);
   color: var(--hc-muted);
   font-size: var(--hc-text-md);
   line-height: 1.45;
@@ -6635,9 +6666,9 @@ strong.middle-ellipsis {
 }
 
 .collectable-authenticity-verifying {
-  color: var(--hc-accent, #57ff97);
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 36%, var(--hc-border));
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 8%, var(--hc-panel));
+  color: var(--hc-accent);
+  border-color: color-mix(in srgb, var(--hc-accent) 36%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-accent) 8%, var(--hc-surface));
 }
 
 .collectable-authenticity-verifying .loading-spinner--sm,
@@ -7135,7 +7166,7 @@ a.app-details-host:hover {
 html[data-aeon-mode='light']
   .wallet-action-bar--nav
   .wallet-action-slot--danger {
-  --wallet-action-slot-own: #991b1b;
+  --wallet-action-slot-own: var(--hc-danger);
 }
 
 html[data-aeon-mode='light']
@@ -7809,7 +7840,7 @@ html[data-aeon-mode='light']
 }
 
 .settings-row-desc[data-aeon-state='warn'] {
-  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-warn) 70%, var(--hc-muted));
 }
 
 /* ListRow description status (Security rows). */
@@ -7818,7 +7849,7 @@ html[data-aeon-mode='light']
 }
 
 [data-aeon-scope='settings'] [data-aeon-part='description'][data-aeon-state='warn'] {
-  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-warn) 70%, var(--hc-muted));
 }
 
 /* items-market ProfileSheet theme toggle: icon-only segmented pill. */
@@ -7919,7 +7950,7 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-grid-desc[data-aeon-state='warn'] {
-  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-warn) 70%, var(--hc-muted));
 }
 
 .recovery-phrase-grid {
@@ -8130,8 +8161,8 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, white 8%, var(--hc-panel)) 0%,
-      color-mix(in srgb, black 6%, var(--hc-panel)) 100%
+      color-mix(in srgb, white 8%, var(--hc-surface)) 0%,
+      color-mix(in srgb, black 6%, var(--hc-surface)) 100%
     );
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
   color: var(--hc-fg, var(--hc-text));
@@ -8195,7 +8226,7 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 .app-toast[data-aeon-state='error'] {
-  border-color: color-mix(in srgb, var(--hc-danger, #ff6b6b) 45%, hsl(var(--border)));
+  border-color: color-mix(in srgb, var(--hc-danger) 45%, hsl(var(--border)));
 }
 
 .update-toast.aeonToast__root {
@@ -8935,7 +8966,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   gap: 8px;
   margin: 6px 0 0;
   font-size: var(--hc-text-sm);
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
 }
 
 .handle-verified-badge {
@@ -8948,7 +8979,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: #0d2818;
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 82%, #ffffff);
+  background: color-mix(in srgb, var(--hc-accent) 82%, #ffffff);
 }
 
 .chat-payment-activity-row {
@@ -8958,15 +8989,15 @@ html[data-aeon-mode='light'] .shortcut-key {
   margin: 8px auto;
   padding: 10px 12px;
   border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 70%, transparent);
-  background: color-mix(in srgb, #0e1411 92%, #1a2a22);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
+  background: var(--hc-bg-elevated);
   color: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .chat-payment-activity-row:hover {
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 35%, var(--hc-border, #2a3330));
+  border-color: color-mix(in srgb, var(--hc-accent) 35%, var(--hc-border));
 }
 
 .chat-payment-activity-title {
@@ -8976,7 +9007,7 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .chat-payment-activity-meta {
   font-size: var(--hc-text-xs);
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
 }
 
 .chat-sidebar-toolbar {
@@ -9917,7 +9948,7 @@ html[data-aeon-mode='dark'] .receive-eta-row[data-native] .receive-eta-value {
   border-color: color-mix(in srgb, currentColor 40%, transparent);
   border-top-color: currentColor;
   animation: loading-spin 0.7s linear infinite;
-  color: var(--hc-accent, #57ff97);
+  color: var(--hc-accent);
 }
 
 .loading-spinner--sm {
@@ -10496,7 +10527,7 @@ html[data-aeon-mode='light'] .skeleton {
   padding: 3px 8px;
   border: 1px solid var(--hc-border);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--hc-panel) 88%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 88%, transparent);
   color: var(--hc-text);
   font: inherit;
   font-size: var(--hc-text-xs);
@@ -10665,7 +10696,7 @@ button.payment-tx-id {
     ),
     linear-gradient(
       155deg,
-      color-mix(in srgb, var(--hc-panel) 95%, var(--hc-accent) 5%),
+      color-mix(in srgb, var(--hc-surface) 95%, var(--hc-accent) 5%),
       var(--hc-sunken-strong)
     );
   box-shadow:
@@ -10752,7 +10783,7 @@ button.payment-tx-id {
   padding: 5px 9px;
   border: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--hc-panel) 78%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 78%, transparent);
   box-shadow: 0 4px 14px color-mix(in srgb, black 18%, transparent);
   color: var(--hc-muted);
   font-size: var(--hc-text-2xs);
@@ -10798,7 +10829,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   border: 1px solid color-mix(in srgb, var(--hc-border) 78%, transparent);
   border-radius: 999px;
   color: var(--hc-muted);
-  background: color-mix(in srgb, var(--hc-panel) 88%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 88%, transparent);
   font-size: var(--hc-text-2xs);
   font-weight: 650;
   line-height: 1.2;
@@ -10806,9 +10837,9 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .collectable-authenticity-brc156,
 .collectable-authenticity-brc150 {
-  color: var(--hc-positive);
-  border-color: color-mix(in srgb, var(--hc-positive) 36%, var(--hc-border));
-  background: color-mix(in srgb, var(--hc-positive) 9%, var(--hc-panel));
+  color: var(--hc-success);
+  border-color: color-mix(in srgb, var(--hc-success) 36%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-success) 9%, var(--hc-surface));
 }
 
 /* Tiny corner proof mark — spinner → check → gone. */
@@ -10843,14 +10874,14 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .collectable-verify-mark--busy,
 .history-pending-mark {
-  color: var(--hc-accent, #57ff97);
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 55%, hsl(var(--border)));
+  color: var(--hc-accent);
+  border-color: color-mix(in srgb, var(--hc-accent) 55%, hsl(var(--border)));
   background: hsl(var(--background));
 }
 
 .collectable-verify-mark--done {
-  color: var(--hc-positive, #3ecf8e);
-  border-color: color-mix(in srgb, var(--hc-positive, #3ecf8e) 55%, hsl(var(--border)));
+  color: var(--hc-success);
+  border-color: color-mix(in srgb, var(--hc-success) 55%, hsl(var(--border)));
   background: hsl(var(--background));
   animation: collectable-verify-fade 1.1s ease forwards;
 }
@@ -10871,8 +10902,8 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   margin: 0;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, #4d88d8 72%, hsl(var(--border)));
-  background: #4d88d8;
+  border: 1px solid color-mix(in srgb, var(--hc-tone-send) 72%, hsl(var(--border)));
+  background: var(--hc-tone-send);
   color: #fff;
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
@@ -10893,26 +10924,26 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .collectable-sending-mark[data-action='burn'] {
-  border-color: color-mix(in srgb, #c9852a 72%, hsl(var(--border)));
-  background: #c9852a;
+  border-color: color-mix(in srgb, var(--hc-tone-amber) 72%, hsl(var(--border)));
+  background: var(--hc-tone-amber);
   color: #fff;
 }
 
 .collectable-sending-mark[data-action='list'] {
-  border-color: color-mix(in srgb, #c9852a 72%, hsl(var(--border)));
-  background: #c9852a;
+  border-color: color-mix(in srgb, var(--hc-tone-amber) 72%, hsl(var(--border)));
+  background: var(--hc-tone-amber);
   color: #fff;
 }
 
 .collectable-sending-mark[data-action='cancel'] {
-  border-color: color-mix(in srgb, #c44747 72%, hsl(var(--border)));
-  background: #c44747;
+  border-color: color-mix(in srgb, var(--hc-tone-fail) 72%, hsl(var(--border)));
+  background: var(--hc-tone-fail);
   color: #fff;
 }
 
 .collectable-sending-mark[data-action='buy'] {
-  border-color: color-mix(in srgb, #2da76f 72%, hsl(var(--border)));
-  background: #2da76f;
+  border-color: color-mix(in srgb, var(--hc-tone-receive) 72%, hsl(var(--border)));
+  background: var(--hc-tone-receive);
   color: #fff;
 }
 
@@ -10937,9 +10968,9 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   margin: 0;
   padding: 2px 5px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
   background: color-mix(in srgb, hsl(var(--background)) 90%, #000);
-  color: var(--hc-accent, #57ff97);
+  color: var(--hc-accent);
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
   font-size: 8px;
@@ -10952,8 +10983,8 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .collectable-listed-mark[data-aeon-state='unpublished'] {
-  border-color: color-mix(in srgb, var(--hc-warn, #ffc857) 55%, hsl(var(--border)));
-  color: var(--hc-warn, #ffc857);
+  border-color: color-mix(in srgb, var(--hc-warn) 55%, hsl(var(--border)));
+  color: var(--hc-warn);
 }
 
 .collectable-media-sm .collectable-listed-mark {
@@ -11005,7 +11036,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .history-verifying {
-  color: color-mix(in srgb, var(--hc-accent, #57ff97) 70%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-accent) 70%, var(--hc-muted));
 }
 
 .collectable-origin-value {
@@ -11278,7 +11309,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--hc-text-2xs);
-  color: var(--hc-warn, #ffc857);
+  color: var(--hc-warn);
 }
 
 [data-aeon-scope='collectables'] [data-aeon-part='token'][data-aeon-state='sending'] {
@@ -11637,18 +11668,18 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   margin-top: 4px;
   font-size: var(--hc-text-md);
   font-weight: 600;
-  color: var(--hc-accent, #38d385);
+  color: var(--hc-accent);
 }
 
 .fungible-details-list-price[data-aeon-state='unpublished'] {
-  color: var(--hc-warn, #ffc857);
+  color: var(--hc-warn);
 }
 
 [data-aeon-scope='fungible-details'] [data-aeon-part='checking'] {
   display: block;
   margin-top: 4px;
   font-size: var(--hc-text-sm);
-  color: var(--hc-warn, #ffc857);
+  color: var(--hc-warn);
 }
 
 .collect-market-section {
@@ -11668,14 +11699,14 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 28%, transparent);
   border-radius: var(--hc-radius);
-  background: color-mix(in srgb, var(--hc-panel) 92%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 92%, transparent);
   overflow: hidden;
   text-align: left;
   cursor: pointer;
 }
 
 .token-market-card:hover {
-  border-color: color-mix(in srgb, var(--hc-accent, #38d385) 45%, transparent);
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
 }
 
 .token-market-card-media {
@@ -11718,7 +11749,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   padding: 14px;
   border-radius: var(--hc-radius);
   border: 1px solid color-mix(in srgb, var(--hc-muted) 24%, transparent);
-  background: color-mix(in srgb, var(--hc-panel) 94%, transparent);
+  background: color-mix(in srgb, var(--hc-surface) 94%, transparent);
 }
 
 .token-market-chart-head {
@@ -11860,7 +11891,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 [data-aeon-scope='coin-deposit'][data-aeon-state='abandoned'] [data-aeon-part='pip'] {
   border-style: dashed;
-  border-color: var(--hc-danger, #c0392b);
+  border-color: var(--hc-danger);
   background: transparent;
 }
 
@@ -12250,7 +12281,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .fungible-activity-row[data-aeon-state='failed'] {
-  color: #c44747;
+  color: var(--hc-fail);
 }
 
 .fungible-activity-icon {
@@ -12264,9 +12295,9 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .fungible-activity-icon.is-burn {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c9852a 22%, hsl(var(--background)));
+  color: var(--hc-warn);
+  border-color: color-mix(in srgb, var(--hc-tone-amber) 55%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--hc-tone-amber) 22%, hsl(var(--background)));
 }
 
 .fungible-activity-copy {
@@ -12370,7 +12401,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .collectable-send-btn:hover {
-  border-color: color-mix(in srgb, var(--hc-accent, #38d385) 45%, transparent);
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
 }
 
 .collectable-send-btn--row {
@@ -12802,7 +12833,7 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 .statechart-zoom-btn:hover {
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 18%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 18%, transparent);
 }
 
 .statechart-zoom-label {
@@ -12893,12 +12924,12 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 
 .statechart-mermaid .node.is-navigable:hover > rect,
 .statechart-mermaid .node.is-navigable:hover .label-container {
-  stroke: var(--hc-accent, #38d385) !important;
+  stroke: var(--hc-accent) !important;
   filter: brightness(1.12);
 }
 
 .statechart-mermaid .node.is-navigable:focus-visible {
-  outline: 2px solid var(--hc-accent, #38d385);
+  outline: 2px solid var(--hc-accent);
   outline-offset: 2px;
 }
 
@@ -12952,7 +12983,7 @@ body > div.statechart-mermaid-host {
   padding: 0.55rem 1rem;
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
-  background: color-mix(in srgb, #0a120e 88%, var(--hc-accent));
+  background: color-mix(in srgb, var(--hc-accent) 12%, var(--hc-bg-elevated));
   color: var(--hc-text);
   font-size: var(--hc-text-sm);
   font-weight: 600;
@@ -13008,8 +13039,8 @@ body > div.statechart-mermaid-host {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
-  background: color-mix(in srgb, var(--hc-bg, #0a120e) 92%, #111);
+  border-right: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
+  background: var(--hc-bg-elevated);
 }
 
 .chat-sidebar-head {
@@ -13060,11 +13091,11 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-peer-row:hover {
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 10%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
 }
 
 .chat-peer-row[data-selected] {
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 16%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
 }
 
 .chat-peer-body {
@@ -13107,7 +13138,7 @@ body > div.statechart-mermaid-host {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
-  background: color-mix(in srgb, #07100c 88%, #1a2a22);
+  background: var(--hc-surface);
 }
 
 .chat-thread > .chat-hint {
@@ -13178,13 +13209,13 @@ body > div.statechart-mermaid-host {
   background: color-mix(in srgb, #182820 92%, #2d4036);
   border: 1px solid color-mix(in srgb, #ffffff 5%, transparent);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
 }
 
 .chat-bubble.is-mine {
   border-radius: 14px 14px 5px 14px;
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 22%, #15241c);
-  border-color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 28%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 18%, var(--hc-bg-elevated));
+  border-color: color-mix(in srgb, var(--hc-accent) 28%, transparent);
 }
 
 .chat-bubble.is-card {
@@ -13192,15 +13223,15 @@ body > div.statechart-mermaid-host {
   max-width: min(92%, 300px);
   padding: 10px 12px 6px;
   background: color-mix(in srgb, #101a14 88%, #1c2e24);
-  border: 1px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 32%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 32%, transparent);
 }
 
 .chat-bubble.is-mine.is-card {
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 14%, #121c16);
+  background: color-mix(in srgb, var(--hc-accent) 12%, var(--hc-bg-elevated));
 }
 
 .chat-bubble.is-request {
-  border-color: color-mix(in srgb, #7eb8ff 40%, transparent);
+  border-color: color-mix(in srgb, var(--hc-info) 40%, transparent);
 }
 
 .chat-bubble-text {
@@ -13237,13 +13268,13 @@ body > div.statechart-mermaid-host {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 90%, #fff);
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 16%, transparent);
+  color: color-mix(in srgb, var(--hc-accent) 90%, #fff);
+  background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
 }
 
 .chat-bubble.is-request .chat-card-badge {
   color: var(--hc-info);
-  background: color-mix(in srgb, #7eb8ff 18%, transparent);
+  background: color-mix(in srgb, var(--hc-info) 18%, transparent);
 }
 
 .chat-card-status {
@@ -13256,7 +13287,7 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-card-status[data-status='pending'] {
-  color: color-mix(in srgb, #f0c674 90%, #fff);
+  color: var(--hc-warn);
   opacity: 1;
 }
 
@@ -13266,7 +13297,7 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-card-status[data-status='sent'] {
-  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 90%, #fff);
+  color: color-mix(in srgb, var(--hc-accent) 90%, #fff);
   opacity: 1;
 }
 
@@ -13334,7 +13365,7 @@ body > div.statechart-mermaid-host {
 .chat-card-btn-ghost {
   background: transparent;
   color: var(--hc-muted);
-  border-color: color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+  border-color: color-mix(in srgb, var(--hc-border) 80%, transparent);
 }
 
 .chat-card-btn-ghost:hover {
@@ -13342,9 +13373,9 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-card-btn-primary {
-  background: var(--hc-accent, #3dcf8e);
-  color: #0a120e;
-  border-color: var(--hc-accent, #3dcf8e);
+  background: var(--hc-accent);
+  color: var(--hc-on-accent);
+  border-color: var(--hc-accent);
 }
 
 .chat-card-btn-primary:hover {
@@ -13352,7 +13383,7 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-bubble[data-pay-status='sent'] .chat-card-meta {
-  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 85%, #fff);
+  color: color-mix(in srgb, var(--hc-accent) 85%, #fff);
   opacity: 1;
 }
 
@@ -13387,7 +13418,7 @@ body > div.statechart-mermaid-host {
   margin: 0;
   padding: 6px 12px;
   font-size: var(--hc-text-xs);
-  color: color-mix(in srgb, #f0c674 85%, #fff);
+  color: var(--hc-warn);
 }
 
 .chat-composer {
@@ -13396,11 +13427,11 @@ body > div.statechart-mermaid-host {
   align-items: flex-end;
   gap: 8px;
   padding: 10px 12px 12px;
-  border-top: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 70%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
 }
 
 .chat-composer[data-aeon-state='command'] {
-  border-top-color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 55%, transparent);
+  border-top-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
 }
 
 .chat-composer-toolbar {
@@ -13422,7 +13453,7 @@ body > div.statechart-mermaid-host {
   padding: 4px 10px;
   min-height: 28px;
   border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
   background: transparent;
   color: var(--hc-muted);
   font: inherit;
@@ -13432,7 +13463,7 @@ body > div.statechart-mermaid-host {
 
 .chat-bind-btn:hover {
   color: inherit;
-  border-color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 50%, transparent);
+  border-color: color-mix(in srgb, var(--hc-accent) 50%, transparent);
 }
 
 .chat-input-bar {
@@ -13444,12 +13475,12 @@ body > div.statechart-mermaid-host {
   min-height: 40px;
   padding: 4px 6px 4px 4px;
   border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
   background: var(--hc-field);
 }
 
 .chat-input-bar:focus-within {
-  outline: 2px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 45%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
   outline-offset: 0;
 }
 
@@ -13480,7 +13511,7 @@ body > div.statechart-mermaid-host {
 
 .chat-action-btn:hover {
   color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 12%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
 }
 
 .chat-action-btn svg {
@@ -13523,7 +13554,7 @@ body > div.statechart-mermaid-host {
   .chat-sidebar {
     max-height: 38%;
     border-right: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
   }
 }
 
@@ -13586,8 +13617,8 @@ body > div.statechart-mermaid-host {
   height: 1.25rem;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--hc-accent, #3dcf8e);
-  color: #04140a;
+  background: var(--hc-accent);
+  color: var(--hc-on-accent);
   font-size: var(--hc-text-2xs);
   font-weight: 700;
   display: inline-flex;
@@ -13602,7 +13633,7 @@ body > div.statechart-mermaid-host {
   padding: 8px 12px;
   border-radius: var(--hc-radius);
   background: color-mix(in srgb, #101a14 70%, transparent);
-  border: 1px dashed color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--hc-border) 80%, transparent);
   opacity: 0.9;
 }
 
@@ -13630,8 +13661,8 @@ body > div.statechart-mermaid-host {
   max-height: 160px;
   overflow-y: auto;
   border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
-  background: color-mix(in srgb, #0a120e 94%, #1a2a22);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
+  background: var(--hc-bg-elevated);
 }
 
 .chat-command-menu button {
@@ -13651,12 +13682,12 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-command-menu button:hover {
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 12%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
 }
 
 .chat-command-menu code {
   font-size: var(--hc-text-sm);
-  color: var(--hc-accent, #3dcf8e);
+  color: var(--hc-accent);
 }
 
 .chat-command-menu span {
@@ -13701,13 +13732,13 @@ body > div.statechart-mermaid-host {
 
 .chat-card-btn-ghost {
   background: transparent;
-  border-color: color-mix(in srgb, var(--hc-border, #2a3330) 90%, transparent);
+  border-color: color-mix(in srgb, var(--hc-border) 90%, transparent);
   color: inherit;
 }
 
 .chat-card-btn-primary {
-  background: var(--hc-accent, #3dcf8e);
-  color: #04140a;
+  background: var(--hc-accent);
+  color: var(--hc-on-accent);
 }
 
 .chat-card-status {
@@ -13749,17 +13780,17 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
 
 /* —— Messages · Nexus-inspired layout (Aeon / HandCash tokens) —— */
 .chat-shell {
-  --chat-mine: color-mix(in srgb, var(--hc-accent, #57ff97) 17%, #14231b);
-  --chat-mine-fg: #effff6;
-  --chat-theirs: color-mix(in srgb, #171d1a 94%, #334039);
-  --chat-rail: color-mix(in srgb, #080c0a 96%, #111);
+  --chat-mine: color-mix(in srgb, var(--hc-accent) 16%, var(--hc-bg-elevated));
+  --chat-mine-fg: var(--hc-text);
+  --chat-theirs: color-mix(in srgb, var(--hc-text) 9%, var(--hc-surface));
+  --chat-rail: var(--hc-bg-elevated);
   background: radial-gradient(900px 420px at 70% -10%, rgba(87, 255, 151, 0.06), transparent 55%),
     var(--chat-rail);
 }
 
 .chat-sidebar {
-  background: color-mix(in srgb, #060908 94%, #121);
-  border-right: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 70%, transparent);
+  background: var(--hc-bg-elevated);
+  border-right: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
 }
 
 .chat-sidebar-head h2 {
@@ -13786,8 +13817,8 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   justify-content: center;
   font-size: var(--hc-text-md);
   font-weight: 700;
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 18%, #1a2420);
-  color: var(--hc-text, #e8f5ef);
+  background: color-mix(in srgb, var(--hc-accent) 18%, #1a2420);
+  color: var(--hc-text);
   flex-shrink: 0;
 }
 
@@ -13835,7 +13866,7 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
   font: inherit;
   font-size: var(--hc-text-xs);
   font-weight: 650;
@@ -13847,7 +13878,7 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
 }
 
 .chat-thread-tab[data-active] {
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
   background: color-mix(in srgb, #ffffff 6%, transparent);
 }
 
@@ -13913,14 +13944,14 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   align-items: baseline;
   gap: 8px;
   font-size: var(--hc-text-xs);
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
 }
 
 .chat-msg-name {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
   font: inherit;
   font-weight: 650;
   padding: 0;
@@ -13950,11 +13981,11 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
 .chat-bubble.is-mine {
   background: linear-gradient(
     145deg,
-    color-mix(in srgb, var(--hc-accent, #57ff97) 24%, #1b2b22),
+    color-mix(in srgb, var(--hc-accent) 24%, #1b2b22),
     var(--chat-mine)
   );
   color: var(--chat-mine-fg);
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 22%, transparent);
+  border-color: color-mix(in srgb, var(--hc-accent) 22%, transparent);
   border-radius: 18px 6px 18px 18px;
 }
 
@@ -13976,18 +14007,18 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   min-width: min(78%, 280px);
   overflow: hidden;
   background: linear-gradient(155deg, #17211c, #0e1511);
-  border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 28%, transparent);
-  color: var(--hc-text, #e8f5ef);
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, transparent);
+  color: var(--hc-text);
   padding: 12px 14px 10px;
 }
 
 .chat-bubble.is-mine.is-card {
   background: linear-gradient(
     155deg,
-    color-mix(in srgb, var(--hc-accent, #57ff97) 14%, #17231c),
+    color-mix(in srgb, var(--hc-accent) 14%, #17231c),
     #101713
   );
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
 }
 
 .chat-bubble.is-tip {
@@ -14050,7 +14081,7 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
 }
 
 .chat-file-card:hover {
-  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 35%, transparent);
+  border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
 }
 
 .chat-file-icon {
@@ -14059,8 +14090,8 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   width: 40px;
   height: 40px;
   border-radius: var(--hc-radius);
-  color: var(--hc-accent, #57ff97);
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 12%, transparent);
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
 }
 
 .chat-file-copy {
@@ -14092,8 +14123,8 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   margin: 8px 12px 14px;
   padding: 6px 8px;
   border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 75%, transparent);
-  background: color-mix(in srgb, #0c1210 92%, #1a2a22);
+  border: 1px solid color-mix(in srgb, var(--hc-border) 75%, transparent);
+  background: var(--hc-field);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
@@ -14106,7 +14137,7 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   appearance: none;
   border: 0;
   background: transparent;
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
   width: 34px;
   height: 34px;
   border-radius: var(--hc-radius);
@@ -14151,8 +14182,8 @@ html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--hc-accent, #57ff97);
-  color: #04140a;
+  background: var(--hc-accent);
+  color: var(--hc-on-accent);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -14176,14 +14207,14 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
 
 /* —— Messages · Aeon-native product projection —— */
 .chat-shell[data-aeon-scope='messages'] {
-  --chat-surface: var(--hc-surface, #0a0a0a);
-  --chat-raised: var(--hc-bg-elevated, #141414);
-  --chat-line: var(--hc-border, #262626);
-  --chat-accent-wash: var(--hc-accent-dim, rgba(87, 255, 151, 0.14));
-  --chat-tip: #e7b85a;
+  --chat-surface: var(--hc-surface);
+  --chat-raised: var(--hc-bg-elevated);
+  --chat-line: var(--hc-border);
+  --chat-accent-wash: var(--hc-accent-dim);
+  --chat-tip: var(--hc-gold);
   background:
     linear-gradient(90deg, transparent 0, transparent calc(100% - 1px), rgba(255, 255, 255, 0.018) 100%),
-    var(--hc-bg, #000);
+    var(--hc-bg);
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-sidebar {
@@ -14194,7 +14225,7 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
 .chat-shell[data-aeon-scope='messages'] .chat-sidebar-head {
   min-height: 52px;
   padding: 12px;
-  background: var(--hc-bg, #000);
+  background: var(--hc-bg);
   border-color: var(--chat-line);
 }
 
@@ -14308,13 +14339,13 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-thread {
-  background: var(--hc-bg, #000);
+  background: var(--hc-bg);
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-thread-head {
   min-height: 52px;
   padding: 9px 14px;
-  background: var(--hc-bg, #000);
+  background: var(--hc-bg);
   border-color: var(--chat-line);
 }
 
@@ -14449,8 +14480,8 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-bubble.is-request {
-  border-color: color-mix(in srgb, #7eb8ff 45%, var(--chat-line));
-  box-shadow: inset 0 2px 0 #7eb8ff;
+  border-color: color-mix(in srgb, var(--hc-info) 45%, var(--chat-line));
+  box-shadow: inset 0 2px 0 var(--hc-info);
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-bubble.is-tip,
@@ -14572,7 +14603,7 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
   border: 0;
   border-top: 1px solid var(--chat-line);
   border-radius: 0;
-  background: var(--hc-bg, #000);
+  background: var(--hc-bg);
   box-shadow: none;
 }
 
@@ -14629,7 +14660,7 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread']
   height: 38px;
   border-radius: var(--hc-radius);
   background: var(--hc-accent);
-  color: var(--hc-bg, #000);
+  color: var(--hc-bg);
 }
 
 .chat-shell[data-aeon-scope='messages'] .chat-command-menu {
@@ -14678,7 +14709,7 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-scope='messages
   min-height: 0;
   padding: clamp(14px, 4vw, 42px);
   z-index: 20;
-  background: color-mix(in srgb, var(--hc-bg, #050806) 54%, transparent);
+  background: color-mix(in srgb, var(--hc-bg) 54%, transparent);
   backdrop-filter: blur(9px) saturate(0.82);
   -webkit-backdrop-filter: blur(9px) saturate(0.82);
 }
@@ -14689,7 +14720,7 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-scope='messages
   width: min(100%, 560px);
   height: min(100%, 720px);
   max-height: 100%;
-  background: color-mix(in srgb, var(--hc-bg-elevated, #0c1210) 88%, transparent);
+  background: color-mix(in srgb, var(--hc-bg-elevated) 88%, transparent);
   box-shadow: 0 24px 80px rgb(0 0 0 / 55%);
 }
 
@@ -14733,8 +14764,8 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   background:
     radial-gradient(1200px 520px at 12% -8%, rgba(87, 255, 151, 0.09), transparent 58%),
     radial-gradient(900px 480px at 88% 108%, rgba(61, 207, 142, 0.06), transparent 55%),
-    linear-gradient(180deg, color-mix(in srgb, #050807 96%, #0f1813), color-mix(in srgb, #060908 94%, #101612));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-accent, #57ff97) 8%, transparent);
+    var(--hc-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-accent) 8%, transparent);
 }
 
 .chat-shell--fullscreen .chat-topbar {
@@ -14746,8 +14777,8 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   gap: 12px;
   padding: 0 12px 0 14px;
   min-height: var(--chat-topbar-h);
-  border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 72%, transparent);
-  background: color-mix(in srgb, #060908 88%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--hc-border) 72%, transparent);
+  background: color-mix(in srgb, var(--hc-bg) 88%, transparent);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   position: sticky;
@@ -14760,7 +14791,7 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   font-size: var(--hc-text-md);
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
 }
 
 .chat-topbar-brand {
@@ -14785,30 +14816,30 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   font-size: var(--hc-text-lg);
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
 }
 
 .chat-topbar-sub {
   font-size: var(--hc-text-2xs);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
 }
 
 .chat-topbar-close {
   flex-shrink: 0;
-  color: var(--hc-muted, #8a9a92);
+  color: var(--hc-muted);
 }
 
 .chat-topbar-close:hover {
-  color: var(--hc-text, #e8f5ef);
+  color: var(--hc-text);
 }
 
 .chat-shell--fullscreen .chat-sidebar {
   grid-row: 1;
   grid-column: 1;
-  border-right: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 65%, transparent);
-  background: color-mix(in srgb, #050807 92%, #0c1210);
+  border-right: 1px solid color-mix(in srgb, var(--hc-border) 65%, transparent);
+  background: var(--hc-bg-elevated);
 }
 
 .chat-shell--fullscreen .chat-thread {
@@ -14855,13 +14886,13 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
 }
 
 .chat-shell--fullscreen .chat-peer-row[data-selected] {
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 14%, #0f1813);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent, #57ff97) 22%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 14%, var(--hc-bg-elevated));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent) 22%, transparent);
 }
 
 .chat-shell--fullscreen .chat-unread-badge {
-  background: var(--hc-accent, #57ff97);
-  color: #04140a;
+  background: var(--hc-accent);
+  color: var(--hc-on-accent);
   font-weight: 700;
   min-width: 20px;
   height: 20px;
@@ -14871,10 +14902,10 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
 
 .chat-shell--fullscreen .chat-thread-head {
   padding: 12px 16px 10px;
-  background: color-mix(in srgb, #060908 90%, transparent);
+  background: color-mix(in srgb, var(--hc-bg) 90%, transparent);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 60%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--hc-border) 60%, transparent);
 }
 
 .chat-shell--fullscreen .chat-thread-messages {
@@ -14896,8 +14927,8 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-radius: 0;
   border: 0;
-  border-top: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 55%, transparent);
-  background: color-mix(in srgb, #060908 94%, #0c1210);
+  border-top: 1px solid color-mix(in srgb, var(--hc-border) 55%, transparent);
+  background: var(--hc-field);
   box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.22);
 }
 
@@ -14918,7 +14949,7 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   height: 42px;
   border-radius: 999px;
   box-shadow:
-    0 6px 18px color-mix(in srgb, var(--hc-accent, #57ff97) 28%, transparent),
+    0 6px 18px color-mix(in srgb, var(--hc-accent) 28%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
@@ -15353,22 +15384,22 @@ html[data-aeon-mode='light'] .receive-mode-opt[data-active] {
 }
 
 html[data-aeon-mode='light'] .asset-burn-trigger {
-  border-color: color-mix(in srgb, #991b1b 38%, var(--hc-border));
-  background: color-mix(in srgb, #991b1b 7%, transparent);
-  color: #991b1b;
+  border-color: color-mix(in srgb, var(--hc-danger) 38%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-danger) 7%, transparent);
+  color: var(--hc-danger);
 }
 
 html[data-aeon-mode='light'] .asset-burn-trigger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, #991b1b 58%, var(--hc-border));
-  background: color-mix(in srgb, #991b1b 12%, transparent);
+  border-color: color-mix(in srgb, var(--hc-danger) 58%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-danger) 12%, transparent);
   color: #7f1d1d;
 }
 
 html[data-aeon-mode='light'] .asset-burn-trigger.is-burning,
 html[data-aeon-mode='light'] .collectable-burn-btn.is-burning {
-  border-color: #991b1b;
-  background: color-mix(in srgb, #991b1b 12%, white);
-  color: #991b1b;
+  border-color: var(--hc-danger);
+  background: color-mix(in srgb, var(--hc-danger) 12%, white);
+  color: var(--hc-danger);
 }
 
 /* Burn is the last thing in any asset action row and sits away from the
@@ -15414,7 +15445,7 @@ html[data-aeon-mode='light'] .collectable-burn-btn.is-burning {
 }
 
 .device-backup-head p[data-aeon-state='warn'] {
-  color: var(--hc-danger, #ef6464);
+  color: var(--hc-danger);
 }
 
 .device-backup-sections {
@@ -15493,7 +15524,7 @@ html[data-aeon-mode='light'] .collectable-burn-btn.is-burning {
 }
 
 .device-backup-row[data-aeon-state='warn'] [data-aeon-part='description'] {
-  color: var(--hc-danger, #ef6464);
+  color: var(--hc-danger);
 }
 
 .device-backup-qr {
@@ -15537,7 +15568,7 @@ html[data-aeon-mode='light'] .collectable-burn-btn.is-burning {
 /* Remove is destructive: last in the row, pushed away from Back. */
 .device-backup-foot .device-backup-remove {
   margin-inline-start: auto;
-  color: var(--hc-danger, #ef6464);
+  color: var(--hc-danger);
 }
 
 /* Add sits under the sections it changes, separated by a rule so it never
@@ -16001,8 +16032,8 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
-  border-color: #991b1b;
-  background: #991b1b;
+  border-color: var(--hc-danger);
+  background: var(--hc-danger);
 }
 
 .app-launch-panel {
@@ -16218,7 +16249,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   min-height: 0;
   padding: clamp(14px, 3vw, 30px) 0;
   overflow: hidden;
-  background: color-mix(in srgb, var(--hc-bg, #050806) 70%, transparent);
+  background: color-mix(in srgb, var(--hc-bg) 70%, transparent);
   backdrop-filter: blur(16px) saturate(0.78);
   -webkit-backdrop-filter: blur(16px) saturate(0.78);
 }
@@ -17389,11 +17420,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 }
 
 :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'][data-aeon-state~='warning'] {
-  --banner-tone: #f5a524;
+  --banner-tone: var(--hc-warn);
 }
 
 :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'][data-aeon-state~='danger'] {
-  --banner-tone: #f04848;
+  --banner-tone: var(--hc-danger);
 }
 
 :is([data-aeon-scope='swap'], [data-aeon-scope='swap-offers']) [data-aeon-scope='statusBanner'][data-aeon-part='root'] [data-aeon-part='copy'] {
@@ -17602,8 +17633,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 }
 
 [data-aeon-scope='swap-route-badge'][data-route='exolix'] {
-  background: color-mix(in srgb, #f5a524 14%, transparent);
-  color: #f5a524;
+  background: color-mix(in srgb, var(--hc-warn) 14%, transparent);
+  color: var(--hc-warn);
 }
 
 [data-aeon-scope='swap-status'] {
@@ -17637,11 +17668,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
 }
 
 [data-aeon-scope='swap-status'][data-tone='returned'] {
-  --tone: #f5a524;
+  --tone: var(--hc-warn);
 }
 
 [data-aeon-scope='swap-status'][data-tone='stopped'] {
-  --tone: #f04848;
+  --tone: var(--hc-danger);
 }
 
 @keyframes swap-status-pulse {
