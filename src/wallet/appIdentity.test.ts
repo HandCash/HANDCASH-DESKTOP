@@ -52,20 +52,16 @@ describe('appDisplayName', () => {
 })
 
 describe('appFaviconCandidates', () => {
-  it('does not use generic favicon proxies for shared app hosts', () => {
-    const candidates = appFaviconCandidates(
-      'https://brc-cloud.bcryderman.workers.dev',
-    )
-    expect(candidates).toContain(
-      'https://brc-cloud.bcryderman.workers.dev/favicon.svg',
-    )
-    expect(candidates.some((candidate) => candidate.includes('google.com'))).toBe(false)
-    expect(candidates.some((candidate) => candidate.includes('duckduckgo.com'))).toBe(false)
+  it('asks only the app itself for its icon', () => {
+    for (const origin of ['https://brc-cloud.bcryderman.workers.dev', 'https://example.com']) {
+      const candidates = appFaviconCandidates(origin)
+      expect(candidates).toContain(`${origin}/favicon.svg`)
+      expect(candidates.every((candidate) => candidate.startsWith(`${origin}/`))).toBe(true)
+    }
   })
 
-  it('retains favicon proxy fallbacks for ordinary app domains', () => {
-    const candidates = appFaviconCandidates('https://example.com')
-    expect(candidates.some((candidate) => candidate.includes('google.com'))).toBe(true)
+  it('has no candidates for an unknown app', () => {
+    expect(appFaviconCandidates(undefined)).toEqual([])
   })
 })
 
