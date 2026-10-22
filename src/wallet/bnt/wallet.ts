@@ -1,4 +1,4 @@
-import { Beef, Transaction, Utils } from '@bsv/sdk'
+import { Beef, Transaction, Utils, type UnlockingScript } from '@bsv/sdk'
 import { rememberHeldBntAssets } from './heldAssets'
 import { bntDeployArt } from './art'
 import { createActor } from 'xstate'
@@ -28,10 +28,14 @@ import {
   encodeBntPayload,
   BNT_MAX_CONTENT_BYTES,
   BNT_MAX_ICON_BYTES,
+  BNT_MAX_OPEN_MINTS,
+  bntOpenMintCap,
   bntSupplyPolicy,
   type BntBacking,
   type BntDeployFields,
+  type BntOpenMint,
 } from './payload'
+import { bntMintUnlock } from './mintCovenant'
 import { buildBntPackage, bntAncestry, BNT_PACKAGE_BUDGET, readBntPackage, type BntPackage } from './proof'
 import {
   BNT_HOLDER_SCOPE,
@@ -41,10 +45,12 @@ import {
   bntAuthorityLock,
   bntDeployLock,
   bntHeldLock,
+  bntMintLock,
   bntOpenUnlock,
   isBntAssetId,
   p2pkLock,
   readBnt,
+  type BntHeldOutput,
   type BntIssued,
   type BntOutput,
 } from './script'
@@ -128,6 +134,7 @@ export type BntError =
   | 'invalid-build'
   | 'awaiting-backing'
   | 'custodial'
+  | 'minted-out'
 
 export class BntRefusal extends Error {
   constructor(
@@ -307,7 +314,7 @@ export type BntRow = {
   txid: string
   vout: number
   assetId: string
-  read: BntOutput
+  read: BntHeldOutput
   /** Units this output carries as an input: a deploy carries its supply. */
   amount: bigint
   authority: boolean
@@ -376,7 +383,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
   for (const o of page.outputs ?? []) {
     if (o.spendable === false || !(o.tags ?? []).includes(BNT_TAG) || !o.lockingScript) continue
     const read = readBnt(o.lockingScript)
-    if (!read) continue
+    if (!read || read.form === 'mint') continue
     const [txid, voutRaw] = o.outpoint.replace('_', '.').split('.')
     const vout = Number(voutRaw)
     const id = read.form === 'deploy' ? bntAssetId(txid!, vout) : read.assetId
@@ -596,6 +603,13 @@ type PlannedOutput = {
   customInstructions?: string
 }
 
+/** An input this wallet signs with a holder or issuer key, or one a covenant unlock opens (null: try another lock time). */
+type PlannedInput =
+  | { outpoint: string; description: string; signer: WalletSigner; scope: number }
+  | { outpoint: string; description: string; unlock: (tx: Transaction, vin: number) => UnlockingScript | null; unlockingScriptLength: number }
+
+class UnsignableLockTime extends Error {}
+
 type SignedBnt = { txid: string; atomic: number[]; tx: Transaction }
 
 /**
@@ -637,9 +651,10 @@ async function signBntAction(
   args: {
     description: string
     labels: string[]
-    inputs: Array<{ outpoint: string; description: string; signer: WalletSigner; scope: number }>
+    inputs: PlannedInput[]
     outputs: PlannedOutput[]
     check: (tx: Transaction) => string | null
+    lockTime?: number
   },
 ): Promise<SignedBnt> {
   const inputBEEF = await inputBeefFor(active, args.inputs.map((i) => i.outpoint))
@@ -647,8 +662,13 @@ async function signBntAction(
     description: args.description.slice(0, 50),
     labels: args.labels,
     inputBEEF: inputBEEF.binary,
-    inputs: args.inputs.map((i) => ({ outpoint: i.outpoint, inputDescription: i.description, unlockingScriptLength: SIG_LENGTH })),
+    inputs: args.inputs.map((i) => ({
+      outpoint: i.outpoint,
+      inputDescription: i.description,
+      unlockingScriptLength: 'unlock' in i ? i.unlockingScriptLength : SIG_LENGTH,
+    })),
     outputs: args.outputs,
+    ...(args.lockTime ? { lockTime: args.lockTime } : {}),
     options: { trustSelf: 'known', knownTxids: inputBEEF.txids, noSend: true, randomizeOutputs: false, signAndProcess: true },
   })
   const signable = created.signableTransaction
@@ -667,7 +687,13 @@ async function signBntAction(
       const input = tx.inputs[vin]!
       const planned = targets.get(`${sourceTxidOf(tx, vin)}.${input.sourceOutputIndex}`)
       if (!planned) continue
-      input.unlockingScript = bntOpenUnlock(await signInputWithWallet(active.wallet, tx, vin, planned.signer, planned.scope))
+      if ('unlock' in planned) {
+        const unlock = planned.unlock(tx, vin)
+        if (!unlock) throw new UnsignableLockTime()
+        input.unlockingScript = unlock
+      } else {
+        input.unlockingScript = bntOpenUnlock(await signInputWithWallet(active.wallet, tx, vin, planned.signer, planned.scope))
+      }
       spends[vin] = { unlockingScript: input.unlockingScript.toHex() }
     }
     if (Object.keys(spends).length !== args.inputs.length) throw new Error('A BNT input is missing from the staged action')
@@ -804,6 +830,8 @@ export type IssueBntArgs = {
   /** An item's collection: a token asset whose authority this wallet holds. */
   collection?: unknown
   mode?: unknown
+  /** Open minting (§5a): once issued, anyone may mint `amount` units, `count` times in all. */
+  openMint?: { count?: unknown; amount?: unknown }
 }
 
 /** Wallet-internal options; the BRC-100 dispatcher never passes them, so an app cannot set them. */
@@ -817,7 +845,15 @@ export type BntWalletOptions = {
   backing?: { deposit: BackingOutpoint; bk?: BntBacking }
 }
 
-export type IssueBntResult = { assetId: string; txid: string; kind: 'token' | 'item'; supply: string; basket: string }
+export type IssueBntResult = {
+  assetId: string
+  txid: string
+  kind: 'token' | 'item'
+  supply: string
+  basket: string
+  /** An open-mint token: the mint anyone can use, `txid.vout`. */
+  mint?: string
+}
 
 /** Plain checks of issue arguments, before anything is staged. */
 export function bntIssueFields(args: IssueBntArgs, identityKey: string): { fields: BntDeployFields; supply: bigint } {
@@ -859,7 +895,23 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
     refuse('bad-asset-args', 'max and size cap minting, so they go on a token with a mint authority.')
   }
   if (max != null && BigInt(supplyRaw) > max) refuse('bad-asset-args', `supply ${supplyRaw} is over max ${max}.`)
-  const auth = args.auth === true || max != null || size != null
+  let om: BntOpenMint | undefined
+  if (args.openMint != null) {
+    const count = Number(args.openMint.count)
+    const lim = String(args.openMint.amount ?? '').trim()
+    if (kind !== 'token' || args.auth === false || max != null || size != null) {
+      refuse('bad-asset-args', 'openMint goes on a token without max, size or auth: false; it fixes its own cap.')
+    }
+    if (!Number.isSafeInteger(count) || count < 1 || count > BNT_MAX_OPEN_MINTS) {
+      refuse('bad-asset-args', `openMint.count is a whole number from 1 to ${BNT_MAX_OPEN_MINTS}.`)
+    }
+    if (!/^\d+$/.test(lim) || BigInt(lim) < 1n || BigInt(lim) > BNT_MAX_AMOUNT) {
+      refuse('bad-asset-args', 'openMint.amount is a whole number of units, at least 1.')
+    }
+    om = { count, lim: BigInt(lim) }
+    if (bntOpenMintCap(BigInt(supplyRaw), om) > BNT_MAX_AMOUNT) refuse('bad-asset-args', 'supply plus every open mint is over 2^64-1 units.')
+  }
+  const auth = args.auth === true || max != null || size != null || om != null
   const fields: BntDeployFields = {
     mode: 'open',
     kind,
@@ -874,6 +926,7 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
     ...(icon ? { icon } : {}),
     ...(content ? { ctype: content.mediaType, c: content.bytes } : {}),
     ...(collection ? { col: collection } : {}),
+    ...(om ? { om } : {}),
   }
   try {
     encodeBntPayload(fields)
@@ -1001,12 +1054,19 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       rememberBntAsset(issued.assetId, issued.fields)
       bntDeployArt(issued.assetId, issued.fields)
       await commitSigned(signed, [issued.assetId, ...(collection ? [collection.row.assetId] : [])], true)
+      // The deploy stands even if opening fails; the first mintBntAsset opens it then.
+      const mint = issued.fields.om
+        ? await openBntMint(active, issued).catch((err) => {
+            console.warn('[bnt] open mint deferred', err instanceof Error ? err.message : String(err))
+            return undefined
+          })
+        : undefined
       chart.send({ type: 'BROADCASTED' })
       chart.send({ type: 'DELIVERED' })
       recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 0, method: issued.fields.kind === 'item' ? 'mint-collectable' : 'mint-token', note: `Issued ${label}`, txid: signed.txid, item: bntActivityItem(active, issued.assetId, issued.fields, BigInt(supply ?? 0)) })
       scheduleHistoryBackupPush('bnt')
       log('issue', startedAt)
-      return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket }
+      return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket, ...(mint ? { mint } : {}) }
     } catch (err) {
       chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
       throw err
@@ -1042,7 +1102,179 @@ async function splitBackedDeploy(active: ActiveWallet, row: BntRow, deploy: BntD
   return authority
 }
 
-export type MintBntResult = { assetId: string; txid: string; amount: string; issued?: { units: string; members: string } }
+export type MintBntResult = {
+  assetId: string
+  txid: string
+  amount: string
+  issued?: { units: string; members: string }
+  /** An open mint: how many mints are left after this one. */
+  remaining?: number
+}
+
+export type MintBntArgs = {
+  assetId?: unknown
+  amount?: unknown
+  /** The asset's deploy, `txid_vout`, when this wallet has never seen it. */
+  deploy?: unknown
+  /** Open minting: any mint of this token, `txid.vout`; the wallet follows its spends to the newest. */
+  tip?: unknown
+}
+
+type BntChart = ReturnType<typeof createActor<typeof bntMachine>>
+
+/** Spends a mint search follows before it gives up for now. */
+const MINT_TIP_STEPS = 64
+/** Lock times tried until the covenant's signature is canonical (each fails about 1 in 512). */
+const MINT_LOCK_TIMES = 16
+/** Unlock bytes beyond the mint script: preimage fields, holder key, pushes and the change outputs. */
+const MINT_UNLOCK_SLACK = 600
+
+function rememberMintTip(assetId: string, outpoint: string | null): void {
+  const state = readBntState()
+  const mints = { ...(state.mints ?? {}) }
+  if (outpoint) mints[assetId] = outpoint
+  else delete mints[assetId]
+  writeBntState({ ...state, mints })
+}
+
+/**
+ * Open the mint of an open-mint token this wallet issued (§5a): spend the
+ * deploy, keep its supply, and write the mint with every mint left at output
+ * 0. Nothing is issued, and no authority exists from then on.
+ */
+async function openBntMint(active: ActiveWallet, deploy: BntDeploy): Promise<string> {
+  const om = deploy.fields.om
+  if (!om) throw new Error('This token has no open mint')
+  const row = (await heldRows(active, BNT_TOKEN_BASKET, deploy.assetId)).find((r) => r.read.form === 'deploy')
+  if (!row) refuse('not-held', "This wallet does not hold the token's deploy, so it cannot open the mint.")
+  const signed = await signBntAction(active, {
+    description: `Open ${deploy.fields.sym ?? 'token'} mint (BNT)`,
+    labels: [LABEL, 'bnt-open-mint'],
+    inputs: [{ outpoint: row.outpoint, description: 'BNT deploy', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE }],
+    outputs: [
+      { lockingScript: bntMintLock({ assetId: deploy.assetId, remaining: om.count, lim: om.lim }).toHex(), satoshis: 1, outputDescription: 'BNT open mint' },
+      ...(await carryBack(active, { ...row, authority: false }, deploy, freshDerivationString())),
+    ],
+    check: (tx) => {
+      const check = checkBntTx(tx, deploy)
+      if (!check.ok) return `${check.reason}: ${check.detail}`
+      return check.outputs.some((o) => o.vout === 0 && o.authority) ? null : 'the mint is not at output 0'
+    },
+  })
+  await commitSigned(signed, [deploy.assetId], true)
+  const outpoint = `${signed.txid}.0`
+  rememberMintTip(deploy.assetId, outpoint)
+  return outpoint
+}
+
+/** Follow a mint's spends to the newest one; refuses once every mint is taken. */
+async function currentMintTip(active: ActiveWallet, deploy: BntDeploy, from: string): Promise<{ outpoint: string; remaining: number }> {
+  const { probeOutpointSpends } = await import('../createActionInputFate')
+  let outpoint = from
+  for (let step = 0; step < MINT_TIP_STEPS; step++) {
+    const [txid, voutRaw] = outpoint.split('.')
+    const tx = await rawTx(active, txid!)
+    const script = tx?.outputs[Number(voutRaw)]?.lockingScript
+    const read = script ? readBnt(script) : null
+    if (read?.form !== 'mint' || read.assetId !== deploy.assetId) refuse('not-held', `${outpoint} is not an open mint of this token.`)
+    const probe = (await probeOutpointSpends([outpoint], '', active.chain)).get(outpoint)
+    if (probe?.kind !== 'spent') return { outpoint, remaining: read.remaining }
+    if (read.remaining === 1) {
+      rememberMintTip(deploy.assetId, null)
+      refuse('minted-out', 'Every mint of this token is taken.')
+    }
+    outpoint = `${probe.spender}.0`
+  }
+  refuse('invalid-build', 'The mint moved too often while it was being found; try again.')
+}
+
+/**
+ * Mint `lim` units of an open-mint token to this wallet (§5a). Anyone may:
+ * the covenant re-creates the mint with one fewer left at output 0, and the
+ * whole history back to the deploy is checked before anything is sent.
+ */
+async function mintOpen(
+  active: ActiveWallet,
+  deploy: BntDeploy,
+  tipArg: { txid: string; vout: number } | undefined,
+  chart: BntChart,
+  labels: readonly string[],
+): Promise<MintBntResult> {
+  const om = deploy.fields.om!
+  const assetId = deploy.assetId
+  let from = tipArg ? `${tipArg.txid}.${tipArg.vout}` : readBntState().mints?.[assetId]
+  if (!from) {
+    const holdsDeploy = (await heldRows(active, BNT_TOKEN_BASKET, assetId)).some((r) => r.read.form === 'deploy')
+    if (!holdsDeploy) refuse('bad-asset-args', 'Name a mint of this token (tip: "txid.vout"); this wallet knows none yet.')
+    from = await openBntMint(active, deploy)
+  }
+  const tip = await currentMintTip(active, deploy, from)
+  const minted = await freshHolder(active, selfOf(active), freshDerivationString())
+  const left = tip.remaining - 1
+  const basket = bntFilingOf(deploy.fields.kind)
+  const outputs: PlannedOutput[] = [
+    ...(left > 0 ? [{ lockingScript: bntMintLock({ assetId, remaining: left, lim: om.lim }).toHex(), satoshis: 1, outputDescription: 'BNT open mint' }] : []),
+    {
+      lockingScript: bntHeldLock({ assetId, amount: om.lim, clause: { mode: 'open', holder: minted.holder } }).toHex(),
+      satoshis: 1,
+      outputDescription: 'BNT minted units',
+      basket,
+      tags: rowTags(assetId, deploy, 'held', om.lim),
+      customInstructions: rowInstructions(assetId, deploy.fields, 'held', om.lim, minted.remittance),
+    },
+  ]
+  chart.send({ type: 'BUILT' })
+  const label = bntAmountLabel(assetId, om.lim)
+  const unlockingScriptLength = bntMintLock({ assetId, remaining: 1, lim: om.lim }).toBinary().length + MINT_UNLOCK_SLACK
+  let signed: SignedBnt | null = null
+  for (let lockTime = 0; !signed && lockTime < MINT_LOCK_TIMES; lockTime++) {
+    try {
+      signed = await signBntAction(active, {
+        description: `Mint ${label} (BNT)`,
+        labels: [LABEL, 'bnt-mint', 'bnt-open-mint', ...labels],
+        inputs: [{ outpoint: tip.outpoint, description: 'BNT open mint', unlock: (tx, vin) => bntMintUnlock(tx, vin, minted.holder, tip.remaining), unlockingScriptLength }],
+        outputs,
+        lockTime,
+        check: (tx) => {
+          const check = checkBntTx(tx, deploy)
+          if (!check.ok) return `${check.reason}: ${check.detail}`
+          return check.minted === om.lim ? null : `it issues ${check.minted} units, not ${om.lim}`
+        },
+      })
+    } catch (err) {
+      if (!(err instanceof UnsignableLockTime)) throw err
+    }
+  }
+  if (!signed) refuse('invalid-build', 'No transaction the mint could sign was found. Nothing was signed.')
+  const seen = new Map<string, Transaction>([[signed.txid, signed.tx]])
+  const walk = await walkBnt(
+    signed.txid,
+    deploy,
+    async (id) => {
+      const tx = seen.get(id) ?? (await bntTxOf(active, id))
+      if (tx) seen.set(id, tx)
+      return tx
+    },
+    (id) => isBntValidatedSync(id, assetId),
+  )
+  if (!walk.ok) {
+    await active.wallet.abortAction({ reference: signed.txid }).catch(() => {})
+    refuse('invalid-build', `The mint's history does not check (${walk.detail}). Nothing was sent.`)
+  }
+  for (const id of walk.validated) {
+    const tx = seen.get(id)
+    if (tx && id !== signed.txid) await putBntTx(tx)
+  }
+  await markBntValidated(walk.validated, assetId)
+  chart.send({ type: 'SIGNED', txid: signed.txid })
+  await commitSigned(signed, [assetId], true)
+  rememberMintTip(assetId, left > 0 ? `${signed.txid}.0` : null)
+  chart.send({ type: 'BROADCASTED' })
+  chart.send({ type: 'DELIVERED' })
+  recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: 'earned', sats: 0, method: 'mint-token', note: `Minted ${label}`, txid: signed.txid, item: bntActivityItem(active, assetId, deploy.fields, om.lim) })
+  scheduleHistoryBackupPush('bnt')
+  return { assetId, txid: signed.txid, amount: om.lim.toString(), remaining: left }
+}
 
 /**
  * Mint units of an open BNT token whose authority this wallet holds (§5).
@@ -1050,16 +1282,25 @@ export type MintBntResult = { assetId: string; txid: string; amount: string; iss
  * token's authority states the new total, and the cap is never passed.
  */
 /** Every refusal a mint can give from local state alone; it reads and writes nothing else. */
-async function mintChecks(active: ActiveWallet, args: { assetId?: unknown; amount?: unknown }, opts: BntWalletOptions) {
+async function mintChecks(active: ActiveWallet, args: MintBntArgs, opts: BntWalletOptions) {
   const assetId = String(args.assetId ?? '').trim().toLowerCase()
   if (!isBntAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex BNT asset id.')
-  const amountRaw = String(args.amount ?? '').trim()
+  const at = args.deploy == null ? undefined : parseOutpoint(args.deploy)
+  if (at === null) refuse('bad-asset-args', 'deploy is the outpoint of the asset\'s deploy, "txid_vout".')
+  const deploy = await deployOf(active, assetId, at)
+  if (!deploy) refuse('not-held', 'This wallet does not know that asset; name its deploy.')
+  const amountRaw = String(args.amount ?? (deploy.fields.om ? deploy.fields.om.lim : '')).trim()
   if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > BNT_MAX_AMOUNT) {
     refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
   }
   const amount = BigInt(amountRaw)
-  const deploy = await deployOf(active, assetId)
-  if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
+  if (deploy.fields.om) {
+    if (amount !== deploy.fields.om.lim) refuse('bad-asset-args', `Each open mint of this token writes exactly ${deploy.fields.om.lim} units.`)
+    if (opts.backing) refuse('bad-asset-args', 'Only a backed token mints against a deposit.')
+    const tip = args.tip == null ? undefined : parseOutpoint(args.tip)
+    if (tip === null) refuse('bad-asset-args', 'tip is an open mint of this token, "txid.vout".')
+    return { open: true as const, assetId, amount, deploy, om: deploy.fields.om, tip }
+  }
   if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open BNT assets only.')
   const policy = bntSupplyPolicy(deploy.fields)
   if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
@@ -1072,22 +1313,28 @@ async function mintChecks(active: ActiveWallet, args: { assetId?: unknown; amoun
   } else if (opts.backing) {
     refuse('bad-asset-args', 'Only a backed token mints against a deposit.')
   }
-  return { assetId, amount, deploy, policy, authority }
+  return { open: false as const, assetId, amount, deploy, policy, authority }
 }
 
 /** Refuse a mint the wallet would refuse anyway, before anyone is asked to approve it. */
-export async function preflightBntMint(args: { assetId?: unknown; amount?: unknown }): Promise<void> {
+export async function preflightBntMint(args: MintBntArgs): Promise<void> {
   await mintChecks(requireActive(), args, {})
 }
 
-export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }, opts: BntWalletOptions = {}): Promise<MintBntResult> {
+export async function mintBntAsset(args: MintBntArgs, opts: BntWalletOptions = {}): Promise<MintBntResult> {
   return runExclusiveSpend(async () => {
     const startedAt = Date.now()
     const active = requireActive()
     const chart = createActor(bntMachine).start()
     chart.send({ type: 'MINT' })
     try {
-      const { assetId, amount, deploy, policy, authority: held } = await mintChecks(active, args, opts)
+      const checks = await mintChecks(active, args, opts)
+      if (checks.open) {
+        const result = await mintOpen(active, checks.deploy, checks.tip, chart, opts.labels ?? [])
+        log('open mint', startedAt)
+        return result
+      }
+      const { assetId, amount, deploy, policy, authority: held } = checks
       let authority = held
       if (deploy.fields.bk) {
         if (authority.amount > 0n) {
@@ -1550,7 +1797,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
     const remittance = readBntRemittance({ ...o, senderIdentityKey: from })
     const script = subject.outputs[o.vout]?.lockingScript
     const read = script ? readBnt(script) : null
-    if (!remittance || !read || read.form === 'deploy' || read.assetId !== wire.asset) return 'invalid'
+    if (!remittance || !read || read.form === 'deploy' || read.form === 'mint' || read.assetId !== wire.asset) return 'invalid'
     if (!(await holdsUnder(active, remittance, read.clause.holder))) return 'invalid'
     if (read.clause.mode !== 'open') return 'retry'
     mine.push({ vout: o.vout, read, remittance })

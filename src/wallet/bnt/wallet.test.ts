@@ -18,6 +18,9 @@ type Row = {
 
 type Pending = { tx: Transaction; outputs: Array<{ basket?: string; tags?: string[]; customInstructions?: string; lockingScript: string; satoshis: number }>; inputs: string[] }
 
+/** Every install's transactions: the spend probe reads them as the chain. */
+const installTxs: Array<Map<string, Transaction>> = []
+
 /** One install: its own toolbox rows, transactions and BNT chain store; nothing comes from a chain. */
 function makeInstall() {
   const root = PrivateKey.fromRandom()
@@ -54,9 +57,10 @@ function makeInstall() {
       const inputs = (args.inputs ?? []).map((i) => i.outpoint)
       const supplied = args.inputBEEF ? Beef.fromBinary(args.inputBEEF) : new Beef()
       for (const outpoint of inputs) {
-        const row = rows.find((r) => r.outpoint === outpoint && r.spendable)
-        if (!row) throw new Error(`unknown input ${outpoint}`)
+        const row = rows.find((r) => r.outpoint === outpoint)
         const [txid, vout] = outpoint.split('.')
+        // An output this wallet never filed (an open mint) is spendable from inputBEEF alone.
+        if (row ? !row.spendable : !supplied.findTxid(txid!)?.tx) throw new Error(`unknown input ${outpoint}`)
         // The engine builds the signable transaction from inputBEEF alone for inputs it does not sign.
         const source = supplied.findTxid(txid!)?.tx
         if (!source) throw new Error('Every signableTransaction input must have a sourceTransaction')
@@ -124,6 +128,7 @@ function makeInstall() {
     backing: new Map<string, unknown>(),
     deposits: new Map<string, string>(),
   }
+  installTxs.push(txs)
   return { root, identityKey, address, txs, rows, chain, active: { wallet, rootKeyHex: root.toHex(), identityKey, address, chain: 'main', txs } }
 }
 
@@ -144,6 +149,22 @@ vi.mock('../durableStorage', () => ({
 }))
 vi.mock('../appActivity', () => ({ recordAppActivity: () => {}, WALLET_ACTIVITY_ORIGIN: 'handcash' }))
 vi.mock('../deviceSync', () => ({ scheduleHistoryBackupPush: () => {} }))
+vi.mock('../createActionInputFate', () => ({
+  probeOutpointSpends: async (outpoints: string[]) => {
+    const answers = new Map<string, { kind: 'spent'; spender: string } | { kind: 'unspent' }>()
+    for (const outpoint of outpoints) {
+      const [txid, vout] = outpoint.split('.')
+      let spender: string | null = null
+      for (const txs of installTxs) {
+        for (const [id, tx] of txs) {
+          if (tx.inputs.some((i) => (i.sourceTXID ?? i.sourceTransaction?.id('hex')) === txid && i.sourceOutputIndex === Number(vout))) spender = id
+        }
+      }
+      answers.set(outpoint, spender ? { kind: 'spent', spender } : { kind: 'unspent' })
+    }
+    return answers
+  },
+}))
 vi.mock('../peerIngestHelpers', () => ({ withRestoredInternalizeStatus: (_: string, run: () => Promise<unknown>) => run() }))
 vi.mock('../signedSendLifecycle', () => ({
   registerSignedSend: async (args: { txid: string }) => (registered.push(args.txid), args),
@@ -292,6 +313,35 @@ describe('open BNT wallet', () => {
     await as(dave, () => serveBntBox({ force: true }))
     expect(await balanceOf(dave, cap.assetId)).toBe('100')
     expect((await as(dave, () => listBntAssets())).assets.find((a) => a.assetId === cap.assetId)?.supply).toEqual({ policy: 'capped', max: '100' })
+  })
+
+  it('opens a mint anyone can use, a fixed amount at a time, until every mint is taken', async () => {
+    const share = (from: Install, to: Install) => from.txs.forEach((tx, id) => to.txs.set(id, tx))
+    const rune = await as(alice, () => issueBntAsset({ kind: 'token', sym: 'RUNE', supply: '10', openMint: { count: 2, amount: '50' } }))
+    expect(rune.mint).toMatch(/^[0-9a-f]{64}\.0$/)
+    expect(await balanceOf(alice, rune.assetId)).toBe('10')
+    await expect(as(alice, () => issueBntAsset({ kind: 'token', sym: 'BAD', supply: '1', max: '5', openMint: { count: 2, amount: '1' } }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
+
+    const dave = makeInstall()
+    share(alice, dave)
+    await expect(as(dave, () => mintBntAsset({ assetId: rune.assetId, deploy: `${rune.txid}_0`, tip: rune.mint, amount: '51' }))).rejects.toMatchObject({ reason: 'bad-asset-args' })
+    const first = await as(dave, () => mintBntAsset({ assetId: rune.assetId, deploy: `${rune.txid}_0`, tip: rune.mint }))
+    expect(first).toMatchObject({ amount: '50', remaining: 1 })
+    expect(await balanceOf(dave, rune.assetId)).toBe('50')
+
+    share(dave, alice)
+    const second = await as(alice, () => mintBntAsset({ assetId: rune.assetId }))
+    expect(second).toMatchObject({ amount: '50', remaining: 0 })
+    expect(await balanceOf(alice, rune.assetId)).toBe('60')
+    expect(alice.txs.get(second.txid)!.outputs.some((o) => readBnt(o.lockingScript)?.form === 'mint')).toBe(false)
+
+    share(alice, dave)
+    await expect(as(dave, () => mintBntAsset({ assetId: rune.assetId }))).rejects.toMatchObject({ reason: 'minted-out' })
+    const erin = makeInstall()
+    const sent = await as(dave, () => transferBntAsset({ assetId: rune.assetId, recipient: erin.identityKey, amount: '50' }))
+    expect(sent.delivered).toBe(true)
+    await as(erin, () => serveBntBox({ force: true }))
+    expect(await balanceOf(erin, rune.assetId)).toBe('50')
   })
 
   it('burns units to a holder nobody signs for and keeps the change and authority', async () => {

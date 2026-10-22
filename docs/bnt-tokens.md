@@ -54,13 +54,26 @@ Every token deploy fixes its supply policy (BRC-255 §4), and `listBntAssets` re
 | Open | `auth: true` | any amount |
 | Capped | `max` (units, supply included) and/or `size` (collection members); either implies `auth` | up to the cap; past it is `over-cap` |
 
+| Open mint (Runes-style) | `openMint: { count, amount }` on a token, with no `max`, `size` or `item`; `amount` defaults to the supply | anyone, `amount` units at a time, `count` times; then `minted-out` |
+
 A capped authority states the units and members issued so far. Every reader checks each mint against the cap during its walk, so a mint past the cap is never credited, whoever signed it. Dropping the authority ends minting for good.
+
+### Open minting (HandCash extension to BRC-255, `om`)
+
+The deploy payload carries `om: [count, lim]`, listed in `crit`, so a reader that does not know it refuses the asset instead of misreading it. `count` is at most 10,000, which keeps a first receipt's walk inside its 20,000-hop budget. The most that can ever exist is `supply + count × lim`.
+
+- **Opening.** Right after the deploy, the issuer spends the authority into one mint output with `remaining = count` and keeps the supply. That transaction issues nothing, and no authority exists after it, so the issuer has no more minting power than anyone else.
+- **Mint output.** `<"bnt"‖asset id> OP_0 <remaining, 4-byte LE> OP_2DROP OP_DROP <covenant>`, 1 sat, with no holder. The covenant checks the spending transaction through OP_PUSH_TX (a signature with key 1 and nonce 1, so anyone can make it). Output 0 must be the same mint with `remaining − 1`, left out once that reaches 0, and the next output must be a held output of exactly `lim` units, 1 sat, to a key the minter names. Other outputs are free.
+- **Unlock.** `<other outputs serialized> <holder key> <preimage>`. The covenant needs a 32-byte low-S signature, so about 1 in 512 transactions must change `nLockTime` and sign again; the wallet does this.
+- **Validity.** The walk applies the same rules as the covenant, so a reader never relies on the script alone. A transaction that spends the mint but breaks §4 elsewhere still passes its vout-0 mint on, so nobody can end the mint chain by spending it badly; nothing else in that transaction is credited.
+- **Finding the tip.** `mintBntAsset({ assetId, deploy?, tip? })` starts from the last mint it knows (or the one it is given) and follows spends with the chain's spend lookup, up to 64 steps. Two minters racing for the same tip get one mint; the loser's broadcast fails and is aborted.
 
 ## Modules (open mode, shipped)
 
 | Concern | Module |
 |---|---|
-| Script encode/parse: deploy, held, authority, both clauses, beacon | `src/wallet/bnt/script.ts` |
+| Script encode/parse: deploy, held, authority, mint, both clauses, beacon | `src/wallet/bnt/script.ts` |
+| Open-mint covenant (OP_PUSH_TX) and its unlock | `src/wallet/bnt/mintCovenant.ts` |
 | Deploy payload (DAG-CBOR, `crit`) | `src/wallet/bnt/payload.ts` |
 | Issuer and holder keys (`[2, "bnt issuer"]` counterparty `anyone`; `[2, "bnt holder"]`) | `src/wallet/bnt/keys.ts` |
 | Deploy read, per-transaction conservation check, walk to the deploy | `src/wallet/bnt/validity.ts` |
@@ -95,8 +108,6 @@ The wallet holds litecoin on Litecoin, with its own key; nothing is wrapped, min
 
 The explorers (`litecoinspace.org`, then BRC-CLOUD `/v1/ltc`, Esplora API) are untrusted: amounts come from raw transactions the wallet checked, and depth only from its own header chain. The first run carries an earlier build's wLTC record over (`handcash.wltc.v1` → `handcash.ltc.v1`) and rewrites its rows to name the Litecoin transactions. Code: `src/wallet/coins/` (engine shared by every chain), `src/wallet/ltc/` and `src/wallet/bch/` (bindings), chart `coinMachine`. The watcher of a chain reads the network only for an account that has shown its address or held a coin on that chain.
 
-Not built: Runes-style open minting. Open minting needs a mint output that anyone can spend, but only if they re-create it with a lower counter. Plain BNT locks cannot hold that rule without a covenant or a change to the spec.
-
 ## Phases
 
 1. **Spec review.** BRC-255 draft open; name, marker and protocol IDs still movable.
@@ -111,3 +122,4 @@ Not built: Runes-style open minting. Open minting needs a mint output that anyon
 
 - The final protocol name.
 - Whether mint-studio issues BNT only from phase 3 on.
+- Whether open minting (`om`, the mint form) goes into the BRC-255 draft or stays a HandCash extension, and whether it gets a UI and an indexed mint tip instead of following spends.
