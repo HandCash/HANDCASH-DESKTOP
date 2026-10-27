@@ -1,3 +1,4 @@
+import { authorizeDeclaredFeature, authorizeActionLabels } from './featurePermissions'
 import { dispatchEcpm, isEcpmRequest } from './ecpm'
 import {
   enrichIdentityIssuance,
@@ -473,6 +474,8 @@ export async function dispatchWalletMethod(
   args: unknown,
   originator?: string,
 ): Promise<unknown> {
+  const runtime = getWalletRuntime()
+  if (originator && runtime?.instance.wallet === wallet) await authorizeActionLabels(runtime, method, args, normalizeOrigin(originator))
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
 
   if (isEcpmRequest(method, args)) return dispatchEcpm(wallet, args, normalizeOrigin(originator))
@@ -1153,8 +1156,11 @@ async function handleBrc100RequestInner(
     }
   }
 
+  let featureAuthorized = false
+  try { featureAuthorized = runtime && originator ? await authorizeDeclaredFeature(runtime, method, args, originator) : false }
+  catch { return { status: 403, body: JSON.stringify({ status: 'error', code: 'FEATURE_PERMISSION_DENIED', description: 'The wallet feature was not authorized.' }) } }
   let attestation: IssuanceAttestation | undefined
-  if (isActionMethod(method)) {
+  if (isActionMethod(method) && !featureAuthorized) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction') {
       const bntInput = await bntInputOf(active.wallet, args)

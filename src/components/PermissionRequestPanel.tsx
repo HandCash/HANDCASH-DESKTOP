@@ -1,3 +1,5 @@
+import { PermissionLifetimeControls } from './PermissionLifetimeControls'
+import type { PermissionLifetime } from '../wallet/permissions'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import {
@@ -32,7 +34,7 @@ import type { WalletDockActions } from './WalletActionDock'
 type Props = {
   pending: PendingPrompt
   /** True only when this exact prompt was still current and accepted. */
-  onAllow: (autoPay?: AutoPayChoice) => boolean
+  onAllow: (autoPay?: AutoPayChoice, lifetime?: PermissionLifetime) => boolean
   /** True only when this exact prompt was still current and cancelled. */
   onDeny: () => boolean
   /** When `inline`, render Deny/Approve in the panel (desktop right column). */
@@ -83,7 +85,7 @@ export function PermissionRequestPanel({
   const runAllow = () => {
     if (decisionCommittedRef.current || !decision.matches('pending')) return
     decisionCommittedRef.current = true
-    const accepted = !showAutoPay ? onAllow() : onAllow(autoPay.toChoice())
+    const accepted = pending.kind === 'action' && pending.featureAccess ? onAllow(undefined, pending.featureAccess.singleRequest ? 'once' : decision.context.lifetime) : !showAutoPay ? onAllow() : onAllow(autoPay.toChoice())
     if (accepted) {
       if (showAcceptIncoming) {
         setAcceptIncomingFunds(pending.origin, acceptIncoming)
@@ -278,7 +280,7 @@ export function PermissionRequestPanel({
           <dt>What for</dt>
           <dd>{pending.summary}</dd>
         </div>
-        {pending.details.slice(0, pending.title === 'Mint token' ? 4 : 2).map((line) => (
+        {(pending.featureAccess ? [] : pending.details.slice(0, pending.title === 'Mint token' ? 4 : 2)).map((line) => (
           <div key={line}>
             <dt>Detail</dt>
             <dd>{line}</dd>
@@ -286,6 +288,7 @@ export function PermissionRequestPanel({
         ))}
       </dl>
 
+      {pending.featureAccess ? <PermissionLifetimeControls pending={pending} lifetime={decision.context.lifetime} disabled={committing} onChange={value => sendDecision({ type: 'CHOOSE_LIFETIME', value })} /> : null}
       {showAutoPay ? (
         <AutoPayControls
           appName={name}

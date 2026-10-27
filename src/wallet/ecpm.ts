@@ -1,3 +1,4 @@
+import { authorizeEcpmFeature, clearFeaturePermissions } from './featurePermissions'
 import { createEcpmModule } from '@bsv/ecpm-permission-module'
 import { KeyDeriver, type PrivateKey, type WalletInterface } from '@bsv/sdk'
 import { requestEcpmApproval } from './permissions'
@@ -15,6 +16,7 @@ export function isEcpmRequest(method: string, args: unknown): boolean {
 
 /** Revoking app/session permissions must also revoke these memory-only grants. */
 export function clearEcpmPermissions(): void {
+  clearFeaturePermissions()
   for (const entry of modules.values()) {
     entry.abort.abort()
     entry.module.dispose()
@@ -39,9 +41,10 @@ export async function dispatchEcpm(wallet: WalletInterface, args: unknown, origi
     const abort = new AbortController()
     const module = createEcpmModule({
       keyDeriver: host.keyDeriver,
+      authorizationTTL: 0,
       authorize: async request => {
         assertCurrent(runtime)
-        const allowed = await requestEcpmApproval(request, abort.signal)
+        const allowed = request.privileged ? await requestEcpmApproval(request, abort.signal) : await authorizeEcpmFeature(runtime, request)
         assertCurrent(runtime)
         return allowed
       },

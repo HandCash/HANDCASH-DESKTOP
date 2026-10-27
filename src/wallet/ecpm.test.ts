@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { KeyDeriver, PrivateKey, ProtoWallet, PublicKey, WalletWireProcessor, WalletWireTransceiver, type WalletInterface } from '@bsv/sdk'
-import { sdk } from '@handcash/wallet-engine'
+import { rememberFeatureManifest } from './featureManifest'
+import { authorizeDeclaredFeature, listFeatureAccess, revokeFeatureAccess, authorizeActionLabels } from './featurePermissions'
+import { sdk, WalletPermissionsManager } from '@handcash/wallet-engine'
 import { dispatchEcpm, clearEcpmPermissions } from './ecpm'
 import { dispatchWalletMethod, handleBrc100Request } from './brc100Handler'
 import { allowOrigin, cancelPendingPermissions, clearPermissionSession, resolvePermission, subscribePermissionRequests, type PendingPrompt } from './permissions'
@@ -14,15 +16,16 @@ const point = new PrivateKey(31).toPublicKey().toString()
 const args = (operation = 'apply', p = point, extra = {}) => ({ protocolID: [2, `p ecpm ${operation} ${p} mental poker deal`] as [2, string], keyID: 'deck', counterparty: 'self', ...extra })
 function activate(next = new ProtoWallet(new KeyDeriver(new PrivateKey(17)))) {
   wallet = next
+  wallet.listOutputs = async () => ({ totalOutputs: 0, outputs: [] })
   return installWalletRuntime({ wallet, identityKey: new PrivateKey(17).toPublicKey().toString(), accountIndex: 0, chain: 'main' } as unknown as ActiveWallet)
 }
-const tick = async () => { for (let i = 0; i < 15; i++) await Promise.resolve() }
+const tick = async () => { for (let i = 0; i < 100; i++) await Promise.resolve() }
 async function approve<T>(pending: Promise<T>): Promise<T> {
-  await tick()
-  expect(prompt?.kind).toBe('action')
+  await vi.waitFor(() => expect(prompt?.kind).toBe('action'))
   if (prompt?.kind !== 'action') throw new Error('Missing ECPM consent')
-  expect(prompt.title).toBe('Point masking')
-  expect(prompt.summary).toContain('all key IDs')
+  expect(prompt.featureAccess).toBeDefined()
+  expect(prompt.title).toMatch(/Point masking|feature access/)
+  expect([prompt.summary, ...prompt.featureAccess!.capabilities].join(' ')).toMatch(/key IDs|operation only/)
   expect(prompt.details.join(' ')).toContain('security level: 2')
   resolvePermission(prompt.id, 'allow')
   return pending
@@ -30,6 +33,8 @@ async function approve<T>(pending: Promise<T>): Promise<T> {
 beforeEach(() => {
   clearEcpmPermissions(); resetWalletRuntimeForTests(); cancelPendingPermissions()
   vi.stubGlobal('window', {})
+  vi.stubGlobal('fetch', async () => new Response('{}', { status: 404 }))
+  vi.spyOn(WalletPermissionsManager.prototype as any, 'fetchManifestGroupPermissions').mockResolvedValue(null)
   const store = new Map<string, string>()
   vi.stubGlobal('localStorage', { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v), removeItem: (k: string) => store.delete(k) })
   prompt = null
@@ -39,6 +44,47 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); disposeWalletRuntime('test'); clearEcpmPermissions(); cancelPendingPermissions(); off(); vi.unstubAllGlobals() })
 
 describe('HandCash shared Desktop/Mobile ECPM path', () => {
+  it('uses one real grouped decision for 167 point operations and transcript signing, then revokes immediately', async () => {
+    const manifest = { metanet: { schemaVersion: 1, groupPermissions: { protocolPermissions: [
+      { protocolID: [2, 'p ecpm mental poker deal'], counterparty: 'self', description: 'Protect the deck' },
+      { protocolID: [2, 'poker demo transcript'], counterparty: 'anyone', description: 'Sign game messages' }
+    ] } } }
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify(manifest), { status: 200 }))
+    vi.spyOn(WalletPermissionsManager.prototype as any, 'fetchManifestGroupPermissions').mockResolvedValue(manifest.metanet.groupPermissions)
+    rememberFeatureManifest('poker.example', manifest)
+    let decisions = 0
+    const unbind = subscribePermissionRequests(value => {
+      if (value?.kind === 'action') { decisions++; expect(value.featureAccess?.grouped).toBe(true); resolvePermission(value.id, 'allow', 'session') }
+    })
+    try {
+      const masked = await dispatchEcpm(wallet, args(), 'poker.example') as { publicKey: string }
+      for (let i = 0; i < 83; i++) {
+        const next = await dispatchEcpm(wallet, args(), 'poker.example') as {publicKey:string}
+        expect((await dispatchEcpm(wallet, args('remove', next.publicKey), 'poker.example') as {publicKey:string}).publicKey).toBe(point)
+      }
+      const runtime = getWalletRuntime()!
+      expect(await authorizeDeclaredFeature(runtime, 'createSignature', { protocolID: [2, 'poker demo transcript'], counterparty: 'anyone' }, 'poker.example')).toBe(true)
+      expect(await authorizeDeclaredFeature(runtime, 'createSignature', { protocolID: [2, '3241645161d8'], counterparty: 'self' }, 'poker.example')).toBe(false)
+      expect(decisions).toBe(1)
+      const access = await listFeatureAccess(); expect(access).toHaveLength(2)
+      await revokeFeatureAccess(access[0])
+      expect(await listFeatureAccess()).toHaveLength(0)
+      await expect(dispatchEcpm(wallet, args('remove', masked.publicKey, {seekPermission:false}), 'poker.example')).rejects.toThrow()
+    } finally { unbind() }
+  })
+
+  it('distinguishes label application from reading all matching history', async () => {
+    const pending = authorizeActionLabels(getWalletRuntime()!, 'createAction', {labels:['papertrade']}, 'labels.example')
+    await vi.waitFor(() => expect(prompt?.kind).toBe('action'))
+    expect((prompt as any).featureAccess.capabilities.join(' ')).toContain('Add “papertrade”')
+    resolvePermission(prompt!.id, 'allow', 'session'); await pending
+    const read = authorizeActionLabels(getWalletRuntime()!, 'listActions', {labels:['papertrade']}, 'labels.example')
+    const refused = expect(read).rejects.toThrow(/denied/)
+    await vi.waitFor(() => expect((prompt as any)?.featureAccess.capabilities.join(' ')).toContain('including matching activity from other apps'))
+    resolvePermission(prompt!.id, 'deny'); await refused
+    expect((await listFeatureAccess())[0].description).toContain('Add “papertrade”')
+  })
+
   it('dispatches semantically, matches an independent scalar oracle, removes masks and preserves ordinary keys', async () => {
     const ordinary = vi.spyOn(wallet, 'getPublicKey')
     const masked = await approve(dispatchWalletMethod(wallet, 'getPublicKey', args(), 'game.example')) as { publicKey: string }
@@ -118,7 +164,7 @@ describe('HandCash shared Desktop/Mobile ECPM path', () => {
     const name = 'mental poker deal'.padEnd(273, 'x')
     const longArgs = { ...args(), protocolID: [2, `p ecpm apply ${point} ${name}`] }
     await approve(dispatchEcpm(wallet, longArgs, 'game.example'))
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 300_001)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1_800_001)
     await expect(dispatchEcpm(wallet, { ...longArgs, seekPermission: false }, 'game.example')).rejects.toThrow(/permission/)
     vi.restoreAllMocks(); off(); off = () => {}
     await expect(dispatchEcpm(wallet, args(), 'other.example')).rejects.toThrow(/denied/)
