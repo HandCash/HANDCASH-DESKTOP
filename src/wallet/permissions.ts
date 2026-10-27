@@ -1,3 +1,5 @@
+import type { EcpmAuthorizationRequest } from '@bsv/ecpm-permission-module'
+import { clearEcpmPermissions } from './ecpm'
 import {
   appDisplayName,
   normalizeAppHost,
@@ -364,6 +366,7 @@ function markRecentlyConnected(origin: string): void {
 }
 
 export function clearPermissionSession(origin?: string): void {
+  clearEcpmPermissions()
   if (!origin) {
     recentlyConnectedAt.clear()
     sessionApprovedProofs.clear()
@@ -1284,6 +1287,43 @@ function rememberItemActionGrant(
 ): void {
   if (isItemReceiveArgs(method, args) || isTokenReceiveArgs(method, args)) {
     patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
+  }
+}
+
+/** ECPM never inherits Connect, identity-proof, Pay or Auto-pay approval. */
+export async function requestEcpmApproval(request: EcpmAuthorizationRequest, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted || promptListeners.size === 0 || queue.length + (current ? 1 : 0) >= 64) return false
+  const id = idCounter++
+  const cancel = () => {
+    if (current?.request.id === id) {
+      const item = current
+      current = null
+      item.resolve('deny')
+    } else {
+      const index = queue.findIndex(item => item.request.id === id)
+      if (index !== -1) queue.splice(index, 1)[0]!.resolve('deny')
+    }
+    pumpQueue()
+    dispatchWalletUiEvent('handcash:permission-dismissed', {})
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(cancel, 120_000)
+  try {
+    return await enqueuePrompt({
+      id, kind: 'action', origin: normalizeOrigin(request.originator), method: 'getPublicKey',
+      title: 'Point masking',
+      summary: 'Apply or remove a hidden wallet scalar. Allow all key IDs and points in this protocol scope for up to five minutes, until lock or account change. Your secret key stays in the wallet.',
+      // Both existing Aeon surfaces show two detail rows. Include the complete
+      // consent scope in those rows instead of truncating security information.
+      details: [
+        `Protocol: ${request.logicalProtocolID}; security level: ${request.securityLevel}; counterparty scope: ${request.securityLevel === 1 ? 'all counterparties' : request.counterparty}`,
+        `First key ID: ${request.keyID}; operation: ${request.operation}; point: ${request.point}; privileged: ${request.privileged ? 'yes' : 'no'}${request.privileged ? `; reason: ${request.privilegedReason}` : ''}`
+      ],
+      createdAt: Date.now()
+    }) === 'allow' && !signal.aborted
+  } finally {
+    clearTimeout(timeout)
+    signal.removeEventListener('abort', cancel)
   }
 }
 

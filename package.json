@@ -52,10 +52,12 @@
     "icons:tray:check": "node scripts/build-tray-icons.mjs --check",
     "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs",
     "ltc:probe": "node scripts/ltc-probe.mjs",
-    "coin:checkpoint": "node scripts/coin-checkpoint.mjs"
+    "coin:checkpoint": "node scripts/coin-checkpoint.mjs",
+    "test:ecpm": "vitest run src/wallet/ecpm.test.ts"
   },
   "dependencies": {
     "@1sat/templates": "^0.0.2",
+    "@bsv/ecpm-permission-module": "0.1.3",
     "@bsv/sdk": "^2.8.11",
     "@bsv/verifast": "^0.3.6",
     "@bsv/webrtpay": "file:vendor/bsv-webrtpay-0.2.1.tgz",

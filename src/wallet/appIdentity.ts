@@ -290,6 +290,9 @@ export function humanActionCopy(
   method: string,
   title?: string,
 ): { eyebrow: string; verb: string } {
+  if (title === 'Point masking') {
+    return { eyebrow: 'Point masking', verb: 'wants to mask points with a wallet-held secret' }
+  }
   if (method === 'walletPayment') {
     return { eyebrow: 'Payment', verb: 'needs your approval to pay' }
   }

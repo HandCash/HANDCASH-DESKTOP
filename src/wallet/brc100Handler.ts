@@ -1,3 +1,4 @@
+import { dispatchEcpm, isEcpmRequest } from './ecpm'
 import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
@@ -473,6 +474,8 @@ export async function dispatchWalletMethod(
   originator?: string,
 ): Promise<unknown> {
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
+
+  if (isEcpmRequest(method, args)) return dispatchEcpm(wallet, args, normalizeOrigin(originator))
 
   const refusal = reservedKeyRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
   if (refusal) {
@@ -1024,7 +1027,7 @@ async function handleBrc100RequestInner(
 
   // Discovery / silent auth / connect prompt: skip basket rewrite. Do not
   // queue getVersion or isAuthenticated behind runExclusiveSpend.
-  if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication') {
+  if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication' && !isEcpmRequest(method, args)) {
     const prepared = prepareItemBasketArgs(args)
     if (prepared.error) {
       return {
@@ -1141,7 +1144,7 @@ async function handleBrc100RequestInner(
   }
 
   // A request the wallet will refuse is refused before it asks the user anything.
-  const reserved = reservedKeyRefusal(method, args, active.identityKey)
+  const reserved = isEcpmRequest(method, args) ? null : reservedKeyRefusal(method, args, active.identityKey)
   if (reserved) {
     appendAppLog('warn', `[brc100] refused ${method} from ${originator || 'unknown origin'}: ${reserved}`)
     return {
