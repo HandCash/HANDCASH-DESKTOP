@@ -62,3 +62,11 @@ and error relay. Merge/retain the Desktop commit first; if it is rebased or
 squashed, repin Mobile to the reviewed resulting SHA and repeat validation.
 Builds and tests do not claim signed installer, physical-device or store release
 acceptance. Versioning/publication remains the normal maintainer release step.
+
+## Feature permission UX follow-up
+
+The module now checks the trusted feature permission manager on every operation, including no-prompt probes. Non-financial declared app features may use one explicit BRC-116 group covering canonical ECPM and transcript scopes. Once, 30-minute memory session and remembered on-chain access are distinct choices. Payment and BRC-29 money-key approvals retain their existing separate guards. Protected keys receive per-request consent and the existing key-unlock policy.
+
+Connected apps → Wallet feature access lists and revokes both active sessions and remembered DPACP records. Action Label grants explain applying a label versus reading all matching history; legacy broad grants retain both rights. Remembering or revoking a token discloses possible transaction/service fees. No database/archive format or BRC-100 wire migration is introduced.
+
+The Desktop and Mobile renderer uses Aeon with lifetime choice owned by permissionDecisionMachine, and inventory operations owned by asyncActionMachine. Local build and tests cover scalar oracles, binary/JSON dispatch, 167 ECPM operations under one group, immediate revocation, label apply/read separation and financial-scope exclusion. The operator explicitly leaves the credential-dependent Jev UI review to HandCash maintainers; no review credential is present locally. No release tag or production installation is performed by this PR.
