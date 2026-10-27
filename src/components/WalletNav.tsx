@@ -107,6 +107,10 @@ import {
   WalletActionDockProvider,
   type WalletDockActions,
 } from './WalletActionDock'
+import {
+  WalletSectionBanner,
+  WalletSectionBannerProvider,
+} from './WalletSectionBanner'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -133,7 +137,6 @@ const SECTIONS: {
 ]
 
 function sectionLabel(section: NavSection): string {
-  if (section === 'collectables') return 'Collectables'
   return SECTIONS.find((s) => s.value === section)?.label ?? section
 }
 
@@ -222,7 +225,10 @@ export const WalletNav = memo(function WalletNav({
     actions: WalletDockActions
   } | null>(null)
   const mobileInlinePermission = compact && pendingPrompt != null
-  const contextualDock = mobileInlinePermission || registeredDock != null
+  // Compact only: Cancel/Review/Approve sit in the bottom dock. Wide hosts them
+  // in the section banner actions strip.
+  const dockInNav = compact && registeredDock != null
+  const contextualDock = mobileInlinePermission || dockInNav
   const browserUnderPermission = pendingPrompt != null && embeddedBrowser != null
   const browserForeground = nav.child?.type === 'app-browser'
   const browserVisible = browserForeground || browserUnderPermission
@@ -534,14 +540,90 @@ export const WalletNav = memo(function WalletNav({
     ((stageChild != null || browserForeground) && !mobileInlinePermission) ||
     (browserUnderPermission && !compact)
 
+  // Wide desktop: icons live in the section banner (not a bottom rail).
+  const showDesktopNavChrome: boolean = !compact
+  const showSectionBanner = showDesktopNavChrome && !hideSectionPanel
+  const desktopCrumbs =
+    showDesktopNavChrome && stageChild ? crumbs : undefined
+  const selectedSectionIndex = SECTIONS.findIndex(
+    (s) => s.value === activeSection,
+  )
+  const sectionTabs = (
+    <div
+      className="wallet-nav-bar wallet-nav-bar--faces"
+      role="tablist"
+      aria-label="Wallet sections"
+    >
+      <div className="wallet-nav-bar-track">
+        {SECTIONS.map(({ value, label, shortLabel, Icon }, index) => {
+          const selected = activeSection === value
+          const neighbor =
+            index === selectedSectionIndex - 1
+              ? 'before'
+              : index === selectedSectionIndex + 1
+                ? 'after'
+                : undefined
+          return (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              className="wallet-nav-tab"
+              aria-label={label}
+              aria-selected={selected}
+              title={label}
+              data-selected={selected ? '' : undefined}
+              data-neighbor={neighbor}
+              onPointerDown={(event) => {
+                if (event.button !== 0) return
+                clickSoundArmed.current = true
+                playWalletSound('soft')
+              }}
+              onClick={() => selectSection(value)}
+            >
+              <Icon size={18} />
+              <span className="wallet-nav-tab-label">{label}</span>
+              <span className="wallet-nav-tab-label-short">{shortLabel}</span>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
   return (
     <WalletActionDockProvider register={registerDock}>
+    <WalletSectionBannerProvider
+      activeSection={activeSection}
+      bannerActive={showDesktopNavChrome}
+    >
     <section
       className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
       data-aeon-state={stateToAttr(aeonState)}
     >
       <div className="wallet-nav">
+        {showDesktopNavChrome ? (
+          <WalletSectionBanner
+            activeSection={activeSection}
+            bannerActive={showDesktopNavChrome}
+            label={
+              showSectionBanner ? sectionLabel(activeSection) : undefined
+            }
+            nav={sectionTabs}
+            trail={desktopCrumbs}
+          >
+            {registeredDock ? (
+              <div className="wallet-nav-desktop-actions">
+                <WalletActionBar
+                  {...registeredDock.actions}
+                  placement="inline"
+                  className="permission-request-actions"
+                />
+              </div>
+            ) : null}
+          </WalletSectionBanner>
+        ) : null}
         <div className="wallet-nav-stage">
           {mountEmbeddedBrowser
             ? browserState.tabs.map((tab) => {
@@ -588,7 +670,7 @@ export const WalletNav = memo(function WalletNav({
 
           {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
-              <NavBreadcrumb crumbs={crumbs} />
+              {compact ? <NavBreadcrumb crumbs={crumbs} /> : null}
               <div className="nav-child-body">
               <RenderProbe id={`stage:${stageChild.type}`}>
               {stageChild.type === 'app' && (() => {
@@ -810,49 +892,63 @@ export const WalletNav = memo(function WalletNav({
           </div>
         </div>
 
-        <div
-          className="wallet-nav-bar"
-          role={contextualDock ? 'group' : 'tablist'}
-          aria-label={contextualDock ? 'Wallet action' : 'Wallet sections'}
-          data-permission={contextualDock ? '' : undefined}
-        >
-          <div className="wallet-nav-bar-track">
-            {registeredDock ? (
-              <WalletActionBar
-                {...registeredDock.actions}
-                placement="nav"
-              />
-            ) : (
-              SECTIONS.map(({ value, label, shortLabel, Icon }) => {
-                const selected = activeSection === value
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="tab"
-                    className="wallet-nav-tab"
-                    aria-label={label}
-                    aria-selected={selected}
-                    title={label}
-                    data-selected={selected ? '' : undefined}
-                    onPointerDown={(event) => {
-                      if (event.button !== 0) return
-                      clickSoundArmed.current = true
-                      playWalletSound('soft')
-                    }}
-                    onClick={() => selectSection(value)}
-                  >
-                    <Icon size={18} />
-                    <span className="wallet-nav-tab-label">{label}</span>
-                    <span className="wallet-nav-tab-label-short">{shortLabel}</span>
-                  </button>
-                )
-              })
-            )}
+        {compact ? (
+          <div
+            className={
+              contextualDock
+                ? 'wallet-nav-bar'
+                : 'wallet-nav-bar wallet-nav-bar--faces'
+            }
+            role={contextualDock ? 'group' : 'tablist'}
+            aria-label={contextualDock ? 'Wallet action' : 'Wallet sections'}
+            data-permission={contextualDock ? '' : undefined}
+          >
+            <div className="wallet-nav-bar-track">
+              {dockInNav && registeredDock ? (
+                <WalletActionBar
+                  {...registeredDock.actions}
+                  placement="nav"
+                />
+              ) : (
+                SECTIONS.map(({ value, label, shortLabel, Icon }, index) => {
+                  const selected = activeSection === value
+                  const neighbor =
+                    index === selectedSectionIndex - 1
+                      ? 'before'
+                      : index === selectedSectionIndex + 1
+                        ? 'after'
+                        : undefined
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="tab"
+                      className="wallet-nav-tab"
+                      aria-label={label}
+                      aria-selected={selected}
+                      title={label}
+                      data-selected={selected ? '' : undefined}
+                      data-neighbor={neighbor}
+                      onPointerDown={(event) => {
+                        if (event.button !== 0) return
+                        clickSoundArmed.current = true
+                        playWalletSound('soft')
+                      }}
+                      onClick={() => selectSection(value)}
+                    >
+                      <Icon size={18} />
+                      <span className="wallet-nav-tab-label">{label}</span>
+                      <span className="wallet-nav-tab-label-short">{shortLabel}</span>
+                    </button>
+                  )
+                })
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </section>
+    </WalletSectionBannerProvider>
     </WalletActionDockProvider>
   )
 })
