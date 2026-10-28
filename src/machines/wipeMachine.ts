@@ -7,7 +7,6 @@ export type WipeContext = {
   /** True after ConfirmPasswordGate succeeds (password or device). */
   unlocked: boolean
   confirmText: string
-  acknowledged: boolean
   error: string | null
   /** Proof the history replica holds localState; wipe refuses without it. */
   gate: WipeHistoryGate | null
@@ -27,7 +26,6 @@ export const wipeMachine = setup({
       | { type: 'CHANGE_PASSWORD'; password: string }
       | { type: 'VERIFIED'; password: string | null }
       | { type: 'CHANGE_CONFIRM'; confirmText: string }
-      | { type: 'TOGGLE_ACK'; acknowledged: boolean }
       | { type: 'SUBMIT' }
       | { type: 'SYNCED'; gate: WipeHistoryGate }
       | { type: 'BLOCKED'; reason: string; refusal: WipeHistoryRefusal }
@@ -44,7 +42,6 @@ export const wipeMachine = setup({
     password: '',
     unlocked: false,
     confirmText: '',
-    acknowledged: false,
     error: null,
     gate: null,
     refusal: null,
@@ -72,16 +69,9 @@ export const wipeMachine = setup({
             error: null,
           }),
         },
-        TOGGLE_ACK: {
-          actions: assign({
-            acknowledged: ({ event }) => event.acknowledged,
-            error: null,
-          }),
-        },
         SUBMIT: {
           guard: ({ context }) =>
             context.unlocked &&
-            context.acknowledged &&
             context.confirmText.trim().toUpperCase() === 'DELETE',
           target: 'syncing',
           actions: assign({ gate: null, error: null }),
@@ -156,13 +146,6 @@ export const wipeMachine = setup({
           target: 'idle',
           actions: assign({
             confirmText: ({ event }) => event.confirmText,
-            error: null,
-          }),
-        },
-        TOGGLE_ACK: {
-          target: 'idle',
-          actions: assign({
-            acknowledged: ({ event }) => event.acknowledged,
             error: null,
           }),
         },

@@ -79,7 +79,14 @@ const sheets = [
 
 describe('coin palette', () => {
   it('maps every coin to its own accent token', () => {
-    expect(TICKER_COIN_ORDER.map(coinAccentVar)).toEqual(['--coin-bsv', '--coin-ltc', '--coin-bch', '--coin-btc', '--coin-doge'])
+    expect(TICKER_COIN_ORDER.map(coinAccentVar)).toEqual([
+      '--coin-bsv',
+      '--coin-ltc',
+      '--coin-bch',
+      '--coin-btc',
+      '--coin-doge',
+      '--coin-arc-usd',
+    ])
     for (const coin of TICKER_COIN_ORDER) {
       expect(css).toContain(`[data-coin='${coin}'] {\n  --coin-color: var(--coin-${coin});`)
     }

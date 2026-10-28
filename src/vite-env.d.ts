@@ -133,6 +133,19 @@ interface HandCashBridge {
   listScreenSources?: () => Promise<{ id: string; name: string; kind: 'screen' | 'window'; thumbnail: string }[]>
   /** Picks the source the next `getDisplayMedia` call gets; it lapses after a few seconds. */
   chooseScreenSource?: (id: string) => Promise<boolean>
+  /** Sealed call-recording part → on-device host folder (never plaintext). */
+  appendCallRecording?: (
+    identityKey: string,
+    id: string,
+    seq: number,
+    sealed: Uint8Array,
+  ) => Promise<void>
+  finishCallRecording?: (identityKey: string, id: string, sealedMeta: Uint8Array) => Promise<void>
+  readCallRecording?: (
+    identityKey: string,
+    id: string,
+  ) => Promise<{ meta: Uint8Array | null; parts: Uint8Array[] }>
+  deleteCallRecording?: (identityKey: string, id: string) => Promise<void>
   /**
    * The prompt that pulled the wallet forward is answered and no other is
    * waiting — return the desktop to the app that asked. No-op on shells that

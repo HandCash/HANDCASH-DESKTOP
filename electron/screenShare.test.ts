@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SCREEN_PICK_MS, createScreenPick, isScreenSourceId, toScreenSourceViews } from './screenShare'
+import { SCREEN_PICK_MS, createScreenPick, isScreenSourceId, toScreenSourceViews } from './screenShare.js'
 
 const image = (url: string) => ({ isEmpty: () => url === '', toDataURL: () => url })
 

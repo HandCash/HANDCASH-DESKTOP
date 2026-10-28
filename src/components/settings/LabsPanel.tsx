@@ -22,13 +22,14 @@ function LabRow({ feature }: { feature: LabFeature }) {
   )
 }
 
-/** Settings → Labs. Every feature starts off on this device. */
+/** Settings → Labs. Every feature starts off on this device.
+ * Title lives in the nav breadcrumb / titlebar — no second panel head. */
 export function LabsPanel() {
   return (
-    <div className="nav-section-body settings-nav" data-aeon-scope="labs">
-      <div className="connected-panel-head settings-panel-head">
-        <h2>Labs</h2>
-      </div>
+    <div
+      className="nav-section-body settings-nav settings-scroll"
+      data-aeon-scope="labs"
+    >
       <p className="settings-row-desc" data-aeon-part="intro">
         Features still being finished. They are off until you turn them on, and only on this device.
       </p>

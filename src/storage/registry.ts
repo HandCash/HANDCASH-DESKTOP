@@ -225,6 +225,13 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  /** Prior cloud HandCash login on this device (upgrade / migrate remember). */
+  cloudPriorSession: defineStorage({
+    key: 'handcash.cloud.priorSession.v1',
+    owner: 'onboard',
+    scope: 'device',
+    version: 1,
+  }),
   blockedSenders: defineStorage({
     key: 'handcash.blockedSenders.v1',
     owner: 'friends',

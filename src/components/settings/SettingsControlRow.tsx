@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ListRow } from '@aeon-ui/ui'
+import { ListRow } from '@aeon-ui/react'
 import { SettingsRowIcon } from './settingIcons'
 
 type Props = {

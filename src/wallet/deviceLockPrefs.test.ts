@@ -23,6 +23,7 @@ import {
   generateWrapSecret,
   getDeviceLockMode,
   getOpenUnlockSecret,
+  hasMemorablePassword,
   isNoDeviceLock,
   setDeviceLockMode,
   setOpenUnlockSecret,
@@ -46,6 +47,16 @@ describe('deviceLockPrefs', () => {
     expect(getOpenUnlockSecret()).toBe('Hc1secretsecret1')
     expect(isNoDeviceLock()).toBe(true)
     expect(shouldAutoUnlock()).toBe(true)
+    expect(hasMemorablePassword()).toBe(false)
+  })
+
+  it('device-only and open-unlock are not memorable passwords', () => {
+    setDeviceLockMode('device')
+    expect(hasMemorablePassword()).toBe(false)
+    setDeviceLockMode('password')
+    expect(hasMemorablePassword()).toBe(true)
+    setDeviceLockMode('both')
+    expect(hasMemorablePassword()).toBe(true)
   })
 
   it('generateWrapSecret meets password policy shape', async () => {

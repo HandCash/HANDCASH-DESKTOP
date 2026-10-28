@@ -6,7 +6,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
  * turns them on on this device. Unknown or unreadable state reads as off, and
  * a wallet wipe clears the record, so every flag returns to off.
  */
-export type LabFeatureId = 'localHandCashHosts'
+export type LabFeatureId = 'localHandCashHosts' | 'arcUsdc'
 
 export type LabFeature = {
   id: LabFeatureId
@@ -20,6 +20,12 @@ export const LAB_FEATURES: readonly LabFeature[] = [
     label: 'Local HandCash hosts',
     description:
       'Treat pages on localhost as HandCash sites for migrate, handle claim and market listing. For local testing only.',
+  },
+  {
+    id: 'arcUsdc',
+    label: 'Wrap Arc USD',
+    description:
+      'Experimental: wrap Arc USD onto BSV claim units (Arc chain only — not Ethereum or other USDC). Holding and pricing Arc USD does not need this. Off by default; unfinished mint/redeem.',
   },
 ]
 

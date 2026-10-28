@@ -45,6 +45,8 @@ export type NavChild =
   /** One swap, either route: `direct:<swapId>` or `exolix:<exchange id>`. */
   | { type: 'swap-detail'; swapId: string }
   | { type: 'ticker-coins' }
+  /** Preferred government currency for Your balance / quotes. */
+  | { type: 'fiat-currency' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend'; identityKey?: string; label?: string }
@@ -327,7 +329,12 @@ export function openScanFlow() {
   openNavChild('activity', { type: 'scan' })
 }
 
-/** Compact shells: the ticker's coin selector fills the main section. */
+/** Your balance chrome → Activity / Currency (government fiat). */
+export function openFiatCurrency() {
+  openNavChild('activity', { type: 'fiat-currency' })
+}
+
+/** Price ticker choose → which coin the ticker shows (not fiat). */
 export function openTickerCoins() {
   openNavChild('activity', { type: 'ticker-coins' })
 }

@@ -5,7 +5,6 @@ import { wipeMachine } from './wipeMachine'
 function blocked() {
   const actor = createActor(wipeMachine).start()
   actor.send({ type: 'VERIFIED', password: null })
-  actor.send({ type: 'TOGGLE_ACK', acknowledged: true })
   actor.send({ type: 'CHANGE_CONFIRM', confirmText: 'delete' })
   actor.send({ type: 'SUBMIT' })
   actor.send({

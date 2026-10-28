@@ -370,6 +370,19 @@ export function DogecoinIcon({ size = 18, ...rest }: IconProps) {
   )
 }
 
+/** Arc USD (Circle USDC on Arc) — crypto mark for the ticker. */
+export function ArcUsdIcon({ size = 18, ...rest }: IconProps) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden focusable="false" data-chain-mark="arc-usd" {...rest}>
+      <circle cx="16" cy="16" r="16" className="chain-mark-disc" />
+      <path
+        className="chain-mark-glyph"
+        d="M16 6.5c-5.25 0-9.5 4.25-9.5 9.5s4.25 9.5 9.5 9.5 9.5-4.25 9.5-9.5-4.25-9.5-9.5-9.5zm.75 14.75h-1.5v-1.35c-1.85-.2-3.2-1.15-3.55-2.7l1.55-.35c.25 1.05 1.2 1.7 2.55 1.7 1.2 0 2.05-.55 2.05-1.45 0-.85-.55-1.25-2.15-1.7l-1.1-.3c-2.05-.55-3.05-1.55-3.05-3.25 0-1.85 1.4-3.15 3.4-3.4V8.5h1.5v1.25c1.55.2 2.7 1.05 3.05 2.45l-1.5.4c-.25-.9-.95-1.45-2-1.45-1.1 0-1.85.55-1.85 1.35 0 .75.5 1.15 2.05 1.55l1.1.3c2.25.6 3.2 1.65 3.2 3.4 0 2-1.5 3.35-3.7 3.65v1.35z"
+      />
+    </svg>
+  )
+}
+
 /**
  * A coin's mark alone, no disc, in the current text colour. BSV draws the
  * Bitcoin B upright, as its own logo does; BTC keeps the tilt.

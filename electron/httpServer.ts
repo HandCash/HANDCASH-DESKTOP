@@ -1,9 +1,7 @@
 import express, { type Request, type Response } from 'express'
 import cors from 'cors'
-import { ipcMain } from 'electron'
 import http from 'node:http'
 import https, { type Server } from 'node:https'
-import log from 'electron-log'
 import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
@@ -16,7 +14,7 @@ import {
   bridgeCorsHeaders,
 } from './appConnectGuardrails.js'
 
-type HttpRequestEvent = {
+export type HttpRequestEvent = {
   method: string
   path: string
   headers: Record<string, string>
@@ -24,10 +22,30 @@ type HttpRequestEvent = {
   request_id: number
 }
 
-type HttpResponseEvent = {
+export type HttpResponseEvent = {
   request_id: number
   status: number
   body: string
+}
+
+export type BridgeLog = {
+  info: (...args: unknown[]) => void
+  warn: (...args: unknown[]) => void
+  error: (...args: unknown[]) => void
+}
+
+export type StartHttpServerOptions = {
+  userDataPath?: string
+  log?: BridgeLog
+  /** Sidecar/native: register response delivery without Electron ipcMain. */
+  onHttpResponse?: (handler: (response: HttpResponseEvent) => void) => () => void
+  onPromptOpen?: (handler: (open: boolean) => void) => () => void
+}
+
+const consoleLog: BridgeLog = {
+  info: (...args) => console.log(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
 }
 
 type PendingRequest = {
@@ -190,6 +208,7 @@ function waitOnRun(
 async function bindIpv6Loopback(
   app: express.Express,
   tls: { cert: string; key: string },
+  log: BridgeLog,
 ): Promise<Array<{ port: number; server: http.Server }>> {
   const bound: Array<{ port: number; server: http.Server }> = []
   const attempts: Array<{ port: number; make: () => http.Server }> = [
@@ -212,11 +231,16 @@ async function bindIpv6Loopback(
   return bound
 }
 
-export async function startHttpServer(windows: BridgeWindowSource): Promise<{
+export async function startHttpServer(
+  windows: BridgeWindowSource,
+  opts?: StartHttpServerOptions,
+): Promise<{
   httpsUrl: string
   httpUrl: string
   stop: () => Promise<void>
 }> {
+  const log = opts?.log ?? consoleLog
+  const unsubscribers: Array<() => void> = []
   const app = express()
 
   app.use((_req, res, next) => {
@@ -284,7 +308,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
     })
   })
 
-  const onHttpResponse = (_event: Electron.IpcMainEvent, response: HttpResponseEvent) => {
+  const deliverHttpResponse = (response: HttpResponseEvent) => {
     spendLedger.settle(response.request_id, { status: response.status, body: response.body })
     const pending = pendingRequests.get(response.request_id)
     if (!pending) {
@@ -300,11 +324,26 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
     pending.resolve(response)
     pendingRequests.delete(response.request_id)
   }
-  ipcMain.on('http-response', onHttpResponse)
-  const onPromptOpen = (_event: Electron.IpcMainEvent, open: unknown) => {
+  const setPromptOpen = (open: unknown) => {
     promptOpen = open === true
   }
-  ipcMain.on('bridge:prompt-open', onPromptOpen)
+  if (opts?.onHttpResponse) {
+    unsubscribers.push(opts.onHttpResponse(deliverHttpResponse))
+  } else {
+    const { ipcMain } = await import('electron')
+    const onHttpResponse = (_event: Electron.IpcMainEvent, response: HttpResponseEvent) =>
+      deliverHttpResponse(response)
+    const onPromptOpen = (_event: Electron.IpcMainEvent, open: unknown) => setPromptOpen(open)
+    ipcMain.on('http-response', onHttpResponse)
+    ipcMain.on('bridge:prompt-open', onPromptOpen)
+    unsubscribers.push(() => {
+      ipcMain.removeListener('http-response', onHttpResponse)
+      ipcMain.removeListener('bridge:prompt-open', onPromptOpen)
+    })
+  }
+  if (opts?.onPromptOpen) {
+    unsubscribers.push(opts.onPromptOpen((open) => setPromptOpen(open)))
+  }
 
   app.all('*', async (req: Request, res: Response) => {
     const request_id = requestIdCounter++
@@ -438,7 +477,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
 
   app.use(jsonRequestErrors(setCorsHeaders))
 
-  const { cert, key, certPath } = await generateSelfSignedCert()
+  const { cert, key, certPath } = await generateSelfSignedCert(opts?.userDataPath)
   await ensureCertTrusted(certPath)
 
   let httpServer: ReturnType<typeof app.listen> | null = null
@@ -474,7 +513,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
    * wildcard would put the bridge on the LAN — and a host without IPv6 simply
    * keeps the two listeners above.
    */
-  const ipv6Servers = await bindIpv6Loopback(app, { cert, key })
+  const ipv6Servers = await bindIpv6Loopback(app, { cert, key }, log)
   for (const { port } of ipv6Servers) {
     log.info(`BRC-100 also on [::1]:${port}`)
   }
@@ -483,8 +522,8 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
     httpsUrl: 'https://127.0.0.1:2121',
     httpUrl: 'http://127.0.0.1:3321',
     stop: async () => {
-      ipcMain.removeListener('http-response', onHttpResponse)
-      ipcMain.removeListener('bridge:prompt-open', onPromptOpen)
+      for (const unsub of unsubscribers) unsub()
+      unsubscribers.length = 0
       failAllPendingRequests('WALLET_BRIDGE_UNAVAILABLE: HTTP server shutting down')
       await Promise.all([
         new Promise<void>((resolve) => {

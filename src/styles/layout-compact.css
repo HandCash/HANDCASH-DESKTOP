@@ -242,16 +242,23 @@ html:is(.platform-mobile, .layout-compact)
   min-height: 0;
 }
 
-/* Settings — pinned "Settings" head; scroll sections underneath (matches Activity). */
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) {
+/* Settings — pinned "Settings" head; scroll sections underneath (matches Activity).
+   Only match the *visible* section panel — a parked Settings root still has
+   .settings-with-scroll in the DOM under [hidden], and must not override it. */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
+  ) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-stage:has(.settings-with-scroll)
-  > .wallet-nav-panel {
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
+  )
+  > .wallet-nav-panel:not([hidden]) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -328,20 +335,48 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-child-stag
   flex-direction: column;
 }
 
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-child-stage) > .wallet-nav-panel.nav-child-stage {
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(.nav-child-stage)
+  > .wallet-nav-panel.nav-child-stage {
+  position: relative;
+  z-index: 2;
   flex: 1 1 auto;
   min-height: 0;
 }
 
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-section-with-scroll),
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) {
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
+  ),
+/* Collect mounts outside a keep-alive slot (ordinal images); still flex the stage. */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
+  ),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
+  ) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-section-with-scroll) > .wallet-nav-panel,
-html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) > .wallet-nav-panel {
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
+  )
+  > .wallet-nav-panel:not([hidden]),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
+  )
+  > .wallet-nav-panel:not([hidden]),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
+  )
+  > .wallet-nav-panel:not([hidden]) {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -355,7 +390,8 @@ html:is(.platform-mobile, .layout-compact) .settings-with-scroll .settings-panel
   top: auto;
   bottom: auto;
   margin-top: 0;
-  margin-bottom: 10px;
+  /* Match Activity / Friends sticky head spacing under the title pill. */
+  margin-bottom: 4px;
   padding-top: 0;
   padding-bottom: 8px;
 }
@@ -386,14 +422,14 @@ html:is(.platform-mobile, .layout-compact)
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .connected-panel-head
   > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
-  --wallet-nav-select: #fff;
-  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+  --wallet-nav-select: var(--hc-nav-select);
+  box-shadow: none;
 }
 
 /* Child path head: reuse titlebar pill tokens so Activity / Send matches desktop. */
@@ -401,25 +437,35 @@ html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head {
   --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
   --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  --wallet-nav-hairline-inset: 0px;
+  position: relative;
   border-bottom: 0;
   background: transparent;
   min-height: 0;
-  padding: 0 0 6px;
+  padding: 0 0 10px;
   margin-bottom: 8px;
 }
 
+/* Same hairline as .wallet-nav-titlebar — Activity / Currency must not lose it. */
+html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head::after {
+  content: '';
+  position: absolute;
+  left: var(--wallet-nav-hairline-inset);
+  right: var(--wallet-nav-hairline-inset);
+  bottom: 0;
+  border-bottom: 1px solid hsl(var(--border));
+  pointer-events: none;
+}
+
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head {
-  --wallet-nav-select: var(--hc-nav-select, #fff);
+  --wallet-nav-select: var(--hc-nav-select);
   --wallet-nav-unselected: var(--hc-nav-unselected, #fff);
 }
 
-html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-path-pill {
-  min-height: 39px;
-}
-
+html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-path-pill,
 html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-back-pill {
-  min-height: 39px;
-  height: 39px;
+  min-height: 34px;
+  height: 34px;
 }
 
 html:is(.platform-mobile, .layout-compact)
@@ -474,7 +520,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   background: var(--wallet-nav-select);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   overflow: visible;
   scroll-snap-type: none;
 }
@@ -677,7 +723,7 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-b
   --wallet-nav-unselected: var(--hc-nav-unselected);
   background: var(--wallet-nav-select);
   border-color: hsl(var(--border));
-  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,

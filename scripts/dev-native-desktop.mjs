@@ -14,26 +14,39 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const crate = path.join(root, 'native-desktop')
 const pageJs = path.join(crate, 'handcash-page.js')
 
-function waitTcp(port, host = '127.0.0.1', ms = 60_000) {
+function waitTcp(port, hosts = ['127.0.0.1', '::1'], ms = 60_000) {
   const start = Date.now()
+  const list = Array.isArray(hosts) ? hosts : [hosts]
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
-      const socket = createConnection({ port, host }, () => {
-        socket.end()
-        resolve()
-      })
-      socket.on('error', () => {
-        socket.destroy()
-        if (Date.now() - start > ms) {
-          reject(
-            new Error(
-              `timed out waiting for ${host}:${port} (start Vite with npm run dev:vite)`,
-            ),
-          )
-          return
-        }
-        setTimeout(tryOnce, 250)
-      })
+      let pending = list.length
+      let opened = false
+      for (const host of list) {
+        const socket = createConnection({ port, host }, () => {
+          if (opened) {
+            socket.end()
+            return
+          }
+          opened = true
+          socket.end()
+          resolve()
+        })
+        socket.on('error', () => {
+          socket.destroy()
+          pending -= 1
+          if (opened) return
+          if (pending > 0) return
+          if (Date.now() - start > ms) {
+            reject(
+              new Error(
+                `timed out waiting for ${list.join('|')}:${port} (start Vite with npm run dev:vite)`,
+              ),
+            )
+            return
+          }
+          setTimeout(tryOnce, 250)
+        })
+      }
     }
     tryOnce()
   })
@@ -77,13 +90,29 @@ if (process.platform !== 'win32' && process.platform !== 'linux') {
 await waitTcp(5173)
 const sidecarPath = await ensureSidecar()
 
-console.log('[dev:native-desktop] cargo build (native-desktop)…')
-await run('cargo', ['build', '--manifest-path', path.join(crate, 'Cargo.toml')], {
-  cwd: crate,
-})
-
 const binName = process.platform === 'win32' ? 'handcash-shell.exe' : 'handcash-shell'
 const outBin = path.join(crate, 'target', 'debug', binName)
+const cargoEnv = {
+  ...process.env,
+  // Keep the binary in-tree; Cursor sandboxes otherwise redirect CARGO_TARGET_DIR.
+  CARGO_TARGET_DIR: path.join(crate, 'target'),
+}
+if (!fs.existsSync(outBin)) {
+  console.log('[dev:native-desktop] cargo build (native-desktop)…')
+  await run('cargo', ['build', '--manifest-path', path.join(crate, 'Cargo.toml')], {
+    cwd: crate,
+    env: cargoEnv,
+  })
+} else {
+  console.log('[dev:native-desktop] using existing binary (set HANDCASH_FORCE_CARGO=1 to rebuild)')
+  if (process.env.HANDCASH_FORCE_CARGO === '1') {
+    console.log('[dev:native-desktop] cargo build (forced)…')
+    await run('cargo', ['build', '--manifest-path', path.join(crate, 'Cargo.toml')], {
+      cwd: crate,
+      env: cargoEnv,
+    })
+  }
+}
 if (!fs.existsSync(outBin)) {
   throw new Error(`missing ${outBin} after cargo build`)
 }

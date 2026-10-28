@@ -76,6 +76,12 @@ import {
 } from './appConnectGuardrails.js'
 import { grantsAppCameraPermission } from './cameraPermissions.js'
 import { createScreenPick, isScreenSourceId, toScreenSourceViews } from './screenShare.js'
+import {
+  appendRecordingPart,
+  deleteRecording,
+  finishRecording,
+  readRecording,
+} from './callRecordings.js'
 import { guardStdioWrites } from './brokenPipe.js'
 import { readOmarchyTheme, startOmarchyThemeWatch } from './omarchyTheme.js'
 
@@ -879,6 +885,41 @@ ipcMain.handle('calls:choose-screen-source', (event, id: unknown) => {
   if (!fromMainApp(event.sender, event.senderFrame) || !isScreenSourceId(id)) return false
   screenPick.choose(id)
   return true
+})
+
+function asSealedBytes(data: unknown): Uint8Array {
+  if (data instanceof Uint8Array) return data
+  if (data instanceof ArrayBuffer) return new Uint8Array(data)
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+  }
+  throw new Error('Invalid sealed recording bytes')
+}
+
+ipcMain.handle(
+  'calls:append-recording',
+  (event, identityKey: unknown, id: unknown, seq: unknown, data: unknown) => {
+    if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+    appendRecordingPart(identityKey, id, seq, asSealedBytes(data))
+  },
+)
+
+ipcMain.handle(
+  'calls:finish-recording',
+  (event, identityKey: unknown, id: unknown, meta: unknown) => {
+    if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+    finishRecording(identityKey, id, asSealedBytes(meta))
+  },
+)
+
+ipcMain.handle('calls:read-recording', (event, identityKey: unknown, id: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return readRecording(identityKey, id)
+})
+
+ipcMain.handle('calls:delete-recording', (event, identityKey: unknown, id: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  deleteRecording(identityKey, id)
 })
 
 ipcMain.handle('app:open-external', async (_event, url: unknown) => {

@@ -3,12 +3,11 @@
  * BRC-100 app bridge stays on 127.0.0.1:3321 / 2121.
  */
 import express, { type Request, type Response } from 'express'
-import { ipcMain } from 'electron'
 import os from 'node:os'
-import log from 'electron-log'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { jsonRequestErrors } from './requestErrors.js'
 import { devicePeerCorsHeaders, devicePeerOriginAllowed } from './devicePeerOrigin.js'
+import type { BridgeLog } from './httpServer.js'
 
 /** Keep in sync with src/wallet/deviceWallets.ts DEVICE_PEER_PORT */
 const DEVICE_PEER_PORT = 3340
@@ -21,14 +20,25 @@ type HttpRequestEvent = {
   request_id: number
 }
 
-type HttpResponseEvent = {
+export type DevicePeerHttpResponseEvent = {
   request_id: number
   status: number
   body: string
 }
 
+export type StartDevicePeerServerOptions = {
+  log?: BridgeLog
+  onHttpResponse?: (handler: (response: DevicePeerHttpResponseEvent) => void) => () => void
+}
+
+const consoleLog: BridgeLog = {
+  info: (...args) => console.log(...args),
+  warn: (...args) => console.warn(...args),
+  error: (...args) => console.error(...args),
+}
+
 type PendingRequest = {
-  resolve: (response: HttpResponseEvent) => void
+  resolve: (response: DevicePeerHttpResponseEvent) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -56,11 +66,16 @@ export function listLanIpv4Addresses(): string[] {
   return out
 }
 
-export async function startDevicePeerServer(windows: BridgeWindowSource): Promise<{
+export async function startDevicePeerServer(
+  windows: BridgeWindowSource,
+  opts?: StartDevicePeerServerOptions,
+): Promise<{
   port: number
   lanUrls: string[]
   stop: () => Promise<void>
 }> {
+  const log = opts?.log ?? consoleLog
+  const unsubscribers: Array<() => void> = []
   const app = express()
   app.use((req, res, next) => {
     if (devicePeerOriginAllowed(req.headers.origin)) {
@@ -77,14 +92,24 @@ export async function startDevicePeerServer(windows: BridgeWindowSource): Promis
     res.sendStatus(200)
   })
 
-  const onHttpResponse = (_event: Electron.IpcMainEvent, response: HttpResponseEvent) => {
+  const deliverHttpResponse = (response: DevicePeerHttpResponseEvent) => {
     const pending = pendingRequests.get(response.request_id)
     if (!pending) return
     clearTimeout(pending.timer)
     pending.resolve(response)
     pendingRequests.delete(response.request_id)
   }
-  ipcMain.on('device-peer-http-response', onHttpResponse)
+  if (opts?.onHttpResponse) {
+    unsubscribers.push(opts.onHttpResponse(deliverHttpResponse))
+  } else {
+    const { ipcMain } = await import('electron')
+    const onHttpResponse = (_event: Electron.IpcMainEvent, response: DevicePeerHttpResponseEvent) =>
+      deliverHttpResponse(response)
+    ipcMain.on('device-peer-http-response', onHttpResponse)
+    unsubscribers.push(() => {
+      ipcMain.removeListener('device-peer-http-response', onHttpResponse)
+    })
+  }
 
   app.all('/handcash-device/v1/*', async (req: Request, res: Response) => {
     const request_id = requestIdCounter++
@@ -112,7 +137,7 @@ export async function startDevicePeerServer(windows: BridgeWindowSource): Promis
         request_id,
       }
 
-      const responsePromise = new Promise<HttpResponseEvent>((resolve, reject) => {
+      const responsePromise = new Promise<DevicePeerHttpResponseEvent>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingRequests.delete(request_id)
           reject(new Error('DEVICE_PEER_TIMEOUT'))
@@ -155,7 +180,8 @@ export async function startDevicePeerServer(windows: BridgeWindowSource): Promis
     port: DEVICE_PEER_PORT,
     lanUrls,
     stop: async () => {
-      ipcMain.removeListener('device-peer-http-response', onHttpResponse)
+      for (const unsub of unsubscribers) unsub()
+      unsubscribers.length = 0
       for (const pending of pendingRequests.values()) {
         clearTimeout(pending.timer)
         pending.reject(new Error('DEVICE_PEER_SHUTDOWN'))

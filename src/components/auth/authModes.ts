@@ -2,7 +2,7 @@
 
 /** Custody restore paths the vault can bootstrap from. */
 export type RestoreMethod = 'phrase' | 'shares' | 'key'
-export type FormMode = 'create' | 'unlock' | 'signin' | 'google' | RestoreMethod
+export type FormMode = 'entry' | 'create' | 'unlock' | 'signin' | 'google' | RestoreMethod
 
 export const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
@@ -34,7 +34,7 @@ export function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
 
 export function initialFormMode(args: { mode: 'onboarding' | 'locked'; recoveryOnly: boolean }): FormMode {
   if (args.recoveryOnly) return 'phrase'
-  return args.mode === 'locked' ? 'unlock' : 'create'
+  return args.mode === 'locked' ? 'unlock' : 'entry'
 }
 
 /**

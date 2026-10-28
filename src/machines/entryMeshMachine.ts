@@ -1,7 +1,7 @@
 import { setup } from 'xstate'
 
 /** Parallax planes this one chart owns (far → near). Physics stays pure. */
-export const ENTRY_MESH_LAYER_COUNT = 24
+export const ENTRY_MESH_LAYER_COUNT = 5
 
 export type EntryMeshContext = {
   /** All depth planes live under this chart — not one actor per layer. */

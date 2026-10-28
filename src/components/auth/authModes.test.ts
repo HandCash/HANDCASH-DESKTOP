@@ -12,8 +12,8 @@ import {
 } from './authModes'
 
 describe('auth screen defaults', () => {
-  it('a new install still opens on Create wallet', () => {
-    expect(initialFormMode({ mode: 'onboarding', recoveryOnly: false })).toBe('create')
+  it('a new install opens the Sign in / Create entry chooser', () => {
+    expect(initialFormMode({ mode: 'onboarding', recoveryOnly: false })).toBe('entry')
     expect(initialFormMode({ mode: 'locked', recoveryOnly: false })).toBe('unlock')
     expect(initialFormMode({ mode: 'onboarding', recoveryOnly: true })).toBe('phrase')
   })

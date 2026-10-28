@@ -5,6 +5,11 @@ import {
   unlockVault,
   unlockVaultWithDevice,
 } from '../wallet/vault'
+import {
+  getOpenUnlockSecret,
+  hasMemorablePassword,
+  isNoDeviceLock,
+} from '../wallet/deviceLockPrefs'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { useAsyncAction } from '../hooks/useAsyncAction'
@@ -19,7 +24,7 @@ type Props = {
   id?: string
   /**
    * Called after unlock verifies.
-   * Password is null when verification used the device factor only.
+   * Password is null when verification used device or open (no-password) unlock.
    */
   onVerified: (password: string | null) => void | Promise<void>
   /** Force password path (e.g. change/remove password). */
@@ -30,7 +35,9 @@ type Props = {
 /**
  * Re-auth before sensitive settings work.
  * Prefers device unlock when enrolled; falls back to HandCash password.
- * One exclusive verification (`device` | `password`) at a time.
+ * Open-unlock wallets (no password chosen) confirm via the held wrap secret —
+ * never ask for a password the holder never set.
+ * One exclusive verification (`device` | `password` | `open`) at a time.
  */
 export function ConfirmPasswordGate({
   title,
@@ -42,13 +49,17 @@ export function ConfirmPasswordGate({
   onCancel,
 }: Props) {
   const factors = readVaultUnlockFactors()
+  /** No memorable password — vault wrap exists only as the open secret. */
+  const openUnlock = !requirePassword && isNoDeviceLock()
   const canDevice = !requirePassword && factors.device
-  const canPassword = factors.password
+  const canPassword = !requirePassword
+    ? hasMemorablePassword()
+    : factors.password && !openUnlock
   const [password, setPassword] = useState('')
   /** Synchronous policy failures; the async failure lives in the chart. */
   const [formError, setFormError] = useState<string | null>(null)
   const [preferDevice, setPreferDevice] = useState(canDevice)
-  const verify = useAsyncAction<'device' | 'password'>()
+  const verify = useAsyncAction<'device' | 'password' | 'open'>()
   const live = useRef(true)
 
   useEffect(() => {
@@ -94,11 +105,36 @@ export function ConfirmPasswordGate({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const verifyWithOpen = async () => {
+    setFormError(null)
+    const secret = getOpenUnlockSecret()
+    if (!secret) {
+      setFormError('This wallet has no unlock factor to confirm.')
+      playWalletSound('deny')
+      return
+    }
+    const outcome = await verify.run('open', async () => {
+      await unlockVault(secret)
+      if (!live.current) return
+      playWalletSound('unlock')
+      await onVerified(null)
+    })
+    if (live.current && !outcome.ok && outcome.error !== null) playWalletSound('error')
+  }
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setFormError(null)
+    if (openUnlock) {
+      await verifyWithOpen()
+      return
+    }
     if (!canPassword) {
-      setFormError('No HandCash password on this wallet. Use device unlock.')
+      setFormError(
+        canDevice
+          ? 'No HandCash password on this wallet. Use device unlock.'
+          : 'No unlock factor on this wallet.',
+      )
       playWalletSound('deny')
       return
     }
@@ -118,20 +154,53 @@ export function ConfirmPasswordGate({
 
   const error = formError ?? verify.error
   const busy = verify.busy
+  const factorAttr =
+    preferDevice && canDevice ? 'device' : openUnlock ? 'open' : 'password'
 
   return (
     <div
       className="confirm-password-gate"
       data-aeon-scope="confirm-password"
       data-aeon-state={verify.stateAttr}
-      data-factor={preferDevice && canDevice ? 'device' : 'password'}
+      data-factor={factorAttr}
     >
       <div className="confirm-password-copy">
         <h3 className="confirm-password-title">{title}</h3>
         <p className="confirm-password-lede">{lede}</p>
       </div>
 
-      {preferDevice && canDevice ? (
+      {openUnlock && !(preferDevice && canDevice) ? (
+        <div className="actions">
+          <Button.Root
+            variant="solid"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => void verifyWithOpen()}
+          >
+            <Button.Label>{verify.running('open') ? 'Checking…' : actionLabel}</Button.Label>
+          </Button.Root>
+          {canDevice ? (
+            <Button.Root
+              variant="ghost"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => setPreferDevice(true)}
+            >
+              <Button.Label>Use device unlock</Button.Label>
+            </Button.Root>
+          ) : null}
+          {onCancel ? (
+            <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+              <Button.Label>Cancel</Button.Label>
+            </Button.Root>
+          ) : null}
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+      ) : preferDevice && canDevice ? (
         <div className="actions">
           <Button.Root variant="solid"
             className="btn btn-primary"
@@ -147,6 +216,15 @@ export function ConfirmPasswordGate({
               onClick={() => setPreferDevice(false)}
             >
               <Button.Label>Use HandCash password</Button.Label>
+            </Button.Root>
+          ) : openUnlock ? (
+            <Button.Root
+              variant="ghost"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => setPreferDevice(false)}
+            >
+              <Button.Label>Continue without password</Button.Label>
             </Button.Root>
           ) : null}
           {onCancel ? (

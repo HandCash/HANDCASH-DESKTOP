@@ -18,6 +18,7 @@ import { validatePassword } from '../wallet/passwordPolicy'
 import {
   clearOpenUnlockSecret,
   getOpenUnlockSecret,
+  hasMemorablePassword,
   isNoDeviceLock,
   setDeviceLockMode,
 } from '../wallet/deviceLockPrefs'
@@ -457,12 +458,12 @@ export function UnlockSettingsPanel() {
           description={
             isNoDeviceLock()
               ? 'Off · no prompt on this device'
-              : factors.password
+              : hasMemorablePassword()
                 ? 'On · separate from device lock'
                 : 'Off'
           }
         >
-          {factors.password && !isNoDeviceLock() ? (
+          {hasMemorablePassword() ? (
             <div className="actions">
               <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => setMode('change-password')}>
                 <Button.Label>Change</Button.Label>

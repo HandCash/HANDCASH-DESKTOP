@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import forge from 'node-forge'
@@ -74,9 +73,12 @@ function writeNewCert(certDir: string, certPath: string, keyPath: string): Certi
   return { cert: certPem, key: keyPem, certPath }
 }
 
-export async function generateSelfSignedCert(): Promise<CertificateKeyPair> {
-  const userDataPath = app.getPath('userData')
-  const certDir = path.join(userDataPath, 'certs')
+export async function generateSelfSignedCert(userDataPath?: string): Promise<CertificateKeyPair> {
+  const base =
+    typeof userDataPath === 'string' && userDataPath.trim()
+      ? userDataPath.trim()
+      : (await import('electron')).app.getPath('userData')
+  const certDir = path.join(base, 'certs')
   const certPath = path.join(certDir, 'server.crt')
   const keyPath = path.join(certDir, 'server.key')
 

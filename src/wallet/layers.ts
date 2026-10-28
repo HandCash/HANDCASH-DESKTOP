@@ -326,6 +326,10 @@ import { getActiveWallet } from './session'
  *   send/sweep fallback. A 1Sat burn ends tips (and BRC-150 origin when
  *   applicable). Only the resulting self BRC-29 wallet-payment internalize may
  *   move recovered physical sats into managed change / `balanceView`.
+ * - **Arc USD** → Circle USDC on Arc as a crypto (ticker `arc-usd`, like Litecoin —
+ *   not a government fiat) + payment-scope asset profile. **Wrap Arc USD (lab)** →
+ *   BSV claim units (`arcUsdc/`, Settings → Labs `arcUsdc`). Not Ethereum USDC; not
+ *   the BSV Association ARC broadcaster.
  * - **Coins of other chains (LTC, BCH, BTC, DOGE)** → native, not wrapped (`coins/coinWallet.ts`
  *   engine + `ltc/` / `bch/` / `btc/` / `doge/` bindings, chart `coinMachine`). Each lives on a BRC-42
  *   key of the vault root, under an account-local durable record — not Toolbox

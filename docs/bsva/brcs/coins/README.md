@@ -18,6 +18,22 @@ is the source, so copy changes from here (absolute BRC links become `../`).
 | [BRC-212](./0212.md) | Wrapped coins: BSV tokens backed by a reserve on the coin's chain, burial proof per mint | `src/wallet/bnt/backing.ts` |
 | [BNT backed tokens](./bnt-backed-tokens.md) | BRC-212 bound to BNT (`bk`, `bntb`); was BRC-255 §15 | `src/wallet/bnt/payload.ts`, `validity.ts` |
 
+## Arc USD (crypto) and wrap (Labs)
+
+**Arc USD** (Circle USDC on Arc) is a crypto like Litecoin: ticker / accept-crypto
+lists it as `arc-usd`, and BRC-214 exposes a payment-scope asset profile. It is
+not a government fiat. Holding / pricing does not need Labs.
+
+**Wrap** onto BSV claim units is experimental (`src/wallet/arcUsdc/`). Settings →
+Labs → **Wrap Arc USD** (`arcUsdc`), off by default.
+
+- **Arc only** — chain id `5042` (mainnet) / `5042002` (testnet); token
+  `0x3600…0000`. Ethereum / Solana / other USDC is refused at the plan gate.
+- Not the BSV Association **ARC** broadcaster (`packages/wallet-engine` ARC
+  provider).
+- Mint / redeem against live Arc RPC + BSV deploy are unfinished; `planFractionalize`
+  / `planRedeem` validate and return `status: 'planned'` while the lab flag is on.
+
 Bindings shipped, each with its own key, address form, signature hash, header
 rules and burial depth:
 

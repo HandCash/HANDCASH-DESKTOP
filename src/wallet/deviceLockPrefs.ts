@@ -74,6 +74,19 @@ export function isNoDeviceLock(): boolean {
 }
 
 /**
+ * True when the holder chose a HandCash password they can type.
+ * Open-unlock (`none`) and device-only wallets still carry a vault password
+ * wrap — that wrap is a generated secret, not a memorable password.
+ */
+export function hasMemorablePassword(): boolean {
+  const mode = getDeviceLockMode()
+  if (mode === 'password' || mode === 'both') return true
+  if (mode === 'none' || mode === 'device') return false
+  // Legacy (no mode pref): a password wrap without an open secret is memorable.
+  return readVaultUnlockFactors().password && !getOpenUnlockSecret()
+}
+
+/**
  * Lock screen / idle timer should open the wallet without a prompt.
  *
  * The vault record is the source of truth for custody factors; this pref only

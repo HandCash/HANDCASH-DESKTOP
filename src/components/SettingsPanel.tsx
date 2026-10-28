@@ -128,23 +128,6 @@ function walletKindLabel(): string {
     : 'Desktop wallet'
 }
 
-export function settingLabel(id: SettingId): string {
-  if (id === 'about-handcash') return 'HandCash'
-  if (id === 'statecharts') return 'Statecharts'
-  if (id === 'logs') return 'Session logs'
-  if (id === 'wallet-health') return 'Wallet health'
-  if (id === 'recover-tx') return 'Recover from transaction'
-  if (id === 'labs') return 'Labs'
-  if (id === 'chart-apps') return 'Apps'
-  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
-  if (id === 'device-handoff') return 'Device backup'
-  if (id === 'handcash-recovery') return 'HandCash Recovery'
-  if (id === 'change-password') return 'Unlock'
-  const item = SECURITY_ITEMS.find((entry) => entry.id === id)
-  if (item) return item.label
-  return 'Setting'
-}
-
 const ACCEPTED_COINS_ICONS: Record<AcceptedCoins, ReactNode> = {
   bitcoin: <CoinGlyphIcon coin="bsv" size={16} />,
   all: (
@@ -269,214 +252,217 @@ export function SettingsPanel() {
       className="nav-section-body settings-nav settings-with-scroll"
       data-aeon-scope="settings"
     >
+      {/* Same head chrome as Activity / Friends — desktop titlebar hides it. */}
       <div className="connected-panel-head settings-panel-head">
         <h2>Settings</h2>
       </div>
       <div className="settings-scroll-body">
-      <SettingsSection title="HandCash Recovery" part="handcash-recovery">
-        <RecoveryRows />
-      </SettingsSection>
+        <SettingsSection title="HandCash Recovery" part="handcash-recovery">
+          <RecoveryRows />
+        </SettingsSection>
 
-      <SettingsSection title="Security" part="security">
-        <SecurityRows />
-      </SettingsSection>
+        <SettingsSection title="Security" part="security">
+          <SecurityRows />
+        </SettingsSection>
 
-      <SettingsSection title="Preferences" part="preferences">
-        <ul className="settings-list">
-          <SettingsControlRow
-            icon={SETTINGS_APPLICATION_ICONS.appearance}
-            label="Appearance"
-            description={
-              appearance === 'system'
-                ? 'Follows Omarchy when detected, otherwise OS light/dark.'
-                : undefined
-            }
-          >
-            <SettingsIconToggle
-              ariaLabel="Appearance"
-              value={appearance}
-              onChange={(pref) => {
-                playWalletSound('soft')
-                setAppearancePreference(pref)
-                setAppearance(pref)
-              }}
-              options={[
-                { value: 'system', label: 'System', icon: <MonitorIcon size={16} /> },
-                { value: 'dark', label: 'Dark', icon: <DarkModeIcon size={16} /> },
-                { value: 'light', label: 'Light', icon: <LightModeIcon size={16} /> },
-              ]}
-            />
-          </SettingsControlRow>
-
-          <SettingsControlRow
-            icon={<CoinGlyphIcon coin="bsv" size={20} />}
-            label="Accept"
-            description={`${acceptedCoinsChoice(accepted).title}. ${acceptedCoinsChoice(accepted).description}`}
-          >
-            <SettingsIconToggle
-              ariaLabel="Accept"
-              value={accepted}
-              onChange={(next) => {
-                playWalletSound('soft')
-                setAcceptedCoins(next)
-              }}
-              options={ACCEPTED_COINS_CHOICES.map((choice) => ({
-                value: choice.id,
-                label: choice.title,
-                icon: ACCEPTED_COINS_ICONS[choice.id],
-              }))}
-            />
-          </SettingsControlRow>
-
-          <SettingsControlRow
-            icon={SETTINGS_APPLICATION_ICONS.sfx}
-            label="Sound effects"
-          >
-            <Switch.Root
-              checked={sfxEnabled}
-              onCheckedChange={(next) => {
-                setWalletSfxEnabled(next)
-                setSfxEnabled(next)
-                if (next) playWalletSound('receive', { force: true })
-              }}
-            />
-          </SettingsControlRow>
-
-          {showUpdates ? (
-            <>
-              <SettingsControlRow
-                icon={SETTINGS_APPLICATION_ICONS.updates}
-                label="Updates"
-              >
-                <SettingsIconToggle
-                  ariaLabel="Updates"
-                  value={context.mode}
-                  onChange={(next) => {
-                    playWalletSound('soft')
-                    void setMode(next)
-                  }}
-                  options={[
-                    { value: 'default', label: 'Automatic', icon: <RepeatIcon size={16} /> },
-                    { value: 'manual', label: 'Manual', icon: <TouchAppIcon size={16} /> },
-                    { value: 'none', label: 'Off', icon: <BlockIcon size={16} /> },
-                  ]}
-                />
-              </SettingsControlRow>
-
-              <SettingsControlRow
-                icon={SETTINGS_APPLICATION_ICONS.version}
-                label={`Version ${runningVersion}`}
-                description={versionDetail || undefined}
-              >
-                <Button.Root variant="solid"
-                  className="btn btn-primary settings-action-btn"
-                  disabled={checkButtonStatus(checking, context.mode) !== 'idle'}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    void check()
-                  }}
-                >
-                  <Button.Label>{checking ? 'Checking…' : 'Check update'}</Button.Label>
-                </Button.Root>
-              </SettingsControlRow>
-            </>
-          ) : null}
-        </ul>
-      </SettingsSection>
-
-      <SettingsSection title="Apps" part="chart-apps">
-        <ul className="settings-list">
-          <SettingsNavRow
-            label="Apps"
-            description={CHART_APPS_DESCRIPTION}
-            icon={settingIconFor('chart-apps').icon}
-            onClick={() => openSetting('chart-apps')}
-          />
-        </ul>
-      </SettingsSection>
-
-      <SettingsSection title="Support" part="support">
-        <ul className="settings-list">
-          <SettingsNavRow
-            label="Wallet health"
-            description={
-              healthAlert === 'ok' || healthAlert === 'unknown'
-                ? healthDescription
-                : undefined
-            }
-            status={
-              healthAlert === 'error' || healthAlert === 'warn'
-                ? healthDescription
-                : undefined
-            }
-            statusTone={healthAlert === 'error' ? 'warn' : 'warn'}
-            icon={settingIconFor('wallet-health').icon}
-            trailingEnd={
-              healthAlert === 'error' || healthAlert === 'warn' ? (
-                <WalletHealthAlertBadge tone={healthAlert} />
-              ) : undefined
-            }
-            onClick={() => openSetting('wallet-health')}
-          />
-          <SettingsNavRow
-            label="Recover from transaction"
-            description="Claim a token or item by its txid"
-            icon={settingIconFor('recover-tx').icon}
-            onClick={() => openSetting('recover-tx')}
-          />
-          <SettingsNavRow
-            label="Session logs"
-            description="View, copy, and upload"
-            icon={SETTINGS_APPLICATION_ICONS.logs}
-            onClick={() => openSetting('logs')}
-          />
-          {isDesktopShell ? (
+        <SettingsSection title="Preferences" part="preferences">
+          <ul className="settings-list">
             <SettingsControlRow
-              icon={SETTINGS_APPLICATION_ICONS.screenshot}
-              label="Screenshot"
-              description="Copy this window to the clipboard"
+              icon={SETTINGS_APPLICATION_ICONS.appearance}
+              label="Appearance"
+              description={
+                appearance === 'system'
+                  ? 'Follows Omarchy when detected, otherwise OS light/dark.'
+                  : undefined
+              }
             >
-              <span className="settings-action-stack">
-                <Button.Root variant="solid"
-                  className="btn btn-primary settings-action-btn"
-                  onClick={() => {
-                    playWalletSound('soft')
-                    void window.handcash?.copyScreenshot?.()
-                  }}
-                >
-                  <Button.Label>Take screenshot</Button.Label>
-                </Button.Root>
-                <ShortcutHint
-                  className="settings-shortcut-hint"
-                  keys={screenshotShortcutKeys(window.handcash?.platform)}
-                />
-              </span>
+              <SettingsIconToggle
+                ariaLabel="Appearance"
+                value={appearance}
+                onChange={(pref) => {
+                  playWalletSound('soft')
+                  setAppearancePreference(pref)
+                  setAppearance(pref)
+                }}
+                options={[
+                  { value: 'system', label: 'System', icon: <MonitorIcon size={16} /> },
+                  { value: 'dark', label: 'Dark', icon: <DarkModeIcon size={16} /> },
+                  { value: 'light', label: 'Light', icon: <LightModeIcon size={16} /> },
+                ]}
+              />
             </SettingsControlRow>
-          ) : null}
-        </ul>
-      </SettingsSection>
 
-      <SettingsSection title="Labs" part="labs">
-        <ul className="settings-list">
-          <SettingsNavRow
-            label="Labs"
-            description="Experimental features, off by default"
-            icon={settingIconFor('labs').icon}
-            onClick={() => openSetting('labs')}
-          />
-        </ul>
-      </SettingsSection>
+            <SettingsControlRow
+              icon={<CoinGlyphIcon coin="bsv" size={20} />}
+              label="Accept"
+              description={`${acceptedCoinsChoice(accepted).title}. ${acceptedCoinsChoice(accepted).description}`}
+            >
+              <SettingsIconToggle
+                ariaLabel="Accept"
+                value={accepted}
+                onChange={(next) => {
+                  playWalletSound('soft')
+                  setAcceptedCoins(next)
+                }}
+                options={ACCEPTED_COINS_CHOICES.map((choice) => ({
+                  value: choice.id,
+                  label: choice.title,
+                  icon: ACCEPTED_COINS_ICONS[choice.id],
+                }))}
+              />
+            </SettingsControlRow>
 
-      <SettingsSection title="About" part="about">
-        <ul className="settings-list">
-          <SettingsNavRow
-            label="HandCash"
-            description={walletKindLabel()}
-            icon={settingIconFor('about-handcash').icon}
-            onClick={() => openSetting('about-handcash')}
-          />
-        </ul>
-      </SettingsSection>
+            <SettingsControlRow
+              icon={SETTINGS_APPLICATION_ICONS.sfx}
+              label="Sound effects"
+            >
+              <Switch.Root
+                checked={sfxEnabled}
+                onCheckedChange={(next) => {
+                  setWalletSfxEnabled(next)
+                  setSfxEnabled(next)
+                  if (next) playWalletSound('receive', { force: true })
+                }}
+              />
+            </SettingsControlRow>
+
+            {showUpdates ? (
+              <>
+                <SettingsControlRow
+                  icon={SETTINGS_APPLICATION_ICONS.updates}
+                  label="Updates"
+                >
+                  <SettingsIconToggle
+                    ariaLabel="Updates"
+                    value={context.mode}
+                    onChange={(next) => {
+                      playWalletSound('soft')
+                      void setMode(next)
+                    }}
+                    options={[
+                      { value: 'default', label: 'Automatic', icon: <RepeatIcon size={16} /> },
+                      { value: 'manual', label: 'Manual', icon: <TouchAppIcon size={16} /> },
+                      { value: 'none', label: 'Off', icon: <BlockIcon size={16} /> },
+                    ]}
+                  />
+                </SettingsControlRow>
+
+                <SettingsControlRow
+                  icon={SETTINGS_APPLICATION_ICONS.version}
+                  label={`Version ${runningVersion}`}
+                  description={versionDetail || undefined}
+                >
+                  <Button.Root
+                    variant="solid"
+                    className="btn btn-primary settings-action-btn"
+                    disabled={checkButtonStatus(checking, context.mode) !== 'idle'}
+                    onClick={() => {
+                      playWalletSound('soft')
+                      void check()
+                    }}
+                  >
+                    <Button.Label>{checking ? 'Checking…' : 'Check update'}</Button.Label>
+                  </Button.Root>
+                </SettingsControlRow>
+              </>
+            ) : null}
+          </ul>
+        </SettingsSection>
+
+        <SettingsSection title="Apps" part="chart-apps">
+          <ul className="settings-list">
+            <SettingsNavRow
+              label="Apps"
+              description={CHART_APPS_DESCRIPTION}
+              icon={settingIconFor('chart-apps').icon}
+              onClick={() => openSetting('chart-apps')}
+            />
+          </ul>
+        </SettingsSection>
+
+        <SettingsSection title="Support" part="support">
+          <ul className="settings-list">
+            <SettingsNavRow
+              label="Wallet health"
+              description={
+                healthAlert === 'ok' || healthAlert === 'unknown'
+                  ? healthDescription
+                  : undefined
+              }
+              status={
+                healthAlert === 'error' || healthAlert === 'warn'
+                  ? healthDescription
+                  : undefined
+              }
+              statusTone={healthAlert === 'error' ? 'warn' : 'warn'}
+              icon={settingIconFor('wallet-health').icon}
+              trailingEnd={
+                healthAlert === 'error' || healthAlert === 'warn' ? (
+                  <WalletHealthAlertBadge tone={healthAlert} />
+                ) : undefined
+              }
+              onClick={() => openSetting('wallet-health')}
+            />
+            <SettingsNavRow
+              label="Recover from transaction"
+              description="Claim a token or item by its txid"
+              icon={settingIconFor('recover-tx').icon}
+              onClick={() => openSetting('recover-tx')}
+            />
+            <SettingsNavRow
+              label="Session logs"
+              description="View, copy, and upload"
+              icon={SETTINGS_APPLICATION_ICONS.logs}
+              onClick={() => openSetting('logs')}
+            />
+            {isDesktopShell ? (
+              <SettingsControlRow
+                icon={SETTINGS_APPLICATION_ICONS.screenshot}
+                label="Screenshot"
+                description="Copy this window to the clipboard"
+              >
+                <span className="settings-action-stack">
+                  <Button.Root
+                    variant="solid"
+                    className="btn btn-primary settings-action-btn"
+                    onClick={() => {
+                      playWalletSound('soft')
+                      void window.handcash?.copyScreenshot?.()
+                    }}
+                  >
+                    <Button.Label>Take screenshot</Button.Label>
+                  </Button.Root>
+                  <ShortcutHint
+                    className="settings-shortcut-hint"
+                    keys={screenshotShortcutKeys(window.handcash?.platform)}
+                  />
+                </span>
+              </SettingsControlRow>
+            ) : null}
+          </ul>
+        </SettingsSection>
+
+        <SettingsSection title="Labs" part="labs">
+          <ul className="settings-list">
+            <SettingsNavRow
+              label="Labs"
+              description="Experimental features, off by default"
+              icon={settingIconFor('labs').icon}
+              onClick={() => openSetting('labs')}
+            />
+          </ul>
+        </SettingsSection>
+
+        <SettingsSection title="About" part="about">
+          <ul className="settings-list">
+            <SettingsNavRow
+              label="HandCash"
+              description={walletKindLabel()}
+              icon={settingIconFor('about-handcash').icon}
+              onClick={() => openSetting('about-handcash')}
+            />
+          </ul>
+        </SettingsSection>
       </div>
     </div>
   )

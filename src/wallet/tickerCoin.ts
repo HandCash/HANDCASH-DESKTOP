@@ -1,4 +1,4 @@
-import { OFFICIAL_URL, type MarketCoin } from './bsvMarket'
+import { OFFICIAL_URL, STABLE_MARKET_COINS, type MarketCoin } from './bsvMarket'
 import { COIN_CHAINS, COIN_INFO, type CoinChain } from './coins/coinChains'
 
 type TickerCoinInfo = { name: string; sym: string; about: string; aboutTitle: string; url: string }
@@ -28,9 +28,17 @@ export const TICKER_COINS: Record<MarketCoin, TickerCoinInfo> = {
       ]
     }),
   ) as Record<CoinChain, TickerCoinInfo>),
+  'arc-usd': {
+    name: 'Arc USD',
+    sym: 'USDC',
+    aboutTitle: 'What is Arc USD?',
+    about:
+      'Arc USD is Circle USDC on the Arc chain — a dollar-pegged crypto, like Litecoin is a coin. It is not a government fiat. Wrapping it onto BSV is experimental under Settings → Labs.',
+    url: 'https://www.circle.com/usdc',
+  },
 }
 
-export const TICKER_COIN_ORDER: readonly MarketCoin[] = ['bsv', ...COIN_CHAINS]
+export const TICKER_COIN_ORDER: readonly MarketCoin[] = ['bsv', ...COIN_CHAINS, ...STABLE_MARKET_COINS]
 
 let coin: MarketCoin = 'bsv'
 const listeners = new Set<() => void>()

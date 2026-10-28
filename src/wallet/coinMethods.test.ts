@@ -79,10 +79,37 @@ describe('BRC-213 coin methods', () => {
 })
 
 describe('BRC-214 asset profiles', () => {
-  it('lists every profile once, coins in the payment scope and assets per action', () => {
+  it('lists every profile once, coins and Arc USD in the payment scope and assets per action', () => {
     const { profiles } = listAssetProfiles()
-    expect(profiles.map((p) => p.id)).toEqual(['bsv', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge', '1sat', 'bntft', 'bntnft', 'iptft', 'iptnft'])
-    expect(profiles.filter((p) => p.scope === 'payment').map((p) => p.id)).toEqual(['bsv', 'coin:ltc', 'coin:bch', 'coin:btc', 'coin:doge'])
+    expect(profiles.map((p) => p.id)).toEqual([
+      'bsv',
+      'coin:ltc',
+      'coin:bch',
+      'coin:btc',
+      'coin:doge',
+      'arc-usd',
+      '1sat',
+      'bntft',
+      'bntnft',
+      'iptft',
+      'iptnft',
+    ])
+    expect(profiles.filter((p) => p.scope === 'payment').map((p) => p.id)).toEqual([
+      'bsv',
+      'coin:ltc',
+      'coin:bch',
+      'coin:btc',
+      'coin:doge',
+      'arc-usd',
+    ])
+    const arcUsd = profiles.find((p) => p.id === 'arc-usd')
+    expect(arcUsd).toMatchObject({
+      chain: 'arc',
+      decimals: 6,
+      spendLabel: 'Arc USD',
+    })
+    expect(arcUsd?.methods).toBeUndefined()
+    expect(arcUsd?.experimental).toBeUndefined()
     expect(profiles.find((p) => p.id === 'coin:bch')).toMatchObject({ chain: 'bch', decimals: 8, minConfirmations: 6 })
     expect(profiles.find((p) => p.id === 'coin:btc')).toMatchObject({ chain: 'btc', decimals: 8, minConfirmations: 3 })
     expect(profiles.find((p) => p.id === 'coin:doge')).toMatchObject({ chain: 'doge', decimals: 8, minConfirmations: 20 })

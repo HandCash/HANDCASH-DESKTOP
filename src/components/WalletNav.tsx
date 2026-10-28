@@ -68,7 +68,8 @@ import { SwapOffersPanel } from './SwapOffersPanel'
 import { SwapDetailPanel } from './SwapDetailPanel'
 import { SwapPanel } from './SwapPanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
-import { SettingsPanel, settingLabel } from './SettingsPanel'
+import { SettingsPanel } from './SettingsPanel'
+import { settingLabel } from './settings/settingLabel'
 import { WalletHealthPanel } from './settings/WalletHealthPanel'
 import { LabsPanel } from './settings/LabsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
@@ -83,6 +84,7 @@ import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { DevKeysPanel } from './DevKeysPanel'
 import { TickerCoinSelector } from './TickerCoinSelector'
+import { FiatCurrencyPanel } from './FiatCurrencyPanel'
 import { useTickerCoin } from '../features/tickerCoin'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
@@ -173,6 +175,9 @@ function childPanelKey(state: NavState): string {
   }
   if ('origin' in child && typeof child.origin === 'string') {
     return `${state.section}:${child.type}:${child.origin}`
+  }
+  if ('settingId' in child && typeof child.settingId === 'string') {
+    return `${state.section}:${child.type}:${child.settingId}`
   }
   return `${state.section}:${child.type}`
 }
@@ -435,7 +440,8 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'swap-offers') return [root, { label: 'Swap', onClick: openSwapFlow }, { label: 'Offers' }]
     if (stageChild.type === 'swap-detail') return [root, { label: 'Swap' }]
     if (stageChild.type === 'dev-keys') return [root, { label: 'Developer keys' }]
-    if (stageChild.type === 'ticker-coins') return [root, { label: 'Ticker' }]
+    if (stageChild.type === 'ticker-coins') return [root, { label: 'Coins' }]
+    if (stageChild.type === 'fiat-currency') return [root, { label: 'Currency' }]
     if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
     if (stageChild.type === 'setting') {
       const stack = getSettingBackStack()
@@ -749,6 +755,11 @@ export const WalletNav = memo(function WalletNav({
                   />
                 </div>
               )}
+              {stageChild.type === 'fiat-currency' && (
+                <div className="nav-child-panel">
+                  <FiatCurrencyPanel />
+                </div>
+              )}
               {stageChild.type === 'receive' && (
                 <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
               )}
@@ -849,7 +860,12 @@ export const WalletNav = memo(function WalletNav({
             </div>
           ) : null}
 
-          <div className="wallet-nav-panel" hidden={hideSectionPanel}>
+          <div
+            className="wallet-nav-panel"
+            hidden={hideSectionPanel}
+            inert={hideSectionPanel ? true : undefined}
+            aria-hidden={hideSectionPanel || undefined}
+          >
             {(mountedLight.has('activity') || mobileInlinePermission) && (
               <div
                 className="wallet-nav-slot"
@@ -892,12 +908,15 @@ export const WalletNav = memo(function WalletNav({
             )}
             {/* Unmount Collect when leaving to free ordinal images; show as
                 soon as the optimistic tab selects it so labels/chrome stay sync.
-                Remount paints the last durable list (collectables.ts). */}
-            {activeSection === 'collectables' && !mobileInlinePermission && (
-              <RenderProbe id="collectables">
-                <MemoInventoryPanel />
-              </RenderProbe>
-            )}
+                Remount paints the last durable list (collectables.ts).
+                Slot wrapper matches Friends/Identity flex selectors (display:contents). */}
+            {activeSection === 'collectables' && !mobileInlinePermission ? (
+              <div className="wallet-nav-slot">
+                <RenderProbe id="collectables">
+                  <MemoInventoryPanel />
+                </RenderProbe>
+              </div>
+            ) : null}
             {mountedLight.has('friends') && (
               <div
                 className="wallet-nav-slot"

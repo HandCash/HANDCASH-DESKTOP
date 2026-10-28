@@ -1,35 +1,32 @@
-import { Button, Field } from '@aeon-ui/react'
-import { Checkbox } from "@aeon-ui/ui";
-import { useMachine } from "@xstate/react";
-import { useEffect, useState } from "react";
-import { stateToAttr } from "@aeon-ui/core";
-import { wipeMachine } from "../machines/wipeMachine";
-import { StatusBanner } from "@aeon-ui/react";
-import { wipeAllWalletData } from "../wallet/wipeWallet";
+import { Button, Field, StatusBanner } from '@aeon-ui/react'
+import { useMachine } from '@xstate/react'
+import { useEffect, useState } from 'react'
+import { stateToAttr } from '@aeon-ui/core'
+import { wipeMachine } from '../machines/wipeMachine'
+import { wipeAllWalletData } from '../wallet/wipeWallet'
 import {
   overrideWipeGate,
   syncHistoryBeforeWipe,
   wipeLossWarning,
   wipeRefusalMessage,
   type WipeHistoryGate,
-} from "../wallet/wipeHistoryGate";
-import { listBntAssets } from "../wallet/bnt/wallet";
-import { playWalletSound } from "../wallet/soundService";
-import { useAsyncAction } from "../hooks/useAsyncAction";
-import { AsyncActionPrompt } from "./AsyncActionPrompt";
-import { ConfirmPasswordGate } from "./ConfirmPasswordGate";
+} from '../wallet/wipeHistoryGate'
+import { listBntAssets } from '../wallet/bnt/wallet'
+import { playWalletSound } from '../wallet/soundService'
+import { useAsyncAction } from '../hooks/useAsyncAction'
+import { AsyncActionPrompt } from './AsyncActionPrompt'
+import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 
-const CONFIRM_WORD = "DELETE";
+const CONFIRM_WORD = 'DELETE'
 
 export function WipeWalletPanel() {
-  const [snapshot, send] = useMachine(wipeMachine);
-  const override = useAsyncAction<"override">();
-  const stateAttr = stateToAttr(snapshot.value);
-  const passwordReady = snapshot.context.unlocked;
+  const [snapshot, send] = useMachine(wipeMachine)
+  const override = useAsyncAction<'override'>()
+  const stateAttr = stateToAttr(snapshot.value)
+  const passwordReady = snapshot.context.unlocked
   const canSubmit =
     passwordReady &&
-    snapshot.context.acknowledged &&
-    snapshot.context.confirmText.trim().toUpperCase() === CONFIRM_WORD;
+    snapshot.context.confirmText.trim().toUpperCase() === CONFIRM_WORD
 
   const busy = snapshot.matches("syncing") || snapshot.matches("wiping");
   const [tokensHeld, setTokensHeld] = useState(0);
@@ -131,23 +128,6 @@ export function WipeWalletPanel() {
             </p>
           </div>
 
-          <Checkbox.Root
-            className="settings-check-label"
-            checked={snapshot.context.acknowledged}
-            disabled={busy}
-            onCheckedChange={(acknowledged) =>
-              send({ type: "TOGGLE_ACK", acknowledged })
-            }
-          >
-            <Checkbox.Control>
-              <Checkbox.Indicator />
-            </Checkbox.Control>
-            <Checkbox.Label>
-              I understand this cannot be undone without my backup.
-            </Checkbox.Label>
-            <Checkbox.HiddenInput />
-          </Checkbox.Root>
-
           <Field.Root className="field">
             <Field.Label htmlFor="wipe-confirm">
               Type <strong>{CONFIRM_WORD}</strong>
@@ -231,10 +211,9 @@ export function WipeWalletPanel() {
                 className="btn btn-ghost"
                 disabled={busy}
                 onClick={() => {
-                  send({ type: "CHANGE_PASSWORD", password: "" });
-                  send({ type: "CHANGE_CONFIRM", confirmText: "" });
-                  send({ type: "TOGGLE_ACK", acknowledged: false });
-                  playWalletSound("soft");
+                  send({ type: 'CHANGE_PASSWORD', password: '' })
+                  send({ type: 'CHANGE_CONFIRM', confirmText: '' })
+                  playWalletSound('soft')
                 }}
               >
                 <Button.Label>Back</Button.Label>

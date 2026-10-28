@@ -20,6 +20,8 @@ const common = {
   target: 'node22',
   sourcemap: true,
   logLevel: 'info',
+  // Sidecar must not embed Electron; host APIs use dynamic import only on the Electron path.
+  external: ['electron', 'electron-log'],
 }
 
 await esbuild.build({

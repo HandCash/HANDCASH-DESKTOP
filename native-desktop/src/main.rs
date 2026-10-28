@@ -73,8 +73,11 @@ fn main() -> wry::Result<()> {
         });
     }
 
+    // App chrome owns the top rail (.titlebar). OS/GTK CSD would stack a second
+    // bar ("HandCash" + min/max/close) on top — drop decorations on Win/Linux.
     let window = WindowBuilder::new()
         .with_title("HandCash")
+        .with_decorations(false)
         .with_inner_size(tao::dpi::LogicalSize::new(1180.0, 760.0))
         .with_min_inner_size(tao::dpi::LogicalSize::new(360.0, 420.0))
         .build(&event_loop)

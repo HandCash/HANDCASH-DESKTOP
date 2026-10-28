@@ -42,6 +42,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
 
   const canConfirm = canConfirmKeysBackup(kind)
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
+  const words = mnemonic.trim().split(/\s+/).filter(Boolean)
 
   const showSlices = async (rotate: boolean) => {
     try {
@@ -116,87 +117,92 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
   }
 
   return (
-    <div className="wallet-setup-config" data-aeon-scope="create-keys-backup">
-      <h2>Save your recovery backup</h2>
-      <p className="auth-lede">
-        Keep a recovery phrase or two key slices yourself. Once you&rsquo;re in, back this wallet
-        up on another device from Settings.
-      </p>
+    <div className="wallet-setup-config keys-backup" data-aeon-scope="create-keys-backup">
+      <header className="keys-backup-head">
+        <h2>Save recovery backup</h2>
+        <div className="keys-backup-tabs" role="tablist" aria-label="Backup kind">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={kind === 'phrase'}
+            className={kind === 'phrase' ? 'btn btn-primary keys-backup-tab' : 'btn btn-ghost keys-backup-tab'}
+            onClick={() => {
+              setKind('phrase')
+              setShareSet(null)
+              clearKeysHandoffEvidence()
+              setTick((n) => n + 1)
+            }}
+          >
+            Phrase
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={kind === 'split'}
+            className={kind === 'split' ? 'btn btn-primary keys-backup-tab' : 'btn btn-ghost keys-backup-tab'}
+            onClick={() => void showSlices(false)}
+          >
+            Key slices
+          </button>
+        </div>
+      </header>
 
-      <div className="actions" style={{ marginBottom: 12 }}>
-        <Button.Root variant="ghost"
-          className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={() => {
-            setKind('phrase')
-            setShareSet(null)
-            clearKeysHandoffEvidence()
-            setTick((n) => n + 1)
-          }}
-        >
-          <Button.Label>Recovery phrase</Button.Label>
-        </Button.Root>
-        <Button.Root variant="ghost"
-          className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
-          onClick={() => void showSlices(false)}
-        >
-          <Button.Label>Key slices</Button.Label>
-        </Button.Root>
+      <div className="keys-backup-body" data-aeon-scroll="hover">
+        {kind === 'phrase' ? (
+          <div className="split-backup-shares">
+            <ol className="recovery-phrase-grid" data-words={words.length}>
+              {words.map((word, i) => (
+                <li key={`${i}-${word}`}>
+                  <span className="recovery-phrase-index">{i + 1}</span>
+                  <span className="recovery-phrase-word">{word}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+
+        {kind === 'split' && shareSet ? (
+          <div className="split-backup-shares">
+            <KeySliceList
+              shares={shareSet.shares}
+              threshold={shareSet.threshold}
+              integrity={shareSet.integrity}
+              issuedAt={shareSet.issuedAt}
+              savedIndices={splitProgress.savedIndices}
+              onHandoff={handoff}
+              onConfirmSaved={(index) => {
+                noteKeysBackupHandoff(index)
+                setTick((n) => n + 1)
+                playWalletSound('soft')
+                toastSuccess(`Slice ${index + 1} confirmed`)
+              }}
+              onRotateShares={() => showSlices(true)}
+            />
+          </div>
+        ) : null}
       </div>
 
-      {kind === 'phrase' ? (
-        <div className="split-backup-shares">
-          <p className="settings-hint">
-            Write these words down offline. Anyone with them controls the wallet.
-          </p>
-          <ol className="recovery-phrase-grid">
-            {mnemonic.split(/\s+/).map((word, i) => (
-              <li key={`${i}-${word}`}>
-                <span className="recovery-phrase-index">{i + 1}.</span> {word}
-              </li>
-            ))}
-          </ol>
-          <div className="actions" style={{ marginTop: 12 }}>
-            <Button.Root variant="ghost"
-              className="btn btn-ghost"
-              onClick={() => {
-                void copyText(mnemonic, { label: 'phrase' }).then((ok) => {
-                  if (!ok) return
-                  noteKeysBackupHandoff()
-                  setTick((n) => n + 1)
-                })
-              }}
-            >
-              <Button.Label>Copy phrase</Button.Label>
-            </Button.Root>
-          </div>
-        </div>
-      ) : null}
-
-      {kind === 'split' && shareSet ? (
-        <div className="split-backup-shares">
-          <KeySliceList
-            shares={shareSet.shares}
-            threshold={shareSet.threshold}
-            integrity={shareSet.integrity}
-            issuedAt={shareSet.issuedAt}
-            savedIndices={splitProgress.savedIndices}
-            onHandoff={handoff}
-            onConfirmSaved={(index) => {
-              noteKeysBackupHandoff(index)
-              setTick((n) => n + 1)
-              playWalletSound('soft')
-              toastSuccess(`Slice ${index + 1} confirmed`)
+      <footer className="keys-backup-foot">
+        {kind === 'phrase' ? (
+          <Button.Root
+            variant="ghost"
+            className="btn btn-ghost"
+            onClick={() => {
+              void copyText(mnemonic, { label: 'phrase' }).then((ok) => {
+                if (!ok) return
+                noteKeysBackupHandoff()
+                setTick((n) => n + 1)
+              })
             }}
-            onRotateShares={() => showSlices(true)}
-          />
-        </div>
-      ) : null}
-
-      <div className="actions" style={{ marginTop: 16 }}>
+          >
+            <Button.Label>Copy phrase</Button.Label>
+          </Button.Root>
+        ) : null}
         <Button.Root variant="solid" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
-          <Button.Label>I’ve saved my backup — continue</Button.Label>
+          <Button.Label>I’ve saved it — continue</Button.Label>
         </Button.Root>
-        <Button.Root variant="ghost"
+        <Button.Root
+          variant="ghost"
           className="btn btn-ghost"
           data-aeon-part="backup-later"
           onClick={() => {
@@ -207,11 +213,7 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         >
           <Button.Label>I’ll do this later</Button.Label>
         </Button.Root>
-      </div>
-      <p className="auth-lede" style={{ marginTop: 8 }}>
-        Later is fine. Until this wallet is on a second device or saved here, losing this device
-        loses it.
-      </p>
+      </footer>
     </div>
   )
 }

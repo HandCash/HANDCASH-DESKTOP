@@ -27,6 +27,14 @@ describe('OnboardAcceptPanel', () => {
     expect(all).not.toContain('checked')
   })
 
+  it('shows coloured coin marks in a row above each choice', () => {
+    const html = renderToStaticMarkup(createElement(OnboardAcceptPanel, { onDone: () => {} }))
+    expect(html).toContain('onboard-accept-icons')
+    expect(html).toContain('data-coin="bsv"')
+    expect(html).toContain('data-coin="ltc"')
+    expect(html).not.toContain('data-aeon-part="fiat"')
+  })
+
   it('never calls Bitcoin SV a crypto', () => {
     const html = renderToStaticMarkup(createElement(OnboardAcceptPanel, { onDone: () => {} }))
     expect(html).not.toMatch(/other crypto|all crypto|crypto including/i)

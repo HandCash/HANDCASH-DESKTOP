@@ -109,6 +109,24 @@
   --hc-gold: #ffd983;
   --hc-gold-soft: #ffe3a0;
   --hc-claimed: #e0b35a;
+
+  /* Each coin's accent, one per TICKER_COIN_ORDER coin: a ring, bar or chip
+     beside its figures, never its type or a large fill. Kept apart from each
+     other and from the status inks under deuteranopia, protanopia and
+     tritanopia; dark values keep 4.5:1 on black, light ones 3:1 on #f3f5f3.
+     --coin-*-mark is the logo disc under a white glyph (4:1 or better), the
+     same on both sheets. */
+  --coin-bsv: #57ff97;
+  --coin-ltc: #5a8fd6;
+  --coin-bch: #38c9b0;
+  --coin-btc: #f08a3c;
+  --coin-doge: #f3dd3a;
+  --coin-arc-usd: #f028b0;
+  --coin-ltc-mark: #345d9d;
+  --coin-bch-mark: #078f69;
+  --coin-btc-mark: #b76d13;
+  --coin-doge-mark: #917c26;
+  --coin-arc-usd-mark: #86198f;
 }
 
 /* White sheet — keep hsl(var(--*)) paths in lockstep with HANDCASH_LIGHT_PALETTE.
@@ -122,8 +140,9 @@ html[data-aeon-mode='light'] {
   --hc-brand: 148 72% 14%;
 
   /* Nav / CTA chrome — change these, not every call site.
-     Soft gray select rail + chrome pills; white idle tab plates; green CTAs. */
-  --hc-nav-select: color-mix(in srgb, var(--hc-text, #141814) 4%, #ffffff);
+     Soft gray select rail + chrome pills (light wash on white paper);
+     white idle tab plates; green CTAs. */
+  --hc-nav-select: color-mix(in srgb, var(--hc-text, #141814) 5%, #f5f6f5);
   --hc-nav-unselected: #ffffff;
   --hc-nav-chrome: var(--hc-nav-select);
   --hc-cta: #38cb7b;
@@ -180,6 +199,13 @@ html[data-aeon-mode='light'] {
   --hc-gold: #9a6700;
   --hc-gold-soft: #8a5b0a;
   --hc-claimed: #9a6700;
+
+  --coin-bsv: #0a3d22;
+  --coin-ltc: #3f72c8;
+  --coin-bch: #13958a;
+  --coin-btc: #de6a10;
+  --coin-doge: #6e6200;
+  --coin-arc-usd: #86198f;
 }
 
 * {
@@ -544,12 +570,24 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   animation: rise 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Full-bleed mesh on signup / unlock — no stage inset around the canvas. */
+/* Full-bleed mesh on signup / unlock — no stage inset around the canvas.
+   Drop the titlebar and collapse to a single 1fr row (display:none alone
+   would leave stage in the auto track and pin content to the top). */
+.app-shell:has(.auth-shell) {
+  grid-template-rows: 1fr;
+}
+
+.app-shell:has(.auth-shell) > .titlebar {
+  display: none;
+}
+
 .stage:has(.auth-shell) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
   padding: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .stage:has(.auth-shell) > .auth-shell {
@@ -582,10 +620,11 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 
 html[data-aeon-mode='dark'] .auth-shell-mesh,
 html:not([data-aeon-mode='light']) .auth-shell-mesh {
-  opacity: 0.78;
+  opacity: 1;
 }
 
-.auth-mesh-canvas {
+.auth-mesh-canvas,
+.auth-entry-field {
   display: block;
   width: 100%;
   height: 100%;
@@ -605,12 +644,46 @@ html:not([data-aeon-mode='light']) .auth-shell-mesh {
   );
 }
 
+/* Dark: lighter left scrim so the neon mesh stays readable around the form. */
+html[data-aeon-mode='dark'] .auth-shell-scrim,
+html:not([data-aeon-mode='light']) .auth-shell-scrim {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, hsl(var(--card)) 58%, transparent) 0%,
+    color-mix(in srgb, hsl(var(--card)) 18%, transparent) 38%,
+    transparent 72%
+  );
+}
+
 .auth-shell-content {
   position: relative;
   z-index: 2;
   width: min(22rem, calc(100% - 2rem));
   margin: 0 auto;
   padding: 1.25rem 0;
+}
+
+/* Phrase / key-slice backup needs width + a scroll body, not a tall card stack. */
+.auth-shell-content:has([data-aeon-scope='create-keys-backup']) {
+  width: min(32rem, calc(100% - 1.25rem));
+  max-height: 100%;
+  min-height: 0;
+  padding: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.auth-shell-content:has([data-aeon-scope='create-keys-backup']) > .auth-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-content: stretch;
+  gap: 0;
+}
+
+.auth-shell-content:has([data-aeon-scope='create-keys-backup']) .keys-backup {
+  flex: 1 1 auto;
 }
 
 /* Auth / unlock — single quiet composition (no card stack, no dual primaries) */
@@ -837,6 +910,26 @@ html:not([data-aeon-mode='light']) .auth-shell-mesh {
   cursor: pointer;
 }
 
+.wallet-setup-option:has(.wallet-setup-option-mark) {
+  grid-template-columns: auto auto 1fr;
+}
+
+.wallet-setup-option-mark {
+  display: grid;
+  place-items: center;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  margin-top: 0.1rem;
+  color: var(--hc-text);
+}
+
+.wallet-setup-option-mark .accepted-coins-glyphs--stack {
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 2.6rem;
+  gap: 2px;
+}
+
 .wallet-setup-option:not(.is-selected):not(.is-disabled):hover {
   border-color: color-mix(in srgb, var(--hc-text) 22%, hsl(var(--border)));
 }
@@ -1040,6 +1133,61 @@ html:not([data-aeon-mode='light']) .auth-shell-mesh {
   text-align: center;
   font-size: var(--hc-text-xs);
   color: var(--hc-muted);
+}
+
+/* Entry chooser — brand mark, Sign in / Create, ambient line under CTAs. */
+.auth-entry-brand {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 0.25rem;
+}
+
+.auth-entry-brand .brand {
+  min-height: 0;
+  gap: var(--hc-space-3);
+}
+
+.auth-entry-brand .brand-logo-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: calc(var(--hc-radius) * 1.25);
+}
+
+.auth-entry-brand .brand-name {
+  font-size: clamp(1.35rem, 3.2vw, 1.75rem);
+  letter-spacing: 0.06em;
+}
+
+.auth-entry-actions {
+  display: grid;
+  gap: 0.65rem;
+  width: 100%;
+}
+
+.auth-entry-primary,
+.auth-entry-secondary {
+  width: 100%;
+  justify-content: center;
+}
+
+.auth-entry-tagline {
+  margin: 0.85rem 0 0;
+  text-align: center;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-sm);
+  line-height: 1.4;
+  min-height: 1.4em;
+  transition: opacity 320ms ease, transform 320ms ease;
+}
+
+.auth-entry-tagline.is-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.auth-entry-tagline.is-out {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 @keyframes rise {
@@ -2288,8 +2436,9 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 }
 
 [data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger'] {
+  /* Stay inside the ticker pad — negative top inset was clipped by overflow:hidden. */
   position: absolute;
-  inset: -8px -10px;
+  inset: 0 -8px;
   z-index: 2;
   margin: 0;
   padding: 0;
@@ -3215,6 +3364,8 @@ button.wallet-detail-value.is-copied {
 }
 
 .wallet-nav-stage:has(.nav-child-stage) > .wallet-nav-panel.nav-child-stage {
+  position: relative;
+  z-index: 2;
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -3227,16 +3378,20 @@ button.wallet-detail-value.is-copied {
 /*
  * Keep-alive slots unwrap with `display: contents` so section panels flex as
  * if the slot were not there. The HTML `hidden` attribute alone is not enough:
- * author `display: contents` can win the cascade in some engines and leave
- * "hidden" panels painting and stealing clicks (Send / Collect / tabs feel dead).
+ * author `display` (contents on slots, flex on panels from :has(.settings-with-scroll)
+ * etc.) can win the cascade and leave "hidden" panels painting and stealing
+ * clicks — Settings children and Send / Collect / tabs feel dead.
  * Always force none — this is the chrome keep-alive contract.
  */
 .wallet-nav-slot {
   display: contents;
 }
 
-.wallet-nav-slot[hidden] {
+.wallet-nav-slot[hidden],
+.wallet-nav-panel[hidden] {
   display: none !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
 }
 
 .wallet-nav-stage:has(.empty-state),
@@ -3337,7 +3492,7 @@ button.wallet-detail-value.is-copied {
   top: auto;
   bottom: auto;
   margin-top: 0;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   padding-top: 0;
   padding-bottom: 8px;
 }
@@ -4273,16 +4428,23 @@ li[data-aeon-state='failed'] .history-progress-range {
   margin: 0;
 }
 
-/* Reuse .wallet-nav-actions-pill — label + total share one chrome pill. */
-.wallet-nav-actions-pill.wallet-hero-metric {
+/* Same chrome height as Activity / titlebar actions pills (34 → 39 desktop). */
+.wallet-nav-actions-pill.wallet-hero-metric,
+.wallet-nav-actions-pill.wallet-hero-identity-chrome {
   position: relative;
   flex: 0 1 auto;
-  gap: 10px;
+  gap: 2px;
   max-width: 100%;
-  min-height: 42px;
-  height: auto;
-  /* Fiat trigger owns the inset so we don't double-pad a nested button. */
+  min-height: 34px;
+  height: 34px;
+  /* Fiat / identity triggers own the inset so we don't double-pad. */
   padding: 2px;
+  box-sizing: border-box;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions-pill {
+  min-height: 39px;
+  height: 39px;
 }
 
 .fiat-currency-trigger {
@@ -4294,9 +4456,10 @@ li[data-aeon-state='failed'] .history-progress-range {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 0;
+  height: 100%;
   margin: 0;
-  padding: 6px 14px 6px 12px;
+  padding: 0 12px 0 10px;
   border: 0;
   border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
   background: transparent;
@@ -4321,15 +4484,6 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .fiat-currency-trigger .wallet-account-caret {
   flex: 0 0 auto;
-  width: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition: opacity 140ms ease, width 140ms ease;
-}
-
-.fiat-currency-trigger:hover .wallet-account-caret,
-.fiat-currency-trigger:focus-visible .wallet-account-caret,
-[data-aeon-scope='fiat-currency'][data-aeon-state='open'] .fiat-currency-trigger .wallet-account-caret {
   width: 16px;
   opacity: 0.75;
 }
@@ -4431,12 +4585,34 @@ li[data-aeon-state='failed'] .history-progress-range {
   color: var(--hc-accent);
 }
 
+.fiat-currency-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.fiat-currency-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  gap: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
 .wallet-hero-metric .wallet-hero-title {
   flex: 0 1 auto;
   min-width: 0;
   margin: 0;
-  /* Keep the pre-pill title type; only the container moved. */
+  /* Match .wallet-nav-titlebar-label (Activity). */
+  font-family: var(--hc-font);
   font-size: var(--hc-text-xl);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.05em;
   line-height: 1.2;
   color: #fafafa;
 }
@@ -4447,10 +4623,12 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 
 .wallet-hero-metric-amount {
   flex: 0 0 auto;
-  font-size: var(--hc-text-sm);
-  font-weight: 700;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-xl);
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
-  line-height: 1;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
   white-space: nowrap;
   color: inherit;
 }
@@ -4458,6 +4636,16 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 .wallet-hero-identity-chrome {
   margin-left: auto;
   flex: 0 0 auto;
+  align-items: stretch;
+}
+
+.wallet-hero-identity-chrome .wallet-hero-identity-row,
+.wallet-hero-identity-chrome .wallet-account-menu {
+  display: inline-flex;
+  align-items: stretch;
+  align-self: stretch;
+  height: 100%;
+  min-height: 0;
 }
 
 /* Compact: never stack the metric + identity pills — join them into one chrome
@@ -4479,23 +4667,24 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 }
 
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .fiat-currency-trigger {
-  min-height: 34px;
-  padding: 4px 10px 4px 10px;
+  min-height: 0;
+  height: 100%;
+  padding: 0 10px;
   gap: 6px;
   /* Merged pill: square the join edge so it meets identity chrome cleanly. */
   border-start-end-radius: 0;
   border-end-end-radius: 0;
 }
 
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric .wallet-hero-title,
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric-amount {
+  font-size: var(--hc-text-xl);
+}
+
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric .wallet-hero-title {
-  font-size: var(--hc-text-lg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric-amount {
-  font-size: var(--hc-text-xs);
 }
 
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-chrome {
@@ -4535,12 +4724,19 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   text-overflow: ellipsis;
 }
 
-/* Identity controls inside the chrome pill — same 28px plate as .wallet-nav-chrome-btn. */
+/* Identity controls fill the shared 34/39px pill — type matches Activity. */
 .wallet-hero-identity-chrome .wallet-hero-identity {
-  height: 28px;
-  padding: 0 8px 0 6px;
+  height: 100%;
+  min-height: 0;
+  padding: 0 10px 0 8px;
   border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
   color: inherit;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-xl);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
 }
 
 .wallet-hero-identity-chrome .wallet-hero-identity:hover {
@@ -4548,12 +4744,17 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 }
 
 .wallet-hero-identity-chrome .wallet-hero-identity-copy {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 100%;
+  min-height: 0;
   padding: 0;
-  border-radius: 999px;
+  border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
   opacity: 1;
   color: var(--hc-muted);
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wallet-hero-identity-copy {
+  width: 32px;
 }
 
 .wallet-hero-identity-chrome .wallet-hero-identity-copy:hover {
@@ -4578,10 +4779,6 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   background: transparent;
   color: var(--hc-text);
   font: inherit;
-  font-size: var(--hc-text-xs);
-  font-weight: 600;
-  line-height: 1.2;
-  height: auto;
   cursor: pointer;
 }
 
@@ -4889,9 +5086,9 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
   color: #fafafa;
-  /* Match preferences theme toggle: soft raised chip, not accent ring. */
+  /* Flat selected chip — no raised drop shadow. */
   background: var(--hc-panel, var(--hc-surface));
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
+  box-shadow: none;
 }
 
 .wallet-nav-tab.is-active svg,
@@ -5142,9 +5339,16 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   z-index: 0;
 }
 
-/* Pill may need a touch more height so the xl label fits cleanly. */
+/* Activity alone and Activity / Currency share one pill height — never grow for crumbs. */
 html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-label) {
-  min-height: 42px;
+  min-height: 39px;
+  height: 39px;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs) {
+  min-height: 39px;
+  height: 39px;
 }
 
 /* Inverted selector track — same language as the mobile dock. */
@@ -5160,7 +5364,7 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill:has(.w
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   overflow: visible;
 }
 
@@ -5276,7 +5480,7 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav
 }
 
 html[data-aeon-mode='light'] .wallet-nav-titlebar-pill {
-  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light']
@@ -5302,13 +5506,13 @@ html[data-aeon-mode='light']
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
   background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 14%, #000));
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   color: var(--hc-text);
 }
 
 html[data-aeon-mode='light'] .wallet-nav-actions-pill {
   background: var(--hc-nav-chrome);
-  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+  box-shadow: none;
 }
 
 .wallet-nav-titlebar-actions {
@@ -5341,6 +5545,13 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
   padding: 0 8px 0 0;
   overflow: hidden;
   pointer-events: auto;
+  /* Inherit Activity label type so / Currency does not reflow the pill. */
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-xl);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
 }
 
 .wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs) .wallet-nav-titlebar-label {
@@ -5406,7 +5617,7 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
 .wallet-nav-chrome-btn[data-selected] {
   color: var(--hc-text);
   background: hsl(var(--card));
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 12%, transparent);
+  box-shadow: none;
 }
 
 .wallet-nav-chrome-btn:disabled {
@@ -8242,7 +8453,7 @@ html[data-aeon-mode='light']
 .nav-breadcrumb-item {
   display: inline-flex;
   align-items: center;
-  height: 28px;
+  height: 1.2em;
   min-width: 0;
 }
 
@@ -8250,7 +8461,7 @@ html[data-aeon-mode='light']
   margin: 0 0.45em;
   color: var(--hc-muted);
   font-weight: 500;
-  line-height: 28px;
+  line-height: 1.2;
 }
 
 /* Leading `/` under the section label — no extra left gap past the inset. */
@@ -8269,8 +8480,8 @@ html[data-aeon-mode='light']
   font-weight: inherit;
   letter-spacing: inherit;
   text-transform: inherit;
-  line-height: 28px;
-  height: 28px;
+  line-height: 1.2;
+  height: auto;
   cursor: pointer;
 }
 
@@ -8281,8 +8492,8 @@ html[data-aeon-mode='light']
 .nav-breadcrumb-current {
   color: var(--hc-text);
   font-weight: inherit;
-  line-height: 28px;
-  height: 28px;
+  line-height: 1.2;
+  height: auto;
   display: inline-block;
   max-width: 14rem;
   overflow: hidden;
@@ -8828,6 +9039,105 @@ html[data-aeon-mode='light']
   gap: 1px;
 }
 
+/* Accept cards — coloured coin marks in a row above the copy; no visible radios. */
+[data-aeon-scope='onboard-accept'] .onboard-accept-option {
+  position: relative;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+  padding: 0.9rem 1rem;
+}
+
+[data-aeon-scope='onboard-accept'] .onboard-accept-option input[type='radio'] {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.onboard-accept-icons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboard-accept-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.onboard-accept-icon svg,
+.onboard-accept-icon img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.onboard-accept-icon[data-coin='bsv'] {
+  background: #0a120e;
+}
+
+html[data-aeon-mode='light'] .onboard-accept-icon[data-coin='bsv'] {
+  background: #e8f7ee;
+}
+
+[data-aeon-scope='onboard-accept'] .wallet-setup-option-body {
+  pointer-events: none;
+}
+
+/* Fiat onboarding — compact flag + ISO chips. */
+.onboard-fiat-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.onboard-fiat-option {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-border, #444) 80%, transparent);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  font-size: var(--hc-text-sm);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.onboard-fiat-option:hover {
+  border-color: color-mix(in srgb, var(--hc-text) 22%, hsl(var(--border)));
+}
+
+.onboard-fiat-option[data-aeon-state='selected'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
+}
+
+.onboard-fiat-flag {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.onboard-fiat-iso {
+  font-variant-numeric: tabular-nums;
+}
+
 html[data-aeon-mode='light'] .settings-icon-toggle {
   background: color-mix(in srgb, var(--hc-text) 8%, transparent);
 }
@@ -8853,8 +9163,140 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   gap: 4px;
 }
 
+.settings-nav-item {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-nav-row {
+  width: 100%;
+}
+
+/* Settings ListRow — product chrome (Aeon parts); full-width hit target. */
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root'] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+  width: 100%;
+  min-height: 3rem;
+  margin: 0;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: var(--hc-radius);
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']:hover {
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='description']:not(:empty)) {
+  grid-template-rows: auto auto;
+  min-height: 3.35rem;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='description']:not(:empty))
+  > :is([data-aeon-part='leading'], [data-aeon-part='trailing']) {
+  grid-row: 1 / -1;
+  align-self: center;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='label'] {
+  grid-column: 2;
+  min-width: 0;
+  font-size: var(--hc-text-md);
+  font-weight: 600;
+  letter-spacing: var(--hc-tracking-body);
+  line-height: var(--hc-leading-snug);
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='description'] {
+  grid-column: 2;
+  min-width: 0;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-sm);
+  line-height: var(--hc-leading-snug);
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='leading'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='trailing'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* Match Activity / Friends head — no extra top offset under the stage pad. */
 .settings-panel-head {
-  margin-top: 10px;
+  margin-top: 0;
   margin-bottom: 0;
 }
 
@@ -8880,24 +9322,104 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   padding: 0;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: 6px;
+}
+
+.recovery-phrase-grid[data-words='24'] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 520px) {
+  .recovery-phrase-grid,
+  .recovery-phrase-grid[data-words='24'] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .recovery-phrase-grid li {
   margin: 0;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-radius: var(--hc-radius);
   background: var(--hc-sunken-strong);
   border: 1px solid color-mix(in srgb, var(--hc-muted) 28%, transparent);
   font-family: var(--hc-mono);
-  font-size: var(--hc-text-md);
-  word-break: break-word;
+  font-size: var(--hc-text-sm);
+  line-height: 1.25;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
 }
 
 .recovery-phrase-index {
   color: var(--hc-muted);
   font-weight: 600;
-  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  min-width: 1.4em;
+}
+
+.recovery-phrase-word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact backup sheet: head + scroll body + sticky foot. */
+.keys-backup {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: 100%;
+}
+
+.keys-backup-head {
+  display: grid;
+  gap: 0.65rem;
+  flex-shrink: 0;
+}
+
+.keys-backup-head h2 {
+  margin: 0;
+}
+
+.keys-backup-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.keys-backup-tab {
+  width: 100%;
+  justify-content: center;
+  padding-block: 8px;
+}
+
+.keys-backup-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 2px;
+}
+
+.keys-backup-body .split-backup-shares {
+  margin: 0;
+}
+
+.keys-backup-foot {
+  display: grid;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 0.25rem;
+}
+
+.keys-backup-foot .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 .settings-row {
@@ -12753,63 +13275,60 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
   overflow: hidden;
 }
 
-/* The Litecoin mark is drawn by the wallet, never from issuer art. */
+/* Chain marks are drawn by the wallet, never from issuer art. */
 [data-chain-mark='ltc'] .chain-mark-disc {
-  fill: #345d9d;
-}
-
-[data-chain-mark='ltc'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-ltc-mark);
 }
 
 [data-chain-mark='bch'] .chain-mark-disc {
-  fill: #0ac18e;
-}
-
-[data-chain-mark='bch'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-bch-mark);
 }
 
 [data-chain-mark='btc'] .chain-mark-disc {
-  fill: #f7931a;
-}
-
-[data-chain-mark='btc'] .chain-mark-glyph {
-  fill: #fff;
+  fill: var(--coin-btc-mark);
 }
 
 [data-chain-mark='doge'] .chain-mark-disc {
-  fill: #c2a633;
+  fill: var(--coin-doge-mark);
 }
 
-[data-chain-mark='doge'] .chain-mark-glyph {
+[data-chain-mark='arc-usd'] .chain-mark-disc {
+  fill: var(--coin-arc-usd-mark);
+}
+
+[data-chain-mark] .chain-mark-glyph {
   fill: #fff;
 }
 
-/* Each native coin's colour, for views that tint by chain. */
-[data-chain='bsv'] {
-  --coin-color: #57ff97;
-  --coin-color-light: #0a3d22;
+/* Each coin's accent, for views that tint by coin or chain. */
+[data-chain='bsv'],
+[data-coin='bsv'] {
+  --coin-color: var(--coin-bsv);
 }
 
-[data-chain='ltc'] {
-  --coin-color: #345d9d;
-  --coin-color-light: #243f6e;
+[data-chain='ltc'],
+[data-coin='ltc'] {
+  --coin-color: var(--coin-ltc);
 }
 
-[data-chain='bch'] {
-  --coin-color: #0ac18e;
-  --coin-color-light: #067a59;
+[data-chain='bch'],
+[data-coin='bch'] {
+  --coin-color: var(--coin-bch);
 }
 
-[data-chain='btc'] {
-  --coin-color: #f7931a;
-  --coin-color-light: #b86a0c;
+[data-chain='btc'],
+[data-coin='btc'] {
+  --coin-color: var(--coin-btc);
 }
 
-[data-chain='doge'] {
-  --coin-color: #c2a633;
-  --coin-color-light: #8a7420;
+[data-chain='doge'],
+[data-coin='doge'] {
+  --coin-color: var(--coin-doge);
+}
+
+[data-chain='arc-usd'],
+[data-coin='arc-usd'] {
+  --coin-color: var(--coin-arc-usd);
 }
 
 /* Coin deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
@@ -16076,13 +16595,13 @@ html[data-aeon-mode='light'] .wallet-nav-bar {
   background: color-mix(in srgb, var(--hc-text) 8%, #ffffff);
 }
 
-/* Selected nav — soft raised chip; primary ink on paper. */
+/* Selected nav — flat chip; primary ink on paper. No drop shadow. */
 html[data-aeon-mode='light'] .wallet-nav-tab.is-active,
 html[data-aeon-mode='light'] .wallet-nav-tab[aria-selected='true'],
 html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] {
   color: hsl(var(--primary));
   background: #fff;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light'] .wallet-nav-tab.is-active svg,
@@ -16599,15 +17118,10 @@ html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar-t
 }
 
 
-/* Onboarding — backup later + protect this device */
-[data-aeon-scope='create-keys-backup'] .actions,
+/* Onboarding — protect this device */
 [data-aeon-scope='onboard-protect'] .auth-actions {
   display: grid;
   gap: 8px;
-}
-
-[data-aeon-scope='create-keys-backup'] [data-aeon-part='backup-later'] {
-  width: 100%;
 }
 
 [data-aeon-scope='onboard-protect'] .wallet-setup-option input {
@@ -16629,7 +17143,7 @@ html:not(.platform-mobile):not(.layout-compact)
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   overflow: visible;
   scroll-snap-type: none;
 }
@@ -16732,7 +17246,7 @@ html:not(.platform-mobile):not(.layout-compact)
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  box-shadow: none;
   overflow: visible;
 }
 
@@ -18947,7 +19461,7 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
 }
 
 [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] [data-aeon-part='coin-trigger'] {
-  inset: -4px -4px;
+  inset: 0 -4px;
   z-index: 2;
   pointer-events: auto;
 }

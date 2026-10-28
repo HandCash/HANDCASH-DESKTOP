@@ -3,7 +3,7 @@
  * key backup for every wallet on every device, so only a new vault asks for
  * it. A restore already used it; a device joined by approval was sent it.
  */
-export type OnboardStep = 'keys-backup' | 'history' | 'accept' | 'protect'
+export type OnboardStep = 'keys-backup' | 'history' | 'accept' | 'fiat' | 'protect'
 
 /** `joined`: a signed-in device approved this one and sent it the vault master. */
 export type OnboardRoute = 'create' | 'restore' | 'joined'

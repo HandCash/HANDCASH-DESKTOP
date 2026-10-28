@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { ListRow } from '@aeon-ui/ui'
+import { ListRow } from '@aeon-ui/react'
 import { playWalletSound } from '../../wallet/soundService'
 import { SettingsRowIcon, type SettingIconTone } from './settingIcons'
 
@@ -31,12 +31,18 @@ export function SettingsNavRow({
   trailingEnd,
 }: Props) {
   const desc = status || description
+  const activate = () => {
+    playWalletSound('soft')
+    onClick()
+  }
   return (
-    <li>
+    <li className="settings-nav-item">
       <ListRow.Root
-        onClick={() => {
-          playWalletSound('soft')
-          onClick()
+        type="button"
+        className="settings-nav-row"
+        onClick={(event) => {
+          event.preventDefault()
+          activate()
         }}
       >
         {leading || icon ? (

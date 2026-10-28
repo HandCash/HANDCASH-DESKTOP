@@ -56,8 +56,9 @@ import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { writeTrustedBalance } from '../wallet/balanceSnapshot'
 import {
   generateWrapSecret,
-  getDeviceLockMode,
   getOpenUnlockSecret,
+  hasMemorablePassword,
+  isNoDeviceLock,
   setDeviceLockMode,
   setOpenUnlockSecret,
   shouldAutoUnlock,
@@ -67,9 +68,11 @@ import { FingerprintIcon } from './icons'
 import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { OnboardProtectPanel } from './OnboardProtectPanel'
 import { OnboardAcceptPanel } from './OnboardAcceptPanel'
+import { OnboardFiatPanel } from './OnboardFiatPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 import { GoogleLoginPanel, type GoogleRecoveredVault } from './GoogleLoginPanel'
 import { DeviceSignInPanel, type ApprovedVault } from './DeviceSignInPanel'
+import { OnboardEntryPanel } from './OnboardEntryPanel'
 import {
   EXISTING_WALLET_MODE,
   OTHER_SIGNIN_MODE,
@@ -79,6 +82,8 @@ import {
   isRestoreMethod,
   type FormMode,
 } from './auth/authModes'
+import { armCloudMigrationIntent } from '../wallet/cloudMigrationIntent'
+import { readCloudPriorSession } from '../wallet/cloudPriorSession'
 import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
 import { setSigninEmail } from '../wallet/deviceSignin'
 import {
@@ -163,7 +168,7 @@ export function AuthScreen({
     wrapPassword: string
     mnemonic: string | null
     rootKeyHex: string
-    step: 'keys-backup' | 'history' | 'accept' | 'protect'
+    step: 'keys-backup' | 'history' | 'accept' | 'fiat' | 'protect'
     kind: 'create' | 'restore'
   } | null>(null)
   /** Holds the create/unlock form off-screen while the vault opens — avoids password flash. */
@@ -222,11 +227,12 @@ export function AuthScreen({
     })()
   }
 
-  useEffect(() => {
-    if (mode !== 'locked' || formMode !== 'unlock') return
-    if (!shouldAutoUnlock()) return
+  const unlockWithOpenSecret = () => {
     const secret = getOpenUnlockSecret()
-    if (!secret) return
+    if (!secret) {
+      onFail('This wallet has no unlock factor. Restore from a backup.')
+      return
+    }
     if (!unlockActor.getSnapshot().can({ type: 'OPEN_SECRET' })) return
     console.info('[unlock] factor=open-secret — device lock is off')
     send({ type: 'OPEN_SECRET' })
@@ -241,6 +247,12 @@ export function AuthScreen({
         send({ type: 'FAIL', error: message })
         onFail(message)
       })
+  }
+
+  useEffect(() => {
+    if (mode !== 'locked' || formMode !== 'unlock') return
+    if (!shouldAutoUnlock()) return
+    unlockWithOpenSecret()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, formMode])
 
@@ -488,9 +500,19 @@ export function AuthScreen({
         return
       }
     } else if (formMode === 'unlock') {
-      const factors = readVaultUnlockFactors()
-      if (!factors.password) {
-        onFail('Unlock with this device, or restore from a backup.')
+      // Open-unlock / device-only wallets still have a vault password wrap —
+      // that wrap is a generated secret, not something the holder typed.
+      if (isNoDeviceLock()) {
+        unlockWithOpenSecret()
+        return
+      }
+      if (!hasMemorablePassword()) {
+        const factors = readVaultUnlockFactors()
+        onFail(
+          factors.device
+            ? 'Unlock with this device.'
+            : 'Unlock with this device, or restore from a backup.',
+        )
         return
       }
       if (snapshot.context.password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
@@ -627,12 +649,16 @@ export function AuthScreen({
           : formMode === 'key'
             ? 'Paste your emergency root key (64 hex chars).'
             : formMode === 'create'
-              ? 'Your keys stay on this device. Next you’ll back up a recovery phrase and choose how this device unlocks.'
-              : shouldAutoUnlock()
+              ? 'Your keys stay on this device.'
+              : shouldAutoUnlock() || isNoDeviceLock()
                 ? 'Opening your wallet on this device.'
                 : readVaultUnlockFactors().device
-                  ? 'Unlock with this device, or your HandCash password.'
-                  : 'Enter your HandCash password to unlock.'
+                  ? hasMemorablePassword()
+                    ? 'Unlock with this device, or your HandCash password.'
+                    : 'Unlock with this device.'
+                  : hasMemorablePassword()
+                    ? 'Enter your HandCash password to unlock.'
+                    : 'Unlock with this device, or restore from a backup.'
 
   const submitting = snapshot.matches('opening')
   const sharesFound = formMode === 'shares' ? extractBrc140Shares(sharesInput).length : 0
@@ -778,6 +804,18 @@ export function AuthScreen({
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="accept">
         <OnboardAcceptPanel
           onDone={() => {
+            setPendingOnboard({ ...pendingOnboard, step: 'fiat' })
+          }}
+        />
+      </section>
+    )
+  }
+
+  if (pendingOnboard?.step === 'fiat') {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="fiat">
+        <OnboardFiatPanel
+          onDone={() => {
             setPendingOnboard({ ...pendingOnboard, step: 'protect' })
           }}
         />
@@ -795,6 +833,20 @@ export function AuthScreen({
           }}
         />
       </section>
+    )
+  }
+
+  if (formMode === 'entry' && !preparing) {
+    return (
+      <OnboardEntryPanel
+        session={readCloudPriorSession()}
+        onSignIn={() => setFormMode(EXISTING_WALLET_MODE)}
+        onCreate={() => setFormMode('create')}
+        onMigrate={() => {
+          armCloudMigrationIntent()
+          setFormMode('create')
+        }}
+      />
     )
   }
 
@@ -1014,10 +1066,7 @@ export function AuthScreen({
           </div>
         ) : null}
 
-        {(formMode === 'unlock' &&
-          readVaultUnlockFactors().password &&
-          getDeviceLockMode() !== 'none') ||
-        needsNewPassword ? (
+        {(formMode === 'unlock' && hasMemorablePassword()) || needsNewPassword ? (
           <>
             <PasswordField
               id="password"

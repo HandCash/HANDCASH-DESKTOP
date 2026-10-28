@@ -2,6 +2,8 @@
  * Preferred government / fiat currency for portfolio totals and "show in fiat"
  * display. Independent of DisplayCurrency (`usd` | `bsv`), which only chooses
  * fiat-vs-coins; this picks *which* fiat.
+ *
+ * Arc USD is a crypto (ticker), not a fiat — see MarketCoin `arc-usd`.
  */
 
 const STORAGE_KEY = 'handcash.brc100.fiatCurrency'
@@ -64,6 +66,8 @@ function isFiatCode(raw: string): raw is FiatCode {
 function read(): FiatCode {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
+    // Brief mistaken Arc-USD-as-fiat storage → fall back to USD.
+    if (raw === 'arc-usd') return 'usd'
     if (raw && isFiatCode(raw)) return raw
   } catch {
     /* ignore */

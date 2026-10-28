@@ -3,11 +3,18 @@ import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { bsvLogoDefault } from '../assets/brand/bsvLogos'
 import { DeferredImage } from './DeferredImage'
-import { BitcoinCashIcon, BitcoinIcon, DogecoinIcon, LitecoinIcon } from './icons'
+import {
+  ArcUsdIcon,
+  BitcoinCashIcon,
+  BitcoinIcon,
+  DogecoinIcon,
+  LitecoinIcon,
+} from './icons'
 import {
   formatPct,
   formatPriceUsd,
   getCachedBsvMarket,
+  isStableMarketCoin,
   refreshMarketBoard,
   subscribeBsvMarket,
   type MarketCoin,
@@ -17,7 +24,7 @@ import { useHeldCoins } from '../features/heldCoins'
 import { useShownMarketCoins } from '../features/acceptedCoins'
 import { useFiatCurrency } from '../hooks/useFiatCurrency'
 import { coinUsd } from '../wallet/heldValue'
-import { COIN_INFO, formatCoinShort, type CoinChain } from '../wallet/coins/coinChains'
+import { COIN_INFO, formatCoinShort, isCoinChain, type CoinChain } from '../wallet/coins/coinChains'
 import { formatBsvSignificant } from '../wallet/session'
 import { formatUsd, formatUsdFromSats } from '../wallet/fx'
 
@@ -35,22 +42,29 @@ export function heldIn(
       usd: priceUsd == null ? null : formatUsdFromSats(heldBsvSats, priceUsd),
     }
   }
+  if (isStableMarketCoin(coin) || !isCoinChain(coin)) return null
   const units = heldCoins[coin]
   if (units === 0n) return null
   const usd = coinUsd(coin, units, priceUsd)
   return { amount: `${formatCoinShort(coin, units)} ${COIN_INFO[coin].ticker}`, usd: usd == null ? null : formatUsd(usd) }
 }
 
-const COIN_MARKS = { ltc: LitecoinIcon, bch: BitcoinCashIcon, btc: BitcoinIcon, doge: DogecoinIcon } as const
+const COIN_MARKS = {
+  ltc: LitecoinIcon,
+  bch: BitcoinCashIcon,
+  btc: BitcoinIcon,
+  doge: DogecoinIcon,
+  'arc-usd': ArcUsdIcon,
+} as const
 
 export function TickerCoinMark({ coin, size }: { coin: MarketCoin; size: number }) {
-  if (coin !== 'bsv') {
-    const Mark = COIN_MARKS[coin]
-    return <Mark size={size} />
+  if (coin === 'bsv') {
+    return (
+      <DeferredImage src={bsvLogoDefault} width={size} height={size} skeletonRadius={size / 4} draggable={false} />
+    )
   }
-  return (
-    <DeferredImage src={bsvLogoDefault} width={size} height={size} skeletonRadius={size / 4} draggable={false} />
-  )
+  const Mark = COIN_MARKS[coin]
+  return <Mark size={size} />
 }
 
 /** Every coin the ticker can show, priced from the cache; picking one is the caller's event. */

@@ -1,6 +1,7 @@
 export { SettingsSection } from './SettingsSection'
 export { SettingsNavRow } from './SettingsNavRow'
 export { SettingsControlRow } from './SettingsControlRow'
+export { settingLabel } from './settingLabel'
 export {
   settingIconFor,
   SettingsRowIcon,

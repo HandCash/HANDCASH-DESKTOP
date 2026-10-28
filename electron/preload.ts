@@ -101,6 +101,17 @@ const handcash = {
       { id: string; name: string; kind: 'screen' | 'window'; thumbnail: string }[]
     >,
   chooseScreenSource: (id: string) => ipcRenderer.invoke('calls:choose-screen-source', id) as Promise<boolean>,
+  appendCallRecording: (identityKey: string, id: string, seq: number, sealed: Uint8Array) =>
+    ipcRenderer.invoke('calls:append-recording', identityKey, id, seq, sealed) as Promise<void>,
+  finishCallRecording: (identityKey: string, id: string, sealedMeta: Uint8Array) =>
+    ipcRenderer.invoke('calls:finish-recording', identityKey, id, sealedMeta) as Promise<void>,
+  readCallRecording: (identityKey: string, id: string) =>
+    ipcRenderer.invoke('calls:read-recording', identityKey, id) as Promise<{
+      meta: Uint8Array | null
+      parts: Uint8Array[]
+    }>,
+  deleteCallRecording: (identityKey: string, id: string) =>
+    ipcRenderer.invoke('calls:delete-recording', identityKey, id) as Promise<void>,
   // This window enables `webviewTag`, so the core may host embedded app tabs.
   embeddedAppBrowser: true,
   getLogInfo: () =>

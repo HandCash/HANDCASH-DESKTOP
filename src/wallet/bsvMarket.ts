@@ -11,16 +11,28 @@ const TOTAL_SUPPLY = 21_000_000
 const CACHE_TTL_MS = 5 * 60_000
 const OFFICIAL_URL = 'https://bsvblockchain.org/'
 
-/** Chains the ticker can price: BSV, and every native coin the wallet holds (BRC-213). */
-export type MarketCoin = 'bsv' | CoinChain
+/**
+ * Coins the ticker can price: BSV, every native UTXO coin (BRC-213), and Arc USD
+ * (Circle USDC on Arc — crypto, not fiat).
+ */
+export type MarketCoin = 'bsv' | CoinChain | 'arc-usd'
 
-const COINS: Record<MarketCoin, { gecko: string; cacheKey: string; totalSupply: number }> = {
+/** Stablecoin tickers that are not BRC-213 UTXO chains. */
+export const STABLE_MARKET_COINS = ['arc-usd'] as const
+export type StableMarketCoin = (typeof STABLE_MARKET_COINS)[number]
+
+export const isStableMarketCoin = (value: unknown): value is StableMarketCoin =>
+  STABLE_MARKET_COINS.includes(value as StableMarketCoin)
+
+const COINS: Record<MarketCoin, { gecko: string | null; cacheKey: string; totalSupply: number }> = {
   bsv: { gecko: 'bitcoin-cash-sv', cacheKey: storageRegistry.bsvMarket.key, totalSupply: TOTAL_SUPPLY },
   ltc: { gecko: 'litecoin', cacheKey: storageRegistry.ltcMarket.key, totalSupply: 84_000_000 },
   bch: { gecko: 'bitcoin-cash', cacheKey: storageRegistry.bchMarket.key, totalSupply: TOTAL_SUPPLY },
   btc: { gecko: 'bitcoin', cacheKey: storageRegistry.btcMarket.key, totalSupply: TOTAL_SUPPLY },
   // Dogecoin has no cap.
   doge: { gecko: 'dogecoin', cacheKey: storageRegistry.dogeMarket.key, totalSupply: 0 },
+  // Arc USD: dollar-pegged; no CoinGecko id required — refresh returns a $1 peg.
+  'arc-usd': { gecko: null, cacheKey: 'handcash.brc100.arcUsdMarket', totalSupply: 0 },
 }
 
 export type BsvChartRange = '24h' | '7d' | '30d'
@@ -379,10 +391,35 @@ async function refreshCoin(force: boolean, coin: MarketCoin): Promise<BsvMarketS
   if (isFxRateLimited()) return cached
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached
 
+  // Arc USD: $1 peg — crypto stablecoin, not a government fiat.
+  if (coin === 'arc-usd') {
+    const flat = cached?.sparklines?.['24h']?.length
+      ? cached.sparklines
+      : {
+          '24h': [1, 1, 1, 1, 1, 1, 1, 1],
+          '7d': [1, 1, 1, 1, 1, 1, 1, 1],
+          '30d': [1, 1, 1, 1, 1, 1, 1, 1],
+        }
+    const stats: BsvMarketStats = {
+      priceUsd: 1,
+      change24hPct: 0,
+      change7dPct: 0,
+      change30dPct: 0,
+      totalSupply: 0,
+      minedSupply: 0,
+      sparklines: flat,
+      sparkline: flat['24h'],
+      fetchedAt: Date.now(),
+    }
+    writeCache(coin, stats)
+    return stats
+  }
+
   // WhatsOnChain supply and the wallet's own BSV rate exist for BSV only.
   const bsv = coin === 'bsv'
+  const geckoId = COINS[coin].gecko
   const [gecko, minedWoc, priceFallback] = await Promise.all([
-    fetchCoinGecko(COINS[coin].gecko),
+    geckoId ? fetchCoinGecko(geckoId) : null,
     bsv ? fetchMinedSupply() : null,
     bsv ? refreshUsdPerBsv(force) : null,
   ])

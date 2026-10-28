@@ -67,6 +67,7 @@ export default defineConfig({
     rollupOptions: { output: { assetFileNames } },
   },
   server: {
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
     proxy: {
