@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, Response } from 'express'
+import { walletFailureFor } from './walletFailure.js'
 
 /**
  * Answers a request Express could not take (an unreadable or oversized body, or
@@ -6,7 +7,7 @@ import type { ErrorRequestHandler, Response } from 'express'
  * the stack trace and the user's local paths, readable by any origin.
  */
 export function jsonRequestErrors(setCorsHeaders: (res: Response) => void): ErrorRequestHandler {
-  return (error, _req, res, next) => {
+  return (error, req, res, next) => {
     if (res.headersSent) return next(error)
     const status = Number((error as { status?: unknown } | null)?.status)
     const [code, description, answer] =
@@ -16,6 +17,6 @@ export function jsonRequestErrors(setCorsHeaders: (res: Response) => void): Erro
           ? ['BAD_REQUEST', 'The request body is not valid JSON or text.', 400]
           : ['HTTP_ERROR', 'The request failed.', 500]
     setCorsHeaders(res)
-    res.status(answer).json({ status: 'error', code, description })
+    res.status(answer).json({ status: 'error', code, description, ...walletFailureFor(code, answer, req.path) })
   }
 }

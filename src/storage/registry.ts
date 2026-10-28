@@ -213,6 +213,18 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  callHistory: defineStorage({
+    key: 'handcash.calls.history.v1',
+    owner: 'calls',
+    scope: 'wallet',
+    version: 1,
+  }),
+  callSettings: defineStorage({
+    key: 'handcash.calls.settings.v1',
+    owner: 'calls',
+    scope: 'device',
+    version: 1,
+  }),
   blockedSenders: defineStorage({
     key: 'handcash.blockedSenders.v1',
     owner: 'friends',
@@ -552,6 +564,12 @@ export const storageRegistry = Object.freeze({
   }),
   claimedHandle: defineStorage({
     key: 'handcash.brc169.claimedHandle.v1',
+    owner: 'identity',
+    scope: 'wallet',
+    version: 1,
+  }),
+  handlePurchases: defineStorage({
+    key: 'handcash.handleMarket.purchases.v1',
     owner: 'identity',
     scope: 'wallet',
     version: 1,
@@ -931,6 +949,20 @@ export const storageRegistry = Object.freeze({
   /** Accounts taken elsewhere whose changes since their last upload still owe a handover (draft BRC-249). */
   accountHandoverPending: defineStorage({
     key: 'handcash.account-handover.pending.v1',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
+  /** Sub-accounts this install sealed to another person's identity (never spend again). */
+  accountSendGifted: defineStorage({
+    key: 'handcash.account-send.gifted.v1',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
+  /** Account-send packages opened here and not yet installed as a vault. */
+  accountSendPending: defineStorage({
+    key: 'handcash.account-send.pending.v1',
     owner: 'custody',
     scope: 'device',
     version: 1,

@@ -49,7 +49,7 @@ describe('jsonRequestErrors', () => {
     expect(res.headers['content-type']).toMatch(/application\/json/)
     expect(res.headers['access-control-allow-origin']).toBe('*')
     const { text } = res
-    expect(JSON.parse(text)).toEqual({ status: 'error', code: 'BAD_REQUEST', description: 'The request body is not valid JSON or text.' })
+    expect(JSON.parse(text)).toEqual({ status: 'error', code: 'BAD_REQUEST', description: 'The request body is not valid JSON or text.', class: 'invalid-request', fault: 'application', retry: 'unsafe' })
     expect(text).not.toMatch(/SyntaxError|node_modules|\/Users\//)
   })
 

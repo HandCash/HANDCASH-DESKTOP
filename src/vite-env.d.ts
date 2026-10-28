@@ -129,6 +129,10 @@ interface HandCashBridge {
   notePromptOpen?: (open: boolean, requestId?: number) => void
   respondDevicePeerHttp?: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
+  /** Screens and windows a call may share, with thumbnails; empty outside the main app window. */
+  listScreenSources?: () => Promise<{ id: string; name: string; kind: 'screen' | 'window'; thumbnail: string }[]>
+  /** Picks the source the next `getDisplayMedia` call gets; it lapses after a few seconds. */
+  chooseScreenSource?: (id: string) => Promise<boolean>
   /**
    * The prompt that pulled the wallet forward is answered and no other is
    * waiting — return the desktop to the app that asked. No-op on shells that
