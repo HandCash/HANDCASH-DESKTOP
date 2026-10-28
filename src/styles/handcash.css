@@ -210,8 +210,8 @@ body {
 }
 
 .brand-logo-mark {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border-radius: var(--hc-radius);
   object-fit: contain;
   flex-shrink: 0;
@@ -255,6 +255,9 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   font-size: var(--hc-text-lg);
   line-height: var(--hc-leading-tight);
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .brand-sub {
@@ -1492,7 +1495,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 26px;
+  /* Matches useFitFontSize maxPx — one figure size on desktop and compact. */
+  font-size: 28px;
   text-align: center;
   cursor: pointer;
   display: inline-flex;
@@ -1553,14 +1557,13 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   letter-spacing: 0.02em;
   line-height: 1.15;
   white-space: nowrap;
-  /* Neon HandCash green on dark — never Omarchy accent, never deep paper green. */
-  color: #57ff97;
+  /* Focused coin tint — --coin-color from [data-chain]. */
+  color: var(--coin-color, #57ff97);
 }
 
 html[data-aeon-mode='light'] .wallet-balance .balance,
 html[data-aeon-mode='light'] .wallet-balance .balance-primary {
-  /* Very dark HandCash green on paper — primary amount only. */
-  color: #0a3d22 !important;
+  color: var(--coin-color-light, #0a3d22) !important;
 }
 
 .wallet-balance .balance-secondary {
@@ -2183,17 +2186,21 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 /* Logo and name sit under one hitbox: the trigger for the ticker's coin selector. */
 [data-aeon-scope='what-is-bsv'] .bsv-asset-row {
   position: relative;
+  z-index: 1;
+  isolation: isolate;
 }
 
 [data-aeon-scope='what-is-bsv'] [data-aeon-part='coin-trigger'] {
   position: absolute;
   inset: -8px -10px;
+  z-index: 2;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: var(--hc-ticker-select-radius);
   background: transparent;
   cursor: pointer;
+  pointer-events: auto;
   transition: background 120ms ease;
 }
 
@@ -3120,12 +3127,19 @@ button.wallet-detail-value.is-copied {
   min-height: 100%;
 }
 
+/*
+ * Keep-alive slots unwrap with `display: contents` so section panels flex as
+ * if the slot were not there. The HTML `hidden` attribute alone is not enough:
+ * author `display: contents` can win the cascade in some engines and leave
+ * "hidden" panels painting and stealing clicks (Send / Collect / tabs feel dead).
+ * Always force none — this is the chrome keep-alive contract.
+ */
 .wallet-nav-slot {
   display: contents;
 }
 
 .wallet-nav-slot[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .wallet-nav-stage:has(.empty-state),
@@ -3241,7 +3255,7 @@ button.wallet-detail-value.is-copied {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--hc-gap-stack);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -3249,7 +3263,7 @@ button.wallet-detail-value.is-copied {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  padding-bottom: 24px;
+  padding-bottom: var(--hc-space-5);
 }
 
 .settings-scroll-body:hover,
@@ -3325,7 +3339,8 @@ button.wallet-detail-value.is-copied {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* Shared section density: Friends / Collect / Apps / Identity / Settings. */
+  gap: var(--hc-gap-stack);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -3333,7 +3348,7 @@ button.wallet-detail-value.is-copied {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  padding-bottom: 24px;
+  padding-bottom: var(--hc-space-5);
 }
 
 [data-aeon-scope='collectables'] .nav-section-scroll-body,
@@ -4161,6 +4176,71 @@ li[data-aeon-state='failed'] .history-progress-range {
   margin: 0;
 }
 
+/* Reuse .wallet-nav-actions-pill — label + total share one chrome pill. */
+.wallet-nav-actions-pill.wallet-hero-metric {
+  flex: 0 1 auto;
+  gap: 10px;
+  max-width: 100%;
+  min-height: 42px;
+  height: auto;
+  padding-inline: 14px 16px;
+}
+
+.wallet-hero-metric .wallet-hero-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  /* Keep the pre-pill title type; only the container moved. */
+  font-size: var(--hc-text-xl);
+  line-height: 1.2;
+  color: #fafafa;
+}
+
+html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
+  color: hsl(var(--primary));
+}
+
+.wallet-hero-metric-amount {
+  flex: 0 0 auto;
+  font-size: var(--hc-text-sm);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.wallet-hero-identity-chrome {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+/* Identity controls inside the chrome pill — same 28px plate as .wallet-nav-chrome-btn. */
+.wallet-hero-identity-chrome .wallet-hero-identity {
+  height: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
+  color: inherit;
+}
+
+.wallet-hero-identity-chrome .wallet-hero-identity:hover {
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
+.wallet-hero-identity-chrome .wallet-hero-identity-copy {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 999px;
+  opacity: 1;
+  color: var(--hc-muted);
+}
+
+.wallet-hero-identity-chrome .wallet-hero-identity-copy:hover {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
 .wallet-hero-identity {
   display: inline-flex;
   align-items: center;
@@ -4548,13 +4628,485 @@ li[data-aeon-state='failed'] .history-progress-range {
   white-space: nowrap;
 }
 
-/* Wide desktop shows full labels; short labels stay off (compact is icon-only). */
+/* Short labels stay off except permission Accept/Decline (compact CSS). */
 .wallet-nav-bar:not([data-permission]) .wallet-nav-tab-label-short {
   display: none !important;
 }
 
 .wallet-nav-tab-label-short {
   display: none;
+}
+
+/*
+ * Desktop section chrome (one place):
+ * - fixed-width section label (Activity default; Collect not Collectables)
+ * - inverted icon selector (same clever mobile dock: select track, unselected
+ *   plates, selected unpilled)
+ * - right actions pill: search / filter / view
+ * Compact keeps the bottom dock; panels still own their head for that shell.
+ */
+/* Chrome pill tokens — shared by titlebar + hero head (not titlebar-only). */
+.wallet-nav-titlebar,
+.wallet-hero-head {
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-unselected: #000;
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+}
+
+html[data-aeon-mode='light'] .wallet-nav-titlebar,
+html[data-aeon-mode='light'] .wallet-hero-head {
+  --wallet-nav-select: #fff;
+  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 5%, #f4f5f4);
+}
+
+.wallet-nav-titlebar {
+  /* Pill pad (2px) + section label pad — breadcrumb `/` lines up under Collect. */
+  --wallet-nav-label-inset: calc(2px + 12px);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 8px var(--hc-pad-panel);
+  background: hsl(var(--card));
+  /* Same hairline as Your balance — separates chrome from the section stage. */
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+/*
+ * Contextual Cancel/Review replace only the section tab plates — label and
+ * pill height stay. Same principle as the compact dock track swap.
+ */
+.wallet-nav-titlebar-tabs[data-permission] {
+  align-items: stretch;
+}
+
+.wallet-nav-titlebar-tabs[data-permission] .wallet-action-bar--nav {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+  width: auto;
+  min-width: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  background: transparent;
+}
+
+.wallet-nav-titlebar-tabs[data-permission] .wallet-action-slot {
+  flex: 0 0 auto;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 100%;
+}
+
+.wallet-nav-titlebar-tabs[data-permission] .wallet-nav-tab {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  /* Match idle section icon plates — never grow the titlebar pill. */
+  min-height: 0;
+  height: 100%;
+}
+
+.wallet-nav-titlebar-tabs[data-permission] .wallet-nav-tab-label {
+  display: none !important;
+}
+
+.wallet-nav-titlebar-tabs[data-permission] .wallet-nav-tab-label-short {
+  display: inline !important;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-display, var(--hc-display));
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/*
+ * Neon / danger fills live on the slot — black ink on dark mode (same as the
+ * compact dock). Titlebar selected tabs default to #fafafa; that clashes on
+ * hsl(primary) green.
+ */
+.wallet-nav-titlebar-tabs[data-permission] {
+  --wallet-dock-cta-ink: #0a0a0a;
+}
+
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected],
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected]:hover,
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected],
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]:hover {
+  color: var(--wallet-dock-cta-ink, #0a0a0a);
+}
+
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected]
+  svg,
+.wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]
+  svg {
+  color: inherit;
+}
+
+html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected]:hover,
+html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]:hover {
+  /* Light mode primary/danger slots are black / deep-red — light ink. */
+  color: #fff;
+}
+
+/* Section label lives inside the inverted selector pill — same type as before. */
+.wallet-nav-titlebar-label {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 8ch;
+  box-sizing: content-box;
+  width: 8ch;
+  max-width: 8ch;
+  min-height: 0;
+  margin: 0;
+  padding: 0 10px 0 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-xl);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+  color: var(--hc-text);
+  white-space: nowrap;
+  align-self: center;
+  background: transparent;
+  /* Not a control — never steal hits from the adjacent tab icons. */
+  pointer-events: none;
+  position: relative;
+  z-index: 0;
+}
+
+/* Pill may need a touch more height so the xl label fits cleanly. */
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-label) {
+  min-height: 42px;
+}
+
+/* Inverted selector track — same language as the mobile dock. */
+.wallet-nav-titlebar-pill {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius);
+  background: var(--wallet-nav-select);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  overflow: visible;
+}
+
+.wallet-nav-titlebar-tabs {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  min-width: max-content;
+  position: relative;
+  z-index: 2;
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab {
+  flex: 0 0 auto;
+  min-width: 34px;
+  min-height: 0;
+  height: auto;
+  padding: 4px 9px;
+  gap: 0;
+  border-radius: 0;
+  color: hsl(var(--muted-foreground));
+  background: var(--wallet-nav-unselected);
+  box-shadow: none;
+  scroll-snap-align: none;
+  position: relative;
+  z-index: 1;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+/* Idle section icons only — contextual short labels live under [data-permission]. */
+.wallet-nav-titlebar-tabs:not([data-permission]) .wallet-nav-tab-label,
+.wallet-nav-titlebar-tabs:not([data-permission]) .wallet-nav-tab-label-short {
+  display: none !important;
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+
+/* Desktop titlebar chrome ≈15% larger than the compact dock scale. */
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill {
+  min-height: 39px;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill .wallet-nav-tab {
+  min-width: 39px;
+  padding: 5px 10px;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar-pill .wallet-nav-tab svg {
+  width: 17px;
+  height: 17px;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav-actions-pill {
+  min-height: 39px;
+  height: 39px;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav-chrome-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav-chrome-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab:hover {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 18%, transparent);
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected],
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected='true'],
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected]:hover,
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected='true']:hover {
+  color: #fafafa;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] svg,
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected='true'] svg {
+  transform: scale(1.11);
+}
+
+/* Cap unselected runs with the dock radius (selected stays flush / unpilled). */
+.wallet-nav-titlebar-tabs
+  .wallet-nav-tab:not([aria-selected='true']):not([data-selected]):first-child,
+.wallet-nav-titlebar-tabs
+  .wallet-nav-tab:is([aria-selected='true'], [data-selected])
+  + .wallet-nav-tab:not([aria-selected='true']):not([data-selected]) {
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+.wallet-nav-titlebar-tabs
+  .wallet-nav-tab:not([aria-selected='true']):not([data-selected]):last-child,
+.wallet-nav-titlebar-tabs
+  .wallet-nav-tab:not([aria-selected='true']):not([data-selected]):has(
+    + :is([aria-selected='true'], [data-selected])
+  ) {
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html[data-aeon-mode='light'] .wallet-nav-titlebar-pill {
+  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+}
+
+html[data-aeon-mode='light']
+  .wallet-nav-titlebar-pill
+  .wallet-nav-tab:is([aria-selected='true'], [data-selected]),
+html[data-aeon-mode='light']
+  .wallet-nav-titlebar-pill
+  .wallet-nav-tab:is([aria-selected='true'], [data-selected]):hover {
+  color: hsl(var(--primary));
+  background: transparent;
+}
+
+.wallet-nav-actions-pill {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 34px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
+  background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 14%, #000));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  color: var(--hc-text);
+}
+
+html[data-aeon-mode='light'] .wallet-nav-actions-pill {
+  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+}
+
+.wallet-nav-titlebar-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  min-width: 0;
+}
+
+.wallet-nav-titlebar-actions:empty {
+  display: none;
+}
+
+/* Shared icon button for titlebar / head actions (search, filter, view, …). */
+.wallet-nav-chrome-btn {
+  appearance: none;
+  position: relative;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hc-muted);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font: inherit;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.wallet-nav-chrome-btn:hover {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
+.wallet-nav-chrome-btn[data-active],
+.wallet-nav-chrome-btn[aria-expanded='true'],
+.wallet-nav-chrome-btn[aria-pressed='true'],
+.wallet-nav-chrome-btn[data-selected] {
+  color: var(--hc-text);
+  background: hsl(var(--card));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 12%, transparent);
+}
+
+.wallet-nav-chrome-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wallet-nav-chrome-btn svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.wallet-nav-chrome-btn span {
+  font-size: var(--hc-text-2xs);
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wallet-nav-chrome-dot,
+.activity-filter-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hc-accent);
+  box-shadow: 0 0 0 2px hsl(var(--secondary));
+}
+
+.wallet-nav-actions-pill .collection-view-toggle {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.wallet-nav-actions-pill .connected-app-tabs-button {
+  width: auto;
+  min-width: 28px;
+  padding: 0 8px;
+  gap: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.panel-search-popover {
+  display: inline-flex;
+}
+
+.panel-search-popover-content {
+  width: min(360px, calc(100vw - 24px));
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
+  border-radius: var(--hc-radius);
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: 0 16px 44px rgb(0 0 0 / 38%);
+}
+
+.panel-search-popover-content .panel-filter,
+.panel-search-popover-content .apps-search {
+  margin: 0;
+}
+
+.panel-search-popover-content .panel-filter-suggestions {
+  position: static;
+  margin-top: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+/* Desktop: section name + actions live in the titlebar — drop redundant heads
+   (Collect/Friends search+view already portaled; never show a second filter row). */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-stage {
+  padding-top: 0;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-stage
+  .connected-panel-head:not(.nav-breadcrumb-head) {
+  display: none !important;
+}
+
+/* Push action pills to the trailing edge — not the hero metric (that sat in the gap). */
+html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-hero-metric) {
+  margin-left: auto;
 }
 
 .wallet-nav-count {
@@ -4592,62 +5144,36 @@ li[data-aeon-state='failed'] .history-progress-range {
   container: identity-panel / inline-size;
 }
 
-.identity-scroll {
-  display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-.identity-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: flex-start;
-  padding: 4px 6px 6px;
-  gap: 8px;
-}
-
-.identity-body > .identity-card:not(.identity-compose) {
-  align-self: center;
-}
-
 .identity-card {
   display: grid;
-  justify-items: center;
-  gap: 8px;
-  width: min(100%, 560px);
-  margin: 0 auto;
+  justify-items: stretch;
+  gap: var(--hc-space-2);
+  width: 100%;
+  max-width: none;
+  margin: 0;
   padding: 0;
 }
 
 .identity-card.identity-compose {
-  justify-items: stretch;
   align-items: stretch;
-  width: 100%;
-  max-width: 560px;
 }
 
 .identity-hero {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 12px 14px;
+  justify-content: flex-start;
+  gap: var(--hc-space-3);
   width: 100%;
   min-width: 0;
 }
 
 .identity-hero-meta {
-  /* width cap only — flex-basis 360px stacked as column left a huge gap under Handle */
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 360px;
+  max-width: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .identity-qr {
@@ -4655,32 +5181,18 @@ li[data-aeon-state='failed'] .history-progress-range {
   flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  min-width: 124px;
+  gap: 0;
+  min-width: 0;
 }
 
 .identity-qr-frame {
   display: grid;
   place-items: center;
-  padding: 6px;
+  padding: 5px;
   width: fit-content;
   flex-shrink: 0;
   border-radius: var(--hc-radius);
   background: #ffffff;
-}
-
-button.identity-qr-copy {
-  appearance: none;
-  margin: 0;
-  border: 0;
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-}
-
-button.identity-qr-copy:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--hc-accent) 55%, transparent);
-  outline-offset: 4px;
 }
 
 .identity-qr-frame img {
@@ -4699,44 +5211,11 @@ button.identity-qr-copy:focus-visible {
   height: 112px !important;
 }
 
-.identity-copy-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: max-content;
-  max-width: 100%;
-  min-height: 30px;
-  padding: 4px 8px;
-  font-size: var(--hc-text-xs);
-  white-space: nowrap;
-}
-
-.identity-key-note {
-  margin: 0;
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--hc-accent) 22%, hsl(var(--border)));
-  border-radius: var(--hc-radius);
-  background: color-mix(in srgb, var(--hc-accent) 7%, transparent);
+.identity-note {
+  margin: 2px 0 0;
   color: var(--hc-muted);
   font-size: var(--hc-text-xs);
   line-height: 1.4;
-}
-
-.identity-key-note svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--hc-accent);
-}
-
-.identity-note {
-  margin: 10px 0 0;
-  color: var(--hc-muted);
-  font-size: var(--hc-text-xs);
-  line-height: 1.45;
 }
 
 .identity-list {
@@ -4746,9 +5225,9 @@ button.identity-qr-copy:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
-  max-width: 560px;
+  max-width: none;
 }
 
 [data-aeon-scope="public-identities"] [data-aeon-part="head"] {
@@ -4760,16 +5239,16 @@ button.identity-qr-copy:focus-visible {
 
 [data-aeon-scope="public-identities"] [data-aeon-part="records"] {
   max-width: none;
-  margin-top: 8px;
+  margin-top: 4px;
   gap: 0;
 }
 
 [data-aeon-scope="public-identities"] [data-aeon-part="record"] {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px 0;
+  gap: 10px;
+  padding: 8px 0;
   border-top: 1px solid var(--hc-border);
 }
 
@@ -4780,8 +5259,8 @@ button.identity-qr-copy:focus-visible {
 .public-identity-avatar {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   overflow: hidden;
   border-radius: var(--hc-radius);
   background: color-mix(in srgb, var(--hc-text) 6%, transparent);
@@ -4789,8 +5268,8 @@ button.identity-qr-copy:focus-visible {
 
 .public-identity-avatar img,
 .public-identity-avatar svg {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   object-fit: cover;
 }
 
@@ -4869,18 +5348,18 @@ button.identity-qr-copy:focus-visible {
 
 [data-aeon-scope="public-identities"] [data-aeon-part="compose"] {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: 80px minmax(0, 1fr);
   align-items: start;
-  gap: 14px;
-  margin: 8px 0 4px;
+  gap: var(--hc-space-3);
+  margin: 6px 0 2px;
 }
 
 .public-identity-image-pick {
   position: relative;
   display: grid;
   place-items: center;
-  width: 88px;
-  height: 88px;
+  width: 80px;
+  height: 80px;
   padding: 0;
   overflow: hidden;
   border: 1px dashed color-mix(in srgb, var(--hc-text) 24%, transparent);
@@ -4909,8 +5388,8 @@ button.identity-qr-copy:focus-visible {
 }
 
 .public-identity-image-pick img {
-  width: 88px;
-  height: 88px;
+  width: 80px;
+  height: 80px;
   object-fit: cover;
 }
 
@@ -5184,13 +5663,13 @@ button.identity-qr-copy:focus-visible {
 
 .identity-field {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 
 .identity-field-label {
   color: var(--hc-muted);
-  font-size: var(--hc-text-xs);
+  font-size: var(--hc-text-2xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 600;
@@ -5205,7 +5684,7 @@ button.identity-qr-copy:focus-visible {
   border: 0;
   background: transparent;
   color: var(--hc-text);
-  font-size: clamp(1.15rem, 4.5cqi, 1.55rem);
+  font-size: clamp(1.05rem, 3.5cqi, 1.35rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -5220,47 +5699,47 @@ button.identity-qr-copy:focus-visible {
 
 .identity-handle-empty {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   justify-items: start;
 }
 
 .identity-handle-missing {
   margin: 0;
   color: var(--hc-muted);
-  font-size: var(--hc-text-lg);
+  font-size: var(--hc-text-md);
   font-weight: 500;
 }
 
 .identity-claim-btn {
   width: fit-content;
-  padding: 6px 12px;
-  font-size: var(--hc-text-md);
+  padding: 4px 10px;
+  font-size: var(--hc-text-sm);
 }
 
+/* Plain value — no decorative network pill. */
 .identity-network {
   justify-self: start;
   margin: 0;
-  padding: 5px 9px;
-  border: 1px solid color-mix(in srgb, var(--hc-success) 34%, hsl(var(--border)));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--hc-success) 10%, transparent);
-  font-size: var(--hc-text-xs);
-  font-weight: 700;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  font-size: var(--hc-text-sm);
+  font-weight: 600;
   color: var(--hc-text);
-  letter-spacing: 0.04em;
+  letter-spacing: 0;
   text-transform: none;
 }
 
 .identity-network[data-network='test'] {
-  border-color: color-mix(in srgb, var(--hc-warn, #ffc857) 40%, hsl(var(--border)));
-  background: color-mix(in srgb, var(--hc-warn, #ffc857) 10%, transparent);
+  color: var(--hc-warn, #ffc857);
 }
 
 .identity-key {
   appearance: none;
   width: 100%;
   margin: 0;
-  padding: 12px 14px;
+  padding: 8px 10px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
   background: var(--hc-sunken);
@@ -5269,7 +5748,7 @@ button.identity-qr-copy:focus-visible {
   cursor: pointer;
   overflow-wrap: anywhere;
   word-break: break-all;
-  line-height: 1.45;
+  line-height: 1.35;
   font-size: var(--hc-text-sm);
   transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
 }
@@ -5300,7 +5779,7 @@ button.identity-qr-copy:focus-visible {
 
 @container identity-panel (min-width: 520px) {
   .identity-hero {
-    gap: 12px 16px;
+    gap: var(--hc-space-3) var(--hc-space-4);
   }
 }
 
@@ -5567,10 +6046,10 @@ button.identity-qr-copy:focus-visible {
   display: inline-flex;
 }
 
-.activity-filter-popover[data-aeon-state='open'] .activity-filter-toggle {
+.activity-filter-popover[data-aeon-state='open'] .activity-filter-toggle,
+.activity-filter-popover[data-aeon-state='open'] .wallet-nav-chrome-btn,
+.panel-search-popover[data-aeon-state='open'] .wallet-nav-chrome-btn {
   z-index: 1;
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 0;
 }
 
 .activity-filter-popover-content {
@@ -7244,6 +7723,11 @@ html[data-aeon-mode='light']
   flex-shrink: 0;
 }
 
+/* Desktop: trail sits under the titlebar section label (same inset as Collect). */
+html:not(.platform-mobile):not(.layout-compact) .nav-breadcrumb-head {
+  padding-left: var(--wallet-nav-label-inset, calc(2px + 12px));
+}
+
 .nav-back-btn {
   appearance: none;
   flex-shrink: 0;
@@ -7294,6 +7778,11 @@ html[data-aeon-mode='light']
   color: var(--hc-muted);
   font-weight: 500;
   line-height: 28px;
+}
+
+/* Leading `/` under the section label — no extra left gap past the inset. */
+.nav-breadcrumb-sep--leading {
+  margin-left: 0;
 }
 
 .nav-breadcrumb-link {
@@ -11797,20 +12286,29 @@ html:is(.platform-mobile, .layout-compact) .collectable-model-hint {
 }
 
 /* Each native coin's colour, for views that tint by chain. */
+[data-chain='bsv'] {
+  --coin-color: #57ff97;
+  --coin-color-light: #0a3d22;
+}
+
 [data-chain='ltc'] {
   --coin-color: #345d9d;
+  --coin-color-light: #243f6e;
 }
 
 [data-chain='bch'] {
   --coin-color: #0ac18e;
+  --coin-color-light: #067a59;
 }
 
 [data-chain='btc'] {
   --coin-color: #f7931a;
+  --coin-color-light: #b86a0c;
 }
 
 [data-chain='doge'] {
   --coin-color: #c2a633;
+  --coin-color-light: #8a7420;
 }
 
 /* Coin deposit progress: one mark per confirmation, filled only for counts this wallet's own header chain made. */
@@ -15864,27 +16362,6 @@ html:not(.platform-mobile):not(.layout-compact)
   background: transparent;
 }
 
-/* Desktop activity dock is deliberately denser than its touch counterpart. */
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar:not([data-permission])
-  .wallet-nav-tab {
-  gap: 7px;
-}
-
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar:not([data-permission])
-  .wallet-nav-tab
-  svg {
-  width: 15.3px;
-  height: 15.3px;
-}
-
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar:not([data-permission])
-  .wallet-nav-tab-label {
-  font-size: 0.527rem;
-}
-
 /*
  * Contextual CTAs: CTA colour lives on the highlighted slot / track only.
  * Danger (cancel) stays muted until that action is selected or hovered.
@@ -16050,7 +16527,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   overflow: hidden;
   border: 0;
   visibility: hidden;
-  pointer-events: none;
+  pointer-events: none !important;
   z-index: 0;
 }
 
@@ -16554,10 +17031,16 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   width: 100%;
 }
 
+/* Match Settings section titles — not a second page head. */
 .identity-compose-title {
-  margin: 0 0 2px;
-  font-size: var(--hc-text-lg);
+  margin: 0;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-md);
   font-weight: 650;
+  font-variant-caps: all-small-caps;
+  text-transform: none;
+  letter-spacing: 0.05em;
+  color: var(--hc-text);
 }
 
 .identity-compose-field {
@@ -17755,20 +18238,32 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
   opacity: 0.45;
 }
 
-/* In BSV the headline wears the BSV mark, in its own colour, not the word. */
-/* The glyph fills rows 6–26 of its 32-unit box: 1.15em makes it digit height,
-   and -0.216em puts its foot on the baseline. */
 .balance-unit-mark {
   display: inline-block;
   line-height: 0;
-  margin-inline: 0 0.04em;
+  margin-inline: 0 0.06em;
   vertical-align: -0.216em;
+  color: inherit;
 }
 
 .balance-unit-mark svg {
   display: block;
-  width: 1.15em;
-  height: 1.15em;
+  width: 1.05em;
+  height: 1.05em;
+}
+
+.balance-split-share[data-chain] {
+  color: var(--coin-color, inherit);
+}
+
+html[data-aeon-mode='light'] .balance-split-share[data-chain] {
+  color: var(--coin-color-light, inherit);
+}
+
+.balance-split-mark {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
 }
 
 /* Ticker: one slide per coin in a horizontal snap track. Swiping, a trackpad,

@@ -1,5 +1,4 @@
 import { handcashBrand, type HandCashMarkVariant } from '../assets/brand'
-import { APP_VERSION } from '../version'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
@@ -16,16 +15,10 @@ const markSrc: Record<HandCashMarkVariant, string> = {
   light: handcashBrand.markLightPng,
 }
 
-function productLine(): string {
-  const platform = window.handcash?.platform
-  if (platform === 'android' || platform === 'ios') return 'Mobile'
-  return 'Desktop'
-}
-
 export function BrandLogo({
   variant = 'green',
   showWordmark = true,
-  size = 34,
+  size = 28,
   className = '',
 }: Props) {
   return (
@@ -44,10 +37,8 @@ export function BrandLogo({
       />
       {showWordmark && (
         <div className="brand-wordmark">
-          <div className="brand-name">HandCash</div>
-          <div className="brand-sub">
-            {productLine()}
-            <span className="brand-version">v{APP_VERSION}</span>
+          <div className="brand-name">
+            HandCash
             <span className="brand-beta">BETA</span>
           </div>
         </div>

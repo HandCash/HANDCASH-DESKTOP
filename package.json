@@ -17,7 +17,7 @@
     "ui:facts": "node scripts/jev-ui-review.mjs --facts",
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && npm run build:electron && electron .",
+    "dev:electron": "wait-on tcp:5173 && npm run build:electron && env -u ELECTRON_RUN_AS_NODE electron .",
     "build": "npm run build:renderer && npm run build:electron",
     "build:wallet-engine": "node scripts/build-wallet-engine.mjs",
     "build:renderer": "npm run build:wallet-engine && tsc -p tsconfig.json --noEmit && vite build",

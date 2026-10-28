@@ -1,25 +1,18 @@
 /**
- * Developer keys — keys this account hands to a developer's server. A new key
- * is a server wallet only.
+ * Developer keys — a server wallet key (isolated balance) plus a revocable
+ * BRC-52 certificate that authorizes it (BRC-100 prove / relinquish).
  *
- * Sign (existing keys only, never issued again): the key is `identity-<seq>`
- * of the presented identity, a BRC-42 `self` child of the identity master
- * under `[1,'sigma']`. Each BAP rotation is signed by the outgoing key, so a
- * server holding it can rotate the identity away from this wallet; rotating
- * on Identity first retires it. The root (`identity-0`) never leaves the
- * wallet.
+ * New keys never receive the identity signing key. Instead the wallet issues a
+ * certificate (subject = server pubkey, certifier = presented identity or
+ * account root). Revoke retires the certificate without emptying the wallet.
  *
- * Wallet: the server runs a stock Toolbox wallet from `SERVER_PRIVATE_KEY` +
- * `WALLET_STORAGE_URL`; this wallet opens the same key against the same
- * storage, so both read one set of outputs and no report protocol exists.
- * Those outputs are outside this account's localState: not in the balance, not
- * selectable by a send, not swept by Refresh. Fund is a BRC-29 payment
- * internalized into that storage, behind the payment approval prompt. Recover
- * is the server wallet paying this one by BRC-29, money only; items and tokens
- * are counted and stay with the server.
+ * Legacy Sign keys (`material.kind === 'bap'`) remain listable until rotated.
  *
- * A key without Sign is a BRC-42 `self` child of the account root under
- * `[2, 'handcash server wallet']`, keyID = its number.
+ * Wallet: Toolbox from `SERVER_PRIVATE_KEY` + `WALLET_STORAGE_URL`; outputs are
+ * outside this account's localState. Fund is BRC-29 into that storage; Recover
+ * pays this wallet back (money only).
+ *
+ * Derived keys are BRC-42 `self` children under `[2, 'handcash server wallet']`.
  */
 import {
   CachedKeyDeriver,
@@ -41,6 +34,11 @@ import {
 } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { approveWalletPayment } from './permissions'
+import {
+  issueDevServerCertificate,
+  serializeDevServerCertificate,
+  type DevServerCertificate,
+} from './devServerCertificate'
 import { presentedBapMaterial, presentedIdentityKeyAt } from './publicIdentities'
 import { BRC29_PROTOCOL_ID } from './sendBrc29Payment'
 import type { ActiveWallet } from './session'
@@ -106,6 +104,10 @@ export type DevKeyRecord = {
   material: DevKeyMaterial
   wallet: DevKeyWallet | null
   createdAt: number
+  /** BRC-52 authorization for the server key; absent on legacy rows. */
+  certificate?: DevServerCertificate | null
+  /** Set when the certificate is revoked; export omits the cert. */
+  revokedAt?: number | null
 }
 
 export type DevKeyLedger = { v: 3; next: number; keys: DevKeyRecord[] }
@@ -142,6 +144,12 @@ export type DevKeyView = {
     /** Null while another identity is presented. */
     name: string | null
     state: 'active' | 'retired'
+  }
+  /** BRC-52 server authorization; null when legacy, missing, or revoked. */
+  certificate: null | {
+    serialNumber: string
+    certifier: string
+    state: 'active' | 'revoked'
   }
   wallet: null | {
     status: DevWalletStatus
@@ -183,6 +191,8 @@ export type DevKeyRefusal =
   | 'still-signing'
   | 'not-empty'
   | 'pending'
+  | 'already-revoked'
+  | 'no-certificate'
 
 export class DevKeyRefused extends Error {
   constructor(
@@ -376,25 +386,33 @@ function signOf(runtime: WalletRuntime, material: Extract<DevKeyMaterial, { kind
   }
 }
 
-/** A new server wallet key; the identity signing key is never handed out. */
-export function generateDevKey(runtime: WalletRuntime): number {
+/** A new server wallet key + revocable BRC-52 certificate. Never issues a signing key. */
+export async function generateDevKey(runtime: WalletRuntime): Promise<number> {
   const active = runtime.instance
   const ledger = readDevKeyLedger(active)
   const n = ledger.next
+  const material: DevKeyMaterial = { kind: 'derived' }
+  const wallet: DevKeyWallet = {
+    storageUrl: defaultDevWalletStorageUrl(active.chain),
+    pendingFunds: [],
+    pendingRecover: null,
+  }
   writeLedger(accountKeyScopeFor(active), {
     v: 3,
     next: n + 1,
     keys: [
       ...ledger.keys,
-      {
-        n,
-        material: { kind: 'derived' },
-        wallet: { storageUrl: defaultDevWalletStorageUrl(active.chain), pendingFunds: [], pendingRecover: null },
-        createdAt: Date.now(),
-      },
+      { n, material, wallet, createdAt: Date.now(), certificate: null, revokedAt: null },
     ],
   })
-  console.info(`[dev-key] generated key=${n} wallet`)
+  const subjectPublicKey = derivedDevKey(active.rootKeyHex, n).toPublicKey().toString()
+  const certificate = await issueDevServerCertificate(runtime, { subjectPublicKey, keyN: n })
+  const next = readDevKeyLedger(active)
+  writeLedger(accountKeyScopeFor(active), {
+    ...next,
+    keys: next.keys.map((k) => (k.n === n ? { ...k, certificate } : k)),
+  })
+  console.info(`[dev-key] generated key=${n} wallet+certificate`)
   return n
 }
 
@@ -404,13 +422,32 @@ export function exportDevKeyConfig(runtime: WalletRuntime, n: number): string {
   const record = requireRecord(active, n)
   const key = requireKey(runtime, record)
   console.info(`[dev-key] exported key=${n}`)
-  return [
-    `SERVER_PRIVATE_KEY=${key.toHex()}`,
+  const lines = [
+    `SERVER_PRIVATE_KEY=${key.toHex().padStart(64, '0')}`,
     ...(record.wallet ? [`WALLET_STORAGE_URL=${record.wallet.storageUrl}`] : []),
     `BSV_NETWORK=${active.chain === 'main' ? 'main' : 'test'}`,
-    ...(record.material.kind === 'bap' ? [`BAP_ID=${record.material.bapId}`] : []),
-    '',
-  ].join('\n')
+  ]
+  if (record.material.kind === 'bap') lines.push(`BAP_ID=${record.material.bapId}`)
+  if (record.certificate && !record.revokedAt) {
+    lines.push(`SERVER_CERTIFICATE=${serializeDevServerCertificate(record.certificate)}`)
+  }
+  return [...lines, ''].join('\n')
+}
+
+/** Retire the BRC-52 certificate; the isolated wallet balance is unchanged. */
+export function revokeDevKeyCertificate(runtime: WalletRuntime, n: number): void {
+  const active = runtime.instance
+  const record = requireRecord(active, n)
+  if (!record.certificate) refuse('no-certificate', `Key ${n} has no certificate to revoke.`)
+  if (record.revokedAt) refuse('already-revoked', `Key ${n}'s certificate is already revoked.`)
+  const ledger = readDevKeyLedger(active)
+  writeLedger(accountKeyScopeFor(active), {
+    ...ledger,
+    keys: ledger.keys.map((k) =>
+      k.n === n ? { ...k, revokedAt: Date.now() } : k,
+    ),
+  })
+  console.info(`[dev-key] revoked certificate key=${n}`)
 }
 
 /**
@@ -563,6 +600,13 @@ export function listDevKeys(runtime: WalletRuntime): DevKeyView[] {
       publicKey: privateKeyOf(runtime, record)?.toPublicKey().toString() ?? null,
       createdAt: record.createdAt,
       sign: record.material.kind === 'bap' ? signOf(runtime, record.material) : null,
+      certificate: record.certificate
+        ? {
+            serialNumber: record.certificate.serialNumber,
+            certifier: record.certificate.certifier,
+            state: record.revokedAt ? ('revoked' as const) : ('active' as const),
+          }
+        : null,
       wallet:
         record.wallet && key
           ? {

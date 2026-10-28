@@ -15,6 +15,7 @@ import { EmptyState } from './EmptyState'
 import { MessagesIcon, PersonAddIcon } from './icons'
 import { FriendIdentityBlock } from './PeerIdentity'
 import { PanelFilter } from './PanelFilter'
+import { TitlebarActions } from './WalletNavChrome'
 
 type Props = {
   chain: Chain
@@ -90,22 +91,25 @@ export function FriendsPanel({ chain }: Props) {
             {friends.length}
           </span>
         </h2>
-        {friends.length === 0 ? null : (
-          <PanelFilter
-            id="friends-search-input"
-            label="Search friends by name or wallet key"
-            placeholder="Name or wallet key"
-            value={query}
-            onValueChange={setQuery}
-            suggest={suggest}
-            shown={filtered.length}
-            total={friends.length}
-          />
-        )}
-        <div className="friends-panel-head-actions panel-icon-toolbar">
+        <TitlebarActions
+          section="friends"
+          className="friends-panel-head-actions panel-icon-toolbar"
+        >
+          {friends.length === 0 ? null : (
+            <PanelFilter
+              id="friends-search-input"
+              label="Search friends by name or wallet key"
+              placeholder="Name or wallet key"
+              value={query}
+              onValueChange={setQuery}
+              suggest={suggest}
+              shown={filtered.length}
+              total={friends.length}
+            />
+          )}
           <button
             type="button"
-            className="panel-icon-btn"
+            className="wallet-nav-chrome-btn"
             aria-label="Open messages"
             title="Messages"
             onClick={openMessagesSoftly}
@@ -114,7 +118,7 @@ export function FriendsPanel({ chain }: Props) {
           </button>
           <button
             type="button"
-            className="panel-icon-btn"
+            className="wallet-nav-chrome-btn"
             aria-label="Add friend"
             title="Add friend"
             onClick={openAddFriendSoftly}
@@ -122,7 +126,7 @@ export function FriendsPanel({ chain }: Props) {
             <PersonAddIcon size={16} />
           </button>
           <CollectionViewToggle label="Friends view" scope="friends" />
-        </div>
+        </TitlebarActions>
       </div>
       {friends.length === 0 ? (
         <EmptyState

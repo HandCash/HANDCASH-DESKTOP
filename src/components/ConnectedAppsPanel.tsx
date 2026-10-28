@@ -36,6 +36,7 @@ import { EmptyState } from './EmptyState'
 import { AppsIcon, CodeIcon, SettingsIcon, ViewGridIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import { AppsSearchBar, appsSearchAddress, canOpenAppAddresses } from './AppsSearchBar'
+import { TitlebarActions } from './WalletNavChrome'
 
 type Props = {
   apps: ConnectedApp[]
@@ -233,10 +234,18 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
     >
       <div className="connected-panel-head">
         <h2>Connected apps</h2>
-        <div className="connected-panel-head-actions">
+        <TitlebarActions section="apps" className="connected-panel-head-actions">
+          {apps.length > 0 || canOpen ? (
+            <AppsSearchBar
+              query={query}
+              onQueryChange={setQuery}
+              topMatch={filteredApps[0] ?? null}
+              canOpen={canOpen}
+            />
+          ) : null}
           <Button.Root
             variant="ghost"
-            className="connected-app-tabs-button"
+            className="wallet-nav-chrome-btn connected-app-tabs-button"
             aria-label={`Show ${openTabCount} open web ${openTabCount === 1 ? 'page' : 'pages'}`}
             title="Open web pages"
             disabled={openTabCount === 0}
@@ -250,7 +259,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           </Button.Root>
           <Button.Root
             variant="ghost"
-            className="connected-app-tabs-button"
+            className="wallet-nav-chrome-btn connected-app-tabs-button"
             aria-label="Developer keys"
             title="Developer keys"
             onClick={() => {
@@ -261,23 +270,12 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
             <CodeIcon size={16} />
           </Button.Root>
           <CollectionViewToggle label="Connected apps view" scope="apps" />
-        </div>
+        </TitlebarActions>
       </div>
       {apps.length === 0 ? (
-        <>
-          {canOpen ? (
-            <AppsSearchBar query={query} onQueryChange={setQuery} topMatch={null} canOpen />
-          ) : null}
-          <EmptyState icon={<AppsIcon size={28} />} title="No apps connected" />
-        </>
+        <EmptyState icon={<AppsIcon size={28} />} title="No apps connected" />
       ) : (
         <>
-          <AppsSearchBar
-            query={query}
-            onQueryChange={setQuery}
-            topMatch={filteredApps[0] ?? null}
-            canOpen={canOpen}
-          />
         <div className="nav-section-scroll-body">
           {filteredApps.length === 0 ? (
             address ? null : (

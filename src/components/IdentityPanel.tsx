@@ -115,107 +115,103 @@ export function IdentityPanel({ profile }: Props) {
       <div className="connected-panel-head">
         <h2>Identity</h2>
       </div>
-      <div className="identity-scroll nav-section-scroll-body">
-        <div className="identity-body">
-          <section className="identity-card" aria-label="Wallet identity">
-            <div className="identity-hero">
-              <div className="identity-qr">
-                <div className="identity-qr-frame">
-                  {dataUrl ? (
-                    <img
-                      src={dataUrl}
-                      alt="Identity QR"
-                      width={160}
-                      height={160}
-                    />
-                  ) : (
-                    <SkeletonQr />
-                  )}
-                </div>
-                <Button.Root variant="ghost"
-                  className="btn btn-ghost identity-copy-btn"
-                  onClick={() => void copyIdentity()}
-                >
-                  <CopyIcon size={14} />
-                  Copy wallet key
-                </Button.Root>
-              </div>
-              <div className="identity-hero-meta">
-                <div className="identity-field">
-                  <span className="identity-field-label">Handle</span>
-                  {handleLabel ? (
-                    <button
-                      type="button"
-                      className="identity-handle"
-                      title={`Click to copy ${handleLabel}`}
-                      onClick={() => void copyHandle()}
-                    >
-                      {handleLabel}
-                    </button>
-                  ) : (
-                    <div className="identity-handle-empty">
-                      <p className="identity-handle-missing">
-                        No handle claimed yet
-                      </p>
-                      <Button.Root variant="ghost"
-                        className="btn btn-ghost identity-claim-btn"
-                        onClick={openClaim}
-                      >
-                        <Button.Label>Claim handle</Button.Label>
-                      </Button.Root>
-                    </div>
-                  )}
-                </div>
+      {/*
+       * Same scroll contract as Friends / Collect / Apps: pinned head + one
+       * scroll body. No extra identity-body pad shell.
+       */}
+      <div className="nav-section-scroll-body">
+        <section className="identity-card" aria-label="Wallet identity">
+          <div className="identity-hero">
+            <div className="identity-qr">
+              <div className="identity-qr-frame">
+                {dataUrl ? (
+                  <img
+                    src={dataUrl}
+                    alt="Identity QR"
+                    width={112}
+                    height={112}
+                  />
+                ) : (
+                  <SkeletonQr />
+                )}
               </div>
             </div>
+            <div className="identity-hero-meta">
+              <div className="identity-field">
+                <span className="identity-field-label">Handle</span>
+                {handleLabel ? (
+                  <button
+                    type="button"
+                    className="identity-handle"
+                    title={`Click to copy ${handleLabel}`}
+                    onClick={() => void copyHandle()}
+                  >
+                    {handleLabel}
+                  </button>
+                ) : (
+                  <div className="identity-handle-empty">
+                    <p className="identity-handle-missing">
+                      No handle claimed yet
+                    </p>
+                    <Button.Root
+                      variant="ghost"
+                      className="btn btn-ghost identity-claim-btn"
+                      onClick={openClaim}
+                    >
+                      <Button.Label>Claim handle</Button.Label>
+                    </Button.Root>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
 
-            <ul className="identity-list">
-              <li className="identity-field identity-key-row">
-                <span className="identity-field-label">Wallet key</span>
-                <button
-                  type="button"
-                  className="mono identity-key"
-                  title={`Click to copy wallet key
+          <ul className="identity-list">
+            <li className="identity-field identity-key-row">
+              <span className="identity-field-label">Wallet key</span>
+              <button
+                type="button"
+                className="mono identity-key"
+                title={`Click to copy wallet key
 ${profile.identityKey}`}
-                  onClick={() => void copyIdentity()}
-                >
-                  <span>{shortIdentityKey(profile.identityKey)}</span>
-                  <CopyIcon size={14} />
-                </button>
-              </li>
+                onClick={() => void copyIdentity()}
+              >
+                <span>{shortIdentityKey(profile.identityKey)}</span>
+                <CopyIcon size={14} />
+              </button>
+            </li>
+            <li className="identity-field">
+              <span className="identity-field-label">Network</span>
+              <strong
+                className="identity-network"
+                data-network={profile.chain}
+              >
+                {profile.chain === 'main'
+                  ? 'Bitcoin SV Mainnet'
+                  : 'Bitcoin SV Testnet'}
+              </strong>
+            </li>
+            {bapProfileId ? (
               <li className="identity-field">
-                <span className="identity-field-label">Network</span>
-                <strong
-                  className="identity-network"
-                  data-network={profile.chain}
-                >
-                  {profile.chain === 'main'
-                    ? 'Bitcoin SV Mainnet'
-                    : 'Bitcoin SV Testnet'}
+                <span className="identity-field-label">Profile ID</span>
+                <strong className="mono identity-bap-id" title={bapProfileId}>
+                  <ProfileIdenticon id={bapProfileId} />
+                  {shortIdentityKey(bapProfileId)}
                 </strong>
               </li>
-              {bapProfileId ? (
-                <li className="identity-field">
-                  <span className="identity-field-label">Profile ID</span>
-                  <strong className="mono identity-bap-id" title={bapProfileId}>
-                    <ProfileIdenticon id={bapProfileId} />
-                    {shortIdentityKey(bapProfileId)}
-                  </strong>
-                </li>
-              ) : null}
-            </ul>
-            <p className="identity-note">
-              {bapProfileId
-                ? 'People pay your wallet key. Your profile ID is the public name they check: a copycat can borrow your name and picture, never this ID.'
-                : 'People pay your wallet key, and your profile is signed by it: a copycat can borrow your name and picture, never this key.'}
-            </p>
-          </section>
+            ) : null}
+          </ul>
+          <p className="identity-note">
+            {bapProfileId
+              ? 'People pay your wallet key. Your profile ID is the public name they check: a copycat can borrow your name and picture, never this ID.'
+              : 'People pay your wallet key, and your profile is signed by it: a copycat can borrow your name and picture, never this key.'}
+          </p>
+        </section>
 
-          <PublicIdentitiesPanel
-            key={`${profile.chain}:${profile.identityKey}`}
-            profile={profile}
-          />
-        </div>
+        <PublicIdentitiesPanel
+          key={`${profile.chain}:${profile.identityKey}`}
+          profile={profile}
+        />
       </div>
     </div>
   )

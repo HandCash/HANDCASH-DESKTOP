@@ -17,6 +17,7 @@ import {
   recoverDevWallet,
   refreshDevWallet,
   removeDevKey,
+  revokeDevKeyCertificate,
   subscribeDevKeys,
   type DevKeyView,
   type DevWalletStatus,
@@ -50,7 +51,8 @@ type DevKeyAction =
   | "fund"
   | "recover"
   | "refresh"
-  | "remove";
+  | "remove"
+  | "revoke";
 
 const FUND_PRESETS = [1_000, 10_000, 100_000] as const;
 
@@ -119,6 +121,9 @@ function signNote(key: DevKeyView): string {
 function copyBody(key: DevKeyView): string {
   const signs = key.sign?.state === "active" ? key.sign.name : null;
   if (signs) return SIGN_RISK(signs);
+  if (key.certificate?.state === "active") {
+    return "Copies the isolated server wallet key and its revocable BRC-52 certificate. Revoke the certificate any time from this card.";
+  }
   return "It can spend what you fund it with, and nothing else.";
 }
 
@@ -236,8 +241,8 @@ function Overview({
 }
 
 /**
- * Developer keys: keys handed to your server. A new key is a wallet your server
- * spends; keys that sign as your identity are no longer issued.
+ * Developer keys: isolated server wallet + revocable BRC-52 certificate.
+ * Legacy identity-signing keys remain listed until rotated.
  */
 export function DevKeysPanel() {
   useSyncExternalStore(subscribeDevKeys, devKeysRevision);
@@ -289,7 +294,7 @@ export function DevKeysPanel() {
 
   const create = () =>
     void run("create", async () => {
-      const n = generateDevKey(requireWalletRuntime());
+      const n = await generateDevKey(requireWalletRuntime());
       return `Key ${n} created`;
     });
 
@@ -407,6 +412,30 @@ export function DevKeysPanel() {
       >
         <Button.Label>{action.running("copy") ? "Copying…" : "Copy server config"}</Button.Label>
       </Button.Root>
+      {key.certificate?.state === "active" ? (
+        <Button.Root variant="ghost"
+          className="btn btn-ghost"
+          disabled={action.busy}
+          onClick={() =>
+            void run(
+              "revoke",
+              async () => {
+                revokeDevKeyCertificate(requireWalletRuntime(), key.n);
+                return `Key ${key.n} certificate revoked`;
+              },
+              {
+                confirm: {
+                  title: `Revoke Key ${key.n} certificate?`,
+                  body: "Servers should stop trusting this certificate. The isolated wallet balance is unchanged — Recover still moves money back.",
+                  confirmLabel: "Revoke",
+                },
+              }
+            )
+          }
+        >
+          <Button.Label>{action.running("revoke") ? "Revoking…" : "Revoke certificate"}</Button.Label>
+        </Button.Root>
+      ) : null}
       {recoverable(key) ? (
         <Button.Root variant="ghost"
           className="btn btn-ghost"
@@ -533,6 +562,18 @@ export function DevKeysPanel() {
                 Wallet
               </span>
             ) : null}
+            {key.certificate ? (
+              <span
+                data-aeon-part="capability"
+                data-aeon-state={
+                  key.certificate.state === "active" ? "certificate" : "revoked"
+                }
+              >
+                {key.certificate.state === "active"
+                  ? "Certificate"
+                  : "Certificate revoked"}
+              </span>
+            ) : null}
           </div>
         </div>
         {key.wallet ? (
@@ -544,6 +585,12 @@ export function DevKeysPanel() {
             >
               {walletNote(key.wallet.status, key.wallet.storageHost, currency)}
             </p>
+            {key.certificate?.state === "active" ? (
+              <p data-aeon-part="key-note" data-aeon-state="certificate">
+                Authorized with a revocable BRC-52 certificate. Isolated
+                balance — only this server key spends what you fund.
+              </p>
+            ) : null}
             {key.sign?.state === "active" && key.publicKey ? (
               <p data-aeon-part="key-note" data-aeon-state="sign-risk">
                 {signNote(key)}

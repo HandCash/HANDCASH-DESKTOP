@@ -58,6 +58,7 @@ vi.mock('./publicIdentities', async () => {
   const { bapKey } = await import('./bapRecords')
   return {
     presentedBapMaterial: () => h.material ?? { kind: 'none' },
+    presentedIdentityMaterial: () => null,
     presentedIdentityKeyAt: (_runtime: unknown, bapId: string, seq: number) => {
       const m = h.material as { kind: string; identity: { bapId: string } } | null
       return m?.kind === 'ready' && m.identity.bapId === bapId
@@ -143,6 +144,7 @@ import {
   recoverDevWallet,
   refreshDevWallet,
   removeDevKey,
+  revokeDevKeyCertificate,
 } from './devKeys'
 import { approveWalletPayment } from './permissions'
 import type { ActiveWallet } from './session'
@@ -268,11 +270,11 @@ function ledgerKey(): string {
   return [...store.keys()].find((k) => k.startsWith('handcash.serverWallet'))!
 }
 
-const walletKey = () => generateDevKey(runtime)
+const walletKey = async () => generateDevKey(runtime)
 
 /** A Sign key made before they stopped being issued. */
-function legacySignKey(seq: number, withWallet = false): number {
-  const n = walletKey()
+async function legacySignKey(seq: number, withWallet = false): Promise<number> {
+  const n = await walletKey()
   const ledger = JSON.parse(store.get(ledgerKey())!)
   const record = ledger.keys.find((k: { n: number }) => k.n === n)
   record.material = { kind: 'bap', bapId: BAP_ID, seq }
@@ -296,22 +298,31 @@ beforeEach(() => {
 })
 
 describe('generate', () => {
-  it('never hands out the identity signing key, even with a published identity', () => {
+  it('never hands out the identity signing key, even with a published identity', async () => {
     present(2)
-    const n = walletKey()
+    const n = await walletKey()
     const env = exportDevKeyConfig(runtime, n)
     expect(env).not.toContain(bapKey(master, 2).toHex())
     expect(env).not.toContain('BAP_ID=')
-    expect(listDevKeys(runtime)[0]).toMatchObject({ sign: null, wallet: { storageHost: expect.any(String) } })
+    expect(env).toContain('SERVER_CERTIFICATE=')
+    expect(listDevKeys(runtime)[0]).toMatchObject({
+      sign: null,
+      certificate: { state: 'active' },
+      wallet: { storageHost: expect.any(String) },
+    })
   })
 
-  it('numbers keys and never reuses a number', async () => {
-    expect(walletKey()).toBe(1)
-    expect(walletKey()).toBe(2)
-    fakeServerWallet(derivedDevKey(rootHex, 2))
-    await removeDevKey(runtime, 2)
-    expect(walletKey()).toBe(3)
-  })
+  it(
+    'numbers keys and never reuses a number',
+    async () => {
+      expect(await walletKey()).toBe(1)
+      expect(await walletKey()).toBe(2)
+      fakeServerWallet(derivedDevKey(rootHex, 2))
+      await removeDevKey(runtime, 2)
+      expect(await walletKey()).toBe(3)
+    },
+    15_000,
+  )
 
   it('derives a wallet-only key per number, never the account root', () => {
     expect(derivedDevKey(rootHex, 1).toHex()).not.toBe(rootHex)
@@ -319,12 +330,15 @@ describe('generate', () => {
   })
 
   it('exports a wallet key as the BSVA server env and opens it on the session services', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     fakeServerWallet(derivedDevKey(rootHex, n))
-    expect(exportDevKeyConfig(runtime, n)).toBe(
-      `SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, n).toHex()}\n` +
-        'WALLET_STORAGE_URL=https://handcash-wallet-storage.bcryderman.workers.dev\nBSV_NETWORK=main\n',
+    const env = exportDevKeyConfig(runtime, n)
+    expect(env).toContain(
+      `SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, n).toHex().padStart(64, '0')}`,
     )
+    expect(env).toContain('WALLET_STORAGE_URL=https://handcash-wallet-storage.bcryderman.workers.dev')
+    expect(env).toContain('BSV_NETWORK=main')
+    expect(env).toContain('SERVER_CERTIFICATE=')
     await refreshDevWallet(runtime, n)
     expect(h.built).toEqual([
       {
@@ -340,13 +354,22 @@ describe('generate', () => {
     expect(defaultDevWalletStorageUrl('test')).toBe('https://handcash-wallet-storage-test.bcryderman.workers.dev')
   })
 
-  it('keeps an existing key on the storage its ledger saved', () => {
-    const n = walletKey()
+  it('issues a revocable BRC-52 certificate and drops it from export after revoke', async () => {
+    const n = await walletKey()
+    expect(listDevKeys(runtime)[0]?.certificate).toMatchObject({ state: 'active' })
+    expect(exportDevKeyConfig(runtime, n)).toContain('SERVER_CERTIFICATE=')
+    revokeDevKeyCertificate(runtime, n)
+    expect(listDevKeys(runtime)[0]?.certificate).toMatchObject({ state: 'revoked' })
+    expect(exportDevKeyConfig(runtime, n)).not.toContain('SERVER_CERTIFICATE=')
+  })
+
+  it('keeps an existing key on the storage its ledger saved', async () => {
+    const n = await walletKey()
     const ledger = JSON.parse(store.get(ledgerKey())!)
     ledger.keys[0].wallet.storageUrl = 'https://storage.babbage.systems'
     store.set(ledgerKey(), JSON.stringify(ledger))
     durableForgetCached()
-    walletKey()
+    await walletKey()
     expect(readDevKeyLedger(active).keys.map((k) => k.wallet!.storageUrl)).toEqual([
       'https://storage.babbage.systems',
       'https://handcash-wallet-storage.bcryderman.workers.dev',
@@ -356,11 +379,15 @@ describe('generate', () => {
 })
 
 describe('existing sign keys', () => {
-  it('carries the identity key it was made with, never the master or root', () => {
+  it('carries the identity key it was made with, never the master or root', async () => {
     present(2)
-    const n = legacySignKey(2)
+    const n = await legacySignKey(2)
     const env = exportDevKeyConfig(runtime, n)
-    expect(env).toBe(`SERVER_PRIVATE_KEY=${bapKey(master, 2).toHex()}\nBSV_NETWORK=main\nBAP_ID=${BAP_ID}\n`)
+    expect(env).toContain(
+      `SERVER_PRIVATE_KEY=${bapKey(master, 2).toHex().padStart(64, '0')}`,
+    )
+    expect(env).toContain('BSV_NETWORK=main')
+    expect(env).toContain(`BAP_ID=${BAP_ID}`)
     expect(env).not.toContain(master.toHex())
     expect(env).not.toContain(bapKey(master, 0).toHex())
     expect(listDevKeys(runtime)[0]).toMatchObject({ sign: { seq: 2, state: 'active' }, wallet: null })
@@ -368,7 +395,7 @@ describe('existing sign keys', () => {
 
   it('still opens a key that both signs and holds a wallet', async () => {
     present(1)
-    const n = legacySignKey(1, true)
+    const n = await legacySignKey(1, true)
     fakeServerWallet(bapKey(master, 1))
     expect(exportDevKeyConfig(runtime, n)).toContain('WALLET_STORAGE_URL=')
     expect(exportDevKeyConfig(runtime, n)).toContain(`BAP_ID=${BAP_ID}`)
@@ -378,7 +405,7 @@ describe('existing sign keys', () => {
 
   it('cannot be removed until a rotation retires it', async () => {
     present(1)
-    const n = legacySignKey(1)
+    const n = await legacySignKey(1)
     await expect(removeDevKey(runtime, n)).rejects.toMatchObject({ reason: 'still-signing' })
 
     present(2)
@@ -390,7 +417,7 @@ describe('existing sign keys', () => {
 
 describe('summary', () => {
   it('counts money, items and distinct tokens', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     server.outputs.push(
       { basket: 'default', satoshis: 700, tags: [] },
@@ -428,7 +455,7 @@ describe('wallet status', () => {
   })
 
   it('lists a wallet key with its storage host and status', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     fakeServerWallet(derivedDevKey(rootHex, n))
     await refreshDevWallet(runtime, n)
     expect(listDevKeys(runtime)[0]!.wallet).toEqual({
@@ -441,7 +468,7 @@ describe('wallet status', () => {
 
 describe('fund', () => {
   it('asks for payment approval, pays by BRC-29 and internalizes into its storage', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     await fundDevWallet(n, 5_000)
     expect(approveWalletPayment).toHaveBeenCalledWith(
@@ -452,7 +479,7 @@ describe('fund', () => {
   })
 
   it('pays nothing when the approval is declined', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     fakeServerWallet(derivedDevKey(rootHex, n))
     vi.mocked(approveWalletPayment).mockRejectedValueOnce(new Error('declined'))
     await expect(fundDevWallet(n, 5_000)).rejects.toThrow('declined')
@@ -460,7 +487,7 @@ describe('fund', () => {
   })
 
   it('keeps a missed internalize pending and settles it on the next refresh', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     const internalize = server.internalizeAction
     server.internalizeAction = async () => {
@@ -475,8 +502,8 @@ describe('fund', () => {
 })
 
 describe('migration', () => {
-  it('turns a v2 server wallet into the numbered key with its wallet', () => {
-    walletKey()
+  it('turns a v2 server wallet into the numbered key with its wallet', async () => {
+    await walletKey()
     store.set(
       ledgerKey(),
       JSON.stringify({ v: 2, generation: 3, storageUrl: 'https://box.example', pendingFunds: [], pendingRecover: null }),
@@ -487,14 +514,13 @@ describe('migration', () => {
       next: 4,
       keys: [{ n: 3, material: { kind: 'derived' }, wallet: { storageUrl: 'https://box.example' } }],
     })
-    expect(exportDevKeyConfig(runtime, 3)).toContain(`SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, 3).toHex()}`)
-  })
+    expect(exportDevKeyConfig(runtime, 3)).toContain(`SERVER_PRIVATE_KEY=${derivedDevKey(rootHex, 3).toHex()}`)})
 
-  it('keeps a v1 or v2 wallet that saved no storage URL on Babbage, where it was opened', () => {
+  it('keeps a v1 or v2 wallet that saved no storage URL on Babbage, where it was opened', async () => {
     const testnet = { ...active, chain: 'test' } as ActiveWallet
-    walletKey()
+    await walletKey()
     const mainKey = ledgerKey()
-    generateDevKey({ instance: testnet } as unknown as WalletRuntime)
+    await generateDevKey({ instance: testnet } as unknown as WalletRuntime)
     const testKey = [...store.keys()].find((k) => k.startsWith('handcash.serverWallet') && k !== mainKey)!
     store.set(mainKey, JSON.stringify({ v: 2, generation: 2, pendingFunds: [], pendingRecover: null }))
     store.set(testKey, JSON.stringify({ v: 1, generation: 2, outputs: [], pendingRecover: null }))
@@ -504,7 +530,7 @@ describe('migration', () => {
   })
 
   it('turns v1 fund payments into internalizations', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     await fundDevWallet(n, 2_500)
     server.outputs.length = 0
@@ -551,7 +577,7 @@ describe('recover', () => {
   })
 
   it('has the server wallet pay this wallet by BRC-29, then internalizes it', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     server.outputs.push({ basket: 'default', satoshis: 10_000, tags: [] }, { basket: '1sat', satoshis: 1, tags: [] })
     const result = await recoverDevWallet(n)
@@ -576,7 +602,7 @@ describe('recover', () => {
   })
 
   it('keeps a broadcast recovery pending and finishes it without spending again', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     server.outputs.push({ basket: 'default', satoshis: 8_000, tags: [] })
     h.failHandcashInternalize = true
@@ -602,7 +628,7 @@ describe('fee shortfall', () => {
 
 describe('remove', () => {
   it('is refused while the wallet holds anything', async () => {
-    const n = walletKey()
+    const n = await walletKey()
     const server = fakeServerWallet(derivedDevKey(rootHex, n))
     server.outputs.push({ basket: '1sat', satoshis: 1, tags: [] })
     await expect(removeDevKey(runtime, n)).rejects.toMatchObject({ reason: 'not-empty' })

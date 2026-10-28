@@ -84,6 +84,7 @@ import {
 import { MiddleEllipsisName } from './MiddleEllipsisName'
 import { useWalletActionDock } from './WalletActionDock'
 import { PanelFilter } from './PanelFilter'
+import { TitlebarActions } from './WalletNavChrome'
 
 /** A basket answer this recent is reused on a tab visit instead of re-read. */
 const INVENTORY_VISIT_FRESH_MS = 30_000
@@ -774,20 +775,22 @@ export function InventoryPanel() {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Collectables</h2>
+        <h2>Collect</h2>
         {empty && !showLoading ? null : (
-          <PanelFilter
-            id="collectables-search-input"
-            label="Search collectables by name, trait or id"
-            placeholder="Name, trait or id"
-            value={query}
-            onValueChange={setQuery}
-            suggest={suggestTerms}
-            shown={visibleItems.length}
-            total={nftItems.length}
-          />
+          <TitlebarActions section="collectables">
+            <PanelFilter
+              id="collectables-search-input"
+              label="Search collectables by name, trait or id"
+              placeholder="Name, trait or id"
+              value={query}
+              onValueChange={setQuery}
+              suggest={suggestTerms}
+              shown={visibleItems.length}
+              total={nftItems.length}
+            />
+            <CollectionViewToggle label="Collectables view" scope="collectables" />
+          </TitlebarActions>
         )}
-        <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
       {empty && !showLoading ? (
         <EmptyState

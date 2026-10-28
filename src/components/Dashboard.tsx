@@ -1,6 +1,6 @@
 import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { useTickerCoin } from '../features/tickerCoin'
 import { refreshFromChain } from '../wallet/chainIngest'
@@ -16,7 +16,7 @@ import {
 import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { useShownCoinChains } from '../features/acceptedCoins'
 import { COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
-import { coinUsd, holdingShares } from '../wallet/heldValue'
+import { coinUsd } from '../wallet/heldValue'
 import type { MarketCoin } from '../wallet/bsvMarket'
 import {
   getDisplayCurrency,
@@ -177,47 +177,10 @@ function walletIdentityChip(
   }
 }
 
-type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string; unitShown?: boolean }
-
-/** Seen by copy and screen readers only, so figures and units don't run together. */
-const HIDDEN_SPACE = <span className="sr-only">{'\u00a0'}</span>
+type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string }
 
 function HiddenUnit({ unit }: { unit: string }) {
   return unit ? <span className="sr-only">{`\u00a0${unit}`}</span> : null
-}
-
-/** A line of coin marks with a figure each: shares of the total, or amounts held. */
-function BalanceParts({ parts, prefix }: { parts: BalancePart[]; prefix: string | null }) {
-  return (
-    <span className="balance-split">
-      {prefix ? (
-        <span className="balance-split-sep">
-          {prefix}
-          {HIDDEN_SPACE}
-        </span>
-      ) : null}
-      {parts.map((part, i) => (
-        <Fragment key={part.coin}>
-          {i > 0 ? (
-            <span className="balance-split-sep">
-              {HIDDEN_SPACE}/{HIDDEN_SPACE}
-            </span>
-          ) : null}
-          <span className="balance-split-share" title={part.title}>
-            <span className="balance-split-mark" aria-hidden>
-              <CoinGlyphIcon coin={part.coin} size={15} />
-            </span>
-            {part.text}
-            {part.unitShown ? (
-              <span className="balance-split-unit">{`\u00a0${part.unit}`}</span>
-            ) : (
-              <HiddenUnit unit={part.unit} />
-            )}
-          </span>
-        </Fragment>
-      ))}
-    </span>
-  )
 }
 
 /** Vault master can host multiple account wallets (BRC-208). */
@@ -314,69 +277,40 @@ export function Dashboard({
   const shownChains = useShownCoinChains()
   const heldChains = shownChains.filter((chain) => heldCoins[chain] > 0n)
   const heldCoinUsd = heldChains.map((chain) => ({ coin: chain as MarketCoin, ticker: COIN_INFO[chain].ticker, usd: coinUsd(chain, heldCoins[chain], coinPrices[chain]) }))
-  // Holding other coins, the total is valued in every coin and the second line is the split.
+  // Portfolio total for the chrome pill — sum when other coins are priced.
   const splitParts =
     heldChains.length > 0 && bsvUsd != null && heldCoinUsd.every((c) => c.usd != null)
       ? [{ coin: 'bsv' as MarketCoin, ticker: 'BSV', usd: bsvUsd }, ...heldCoinUsd.map((c) => ({ coin: c.coin, ticker: c.ticker, usd: c.usd! }))]
       : null
-  const split = splitParts
-    ? {
-        totalUsd: splitParts.reduce((sum, p) => sum + p.usd, 0),
-        shares: holdingShares(splitParts),
-      }
-    : null
-  // Coins only add up in dollars. In BSV the headline is the BSV actually held
-  // and every other coin follows in its own units, never converted.
+  const totalUsd = splitParts?.reduce((sum, p) => sum + p.usd, 0) ?? null
   const usdLabel =
-    split ? formatUsd(split.totalUsd)
+    totalUsd != null ? formatUsd(totalUsd)
     : heldChains.length > 0 ? '—'
     : formatUsdFromSats(balanceSats, usdPerBsv)
   const bsvLabel = formatBsvSignificant(balanceSats, 4)
   // The hero never names BSV: its coin mark stands for the unit.
   const bsvText = bsvLabel.endsWith(' BSV') ? bsvLabel.slice(0, -' BSV'.length) : bsvLabel
-  const bsvPart: BalancePart = { coin: 'bsv', text: bsvText, unit: '', title: bsvText }
-  const otherCoins: BalancePart[] = heldChains.map((chain) => {
-    const text = formatCoinShort(chain, heldCoins[chain])
-    const unit = COIN_INFO[chain].ticker
-    return { coin: chain, text, unit, title: `${text} ${unit}` }
-  })
-  const holdings = [bsvPart, ...otherCoins]
-  // The coin picked in the ticker leads, as long as the wallet holds it.
-  const focus = holdings.find((part) => part.coin === tickerCoin) ?? bsvPart
-  const focusFirst = (parts: BalancePart[]) =>
-    [...parts].sort((a, b) => Number(b.coin === focus.coin) - Number(a.coin === focus.coin))
-  const shareParts: BalancePart[] | null =
-    split?.shares?.map((share) =>
-      share.coin === 'bsv'
-        ? { coin: share.coin, text: share.pct, unit: '', title: share.pct }
-        : { coin: share.coin, text: share.pct, unit: share.ticker, title: `${share.pct} ${share.ticker}` },
-    ) ?? null
-  // A coin picked in the ticker but not held still shows, named, beside the total.
-  const pickedEmpty = shownChains.find((chain) => chain === tickerCoin && !(heldCoins[chain] > 0n))
-  const emptyPart: BalancePart | null = pickedEmpty
-    ? {
-        coin: pickedEmpty as MarketCoin,
-        text: '0',
-        unit: COIN_INFO[pickedEmpty].ticker,
-        title: `0 ${COIN_INFO[pickedEmpty].ticker}`,
-        unitShown: true,
-      }
-    : null
-  const heldParts =
-    currency === 'usd' ? { parts: focusFirst(shareParts ?? holdings), prefix: null }
-    : heldChains.length === 0 ? null
-    : {
-        parts: holdings.filter((part) => part !== focus && !(part === bsvPart && balanceSats === 0)),
-        prefix: '+',
-      }
-  const secondaryParts = emptyPart
-    ? { parts: [emptyPart, ...(heldParts?.parts ?? [])], prefix: heldParts?.prefix ?? null }
-    : heldParts
+  // Hero always follows the ticker coin — glyph + that coin's amount (0 if none).
+  const focus: BalancePart =
+    tickerCoin === 'bsv'
+      ? { coin: 'bsv', text: bsvText, unit: '', title: bsvText }
+      : (() => {
+          const units = heldCoins[tickerCoin]
+          const text = formatCoinShort(tickerCoin, units)
+          const unit = COIN_INFO[tickerCoin].ticker
+          return { coin: tickerCoin, text, unit, title: `${text} ${unit}` }
+        })()
+  // Focused coin's own USD for the headline. Portfolio total stays in the pill.
+  const focusUsd =
+    focus.coin === 'bsv'
+      ? bsvUsd
+      : coinUsd(focus.coin, heldCoins[focus.coin], coinPrices[focus.coin])
+  const focusUsdLabel = focusUsd == null ? '—' : formatUsd(focusUsd)
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
     minPx: 8,
-    watch: `${currency}|${usdLabel}|${focus.title}|${secondaryParts?.parts.map((part) => part.title).join() ?? ''}`,
+    watch: `${currency}|${tickerCoin}|${usdLabel}|${focusUsdLabel}|${focus.title}`,
   })
 
   useEffect(() => {
@@ -793,18 +727,28 @@ export function Dashboard({
       <div className="dashboard-main">
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">
-            <h2 className="wallet-hero-title">Your balance</h2>
+            <div
+              className="wallet-nav-actions-pill wallet-hero-metric"
+              title="Total balance"
+            >
+              <h2 className="wallet-hero-title">Your balance</h2>
+              <span className="wallet-hero-metric-amount">
+                {balancePending ? '—' : usdLabel}
+              </span>
+            </div>
             {(() => {
               const identity = walletIdentityChip(profile, claimedHandle)
               if (!identity) return null
               return (
-                <WalletAccountMenu
-                  profile={profile}
-                  identityLabel={identity.label}
-                  identityCopy={identity.copy}
-                  onAccountSwitchStarted={onAccountSwitchStarted}
-                  onAccountSwitched={onAccountSwitched}
-                />
+                <div className="wallet-nav-actions-pill wallet-hero-identity-chrome">
+                  <WalletAccountMenu
+                    profile={profile}
+                    identityLabel={identity.label}
+                    identityCopy={identity.copy}
+                    onAccountSwitchStarted={onAccountSwitchStarted}
+                    onAccountSwitched={onAccountSwitched}
+                  />
+                </div>
               )
             })()}
           </div>
@@ -826,17 +770,20 @@ export function Dashboard({
                   }}
                 >
                   {balancePending ? (
-                    <>
-                      <span className="balance balance-primary">—</span>
-                      <span className="balance-secondary">Reading this wallet…</span>
-                    </>
+                    <span className="balance balance-primary">—</span>
                   ) : (
                     <>
                       <span
-                        className={`balance balance-primary balance-${currency === 'usd' ? 'fiat' : 'bsv'}`}
+                        className={`balance balance-primary balance-${currency === 'usd' ? 'fiat' : 'coin'}`}
+                        data-chain={focus.coin}
                       >
                         {currency === 'usd' ? (
-                          usdLabel
+                          <>
+                            <span className="balance-unit-mark" aria-hidden>
+                              <CoinGlyphIcon coin={focus.coin} />
+                            </span>
+                            {focusUsdLabel}
+                          </>
                         ) : (
                           <>
                             <span className="balance-unit-mark" aria-hidden>
@@ -845,15 +792,6 @@ export function Dashboard({
                             {focus.text}
                             <HiddenUnit unit={focus.unit} />
                           </>
-                        )}
-                      </span>
-                      <span
-                        className={`balance-secondary balance-${currency === 'usd' ? 'bsv' : 'fiat'}`}
-                      >
-                        {secondaryParts ? (
-                          <BalanceParts {...secondaryParts} />
-                        ) : (
-                          usdLabel
                         )}
                       </span>
                       <span className="sr-only">

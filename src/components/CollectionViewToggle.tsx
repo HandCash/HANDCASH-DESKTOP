@@ -25,7 +25,7 @@ export function CollectionViewToggle({
     <div className="collection-view-toggle" role="group" aria-label={label}>
       <button
         type="button"
-        className="collection-view-btn"
+        className="wallet-nav-chrome-btn collection-view-btn"
         aria-label="List view"
         aria-pressed={view === 'list'}
         title="List"
@@ -36,7 +36,7 @@ export function CollectionViewToggle({
       </button>
       <button
         type="button"
-        className="collection-view-btn"
+        className="wallet-nav-chrome-btn collection-view-btn"
         aria-label="Grid view"
         aria-pressed={view === 'grid'}
         title="Grid"

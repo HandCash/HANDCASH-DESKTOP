@@ -148,34 +148,6 @@ html:is(.platform-mobile, .layout-compact) .wallet-balance-slot {
   width: 100%;
   max-width: none;
   min-height: 2.75rem;
-  justify-content: center;
-  overflow: visible;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-balance {
-  flex-direction: row;
-  align-items: baseline;
-  justify-content: center;
-  flex-wrap: nowrap;
-  gap: 0.4em;
-  white-space: nowrap;
-  width: max-content;
-  max-width: 100%;
-  font-size: clamp(26px, 8vw, 36px);
-  line-height: 1.15;
-  /* Defeat FitSlot scale that can shrink amounts away on narrow phones */
-  transform: none !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-balance .balance {
-  font-size: 1em;
-  white-space: nowrap;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-balance .balance-secondary {
-  font-size: 0.5em;
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions {
@@ -257,7 +229,7 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-market-body {
     'asset spark price'
     'asset spark change';
   align-items: center;
-  column-gap: 14px;
+  column-gap: 16px;
   row-gap: 2px;
 }
 
@@ -302,7 +274,9 @@ html:is(.platform-mobile, .layout-compact) .identity-nav {
   overflow: hidden;
 }
 
-html:is(.platform-mobile, .layout-compact) .identity-scroll {
+html:is(.platform-mobile, .layout-compact)
+  [data-aeon-scope='identity']
+  .nav-section-scroll-body {
   flex: 1 1 auto;
   min-height: 0;
 }
@@ -439,6 +413,28 @@ html:is(.platform-mobile, .layout-compact) .panel-label-bar {
   margin-bottom: 4px;
 }
 
+/* Section titles match desktop titlebar label chrome (gray pill, xl type). */
+html:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  box-sizing: border-box;
+  min-height: 34px;
+  padding: 4px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius);
+  background: var(--wallet-nav-select);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
+  --wallet-nav-select: #fff;
+  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+}
+
 html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.empty-state) {
   display: flex;
   flex-direction: column;
@@ -464,8 +460,23 @@ html:is(.platform-mobile, .layout-compact) .empty-state {
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-row {
   grid-area: asset;
   min-width: 0;
-  max-width: 42vw;
-  gap: 8px;
+  max-width: none;
+  gap: 10px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv [data-aeon-part='coin-trigger'] {
+  inset: -4px -4px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+/* Stage is display:contents here — keep chart chrome from eating the coin hitbox. */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
+  position: relative;
+  z-index: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn,
@@ -1106,39 +1117,35 @@ html:is(.platform-mobile, .layout-compact)
   box-shadow: 0 -12px 32px -16px rgba(0, 0, 0, 0.55);
 }
 
-html:is(.platform-mobile, .layout-compact) .identity-body {
-  padding: 2px 4px 4px;
-  gap: 6px;
-}
-
 html:is(.platform-mobile, .layout-compact) .identity-card {
   padding: 0;
   gap: 6px;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-hero {
-  gap: 10px;
+  gap: var(--hc-space-3);
   flex-direction: column;
   align-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame {
-  padding: 6px;
+  padding: 5px;
 }
 
-html:is(.platform-mobile, .layout-compact) .identity-qr {
-  width: 160px;
-  min-width: 160px;
-}
-
+/* Same QR footprint as desktop — phone should not enlarge the hero. */
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame img,
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame .skeleton-qr {
-  width: 148px !important;
-  height: 148px !important;
+  width: 112px !important;
+  height: 112px !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-handle {
-  font-size: var(--hc-text-xl);
+  font-size: var(--hc-text-lg);
+  text-align: center;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-handle-empty {
+  justify-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-key {
@@ -1155,6 +1162,7 @@ html:is(.platform-mobile, .layout-compact) .identity-hero-meta {
   flex: 0 0 auto;
   max-width: none;
   width: 100%;
+  align-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
@@ -1162,8 +1170,10 @@ html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
   max-width: none;
 }
 
-html:is(.platform-mobile, .layout-compact) .identity-scroll {
-  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+html:is(.platform-mobile, .layout-compact)
+  [data-aeon-scope='identity']
+  .nav-section-scroll-body {
+  padding-bottom: calc(var(--hc-space-5) + env(safe-area-inset-bottom, 0px));
 }
 
 /* Three hero actions (Send · Receive · Swap) share a phone-width row. */

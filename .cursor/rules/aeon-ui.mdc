@@ -43,6 +43,12 @@ import { stateToAttr } from '@aeon-ui/core'
 
 Prefer Aeon: `Button`, `Field`, `Dialog`/`Prompt`, `StatusBanner`, `Accordion`, `Menu`, `Tabs`, `Identity`, `ListRow`, `MetricStrip`, `Panel`, `Thread`, `Toast`. Compose parts before inventing a wallet-only primitive.
 
+**Wallet section chrome (one strip, two shells — do not invent a second pattern):**
+- **Idle:** section label (`Collect`, not Collectables) + inverted icon selector (select track / unselected plates / selected unpilled) + trailing `TitlebarActions` pill. Desktop places that strip in the titlebar; compact places it in the bottom dock (+ in-head actions).
+- **Contextual (Send / Swap / Receive / permissions):** `WalletActionBar` (Cancel / Review / …) **replaces only the section tab plates** inside the existing nav pill — section label stays, pill height stays, trailing titlebar actions stay. Compact swaps the bottom dock track the same way. Never a second bar under the stage; never a shrink-wrapped Cancel/Review pill that eats the label.
+- Hero mirrors idle chrome: `Your balance` + total in one `wallet-nav-actions-pill`. Icon controls use `wallet-nav-chrome-btn`; search/filter open via `TopBarPopover`.
+- CSS: `wallet-nav-titlebar*` / `wallet-nav-titlebar-pill` / `wallet-nav-actions-pill` / `wallet-nav-chrome-btn` in `handcash.css`. Keep-alive slots: `.wallet-nav-slot[hidden] { display: none !important }` (author `display: contents` must not leave hidden panels stealing clicks).
+
 - Brand once: `applyBrandPalette` in `src/wallet/handcashTheme.ts` (called from `src/main.tsx`).
 - Vite: keep `aeonUiViteAliases()` + `aeonUiOptimizeDeps()` (or `aeonUiVitePlugin()`).
 - CSS: import engine sheets, then product chrome in `handcash.css`.

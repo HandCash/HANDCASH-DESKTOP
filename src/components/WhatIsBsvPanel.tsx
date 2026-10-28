@@ -179,10 +179,8 @@ function MarketSlide({
             </span>
           </span>
         </div>
-        <span data-aeon-part="held" aria-label={held ? `You hold ${held.amount}` : undefined}>
-          <span data-aeon-part="held-amount">{held?.amount ?? shown.sym}</span>
-          {held?.usd ? <span data-aeon-part="held-usd">{held.usd}</span> : null}
-        </span>
+        {/* Amount held lives in the open coin selector only — closed row stays name + price. */}
+        {held ? <span className="sr-only">You hold {held.amount}</span> : null}
       </div>
 
       {marketReady ? (

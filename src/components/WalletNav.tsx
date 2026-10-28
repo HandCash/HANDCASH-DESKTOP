@@ -90,7 +90,12 @@ import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { ChartAppsPanel } from './ChartAppsPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
-import { NavBreadcrumb } from './NavBreadcrumb'
+import { NavBreadcrumb, navBreadcrumbBack } from './NavBreadcrumb'
+import { KeepAliveSlot } from './KeepAliveSlot'
+import {
+  TitlebarActionsSlot,
+  WalletNavChromeProvider,
+} from './WalletNavChrome'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
 import {
   ActivityIcon,
@@ -133,7 +138,6 @@ const SECTIONS: {
 ]
 
 function sectionLabel(section: NavSection): string {
-  if (section === 'collectables') return 'Collectables'
   return SECTIONS.find((s) => s.value === section)?.label ?? section
 }
 
@@ -500,6 +504,11 @@ export const WalletNav = memo(function WalletNav({
     }
     return [root, { label: 'Transaction' }]
   })()
+  // Desktop titlebar already prints the section — drop the redundant root label,
+  // but keep back from the full stack (root's clearNavChild / ancestor pops).
+  const breadcrumbOnBack = navBreadcrumbBack(crumbs)
+  const breadcrumbCrumbs =
+    !compact && crumbs.length > 1 ? crumbs.slice(1) : crumbs
 
   const selectSection = (next: NavSection) => {
     // Sync SFX + optimistic tab so a press always feels taken, even when the
@@ -534,14 +543,78 @@ export const WalletNav = memo(function WalletNav({
     ((stageChild != null || browserForeground) && !mobileInlinePermission) ||
     (browserUnderPermission && !compact)
 
+  const sectionLabelText = sectionLabel(activeSection)
+
+  const sectionTabs = SECTIONS.map(({ value, label, shortLabel, Icon }) => {
+    const selected = activeSection === value
+    return (
+      <button
+        key={value}
+        type="button"
+        role="tab"
+        className="wallet-nav-tab"
+        aria-label={label}
+        aria-selected={selected}
+        title={label}
+        data-selected={selected ? '' : undefined}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
+          clickSoundArmed.current = true
+          playWalletSound('soft')
+        }}
+        onClick={() => selectSection(value)}
+      >
+        <Icon size={18} />
+        <span className="wallet-nav-tab-label">{label}</span>
+        <span className="wallet-nav-tab-label-short">{shortLabel}</span>
+      </button>
+    )
+  })
+
   return (
     <WalletActionDockProvider register={registerDock}>
+    <WalletNavChromeProvider section={activeSection}>
     <section
       className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
       data-aeon-state={stateToAttr(aeonState)}
     >
       <div className="wallet-nav">
+        {!compact ? (
+          <div className="wallet-nav-titlebar">
+            {/*
+             * Mobile principle: swap only the section tabs for Cancel/Review.
+             * Section label + pill size stay; trailing actions stay.
+             */}
+            <div className="wallet-nav-titlebar-pill">
+              <span className="wallet-nav-titlebar-label">
+                {sectionLabelText}
+              </span>
+              {registeredDock ? (
+                <div
+                  className="wallet-nav-titlebar-tabs"
+                  role="group"
+                  aria-label={registeredDock.actions.ariaLabel}
+                  data-permission=""
+                >
+                  <WalletActionBar
+                    {...registeredDock.actions}
+                    placement="nav"
+                  />
+                </div>
+              ) : (
+                <div
+                  className="wallet-nav-titlebar-tabs"
+                  role="tablist"
+                  aria-label="Wallet sections"
+                >
+                  {sectionTabs}
+                </div>
+              )}
+            </div>
+            <TitlebarActionsSlot />
+          </div>
+        ) : null}
         <div className="wallet-nav-stage">
           {mountEmbeddedBrowser
             ? browserState.tabs.map((tab) => {
@@ -555,6 +628,8 @@ export const WalletNav = memo(function WalletNav({
                     }`}
                     aria-hidden={visible ? undefined : true}
                     data-parked={visible ? undefined : ''}
+                    // Parked guests can still eat hits as OS surfaces — inert gates them.
+                    inert={visible ? undefined : true}
                   >
                     <div className="nav-child-body nav-child-body--browser">
                     <AppBrowserPanel
@@ -588,7 +663,11 @@ export const WalletNav = memo(function WalletNav({
 
           {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
-              <NavBreadcrumb crumbs={crumbs} />
+              <NavBreadcrumb
+                crumbs={breadcrumbCrumbs}
+                onBack={breadcrumbOnBack}
+                leadingSep={!compact && crumbs.length > 1}
+              />
               <div className="nav-child-body">
               <RenderProbe id={`stage:${stageChild.type}`}>
               {stageChild.type === 'app' && (() => {
@@ -745,6 +824,11 @@ export const WalletNav = memo(function WalletNav({
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'activity' && !mobileInlinePermission}
+                inert={
+                  activeSection !== 'activity' && !mobileInlinePermission
+                    ? true
+                    : undefined
+                }
               >
                 {mobileInlinePermission && pendingPrompt ? (
                   <PermissionRequestPanel
@@ -763,6 +847,11 @@ export const WalletNav = memo(function WalletNav({
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'apps' || mobileInlinePermission}
+                inert={
+                  activeSection !== 'apps' || mobileInlinePermission
+                    ? true
+                    : undefined
+                }
               >
                 <ConnectedAppsPanel
                   apps={apps}
@@ -783,6 +872,11 @@ export const WalletNav = memo(function WalletNav({
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'friends' || mobileInlinePermission}
+                inert={
+                  activeSection !== 'friends' || mobileInlinePermission
+                    ? true
+                    : undefined
+                }
               >
                 <RenderProbe id="friends">
                   <FriendsPanel chain={profile.chain} />
@@ -793,6 +887,11 @@ export const WalletNav = memo(function WalletNav({
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'identity' || mobileInlinePermission}
+                inert={
+                  activeSection !== 'identity' || mobileInlinePermission
+                    ? true
+                    : undefined
+                }
               >
                 <IdentityPanel profile={profile} />
               </div>
@@ -801,6 +900,11 @@ export const WalletNav = memo(function WalletNav({
               <div
                 className="wallet-nav-slot"
                 hidden={activeSection !== 'settings' || mobileInlinePermission}
+                inert={
+                  activeSection !== 'settings' || mobileInlinePermission
+                    ? true
+                    : undefined
+                }
               >
                 <RenderProbe id="settings">
                   <SettingsPanel />
@@ -810,49 +914,28 @@ export const WalletNav = memo(function WalletNav({
           </div>
         </div>
 
-        <div
-          className="wallet-nav-bar"
-          role={contextualDock ? 'group' : 'tablist'}
-          aria-label={contextualDock ? 'Wallet action' : 'Wallet sections'}
-          data-permission={contextualDock ? '' : undefined}
-        >
-          <div className="wallet-nav-bar-track">
-            {registeredDock ? (
-              <WalletActionBar
-                {...registeredDock.actions}
-                placement="nav"
-              />
-            ) : (
-              SECTIONS.map(({ value, label, shortLabel, Icon }) => {
-                const selected = activeSection === value
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="tab"
-                    className="wallet-nav-tab"
-                    aria-label={label}
-                    aria-selected={selected}
-                    title={label}
-                    data-selected={selected ? '' : undefined}
-                    onPointerDown={(event) => {
-                      if (event.button !== 0) return
-                      clickSoundArmed.current = true
-                      playWalletSound('soft')
-                    }}
-                    onClick={() => selectSection(value)}
-                  >
-                    <Icon size={18} />
-                    <span className="wallet-nav-tab-label">{label}</span>
-                    <span className="wallet-nav-tab-label-short">{shortLabel}</span>
-                  </button>
-                )
-              })
-            )}
+        {compact ? (
+          <div
+            className="wallet-nav-bar"
+            role={contextualDock ? 'group' : 'tablist'}
+            aria-label={contextualDock ? 'Wallet action' : 'Wallet sections'}
+            data-permission={contextualDock ? '' : undefined}
+          >
+            <div className="wallet-nav-bar-track">
+              {registeredDock ? (
+                <WalletActionBar
+                  {...registeredDock.actions}
+                  placement="nav"
+                />
+              ) : (
+                sectionTabs
+              )}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </section>
+    </WalletNavChromeProvider>
     </WalletActionDockProvider>
   )
 })

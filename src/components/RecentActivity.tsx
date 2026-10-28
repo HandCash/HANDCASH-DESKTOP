@@ -21,6 +21,7 @@ import {
   type RefObject,
 } from "react";
 import { PaymentFiltersPanel } from "./PaymentFiltersPanel";
+import { TitlebarActions } from "./WalletNavChrome";
 import { TopBarPopover } from "./TopBarPopover";
 import {
   ActivityIcon,
@@ -1443,7 +1444,7 @@ export function ActivityFeed({
   const head = (
     <div className="connected-panel-head" ref={headRef}>
       <h2>{title}</h2>
-      <div className="connected-panel-head-actions">
+      <TitlebarActions section="activity" className="connected-panel-head-actions">
         {showCount ? (
           <span className="connected-count">{filtered.length}</span>
         ) : null}
@@ -1506,7 +1507,7 @@ export function ActivityFeed({
             ariaLabel="Activity filters"
             title="Filters"
             className="activity-filter-popover"
-            triggerClassName="activity-filter-toggle"
+            triggerClassName="wallet-nav-chrome-btn"
             contentClassName="activity-filter-popover-content"
             active={filtersActive}
             // Phone: span the activity header, so the panel covers the list it
@@ -1517,7 +1518,7 @@ export function ActivityFeed({
               <>
                 <FilterIcon size={16} />
                 {filtersActive ? (
-                  <span className="activity-filter-dot" aria-hidden />
+                  <span className="wallet-nav-chrome-dot" aria-hidden />
                 ) : null}
               </>
             }
@@ -1530,7 +1531,7 @@ export function ActivityFeed({
             />
           </TopBarPopover>
         ) : null}
-      </div>
+      </TitlebarActions>
     </div>
   );
 
