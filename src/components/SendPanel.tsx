@@ -16,10 +16,14 @@ import {
   formatSecondaryFromSats,
   formatTypedAmount,
   formatUsd,
+  getCachedFiatPerBsv,
   getCachedUsdPerBsv,
+  satsToFiat,
   satsToUsd,
   subscribeUsdRate,
 } from '../wallet/fx'
+import { getFiatOption, getFiatSymbol } from '../wallet/fiatCurrency'
+import { useFiatCurrency } from '../hooks/useFiatCurrency'
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -111,7 +115,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   })
 }
 
-/** Keep the satoshi value when the send form swaps USD <-> BSV. */
+/** Keep the satoshi value when the send form swaps fiat <-> coin. */
 function amountInputFromSats(
   sats: number,
   currency: DisplayCurrency,
@@ -120,9 +124,10 @@ function amountInputFromSats(
   if (!(sats > 0)) return ''
   const raw =
     currency === 'usd'
-      ? usdPerBsv != null && usdPerBsv > 0
-        ? satsToUsd(sats, usdPerBsv)
-        : null
+      ? (() => {
+          const perBsv = getCachedFiatPerBsv() ?? usdPerBsv
+          return perBsv != null && perBsv > 0 ? satsToFiat(sats, undefined, perBsv) : null
+        })()
       : sats / 1e8
   if (raw == null || !Number.isFinite(raw) || raw <= 0) return ''
   return trimAmountInput(raw)
@@ -155,6 +160,9 @@ export function SendPanel({
   const [showFriendMatches, setShowFriendMatches] = useState(false)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const fiatCode = useFiatCurrency()
+  const fiatOption = getFiatOption(fiatCode)
+  const fiatSymbol = getFiatSymbol(fiatCode)
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   /** Local balance read before Review — a phase of `editing`, owned by the chart. */
   const reviewBusy = sendSnap.matches({ editing: 'checking' })
@@ -625,6 +633,9 @@ export function SendPanel({
                 Amount
               </label>
               <div className="send-amount-row">
+                <span className="send-amount-prefix" aria-hidden>
+                  {currency === 'usd' ? fiatSymbol : ticker}
+                </span>
                 <input
                   id="amount"
                   className="send-amount-input"
@@ -634,7 +645,11 @@ export function SendPanel({
                   onBlur={() => syncAmountToMachine(amountDraft)}
                   placeholder="0"
                   autoFocus
-                  aria-label={currency === 'usd' ? 'Amount in USD' : `Amount in ${ticker}`}
+                  aria-label={
+                    currency === 'usd'
+                      ? `Amount in ${fiatOption.name}`
+                      : `Amount in ${ticker}`
+                  }
                   aria-invalid={overHeld || undefined}
                 />
               </div>
@@ -646,7 +661,7 @@ export function SendPanel({
                   aria-pressed={currency === 'usd'}
                   onClick={() => setSendCurrency('usd')}
                 >
-                  USD
+                  {fiatOption.iso}
                 </button>
                 <button
                   type="button"
@@ -661,7 +676,7 @@ export function SendPanel({
               <div className="send-amount-note" aria-live="polite">
                 {currency === 'usd' && coinUsd == null ? (
                   <span className="send-amount-warning">
-                    USD rate unavailable — switch to {ticker} or refresh
+                    {fiatOption.iso} rate unavailable — switch to {ticker} or refresh
                   </span>
                 ) : overHeld ? (
                   <span className="send-amount-warning">More than this wallet can send on {coinInfo?.label}</span>

@@ -90,8 +90,7 @@ import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { ChartAppsPanel } from './ChartAppsPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
-import { NavBreadcrumb, navBreadcrumbBack } from './NavBreadcrumb'
-import { KeepAliveSlot } from './KeepAliveSlot'
+import { NavBreadcrumb, NavBreadcrumbTrail, navBreadcrumbBack } from './NavBreadcrumb'
 import {
   TitlebarActionsSlot,
   WalletNavChromeProvider,
@@ -100,6 +99,7 @@ import { getCachedCollectable, getCollectable } from '../wallet/collectables'
 import {
   ActivityIcon,
   AppsIcon,
+  BackIcon,
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
@@ -506,6 +506,8 @@ export const WalletNav = memo(function WalletNav({
   })()
   // Desktop titlebar already prints the section — drop the redundant root label,
   // but keep back from the full stack (root's clearNavChild / ancestor pops).
+  // Compact stage mirrors that path reading: root stays in the path pill as
+  // Activity / Send (not a separate title + orphan trail).
   const breadcrumbOnBack = navBreadcrumbBack(crumbs)
   const breadcrumbCrumbs =
     !compact && crumbs.length > 1 ? crumbs.slice(1) : crumbs
@@ -573,7 +575,10 @@ export const WalletNav = memo(function WalletNav({
 
   return (
     <WalletActionDockProvider register={registerDock}>
-    <WalletNavChromeProvider section={activeSection}>
+    <WalletNavChromeProvider
+      section={activeSection}
+      childActive={Boolean(stageChild) || browserForeground}
+    >
     <section
       className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
@@ -583,13 +588,22 @@ export const WalletNav = memo(function WalletNav({
         {!compact ? (
           <div className="wallet-nav-titlebar">
             {/*
-             * Mobile principle: swap only the section tabs for Cancel/Review.
-             * Section label + pill size stay; trailing actions stay.
+             * One pill: root label (+ / child path) then nav plates.
+             * Child: Activity / Send · Cancel|Review — not Activity · plates · / Send.
+             * Trailing edge stays sparse (back, not root filters).
              */}
             <div className="wallet-nav-titlebar-pill">
+              {/* Path first — Activity / Send — then the nav plates (tabs or Cancel/Review). */}
               <span className="wallet-nav-titlebar-label">
                 {sectionLabelText}
               </span>
+              {stageChild && breadcrumbCrumbs.length > 0 ? (
+                <NavBreadcrumbTrail
+                  crumbs={breadcrumbCrumbs}
+                  leadingSep={crumbs.length > 1}
+                  className="nav-breadcrumb wallet-nav-titlebar-crumbs"
+                />
+              ) : null}
               {registeredDock ? (
                 <div
                   className="wallet-nav-titlebar-tabs"
@@ -612,7 +626,25 @@ export const WalletNav = memo(function WalletNav({
                 </div>
               )}
             </div>
-            <TitlebarActionsSlot />
+            <div className="wallet-nav-titlebar-actions">
+              <TitlebarActionsSlot />
+              {breadcrumbOnBack ? (
+                <div className="wallet-nav-actions-pill">
+                  <button
+                    type="button"
+                    className="wallet-nav-chrome-btn"
+                    aria-label="Back"
+                    title="Back"
+                    onClick={() => {
+                      playWalletSound('soft')
+                      breadcrumbOnBack()
+                    }}
+                  >
+                    <BackIcon size={18} />
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
         <div className="wallet-nav-stage">
@@ -663,11 +695,9 @@ export const WalletNav = memo(function WalletNav({
 
           {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
-              <NavBreadcrumb
-                crumbs={breadcrumbCrumbs}
-                onBack={breadcrumbOnBack}
-                leadingSep={!compact && crumbs.length > 1}
-              />
+              {compact ? (
+                <NavBreadcrumb crumbs={crumbs} onBack={breadcrumbOnBack} />
+              ) : null}
               <div className="nav-child-body">
               <RenderProbe id={`stage:${stageChild.type}`}>
               {stageChild.type === 'app' && (() => {

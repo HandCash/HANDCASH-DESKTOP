@@ -102,7 +102,7 @@ Not built: Runes-style open minting. Open minting needs a mint output that anyon
 1. **Spec review.** BRC-255 draft open; name, marker and protocol IDs still movable.
 2. **Core.** Done: script, payload, keys, validity, proof, with adversarial tests.
 3. **Open mode end to end.** Done: issue, send, receive, `bntft` / `bntnft` filing, app access, Collectables shelf.
-4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections. Until it lands, a countersigned transfer stays unacknowledged in box `bnt` so nothing is lost.
+4. **Countersigned mode.** Acceptor, requester, beacon, release, policy, and items with collections. Until it lands, a countersigned transfer stays unacknowledged in box `bnt` so nothing is lost. **HandCash handles** are the first product IPT: a claimed `$handle` is supply-1 `iptnft` issued by the BRC-169 certifier (`handleIpt.ts`); the certificate path stays live and the on-chain tip is this phase.
 5. **Market.** BRC-254 on BNT outputs; BRC-CLOUD index and storefront read BNT rows in `bntft` / `bntnft`.
 6. **Items.** Mint-studio and issuers mint BNT items. The market sells them on the token layout, with no pads. `1sat` stays as the outside-format path.
 7. **BRC-162 removed.** Done: no read-only support and no conversion path.

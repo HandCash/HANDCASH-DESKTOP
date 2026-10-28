@@ -19,6 +19,7 @@ import {
   type PendingPrompt,
 } from './wallet/permissions'
 import { AuthScreen } from './components/AuthScreen'
+import { AuthShell } from './components/AuthShell'
 import { Dashboard } from './components/Dashboard'
 import { RenderProbe } from './components/RenderProbe'
 import { BrandLogo } from './components/BrandLogo'
@@ -382,6 +383,11 @@ export function App() {
         <header className="titlebar aeon-titlebar">
           <BrandLogo variant="green" />
           <div className="titlebar-end" data-aeon-no-drag>
+            <WalletStatusPill
+              session={sessionFromMachine(snapshot.value)}
+              bridgeOnline={snapshot.context.bridgeOnline}
+              onManualSync={walletUnlocked ? handleManualSync : undefined}
+            />
             {snapshot.matches('ready') && (
               <div className="titlebar-actions">
                 <button
@@ -410,46 +416,47 @@ export function App() {
                 </button>
               </div>
             )}
-            <WalletStatusPill
-              session={sessionFromMachine(snapshot.value)}
-              bridgeOnline={snapshot.context.bridgeOnline}
-              onManualSync={walletUnlocked ? handleManualSync : undefined}
-            />
           </div>
         </header>
 
         <main className="stage">
           {snapshot.matches('boot') && (
-            <section className="auth-screen" data-aeon-state="loading">
-              <div className="auth-copy">
-                <h1 className="auth-title">Opening…</h1>
-                <p className="auth-lede">Getting your wallet ready.</p>
-              </div>
-            </section>
+            <AuthShell state="loading">
+              <section className="auth-screen" data-aeon-state="loading">
+                <div className="auth-copy">
+                  <h1 className="auth-title">Opening…</h1>
+                  <p className="auth-lede">Getting your wallet ready.</p>
+                </div>
+              </section>
+            </AuthShell>
           )}
 
           {snapshot.matches('failure') && (
-            <section className="auth-screen" data-aeon-state="failure">
-              <div className="auth-copy">
-                <h1 className="auth-title">Something broke</h1>
-                <p className="error auth-error">{snapshot.context.error}</p>
-              </div>
-              <Button.Root variant="solid" className="btn btn-primary auth-submit" onClick={() => send({ type: 'CLEAR_ERROR' })}>
-                <Button.Label>Retry</Button.Label>
-              </Button.Root>
-            </section>
+            <AuthShell state="failure">
+              <section className="auth-screen" data-aeon-state="failure">
+                <div className="auth-copy">
+                  <h1 className="auth-title">Something broke</h1>
+                  <p className="error auth-error">{snapshot.context.error}</p>
+                </div>
+                <Button.Root variant="solid" className="btn btn-primary auth-submit" onClick={() => send({ type: 'CLEAR_ERROR' })}>
+                  <Button.Label>Retry</Button.Label>
+                </Button.Root>
+              </section>
+            </AuthShell>
           )}
 
           {(snapshot.matches('onboarding') || snapshot.matches('locked')) && (
-            <AuthScreen
-              mode={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}
-              error={snapshot.context.error}
-              recoveryOnly={snapshot.context.recoveryOnly}
-              onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
-              onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
-              onBalanceRefreshed={handleBalanceRefresh}
-              onFail={(error) => send({ type: 'FAIL', error })}
-            />
+            <AuthShell state={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}>
+              <AuthScreen
+                mode={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}
+                error={snapshot.context.error}
+                recoveryOnly={snapshot.context.recoveryOnly}
+                onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
+                onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
+                onBalanceRefreshed={handleBalanceRefresh}
+                onFail={(error) => send({ type: 'FAIL', error })}
+              />
+            </AuthShell>
           )}
 
           {snapshot.matches('ready') && snapshot.context.profile && (

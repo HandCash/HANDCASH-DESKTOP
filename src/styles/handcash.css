@@ -121,6 +121,14 @@ html[data-aeon-mode='light'] {
      brand/success/accent green is rendered as foreground or decoration. */
   --hc-brand: 148 72% 14%;
 
+  /* Nav / CTA chrome — change these, not every call site.
+     Soft gray select rail + chrome pills; white idle tab plates; green CTAs. */
+  --hc-nav-select: color-mix(in srgb, var(--hc-text, #141814) 4%, #ffffff);
+  --hc-nav-unselected: #ffffff;
+  --hc-nav-chrome: var(--hc-nav-select);
+  --hc-cta: #38cb7b;
+  --hc-cta-ink: #0a120e;
+
   /* Brighter paper — near-white canvas, soft borders, less grey fog. */
   --background: 140 10% 98.5%;
   --foreground: 140 10% 8%;
@@ -199,14 +207,18 @@ body {
   display: flex;
   align-items: center;
   gap: var(--hc-space-3);
+  /* Match titlebar action / sync chip height so the wordmark sits on the rail. */
+  min-height: 34px;
 }
 
 .brand-wordmark {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
   justify-content: center;
   gap: 0;
   line-height: 1;
+  min-height: 34px;
 }
 
 .brand-logo-mark {
@@ -253,11 +265,12 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: var(--hc-tracking-display);
   text-transform: uppercase;
   font-size: var(--hc-text-lg);
-  line-height: var(--hc-leading-tight);
+  line-height: 1;
   margin: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 34px;
 }
 
 .brand-sub {
@@ -389,13 +402,14 @@ html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .s
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
   max-width: min(7.25rem, calc(100vw - 12.5rem));
-  height: 28px;
-  min-height: 28px;
-  max-height: 28px;
-  padding: 0 8px;
+  height: 34px;
+  min-height: 34px;
+  max-height: 34px;
+  padding: 0 10px;
   gap: 5px;
   font-size: var(--hc-text-xs);
   align-items: center;
+  box-sizing: border-box;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-pill-label {
@@ -530,11 +544,80 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   animation: rise 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Full-bleed mesh on signup / unlock — no stage inset around the canvas. */
+.stage:has(.auth-shell) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.stage:has(.auth-shell) > .auth-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * Auth shell — partners/Devs payment mesh behind the form.
+ * Scope: auth-shell · parts: backdrop / mesh / scrim / content.
+ */
+.auth-shell {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.auth-shell-mesh {
+  position: absolute;
+  inset: 0;
+  opacity: 0.72;
+  pointer-events: none;
+  z-index: 0;
+}
+
+html[data-aeon-mode='dark'] .auth-shell-mesh,
+html:not([data-aeon-mode='light']) .auth-shell-mesh {
+  opacity: 0.78;
+}
+
+.auth-mesh-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.auth-shell-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* Keep the form readable; mesh stays bright at the edges. */
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, hsl(var(--card)) 72%, transparent) 0%,
+    color-mix(in srgb, hsl(var(--card)) 28%, transparent) 42%,
+    transparent 100%
+  );
+}
+
+.auth-shell-content {
+  position: relative;
+  z-index: 2;
+  width: min(22rem, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 1.25rem 0;
+}
+
 /* Auth / unlock — single quiet composition (no card stack, no dual primaries) */
 .auth-screen {
-  width: min(22rem, 100%);
+  width: 100%;
   margin: 0 auto;
-  min-height: calc(100% - 24px);
+  min-height: 0;
   display: grid;
   align-content: center;
   gap: 1.5rem;
@@ -1139,6 +1222,16 @@ button.link-btn:hover {
   filter: brightness(1.05);
 }
 
+/* Light sheet: filled CTAs use --hc-cta instead of load-bearing black. */
+html[data-aeon-mode='light'] .btn-primary {
+  background: var(--hc-cta);
+  color: var(--hc-cta-ink);
+}
+
+html[data-aeon-mode='light'] .btn-primary:hover {
+  filter: brightness(0.96);
+}
+
 .btn-ghost {
   background: color-mix(in srgb, var(--hc-text) 6%, var(--hc-surface));
   border-color: color-mix(in srgb, var(--hc-text) 22%, transparent);
@@ -1436,7 +1529,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   margin-top: 0;
   flex: 0 1 auto;
   justify-content: flex-end;
-  align-items: center;
+  align-items: stretch;
   flex-wrap: nowrap;
   min-width: 0;
   gap: 10px;
@@ -1446,6 +1539,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   flex: 35 1 0;
   min-width: 0;
   justify-content: center;
+  align-self: stretch;
+  box-sizing: border-box;
   min-height: 44px;
   font-size: var(--hc-text-lg);
 }
@@ -2009,36 +2104,38 @@ html[data-aeon-mode='light'] .wallet-balance .balance-primary {
   color: var(--hc-text);
 }
 
-/*
- * Light sheet: every BSV-slot toast is black plate + white type
- * (same as floating app/update toasts — no mint success wash).
- */
+/* Light sheet: ticker toasts use CTA green (not black). Errors stay red. */
 html[data-aeon-mode='light'] .bsv-toast-cover,
 html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='success'],
-html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='error'],
 html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='neutral'] {
-  background: #0a0a0a;
-  color: #fafafa;
-  border: 1px solid #262626;
+  background: var(--hc-cta, #38cb7b);
+  color: var(--hc-cta-ink, #0a120e);
+  border: 1px solid color-mix(in srgb, var(--hc-cta, #38cb7b) 70%, #0a3d22);
+}
+
+html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='error'] {
+  background: color-mix(in srgb, hsl(var(--destructive, 0 72% 51%)) 88%, #fff);
+  color: #450a0a;
+  border: 1px solid color-mix(in srgb, hsl(var(--destructive, 0 72% 51%)) 55%, #7f1d1d);
 }
 
 html[data-aeon-mode='light'] .bsv-toast-cover::before {
-  opacity: 0.35;
+  opacity: 0.4;
   background:
     radial-gradient(
       ellipse 85% 70% at 50% 35%,
-      color-mix(in srgb, #fff 10%, transparent) 0%,
+      color-mix(in srgb, #fff 22%, transparent) 0%,
       transparent 58%
     ),
     radial-gradient(
       ellipse 120% 100% at 50% 100%,
-      color-mix(in srgb, #000 35%, transparent) 0%,
+      color-mix(in srgb, #000 8%, transparent) 0%,
       transparent 55%
     );
 }
 
 html[data-aeon-mode='light'] .bsv-toast-cover::after {
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 28%, transparent);
 }
 
 .bsv-toast-title {
@@ -4178,12 +4275,160 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 /* Reuse .wallet-nav-actions-pill — label + total share one chrome pill. */
 .wallet-nav-actions-pill.wallet-hero-metric {
+  position: relative;
   flex: 0 1 auto;
   gap: 10px;
   max-width: 100%;
   min-height: 42px;
   height: auto;
-  padding-inline: 14px 16px;
+  /* Fiat trigger owns the inset so we don't double-pad a nested button. */
+  padding: 2px;
+}
+
+.fiat-currency-trigger {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  margin: 0;
+  padding: 6px 14px 6px 12px;
+  border: 0;
+  border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.fiat-currency-trigger:hover {
+  background: color-mix(in srgb, var(--hc-text) 6%, transparent);
+}
+
+.fiat-currency-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  outline-offset: -2px;
+}
+
+/* Flag stays in the list only — trigger doesn't advertise a permanent control. */
+.fiat-currency-flag {
+  display: none;
+}
+
+.fiat-currency-trigger .wallet-account-caret {
+  flex: 0 0 auto;
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: opacity 140ms ease, width 140ms ease;
+}
+
+.fiat-currency-trigger:hover .wallet-account-caret,
+.fiat-currency-trigger:focus-visible .wallet-account-caret,
+[data-aeon-scope='fiat-currency'][data-aeon-state='open'] .fiat-currency-trigger .wallet-account-caret {
+  width: 16px;
+  opacity: 0.75;
+}
+
+.fiat-currency-dropdown {
+  /* Own chrome (not .wallet-account-dropdown) — that class anchors right:0 with
+     min-width 290px and clipped the list off the left of the hero. */
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: auto;
+  z-index: 40;
+  box-sizing: border-box;
+  width: min(280px, calc(100vw - 24px));
+  min-width: 0;
+  max-width: min(280px, calc(100% + 14px), calc(100vw - 24px));
+  max-height: min(320px, calc(100dvh - 7rem), 55vh);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
+  border: 1px solid hsl(var(--border));
+  background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 7%, #0a0a0a));
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 45%, transparent);
+  color: var(--hc-text);
+}
+
+.wallet-hero > .wallet-hero-head.connected-panel-head,
+.wallet-nav-actions-pill.wallet-hero-metric.fiat-currency-menu {
+  overflow: visible;
+}
+
+/* Dropdowns hang below the head over the balance row. Without a raised head,
+   later siblings paint on top and steal hits — picks feel wrong / delayed. */
+.wallet-hero > .wallet-hero-head.connected-panel-head:has(.fiat-currency-dropdown),
+.wallet-hero > .wallet-hero-head.connected-panel-head:has(.wallet-account-dropdown) {
+  z-index: 40;
+}
+
+/* Balance / CTAs must not eat hits while the fiat list overlays them. */
+.wallet-hero:has(.fiat-currency-dropdown) .wallet-hero-main {
+  pointer-events: none;
+}
+
+.fiat-currency-option {
+  appearance: none;
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 6px);
+  background: transparent;
+  color: var(--hc-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fiat-currency-option:hover,
+.fiat-currency-option[data-aeon-state='selected'] {
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.fiat-currency-option-flag {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.fiat-currency-option-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.fiat-currency-option-copy strong {
+  font-size: var(--hc-text-sm);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.fiat-currency-option-copy span {
+  font-size: var(--hc-text-2xs);
+  color: var(--hc-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fiat-currency-option-check {
+  font-size: var(--hc-text-sm);
+  font-weight: 700;
+  color: var(--hc-accent);
 }
 
 .wallet-hero-metric .wallet-hero-title {
@@ -4213,6 +4458,81 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 .wallet-hero-identity-chrome {
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+/* Compact: never stack the metric + identity pills — join them into one chrome
+   bar and let the identity label ellipsize when the row runs out of room. */
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] > .wallet-hero-head {
+  flex-wrap: nowrap;
+  gap: 0;
+  align-items: stretch;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-nav-actions-pill.wallet-hero-metric {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  gap: 6px;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+  border-right: 0;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .fiat-currency-trigger {
+  min-height: 34px;
+  padding: 4px 10px 4px 10px;
+  gap: 6px;
+  /* Merged pill: square the join edge so it meets identity chrome cleanly. */
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric .wallet-hero-title {
+  font-size: var(--hc-text-lg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-metric-amount {
+  font-size: var(--hc-text-xs);
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-chrome {
+  margin-left: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 58%;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-account-menu,
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-row {
+  min-width: 0;
+  max-width: 100%;
+  width: auto;
+  flex: 1 1 auto;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-row {
+  gap: 4px;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  width: auto;
+  padding: 0 4px 0 6px;
+  gap: 4px;
+}
+
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Identity controls inside the chrome pill — same 28px plate as .wallet-nav-chrome-btn. */
@@ -4309,10 +4629,12 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   width: min(340px, calc(100vw - 24px));
   min-width: 290px;
   padding: 8px;
-  border-radius: var(--hc-radius);
-  border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
-  background: var(--hc-panel, var(--hc-bg, #111));
-  box-shadow: 0 10px 28px color-mix(in srgb, #000 35%, transparent);
+  /* Same chrome as the identity pill (inherits --wallet-nav-* from hero head). */
+  border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
+  border: 1px solid hsl(var(--border));
+  background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 14%, #000));
+  box-shadow: 0 10px 28px color-mix(in srgb, #000 45%, transparent);
+  color: var(--hc-text);
 }
 
 .wallet-account-heading {
@@ -4645,23 +4967,22 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
  * - right actions pill: search / filter / view
  * Compact keeps the bottom dock; panels still own their head for that shell.
  */
-/* Chrome pill tokens — shared by titlebar + hero head (not titlebar-only). */
+/* Chrome pill tokens — shared by titlebar + hero head (not titlebar-only).
+   Dark select is a soft lift off black, not a heavy plate. */
 .wallet-nav-titlebar,
 .wallet-hero-head {
-  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
   --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
 }
 
 html[data-aeon-mode='light'] .wallet-nav-titlebar,
 html[data-aeon-mode='light'] .wallet-hero-head {
-  --wallet-nav-select: #fff;
-  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 5%, #f4f5f4);
+  --wallet-nav-select: var(--hc-nav-select);
+  --wallet-nav-unselected: var(--hc-nav-unselected);
 }
 
 .wallet-nav-titlebar {
-  /* Pill pad (2px) + section label pad — breadcrumb `/` lines up under Collect. */
-  --wallet-nav-label-inset: calc(2px + 12px);
   /* Match .wallet-hero horizontal inset so the hairline shares that length. */
   --wallet-nav-hairline-inset: 14px;
   position: relative;
@@ -4779,14 +5100,16 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   .wallet-nav-tab[data-selected],
 html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   .wallet-action-slot--primary
-  .wallet-nav-tab[data-selected]:hover,
+  .wallet-nav-tab[data-selected]:hover {
+  color: var(--hc-cta-ink);
+}
+
 html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   .wallet-action-slot--danger
   .wallet-nav-tab[data-selected],
 html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   .wallet-action-slot--danger
   .wallet-nav-tab[data-selected]:hover {
-  /* Light mode primary/danger slots are black / deep-red — light ink. */
   color: #fff;
 }
 
@@ -4984,17 +5307,69 @@ html[data-aeon-mode='light']
 }
 
 html[data-aeon-mode='light'] .wallet-nav-actions-pill {
+  background: var(--hc-nav-chrome);
   box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
 }
 
 .wallet-nav-titlebar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   margin-left: auto;
   min-width: 0;
+  flex: 0 1 auto;
 }
 
-.wallet-nav-titlebar-actions:empty {
+/* Portal mount for section chrome; hide when nothing is portaled. */
+.wallet-nav-titlebar-actions-slot:empty {
+  display: none;
+}
+
+/* No section pill and no back — collapse the trailing cluster. */
+.wallet-nav-titlebar-actions:not(:has(.wallet-nav-actions-pill)) {
+  display: none;
+}
+
+/* Path continues the root label inside the pill — Activity / Send · then nav. */
+.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {
+  flex: 1 1 auto;
+  align-self: center;
+  min-width: 0;
+  max-width: 28ch;
+  margin: 0;
+  padding: 0 8px 0 0;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs) .wallet-nav-titlebar-label {
+  /* Shrink-wrap the root word; the trail owns the flexible middle. */
+  flex: 0 0 auto;
+  width: auto;
+  max-width: 8ch;
+  padding-right: 0;
+}
+
+/* Breathing room between Collect/Activity and the path `/`. */
+.wallet-nav-titlebar-pill .nav-breadcrumb-sep--leading {
+  margin-left: 0.55em;
+}
+
+/*
+ * Child path on: trailing chrome stays sparse — at most 3 controls in the
+ * portaled pill (Back is a separate sibling pill). Prefer a child-owned pill
+ * when one is present.
+ */
+.wallet-nav-titlebar:has(.wallet-nav-titlebar-crumbs)
+  .wallet-nav-titlebar-actions-slot
+  .wallet-nav-actions-pill
+  > :nth-child(n + 4) {
+  display: none;
+}
+
+.wallet-nav-titlebar-actions-slot:has(.wallet-nav-actions-pill--child)
+  .wallet-nav-actions-pill:not(.wallet-nav-actions-pill--child) {
   display: none;
 }
 
@@ -5170,19 +5545,10 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
 .identity-hero {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
   gap: var(--hc-space-3);
   width: 100%;
   min-width: 0;
-}
-
-.identity-hero-meta {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
 
 .identity-qr {
@@ -5190,7 +5556,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
   flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
-  gap: 0;
+  gap: 6px;
   min-width: 0;
 }
 
@@ -5202,6 +5568,87 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
   flex-shrink: 0;
   border-radius: var(--hc-radius);
   background: #ffffff;
+}
+
+.identity-qr-handle {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--hc-text);
+  font-family: var(--hc-font);
+  font-size: clamp(1.05rem, 3.5cqi, 1.35rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.identity-qr-handle:hover {
+  color: var(--hc-accent);
+}
+
+/* Handle as IPT (iptnft) — certificate held; tip awaits countersigned mode. */
+[data-aeon-scope='handle-ipt'] {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-accent) 4%, transparent);
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='head'] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='title'] {
+  margin: 0;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-md);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.05em;
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='profile'] {
+  font-family: var(--hc-mono, ui-monospace, monospace);
+  font-size: var(--hc-text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hc-accent);
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='empty'],
+[data-aeon-scope='handle-ipt'] [data-aeon-part='held'] {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='lede'] {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: var(--hc-text-xs);
+  line-height: 1.4;
+}
+
+[data-aeon-scope='handle-ipt'] .identity-claim-btn {
+  width: fit-content;
+  padding: 4px 10px;
+  font-size: var(--hc-text-sm);
 }
 
 .identity-qr-frame img {
@@ -5798,21 +6245,9 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
     padding-inline: 0;
   }
 
-  .identity-hero {
-    align-items: center;
-    flex-direction: column;
-  }
-
-  .identity-hero-meta {
-    width: 100%;
-    max-width: none;
-    flex: 0 0 auto;
-    align-items: center;
-    text-align: center;
-  }
-
   .identity-handle-empty {
     justify-items: center;
+    text-align: center;
   }
 
   .identity-list {
@@ -7619,13 +8054,14 @@ html[data-aeon-mode='light']
 html[data-aeon-mode='light']
   .wallet-action-bar--nav
   .wallet-action-slot--primary {
-  --wallet-action-slot-own: #0a0a0a;
+  --wallet-action-slot-own: var(--hc-cta);
 }
 
+/* Cancel / secondary idle plates match Send·Swap·Receive — white on paper. */
 html[data-aeon-mode='light']
   .wallet-action-bar--nav
   .wallet-action-slot--neutral {
-  --wallet-action-slot-own: #ecefec;
+  --wallet-action-slot-own: var(--hc-nav-unselected, #ffffff);
 }
 
 /* List row only — grid cards keep flexible action strip. */
@@ -7730,11 +8166,39 @@ html[data-aeon-mode='light']
 
 .nav-breadcrumb-head {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
-/* Desktop: trail sits under the titlebar section label (same inset as Collect). */
-html:not(.platform-mobile):not(.layout-compact) .nav-breadcrumb-head {
-  padding-left: var(--wallet-nav-label-inset, calc(2px + 12px));
+/* Compact subtext: one path pill + trailing Back — same grammar as desktop. */
+.nav-breadcrumb-head .nav-breadcrumb-path-pill {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  min-height: 34px;
+  height: auto;
+  padding: 2px 10px 2px 12px;
+}
+
+.nav-breadcrumb-head .nav-breadcrumb-path-pill .wallet-nav-titlebar-crumbs,
+.nav-breadcrumb-head .nav-breadcrumb-path-pill .nav-breadcrumb {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  margin: 0;
+}
+
+.nav-breadcrumb-head .nav-breadcrumb-back-pill {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.nav-breadcrumb-head .nav-back-btn {
+  display: none;
 }
 
 .nav-back-btn {
@@ -9816,22 +10280,47 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 .send-amount-row {
-  display: flex;
+  display: inline-flex;
   align-items: baseline;
   justify-content: center;
-  width: 100%;
+  gap: 0.28em;
   max-width: 100%;
+  padding: 2px 0;
+  /* One underline under mark + digits so $ / £ / BSV stay symmetrical. */
+  border-bottom: 2px solid hsl(var(--border));
+}
+
+.send-amount-row:focus-within {
+  border-bottom-color: color-mix(in srgb, var(--hc-accent) 70%, transparent);
+}
+
+.send-amount-prefix {
+  flex: 0 0 auto;
+  color: var(--hc-muted);
+  font-family: var(--hc-display);
+  font-size: clamp(1.25rem, 3.6cqi, 1.85rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+  user-select: none;
+}
+
+.send-amount-hero[data-currency='bsv'] .send-amount-prefix {
+  font-size: clamp(0.95rem, 2.6cqi, 1.2rem);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .send-amount-input {
   appearance: none;
   flex: 0 1 auto;
-  min-width: 0;
-  width: 100%;
+  box-sizing: content-box;
+  min-width: 2.5ch;
+  width: 7ch;
+  max-width: min(14ch, 70vw);
   margin: 0;
-  padding: 2px 0;
+  padding: 0;
   border: 0;
-  border-bottom: 2px solid hsl(var(--border));
   background: transparent;
   color: var(--hc-text);
   font-family: var(--hc-display);
@@ -9839,12 +10328,15 @@ html[data-aeon-mode='light'] .shortcut-key {
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.05;
-  text-align: center;
+  text-align: left;
   outline: none;
 }
 
-.send-amount-input:focus {
-  border-bottom-color: color-mix(in srgb, var(--hc-accent) 70%, transparent);
+@supports (field-sizing: content) {
+  .send-amount-input {
+    field-sizing: content;
+    width: auto;
+  }
 }
 
 .send-amount-input::placeholder {
@@ -16130,7 +16622,7 @@ html:not(.platform-mobile):not(.layout-compact)
   width: auto;
   margin: 0 var(--hc-space-3) var(--hc-space-3);
   /* Only the selected tab is lit; idle tabs stay black. */
-  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
   --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px;
@@ -16206,12 +16698,8 @@ html:not(.platform-mobile):not(.layout-compact)
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar:not([data-permission]) {
-  --wallet-nav-select: #fff;
-  --wallet-nav-unselected: color-mix(
-    in srgb,
-    var(--hc-text) 5%,
-    #f4f5f4
-  );
+  --wallet-nav-select: var(--hc-nav-select);
+  --wallet-nav-unselected: var(--hc-nav-unselected);
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
@@ -16310,7 +16798,10 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--primary
-  .wallet-nav-tab[data-selected]:hover,
+  .wallet-nav-tab[data-selected]:hover {
+  color: var(--hc-cta-ink);
+}
+
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--danger
@@ -16319,7 +16810,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--danger
   .wallet-nav-tab[data-selected]:hover {
-  /* Black / deep-red fills need light ink. */
+  /* Deep-red fill — light ink. */
   color: #fff;
 }
 
@@ -16333,9 +16824,9 @@ html:not(.platform-mobile):not(.layout-compact)
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission] {
-  --wallet-nav-select: #fff;
-  --wallet-nav-unselected: #ecefec;
-  --wallet-dock-cta-ink: #0a0a0a;
+  --wallet-nav-select: var(--hc-nav-select);
+  --wallet-nav-unselected: var(--hc-nav-unselected);
+  --wallet-dock-cta-ink: var(--hc-cta-ink);
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
@@ -16344,8 +16835,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-deny[data-selected]:hover {
-  /* Deny on the primary CTA slot still needs primary-foreground (white on black). */
-  color: hsl(var(--primary-foreground));
+  color: var(--hc-cta-ink);
 }
 
 html:not(.platform-mobile):not(.layout-compact)
@@ -16455,8 +16945,8 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
-  border-color: #0a0a0a;
-  background: #0a0a0a;
+  border-color: var(--hc-cta);
+  background: var(--hc-cta);
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
@@ -16924,18 +17414,10 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   max-width: none;
 }
 
-/* Phones: more air between caret and copy — 8px still felt cramped. */
-html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-row {
-  gap: 12px;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-hero-identity {
-  padding-right: 6px;
-  gap: 6px;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
-  padding: 6px;
+/* Compact identity chrome densifies with the merged hero head (see shell rules above). */
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-copy {
+  padding: 4px;
+  flex: 0 0 auto;
 }
 
 .wallet-hero-identity-copy {
@@ -18304,9 +18786,18 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
   scroll-snap-type: x mandatory;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
-  touch-action: pan-x pan-y;
+  /* Vertical page scroll stays native; horizontal flicks are stepped one slide in JS. */
+  touch-action: pan-y;
   outline: none;
   will-change: scroll-position;
+  cursor: grab;
+  /* Drag is a flick, not a text select of price / ticker copy. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bsv-carousel:active {
+  cursor: grabbing;
 }
 
 .bsv-carousel::-webkit-scrollbar {
@@ -18375,6 +18866,241 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
 [data-aeon-scope='what-is-bsv'] .bsv-asset-row [data-aeon-part='held-usd'] {
   font-size: var(--hc-text-xs);
   color: var(--hc-muted);
+}
+
+/* Compact ticker — keyed off data-aeon-shell on the scope (not html.platform-mobile).
+   Density tokens live on the scope so pad/dot/spark tweaks are one override. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] {
+  --ticker-pad-x: 16px;
+  --ticker-pad-y: 10px 16px 8px;
+  --ticker-dot: 4px;
+  --ticker-dot-active: 10px;
+  --ticker-spark-h: 24px;
+  order: 2;
+  flex: 0 0 auto;
+  min-height: 0 !important;
+  height: auto !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: var(--ticker-pad-y);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Compact: coin | sparkline | price, range change under the price. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-market-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(48px, 1fr) auto;
+  grid-template-areas:
+    'asset spark price'
+    'asset spark change';
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 2px;
+  cursor: pointer;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-cover {
+  padding: 10px 14px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Toast replaces the one-row bar in flow so a two-line message can grow. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'][data-aeon-state^='toast-'] .bsv-carousel-frame {
+  display: none;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'][data-aeon-state^='toast-'] .bsv-toast-cover {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  align-self: stretch;
+  min-height: 56px;
+  margin: -10px calc(-1 * var(--ticker-pad-x)) -8px;
+  flex-direction: column;
+  gap: 4px;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-title {
+  font-size: var(--hc-text-sm);
+  letter-spacing: 0.05em;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-body {
+  font-size: var(--hc-text-xs);
+  font-weight: 700;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-asset-row {
+  grid-area: asset;
+  min-width: 0;
+  max-width: none;
+  gap: 10px;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] [data-aeon-part='coin-trigger'] {
+  inset: -4px -4px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+/* Stage is display:contents — keep chart chrome from eating the coin hitbox. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-spark,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-spark-empty,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-price,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-price-skeleton {
+  position: relative;
+  z-index: 0;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-logo-btn,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-logo-stack,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-logo,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-logo-skeleton {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-asset-text strong {
+  font-size: var(--hc-text-md);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] [data-aeon-part='held'] {
+  font-size: var(--hc-text-md);
+  color: color-mix(in srgb, var(--hc-text) 78%, transparent);
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-logo-btn > svg {
+  width: 32px;
+  height: 32px;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-change {
+  position: relative;
+  z-index: 3;
+  font-size: var(--hc-text-2xs);
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+/* Compact must not force neon — neon fails on the light sheet. */
+html:not([data-aeon-mode='light'])
+  [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact']
+  .bsv-change.is-up {
+  color: #57ff97 !important;
+}
+
+html:not([data-aeon-mode='light'])
+  [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact']
+  .bsv-change.is-down {
+  color: #ff8e8e !important;
+}
+
+html[data-aeon-mode='light']
+  [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact']
+  .bsv-change.is-up {
+  color: #0a3d22 !important;
+}
+
+html[data-aeon-mode='light']
+  [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact']
+  .bsv-change.is-down {
+  color: #b91c1c !important;
+}
+
+/* Sparkline + change sit in the ticker grid; about accordion is desktop-only. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-stage,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-stage-chart {
+  display: contents !important;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-stage-about,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-about {
+  display: none !important;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-spark,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-spark-empty {
+  grid-area: spark;
+  justify-self: center;
+  width: 100%;
+  max-width: 168px;
+  height: var(--ticker-spark-h);
+  margin: 0;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-stage-chart > :first-child {
+  grid-area: change;
+  justify-self: end;
+  align-self: start;
+  margin: 0;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-stage-chart > .skeleton-line {
+  width: 48px !important;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-price-skeleton {
+  width: 72px !important;
+  height: 18px !important;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-price,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-price-skeleton {
+  grid-area: price;
+  justify-self: end;
+  align-self: end;
+  margin: 0;
+  font-size: var(--hc-text-lg);
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Dots sit in the bottom pad (out of flow) so the one-row bar doesn't grow. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-carousel-frame {
+  gap: 0;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-carousel-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 2px;
+  z-index: 1;
+  gap: 4px;
+  pointer-events: none;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-carousel-dots button {
+  width: var(--ticker-dot);
+  height: var(--ticker-dot);
+  pointer-events: auto;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-carousel-dots button[aria-current='true'] {
+  width: var(--ticker-dot-active);
+}
+
+/* Each coin is one full-width slide. */
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-carousel > .bsv-slide {
+  flex: 0 0 100%;
 }
 
 /* A wallet-to-wallet swap's moves: done, the one it waits on, then what follows. */

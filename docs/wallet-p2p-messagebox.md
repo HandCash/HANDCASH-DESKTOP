@@ -149,7 +149,9 @@ nothing rides the messagebox. Settings shows money (basket `default`), items
 
 ### Phase 5 — Handle trust (BRC-169)
 
-A handle is a convenience name for an identity key (grade C). The wallet trusts the resolver's answer only as far as these checks go:
+A handle is a convenience name for an identity key (grade C) **and**, in HandCash product terms, an **Issuer-Permissioned Token**: supply-1 `iptnft` (BRC-214 / draft BRC-253), issuer = the domain's BRC-169 handle certifier. It is never open BNT (`bntnft`). Resolve and the BRC-52 certificate stay the naming authority (grade C); the on-chain tip (when countersigned mode ships, `bnt-tokens.md` phase 4) is the transferable IPT. Until then Identity shows the certificate under the `iptnft` profile (`handleIpt.ts`) and does not mint a fake tip.
+
+The wallet trusts the resolver's answer only as far as these checks go:
 
 - [x] The resolve answer must echo the requested handle. A `$name@domain` the resolver does not serve is refused, not resolved on the default domain.
 - [x] A saved friend pins the key (`friends.ts`, `HandleKeyChangedError`); a legacy friend whose handle is only its label pins it too. If the handle later resolves to another key, every recipient field (BSV, collectable, token, add friend) refuses as it resolves, and the send refuses again right before signing (`refuseBoundHandleConflict`, local, no resolve). Nothing redirects a pinned handle: a handle friend's key cannot be edited, device sync skips a friend that repoints it, and add friend refuses when the key changed after its preview. Accepting a new key means removing the friend after confirming the change with them another way.

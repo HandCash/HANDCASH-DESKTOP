@@ -5,6 +5,7 @@ import { formatBsvSignificant } from '../wallet/session'
 import { useTickerCoin } from '../features/tickerCoin'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
+import { useCompactShell } from '../wallet/isCompactShell'
 import {
   formatUsd,
   formatUsdFromSats,
@@ -32,6 +33,9 @@ import {
   CoinGlyphIcon,
 } from './icons'
 import { WalletAccountMenu } from './WalletAccountMenu'
+import { FiatCurrencyMenu } from './FiatCurrencyMenu'
+import { useFiatCurrency } from '../hooks/useFiatCurrency'
+import { getFiatOption } from '../wallet/fiatCurrency'
 import {
   claimedHandleForIdentity,
   subscribeClaimedCloudHandle,
@@ -216,6 +220,9 @@ export function Dashboard({
   const [claimedHandle, setClaimedHandle] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
+  const compact = useCompactShell()
+  const fiatCode = useFiatCurrency()
+  const fiatOption = getFiatOption(fiatCode)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -310,7 +317,7 @@ export function Dashboard({
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,
     minPx: 8,
-    watch: `${currency}|${tickerCoin}|${usdLabel}|${focusUsdLabel}|${focus.title}`,
+    watch: `${currency}|${fiatCode}|${tickerCoin}|${usdLabel}|${focusUsdLabel}|${focus.title}`,
   })
 
   useEffect(() => {
@@ -725,17 +732,13 @@ export function Dashboard({
       data-aeon-state="ready"
     >
       <div className="dashboard-main">
-        <div className="panel wallet-hero">
+        <div
+          className="panel wallet-hero"
+          data-aeon-scope="wallet-hero"
+          data-aeon-shell={compact ? 'compact' : 'wide'}
+        >
           <div className="connected-panel-head wallet-hero-head">
-            <div
-              className="wallet-nav-actions-pill wallet-hero-metric"
-              title="Total balance"
-            >
-              <h2 className="wallet-hero-title">Your balance</h2>
-              <span className="wallet-hero-metric-amount">
-                {balancePending ? '—' : usdLabel}
-              </span>
-            </div>
+            <FiatCurrencyMenu amountLabel={usdLabel} pending={balancePending} />
             {(() => {
               const identity = walletIdentityChip(profile, claimedHandle)
               if (!identity) return null
@@ -762,7 +765,11 @@ export function Dashboard({
                   data-aeon-part="balance"
                   data-aeon-state={balancePending ? 'pending' : currency}
                   aria-busy={balancePending || undefined}
-                  title={currency === 'usd' ? 'Show in coins' : 'Show in USD'}
+                  title={
+                    currency === 'usd'
+                      ? 'Show in coins'
+                      : `Show in ${fiatOption.name}`
+                  }
                   disabled={balancePending}
                   onClick={() => {
                     playWalletSound('soft')
@@ -795,7 +802,9 @@ export function Dashboard({
                         )}
                       </span>
                       <span className="sr-only">
-                        {currency === 'usd' ? '. Show in coins' : '. Show in USD'}
+                        {currency === 'usd'
+                          ? '. Show in coins'
+                          : `. Show in ${fiatOption.name}`}
                       </span>
                     </>
                   )}

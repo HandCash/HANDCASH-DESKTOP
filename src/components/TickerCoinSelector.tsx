@@ -15,6 +15,7 @@ import {
 import { TICKER_COINS } from '../wallet/tickerCoin'
 import { useHeldCoins } from '../features/heldCoins'
 import { useShownMarketCoins } from '../features/acceptedCoins'
+import { useFiatCurrency } from '../hooks/useFiatCurrency'
 import { coinUsd } from '../wallet/heldValue'
 import { COIN_INFO, formatCoinShort, type CoinChain } from '../wallet/coins/coinChains'
 import { formatBsvSignificant } from '../wallet/session'
@@ -64,6 +65,7 @@ export function TickerCoinSelector({
 }) {
   const heldCoins = useHeldCoins()
   const coins = useShownMarketCoins()
+  useFiatCurrency()
   const [, priced] = useReducer((n: number) => n + 1, 0)
   useEffect(() => {
     const unsub = subscribeBsvMarket(priced)

@@ -1,11 +1,19 @@
 import { storageRegistry } from '../storage/registry'
 import { type DisplayCurrency } from './displayCurrency'
+import {
+  FIAT_CODES,
+  getFiatCurrency,
+  getFiatOption,
+  type FiatCode,
+} from './fiatCurrency'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import { formatBsvSignificant } from './session'
 
 const CACHE_KEY = storageRegistry.bsvUsd.key
 const CACHE_TTL_MS = 5 * 60_000
 const RATE_BACKOFF_MS = 15 * 60_000
+const VS = FIAT_CODES.join(',')
+
 let rateBackoffUntil = 0
 
 export function noteFxRateLimited(): void {
@@ -17,6 +25,9 @@ export function isFxRateLimited(): boolean {
 }
 
 type RateCache = {
+  /** Fiat units per 1 BSV, keyed by fiat code. `usd` is always present when valid. */
+  perBsv: Partial<Record<FiatCode, number>>
+  /** Legacy mirror of perBsv.usd for older cache readers. */
   usdPerBsv: number
   fetchedAt: number
 }
@@ -24,46 +35,60 @@ type RateCache = {
 let memory: RateCache | null = null
 const listeners = new Set<(rate: number | null) => void>()
 
+function asPositive(n: unknown): number | null {
+  return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null
+}
+
 function readCache(): RateCache | null {
   if (memory && Date.now() - memory.fetchedAt < CACHE_TTL_MS) return memory
   try {
     const raw = localStorage.getItem(CACHE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as RateCache
-    if (
-      typeof parsed.usdPerBsv === 'number' &&
-      parsed.usdPerBsv > 0 &&
-      typeof parsed.fetchedAt === 'number'
-    ) {
-      memory = parsed
-      return parsed
-    }
+    const parsed = JSON.parse(raw) as Partial<RateCache>
+    const usd =
+      asPositive(parsed.usdPerBsv) ??
+      asPositive(parsed.perBsv?.usd)
+    if (!usd || typeof parsed.fetchedAt !== 'number') return null
+    const perBsv: Partial<Record<FiatCode, number>> = { ...(parsed.perBsv ?? {}), usd }
+    memory = { perBsv, usdPerBsv: usd, fetchedAt: parsed.fetchedAt }
+    return memory
   } catch {
-    // ignore
+    return null
   }
-  return null
 }
 
-function writeCache(usdPerBsv: number): void {
-  memory = { usdPerBsv, fetchedAt: Date.now() }
+function writeCache(perBsv: Partial<Record<FiatCode, number>>): void {
+  const usd = asPositive(perBsv.usd)
+  if (!usd) return
+  memory = { perBsv: { ...perBsv, usd }, usdPerBsv: usd, fetchedAt: Date.now() }
   localStorage.setItem(CACHE_KEY, JSON.stringify(memory))
-  for (const cb of listeners) cb(usdPerBsv)
+  for (const cb of listeners) cb(usd)
 }
 
-async function fetchFromCoinGecko(): Promise<number> {
-  const tryDirect = async (): Promise<number> => {
+function parseCoinGeckoRow(row: Record<string, unknown> | undefined): Partial<Record<FiatCode, number>> {
+  const out: Partial<Record<FiatCode, number>> = {}
+  if (!row) return out
+  for (const code of FIAT_CODES) {
+    const n = asPositive(row[code])
+    if (n != null) out[code] = n
+  }
+  return out
+}
+
+async function fetchFromCoinGecko(): Promise<Partial<Record<FiatCode, number>>> {
+  const tryDirect = async (): Promise<Partial<Record<FiatCode, number>>> => {
     const res = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
+      `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=${VS}`,
     )
     if (res.status === 429) {
       noteFxRateLimited()
       throw new Error('coingecko 429')
     }
     if (!res.ok) throw new Error(`coingecko ${res.status}`)
-    const data = (await res.json()) as { 'bitcoin-cash-sv'?: { usd?: number } }
-    const rate = data['bitcoin-cash-sv']?.usd
-    if (typeof rate !== 'number' || !(rate > 0)) throw new Error('bad coingecko rate')
-    return rate
+    const data = (await res.json()) as { 'bitcoin-cash-sv'?: Record<string, unknown> }
+    const perBsv = parseCoinGeckoRow(data['bitcoin-cash-sv'])
+    if (!asPositive(perBsv.usd)) throw new Error('bad coingecko rate')
+    return perBsv
   }
 
   // Dev uses the Vite proxy to BRC-CLOUD; when that route 502s the browser logs
@@ -85,8 +110,12 @@ async function fetchFromCoinGecko(): Promise<number> {
         throw new Error('coingecko 429')
       }
       if (res.ok) {
-        const data = (await res.json()) as { usdPerBsv?: number }
-        if (typeof data.usdPerBsv === 'number' && data.usdPerBsv > 0) return data.usdPerBsv
+        const data = (await res.json()) as {
+          usdPerBsv?: number
+          perBsv?: Partial<Record<FiatCode, number>>
+        }
+        if (data.perBsv && asPositive(data.perBsv.usd)) return data.perBsv
+        if (asPositive(data.usdPerBsv)) return { usd: data.usdPerBsv }
       }
     } catch (err) {
       if (err instanceof Error && err.message === 'coingecko 429') throw err
@@ -100,6 +129,13 @@ async function fetchFromCoinGecko(): Promise<number> {
 /** Cached BSV→USD. Returns null until a successful fetch. */
 export function getCachedUsdPerBsv(): number | null {
   return readCache()?.usdPerBsv ?? null
+}
+
+/** Cached BSV→fiat for a government currency. */
+export function getCachedFiatPerBsv(code: FiatCode = getFiatCurrency()): number | null {
+  const cache = readCache()
+  if (!cache) return null
+  return asPositive(cache.perBsv[code]) ?? (code === 'usd' ? cache.usdPerBsv : null)
 }
 
 export function subscribeUsdRate(cb: (rate: number | null) => void): () => void {
@@ -117,9 +153,9 @@ export async function refreshUsdPerBsv(force = false): Promise<number | null> {
     return cached.usdPerBsv
   }
   try {
-    const rate = await fetchFromCoinGecko()
-    writeCache(rate)
-    return rate
+    const perBsv = await fetchFromCoinGecko()
+    writeCache(perBsv)
+    return asPositive(perBsv.usd) ?? null
   } catch (err) {
     console.warn('[fx] CoinGecko rate failed', err)
   }
@@ -131,7 +167,26 @@ export function satsToUsd(sats: number, usdPerBsv: number | null = getCachedUsdP
   return (Math.max(0, sats) / 1e8) * usdPerBsv
 }
 
-/** Convert a typed display amount (USD or BSV) into satoshis. */
+export function satsToFiat(
+  sats: number,
+  code: FiatCode = getFiatCurrency(),
+  perBsv: number | null = getCachedFiatPerBsv(code),
+): number {
+  if (!perBsv || !Number.isFinite(sats)) return 0
+  return (Math.max(0, sats) / 1e8) * perBsv
+}
+
+/** Convert a USD amount into the preferred fiat using cached cross rates. */
+export function usdToPreferredFiat(usdAmount: number): number {
+  const code = getFiatCurrency()
+  if (code === 'usd') return usdAmount
+  const usd = getCachedFiatPerBsv('usd')
+  const fiat = getCachedFiatPerBsv(code)
+  if (!usd || !fiat) return usdAmount
+  return usdAmount * (fiat / usd)
+}
+
+/** Convert a typed display amount (preferred fiat or BSV) into satoshis. */
 export function amountToSats(
   amount: string | number,
   currency: DisplayCurrency,
@@ -140,36 +195,27 @@ export function amountToSats(
   const n = typeof amount === 'number' ? amount : Number(String(amount).trim())
   if (!Number.isFinite(n) || n <= 0) return 0
   if (currency === 'bsv') return Math.round(n * 1e8)
-  if (usdPerBsv == null || !(usdPerBsv > 0)) return 0
-  return Math.round((n / usdPerBsv) * 1e8)
+  const fiatPerBsv = getCachedFiatPerBsv(getFiatCurrency()) ?? usdPerBsv
+  if (fiatPerBsv == null || !(fiatPerBsv > 0)) return 0
+  return Math.round((n / fiatPerBsv) * 1e8)
 }
 
 /** Format a typed primary amount for confirm/success copy. */
 export function formatTypedAmount(amount: string, currency: DisplayCurrency): string {
   const n = Number(String(amount).trim())
-  if (!Number.isFinite(n) || n < 0) return currency === 'usd' ? '$0' : '0 BSV'
-  if (currency === 'usd') {
-    return n.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 4,
-    })
+  if (!Number.isFinite(n) || n < 0) {
+    return currency === 'usd' ? formatFiat(0) : '0 BSV'
   }
+  if (currency === 'usd') return formatFiat(n, { alreadyPreferred: true })
   return `${n} BSV`
 }
 
-export function formatUsd(
-  amount: number,
-  opts?: { compact?: boolean; signed?: boolean },
-): string {
-  const safe = Number.isFinite(amount) ? amount : 0
-  const abs = Math.abs(safe)
-  // A positive value must never be rendered as "$0.00". Tips routinely carry
-  // one or a few satoshis, so cent precision erases the entire meaning of the
-  // card. Compact affects large numbers only; small values earn enough decimal
-  // places to preserve their first significant digit.
-  const digits =
+function fiatDigits(abs: number, iso: string): { min: number; max: number } {
+  // Yen / won are whole-unit currencies.
+  if (iso === 'JPY' || iso === 'KRW') {
+    return { min: 0, max: abs >= 1 || abs === 0 ? 0 : 2 }
+  }
+  const max =
     abs === 0 || abs >= 0.01
       ? 2
       : abs >= 0.0001
@@ -177,14 +223,39 @@ export function formatUsd(
         : abs >= 0.000001
           ? 6
           : 8
-  const body = abs.toLocaleString('en-US', {
+  return { min: max > 2 ? 2 : max, max }
+}
+
+/**
+ * Format a money amount for the preferred government currency.
+ * By default `amount` is USD (what most call sites already compute); pass
+ * `alreadyPreferred` when the number is already in that fiat.
+ */
+export function formatFiat(
+  amount: number,
+  opts?: { compact?: boolean; signed?: boolean; alreadyPreferred?: boolean },
+): string {
+  const fiat = getFiatOption()
+  const safe = Number.isFinite(amount) ? amount : 0
+  const preferred = opts?.alreadyPreferred ? safe : usdToPreferredFiat(safe)
+  const abs = Math.abs(preferred)
+  const { min, max } = fiatDigits(abs, fiat.iso)
+  const body = abs.toLocaleString(fiat.locale, {
     style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: digits > 2 ? 2 : digits,
-    maximumFractionDigits: digits,
+    currency: fiat.iso,
+    minimumFractionDigits: min,
+    maximumFractionDigits: max,
   })
-  if (!opts?.signed || safe === 0) return body
-  return safe > 0 ? `+${body}` : `-${body.replace('$', '')}`
+  if (!opts?.signed || preferred === 0) return body
+  return preferred > 0 ? `+${body}` : `-${body.replace(/^\D+/, '')}`
+}
+
+/** @deprecated Prefer {@link formatFiat}; kept as the historical name. */
+export function formatUsd(
+  amount: number,
+  opts?: { compact?: boolean; signed?: boolean },
+): string {
+  return formatFiat(amount, opts)
 }
 
 export function formatUsdFromSats(
@@ -192,8 +263,10 @@ export function formatUsdFromSats(
   usdPerBsv: number | null = getCachedUsdPerBsv(),
   opts?: { compact?: boolean; signed?: boolean },
 ): string {
-  if (usdPerBsv == null) return '—'
-  return formatUsd(satsToUsd(sats, usdPerBsv), opts)
+  const code = getFiatCurrency()
+  const perBsv = getCachedFiatPerBsv(code) ?? (code === 'usd' ? usdPerBsv : null)
+  if (perBsv == null) return '—'
+  return formatFiat(satsToFiat(sats, code, perBsv), { ...opts, alreadyPreferred: true })
 }
 
 /** Primary amount according to display-currency preference. */

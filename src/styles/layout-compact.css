@@ -69,6 +69,23 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   min-height: 0;
 }
 
+/* One rail height: wordmark, sync chip, QR/lock share 34px. */
+html:is(.platform-mobile, .layout-compact) .titlebar .brand,
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-wordmark,
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-name {
+  min-height: 34px;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-end {
+  align-items: center;
+  gap: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-action-btn {
+  width: 34px;
+  height: 34px;
+}
+
 /* A narrow Mac window is compact too, and its hiddenInset traffic lights still sit over the bar's top edge. */
 html.platform-darwin:is(.platform-mobile, .layout-compact) .titlebar {
   padding-top: 36px;
@@ -155,6 +172,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions {
   width: 100%;
   max-width: none;
   justify-content: space-between;
+  align-items: stretch;
   flex-wrap: nowrap;
   gap: 10px;
 }
@@ -163,6 +181,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
   flex: 35 1 0;
   min-width: 0;
   overflow: hidden;
+  align-self: stretch;
+  box-sizing: border-box;
   font-size: inherit;
   text-transform: none;
   letter-spacing: inherit;
@@ -178,7 +198,9 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
   padding: 14px 18px;
   overflow: hidden;
   justify-content: center;
+  align-items: center;
   min-height: 56px;
+  height: auto;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon svg {
@@ -205,69 +227,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-action-label {
   color: inherit;
 }
 
-html:is(.platform-mobile, .layout-compact) .what-is-bsv {
-  order: 2;
-  flex: 0 0 auto;
-  min-height: 0 !important;
-  height: auto !important;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  --ticker-pad-x: 16px;
-  padding: 10px var(--ticker-pad-x) 8px;
-  position: relative;
-  overflow: hidden;
-}
-
-/* Compact ticker: coin | sparkline | price, with the range change under the price. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-market-body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(48px, 1fr) auto;
-  grid-template-areas:
-    'asset spark price'
-    'asset spark change';
-  align-items: center;
-  column-gap: 16px;
-  row-gap: 2px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-cover {
-  padding: 10px 14px;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-/* A shown toast replaces the one-row bar in the flow, so a two-line message grows the bar instead of being cut. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv[data-aeon-state^='toast-'] .bsv-carousel-frame {
-  display: none;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv[data-aeon-state^='toast-'] .bsv-toast-cover {
-  position: relative;
-  inset: auto;
-  flex: 1 1 auto;
-  align-self: stretch;
-  min-height: 56px;
-  margin: -10px calc(-1 * var(--ticker-pad-x)) -8px;
-  flex-direction: column;
-  gap: 4px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-title {
-  font-size: var(--hc-text-sm);
-  letter-spacing: 0.05em;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-body {
-  font-size: var(--hc-text-xs);
-  font-weight: 700;
-  line-height: 1.35;
-  text-wrap: balance;
-}
+/* Ticker compact anatomy lives on [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact']
+   in handcash.css — edit there, not under html.platform-mobile. */
 
 /* Identity tab — compact hero + field list (matches Settings / Apps density). */
 html:is(.platform-mobile, .layout-compact) .identity-nav {
@@ -417,7 +378,7 @@ html:is(.platform-mobile, .layout-compact) .panel-label-bar {
 html:is(.platform-mobile, .layout-compact)
   .connected-panel-head
   > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
-  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   box-sizing: border-box;
   min-height: 34px;
@@ -433,6 +394,39 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
   --wallet-nav-select: #fff;
   box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
+}
+
+/* Child path head: reuse titlebar pill tokens so Activity / Send matches desktop. */
+html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head {
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
+  --wallet-nav-unselected: #000;
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  border-bottom: 0;
+  background: transparent;
+  min-height: 0;
+  padding: 0 0 6px;
+  margin-bottom: 8px;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head {
+  --wallet-nav-select: var(--hc-nav-select, #fff);
+  --wallet-nav-unselected: var(--hc-nav-unselected, #fff);
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-path-pill {
+  min-height: 39px;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-back-pill {
+  min-height: 39px;
+  height: 39px;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .nav-breadcrumb-head
+  .nav-breadcrumb-path-pill
+  .nav-breadcrumb-sep--leading {
+  margin-left: 0.55em;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.empty-state) {
@@ -457,143 +451,6 @@ html:is(.platform-mobile, .layout-compact) .empty-state {
   padding: 16px 14px;
 }
 
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-row {
-  grid-area: asset;
-  min-width: 0;
-  max-width: none;
-  gap: 10px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv [data-aeon-part='coin-trigger'] {
-  inset: -4px -4px;
-  z-index: 2;
-  pointer-events: auto;
-}
-
-/* Stage is display:contents here — keep chart chrome from eating the coin hitbox. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
-  position: relative;
-  z-index: 0;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-stack,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-skeleton {
-  width: 32px !important;
-  height: 32px !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-text strong {
-  font-size: var(--hc-text-md);
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv [data-aeon-part='held'] {
-  font-size: var(--hc-text-md);
-  color: color-mix(in srgb, var(--hc-text) 78%, transparent);
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn > svg {
-  width: 32px;
-  height: 32px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-change {
-  font-size: var(--hc-text-2xs);
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* Compact must not force neon — neon fails on the light sheet. */
-html:is(.platform-mobile, .layout-compact):not([data-aeon-mode='light'])
-  .what-is-bsv
-  .bsv-change.is-up {
-  color: #57ff97 !important;
-}
-
-html:is(.platform-mobile, .layout-compact):not([data-aeon-mode='light'])
-  .what-is-bsv
-  .bsv-change.is-down {
-  color: #ff8e8e !important;
-}
-
-html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
-  .what-is-bsv
-  .bsv-change.is-up {
-  color: #0a3d22 !important;
-}
-
-html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
-  .what-is-bsv
-  .bsv-change.is-down {
-  color: #b91c1c !important;
-}
-
-/* The stage has no box here: its sparkline and change button sit in the ticker grid. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart {
-  display: contents !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-about {
-  display: none !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty {
-  grid-area: spark;
-  justify-self: center;
-  width: 100%;
-  max-width: 168px;
-  height: 24px;
-  margin: 0;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart > :first-child {
-  grid-area: change;
-  justify-self: end;
-  align-self: start;
-  margin: 0;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart .bsv-change {
-  pointer-events: auto;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-chart > .skeleton-line {
-  width: 48px !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
-  width: 72px !important;
-  height: 18px !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
-  grid-area: price;
-  justify-self: end;
-  align-self: end;
-  margin: 0;
-  font-size: var(--hc-text-lg);
-  line-height: 1.15;
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-about {
-  display: none !important;
-}
-
 /* Aeon wallet-nav dock — inside the shell panel, not fixed to the viewport.
  * Track = select plate; unselected tabs are gray pills; selected is unpilled. */
 html:is(.platform-mobile, .layout-compact) [data-aeon-scope='wallet-nav'] .wallet-nav-bar,
@@ -607,8 +464,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   flex-shrink: 0;
   width: auto;
   margin: 0 8px 8px;
-  /* Only the selected tab is lit; idle tabs stay black. */
-  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 14%, #000);
+  /* Soft select plate — idle tabs stay black. */
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
   --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px 2px 1px;
@@ -814,10 +671,10 @@ html:is(.platform-mobile, .layout-compact)
   border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
 
-/* Light: white select track; soft unselected pills (not heavy gray). */
+/* Light: gray select rail; white idle plates (--hc-nav-* on html). */
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
-  --wallet-nav-select: #fff;
-  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 5%, #f4f5f4);
+  --wallet-nav-select: var(--hc-nav-select);
+  --wallet-nav-unselected: var(--hc-nav-unselected);
   background: var(--wallet-nav-select);
   border-color: hsl(var(--border));
   box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
@@ -982,9 +839,9 @@ html:is(.platform-mobile, .layout-compact)
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-accept[data-selected]:not(:disabled) {
-  border-color: #0a0a0a;
-  background: #0a0a0a;
-  color: #fff;
+  border-color: var(--hc-cta);
+  background: var(--hc-cta);
+  color: var(--hc-cta-ink);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
@@ -998,8 +855,8 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-accept[data-selected]:not(:disabled):hover {
-  background: #0a0a0a;
-  color: #fff;
+  background: var(--hc-cta);
+  color: var(--hc-cta-ink);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
@@ -1012,14 +869,14 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab[data-selected]:not(:disabled):hover {
-  color: #fff;
+  color: var(--hc-cta-ink);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-deny:not(:disabled):hover {
-  background: #0a0a0a;
-  color: #fff;
+  background: var(--hc-cta);
+  color: var(--hc-cta-ink);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
@@ -1063,8 +920,8 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
-  border-color: #0a0a0a;
-  background: #0a0a0a;
+  border-color: var(--hc-cta);
+  background: var(--hc-cta);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
@@ -1124,8 +981,8 @@ html:is(.platform-mobile, .layout-compact) .identity-card {
 
 html:is(.platform-mobile, .layout-compact) .identity-hero {
   gap: var(--hc-space-3);
-  flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-qr-frame {
@@ -1139,13 +996,13 @@ html:is(.platform-mobile, .layout-compact) .identity-qr-frame .skeleton-qr {
   height: 112px !important;
 }
 
-html:is(.platform-mobile, .layout-compact) .identity-handle {
+html:is(.platform-mobile, .layout-compact) .identity-qr-handle {
   font-size: var(--hc-text-lg);
-  text-align: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-handle-empty {
   justify-items: center;
+  text-align: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-key {
@@ -1156,13 +1013,6 @@ html:is(.platform-mobile, .layout-compact) .identity-key {
 html:is(.platform-mobile, .layout-compact) .identity-compose {
   gap: 6px;
   margin-top: 2px;
-}
-
-html:is(.platform-mobile, .layout-compact) .identity-hero-meta {
-  flex: 0 0 auto;
-  max-width: none;
-  width: 100%;
-  align-items: center;
 }
 
 html:is(.platform-mobile, .layout-compact) .identity-card.identity-compose {
@@ -1194,29 +1044,6 @@ html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .col
 
 html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions .collectable-send-btn {
   display: none;
-}
-
-/* The coin dots get their own line under the row, so they never touch the sparkline. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-frame {
-  gap: 6px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots {
-  gap: 4px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots button {
-  width: 4px;
-  height: 4px;
-}
-
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel-dots button[aria-current='true'] {
-  width: 10px;
-}
-
-/* Each coin is one full-width slide; the compact market body rule above would otherwise share the bar between them. */
-html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-carousel > .bsv-slide {
-  flex: 0 0 100%;
 }
 
 /* Under 16px, iOS zooms the page when the field takes focus. */

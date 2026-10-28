@@ -9,6 +9,7 @@ import {
   type ClaimedHandleState,
 } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
+import { handleIptFromClaim } from '../wallet/handleIpt'
 import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
 import { identityProfilesGeneration, subscribeIdentityProfiles } from '../wallet/identityProfiles'
@@ -93,6 +94,10 @@ export function IdentityPanel({ profile }: Props) {
   const handleLabel = claimed
     ? formatHandCashHandle(claimed.handle, null)
     : null
+  const handleIpt = useMemo(
+    () => handleIptFromClaim(claimed, handleLabel),
+    [claimed, handleLabel],
+  )
 
   const copyIdentity = async () => {
     await copyText(profile.identityKey, { label: 'wallet key' })
@@ -136,35 +141,55 @@ export function IdentityPanel({ profile }: Props) {
                 )}
               </div>
             </div>
-            <div className="identity-hero-meta">
-              <div className="identity-field">
-                <span className="identity-field-label">Handle</span>
-                {handleLabel ? (
-                  <button
-                    type="button"
-                    className="identity-handle"
-                    title={`Click to copy ${handleLabel}`}
-                    onClick={() => void copyHandle()}
-                  >
-                    {handleLabel}
-                  </button>
-                ) : (
-                  <div className="identity-handle-empty">
-                    <p className="identity-handle-missing">
-                      No handle claimed yet
-                    </p>
-                    <Button.Root
-                      variant="ghost"
-                      className="btn btn-ghost identity-claim-btn"
-                      onClick={openClaim}
-                    >
-                      <Button.Label>Claim handle</Button.Label>
-                    </Button.Root>
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
+
+          {/*
+           * Handle = issuer-permissioned token (iptnft). Certificate binds the
+           * name today; on-chain tip waits on countersigned mode.
+           */}
+          <section
+            className="handle-ipt"
+            data-aeon-scope="handle-ipt"
+            data-aeon-state={handleIpt.state}
+            aria-label="Handle"
+          >
+            <header data-aeon-part="head">
+              <h3 data-aeon-part="title">Handle</h3>
+              <span data-aeon-part="profile">{handleIpt.profile}</span>
+            </header>
+            {handleIpt.state === 'empty' ? (
+              <div data-aeon-part="empty">
+                <p className="identity-handle-missing">
+                  No handle claimed yet. A handle is an issuer-permissioned
+                  item — the certifier must countersign every transfer.
+                </p>
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost identity-claim-btn"
+                  onClick={openClaim}
+                >
+                  <Button.Label>Claim handle</Button.Label>
+                </Button.Root>
+              </div>
+            ) : (
+              <div data-aeon-part="held">
+                <button
+                  type="button"
+                  className="identity-qr-handle"
+                  data-aeon-part="label"
+                  title={`Click to copy ${handleIpt.label}`}
+                  onClick={() => void copyHandle()}
+                >
+                  {handleIpt.label}
+                </button>
+                <p data-aeon-part="lede">
+                  Issuer-permissioned token ({handleIpt.profile}). Bound by
+                  your BRC-169 certificate; the on-chain tip ships with
+                  countersigned IPT.
+                </p>
+              </div>
+            )}
+          </section>
 
           <ul className="identity-list">
             <li className="identity-field identity-key-row">

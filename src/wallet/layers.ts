@@ -158,6 +158,10 @@ import { getActiveWallet } from './session'
  *     storage. GorillaPool `/content/` is the last resort for an origin whose
  *     bytes never reached us (a legacy-address sweep), never how a fresh mint
  *     first paints — a just-signed transaction is in no indexer yet.
+ *   - **Handle as IPT** (`handleIpt.ts`) — a claimed `$handle` is product-wise
+ *     a supply-1 `iptnft` (issuer-permissioned, never open BNT). Today the
+ *     binding is the BRC-169 certificate; the on-chain tip waits on
+ *     countersigned mode (`bnt-tokens.md` phase 4).
  *   - **Issuer identity** (BRC-247 stamp, draft BRC-248 package) — the issuer
  *     is the BRC-100 identity key: every new item and token carries
  *     `MAP SET issuer <identityKey>` and a Sigma BRC-77 signature by that key

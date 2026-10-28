@@ -5,10 +5,12 @@ import { stateToAttr } from '@aeon-ui/core'
 import { tickerMachine } from '../machines/tickerMachine'
 import { useTickerCoin } from '../features/tickerCoin'
 import { useHeldCoins } from '../features/heldCoins'
+import { useCompactShell } from '../wallet/isCompactShell'
 import type { CoinChain } from '../wallet/coins/coinChains'
 import { setTickerCoin, TICKER_COINS } from '../wallet/tickerCoin'
 import { useShownMarketCoins } from '../features/acceptedCoins'
-import { stepOnWheel } from './carouselWheel'
+import { useFiatCurrency } from '../hooks/useFiatCurrency'
+import { stepOnPointer, stepOnWheel } from './carouselWheel'
 import { playWalletSound } from '../wallet/soundService'
 import { heldIn, TickerCoinMark, TickerCoinSelector } from './TickerCoinSelector'
 import { bsvLogoClassic, bsvLogoDefault } from '../assets/brand/bsvLogos'
@@ -108,9 +110,12 @@ function MarketSlide({
   classicLogo,
   logosReady,
   onChoose,
-}: SlideShared & { coin: MarketCoin; active: boolean }) {
+  compact,
+}: SlideShared & { coin: MarketCoin; active: boolean; compact: boolean }) {
   const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket(coin))
   const [openSections, setOpenSections] = useState<string[]>([])
+  // Re-render when preferred fiat changes so formatPriceUsd / held labels switch marks.
+  useFiatCurrency()
 
   useEffect(() => {
     setStats(getCachedBsvMarket(coin))
@@ -133,12 +138,29 @@ function MarketSlide({
       aria-roledescription="slide"
       aria-label={shown.name}
       inert={!active}
+      /* Compact: the whole bar opens the coin list. Tap (not swipe) bubbles here;
+         the range chip and coin-trigger stopPropagation so they keep their jobs. */
+      onClick={
+        compact
+          ? (e) => {
+              if ((e.target as Element).closest('.bsv-change, a')) return
+              onChoose()
+            }
+          : undefined
+      }
     >
       <div className="bsv-asset-row">
         <button
           type="button"
           data-aeon-part="coin-trigger"
-          onClick={onChoose}
+          onPointerDown={(e) => {
+            // Keep the carousel flick tracker off this hitbox so CHOOSE always fires.
+            e.stopPropagation()
+          }}
+          onClick={(e) => {
+            e.stopPropagation()
+            onChoose()
+          }}
           aria-haspopup="listbox"
           aria-label={`${shown.name}. Choose the coin shown here`}
           title="Choose the coin shown here"
@@ -184,7 +206,10 @@ function MarketSlide({
       </div>
 
       {marketReady ? (
-        <strong className="bsv-price" onClick={coin === 'bsv' ? registerBsvLogoTap : undefined}>
+        <strong
+          className="bsv-price"
+          onClick={!compact && coin === 'bsv' ? registerBsvLogoTap : undefined}
+        >
           {formatPriceUsd(stats?.priceUsd ?? null)}
         </strong>
       ) : (
@@ -198,7 +223,10 @@ function MarketSlide({
               <button
                 type="button"
                 className={`bsv-change ${up ? 'is-up' : 'is-down'}`}
-                onClick={onCycleRange}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onCycleRange()
+                }}
                 aria-label={`Price change ${rangeLabel}. Click to cycle 24h, 7D, 1M`}
                 title="Click to cycle 24h → 7D → 1M"
                 tabIndex={aboutOpen ? -1 : undefined}
@@ -240,6 +268,7 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   const coin = useTickerCoin()
   const heldCoins = useHeldCoins()
   const order = useShownMarketCoins()
+  const compact = useCompactShell()
   const [ticker, sendTicker] = useMachine(tickerMachine)
   const [chartRange, setChartRange] = useState<BsvChartRange>('24h')
   const [classicLogo, setClassicLogo] = useState(() => getBsvLogoClassic())
@@ -248,6 +277,8 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   const trackRef = useRef<HTMLDivElement | null>(null)
   const settleTimer = useRef<number | null>(null)
   const swipedTo = useRef<MarketCoin | null>(null)
+  /** Set when a pointer flick moved a slide — the synthetic click must not open the coin list. */
+  const flickedRef = useRef(false)
 
   useEffect(() => {
     void refreshBsvMarket(true, coin)
@@ -299,7 +330,14 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
   useEffect(() => {
     const track = trackRef.current
     if (!track || choosing) return
-    return stepOnWheel(track, order.length)
+    const stopWheel = stepOnWheel(track, order.length)
+    const stopPointer = stepOnPointer(track, order.length, () => {
+      flickedRef.current = true
+    })
+    return () => {
+      stopWheel()
+      stopPointer()
+    }
   }, [choosing, order.length])
 
   const settle = () => {
@@ -341,13 +379,20 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
     onCycleRange: () => setChartRange((r) => nextBsvChartRange(r)),
     classicLogo,
     logosReady,
-    onChoose: () => sendTicker({ type: 'CHOOSE' }),
+    onChoose: () => {
+      if (flickedRef.current) {
+        flickedRef.current = false
+        return
+      }
+      sendTicker({ type: 'CHOOSE' })
+    },
   }
 
   return (
     <aside
       className="panel what-is-bsv"
       data-aeon-scope="what-is-bsv"
+      data-aeon-shell={compact ? 'compact' : 'wide'}
       data-aeon-state={showingToast && tone ? `toast-${tone}` : stateToAttr(ticker.value)}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && choosing) sendTicker({ type: 'CLOSE' })
@@ -382,7 +427,7 @@ export function WhatIsBsvPanel({ heldBsvSats }: { heldBsvSats: number | null }) 
             }}
           >
             {order.map((c) => (
-              <MarketSlide key={c} coin={c} active={c === coin} {...shared} />
+              <MarketSlide key={c} coin={c} active={c === coin} compact={compact} {...shared} />
             ))}
           </div>
           {order.length > 1 ? (
