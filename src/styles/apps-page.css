@@ -1,0 +1,236 @@
+/*
+ * Connected Apps page — permission facepile + dense cards.
+ * Kept out of handcash.css while other chats hold that file.
+ * All layout overrides are scoped to connected-apps so collectables stay alone.
+ */
+
+.permission-facepile {
+  --facepile-bg: var(--hc-surface, hsl(var(--card)));
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-inline: 1px;
+}
+
+.permission-facepile-face {
+  display: inline-grid;
+  place-items: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0;
+  margin-inline-start: -0.3rem;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--facepile-bg), var(--hc-text) 8%);
+  box-shadow: 0 0 0 1.5px var(--facepile-bg);
+  color: var(--hc-muted);
+  cursor: default;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  transition: color 140ms ease, background 140ms ease, z-index 0s;
+}
+
+button.permission-facepile-face {
+  cursor: pointer;
+  font: inherit;
+}
+
+.permission-facepile-face:first-child {
+  margin-inline-start: 0;
+}
+
+.permission-facepile-face:nth-child(1) { z-index: 5; }
+.permission-facepile-face:nth-child(2) { z-index: 4; }
+.permission-facepile-face:nth-child(3) { z-index: 3; }
+.permission-facepile-face:nth-child(4) { z-index: 2; }
+.permission-facepile-face:nth-child(5) { z-index: 1; }
+
+button.permission-facepile-face:hover,
+button.permission-facepile-face:focus-visible {
+  z-index: 6;
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 14%, var(--facepile-bg));
+}
+
+button.permission-facepile-face:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.permission-facepile-face--accent {
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 16%, var(--facepile-bg));
+}
+
+.permission-facepile--md .permission-facepile-face {
+  width: 1.4rem;
+  height: 1.4rem;
+  margin-inline-start: -0.35rem;
+}
+
+.permission-facepile--md .permission-facepile-face:first-child {
+  margin-inline-start: 0;
+}
+
+/* ——— Dense Connected Apps cards ——— */
+
+[data-aeon-scope='connected-apps'] .apps-search {
+  gap: 2px;
+  margin: 0 0 8px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-list {
+  gap: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-row {
+  padding: 2px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-card-top {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-card-top > .connected-app-permissions {
+  /* Align under name: avatar-sm 36px + main gap 8px */
+  margin-inline-start: calc(36px + 8px);
+  --facepile-bg: var(--hc-surface, hsl(var(--card)));
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-row:hover .connected-app-permissions,
+[data-aeon-scope='connected-apps'] .collection-grid-card:hover .connected-app-permissions {
+  --facepile-bg: color-mix(in srgb, var(--hc-surface) 92%, var(--hc-accent));
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-main {
+  padding: 4px;
+  gap: 8px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-body {
+  gap: 1px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-name {
+  font-size: var(--hc-text-md);
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-host,
+[data-aeon-scope='connected-apps'] .collection-grid-host {
+  font-size: var(--hc-text-2xs);
+  line-height: 1.25;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-seen {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--hc-text-2xs);
+  line-height: 1.25;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-stats {
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-stats .connected-app-usd-primary {
+  font-size: var(--hc-text-sm, var(--hc-text-md));
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-usd-label {
+  font-size: var(--hc-text-2xs);
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-card-actions {
+  gap: 4px;
+  padding: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-row .connected-app-card-actions {
+  padding: 4px;
+  gap: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .connected-app-manage {
+  height: 32px;
+  padding: 0 8px;
+  gap: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid {
+  gap: 6px;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-main {
+  gap: 0;
+  padding: 0;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-card-top {
+  justify-items: center;
+  width: 100%;
+  padding: 4px 4px 2px;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-card-top > .connected-app-permissions {
+  margin-inline-start: 0;
+  justify-self: center;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-main {
+  justify-items: center;
+  text-align: center;
+  padding: 4px;
+  gap: 6px;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-body {
+  align-items: center;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-name {
+  font-size: var(--hc-text-md);
+  line-height: 1.2;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-card-actions {
+  padding: 4px;
+  gap: 4px;
+}
+
+[data-aeon-scope='connected-apps'] .collection-grid-card .connected-app-stats {
+  padding: 4px 8px;
+}
+
+.app-details-permissions {
+  margin-bottom: 10px;
+  padding: 2px 0;
+}
+
+.app-details-section.app-details-permissions .permission-facepile {
+  --facepile-bg: var(--hc-surface-2, var(--hc-surface));
+}
+
+.app-details-overview-head {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.app-details-overview-head .app-activity-stats {
+  padding: 8px 10px;
+}
+
+.permission-details-lede {
+  margin: 0 0 4px;
+  max-width: 28rem;
+}
