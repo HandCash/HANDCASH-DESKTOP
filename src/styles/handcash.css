@@ -4662,14 +4662,27 @@ html[data-aeon-mode='light'] .wallet-hero-head {
 .wallet-nav-titlebar {
   /* Pill pad (2px) + section label pad — breadcrumb `/` lines up under Collect. */
   --wallet-nav-label-inset: calc(2px + 12px);
+  /* Match .wallet-hero horizontal inset so the hairline shares that length. */
+  --wallet-nav-hairline-inset: 14px;
+  position: relative;
   display: flex;
   align-items: center;
   flex-shrink: 0;
   gap: 10px;
-  padding: 8px var(--hc-pad-panel);
+  padding: 8px var(--wallet-nav-hairline-inset);
   background: hsl(var(--card));
-  /* Same hairline as Your balance — separates chrome from the section stage. */
+  border-bottom: 0;
+}
+
+/* Same profile as Your balance: line spans the padded content, not the shell. */
+.wallet-nav-titlebar::after {
+  content: '';
+  position: absolute;
+  left: var(--wallet-nav-hairline-inset);
+  right: var(--wallet-nav-hairline-inset);
+  bottom: 0;
   border-bottom: 1px solid hsl(var(--border));
+  pointer-events: none;
 }
 
 /*
@@ -5092,12 +5105,8 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
 }
 
 /* Desktop: section name + actions live in the titlebar — drop redundant heads
-   (Collect/Friends search+view already portaled; never show a second filter row). */
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-stage {
-  padding-top: 0;
-}
-
+   (Collect/Friends search+view already portaled; never show a second filter row).
+   Stage keeps its normal top pad (8px) so Identity / Settings aren’t flush. */
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-stage
   .connected-panel-head:not(.nav-breadcrumb-head) {
