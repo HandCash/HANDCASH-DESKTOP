@@ -14,7 +14,7 @@ import {
 } from './walletRuntime'
 import type { WalletInterface } from '@bsv/sdk'
 import { brc100HandlerOwner } from '../contracts/brc100Handlers'
-import { bumpBalanceAfterHeal, fetchFastBalanceSats } from './session'
+import { bumpBalanceAfterHeal, fetchFastBalanceSats, getActiveWallet } from './session'
 import {
   connectedAppChannel,
   filterItemOutputsForOrigin,
@@ -87,6 +87,11 @@ import {
   isHandleClaimOrigin,
   isHandleClaimWriteMethod,
 } from './handleClaim'
+import {
+  HandleIssueError,
+  issueHandleCertificate,
+  walletHandleIssueDeps,
+} from './handleIssuance'
 import {
   getLegacyAddressPayload,
   isMigrationMethod,
@@ -1201,6 +1206,28 @@ async function handleBrc100RequestInner(
         code: 'MIGRATION_ORIGIN_DENIED',
         description: 'Handle claim is only available to HandCash web hosts.',
       }),
+    }
+  }
+
+  if (method === 'issueHandle') {
+    try {
+      const issued = await issueHandleCertificate(
+        originator ?? '',
+        args,
+        walletHandleIssueDeps(() => getActiveWallet()?.identityKey ?? null, event.request_id),
+      )
+      return { status: 200, body: JSON.stringify(issued) }
+    } catch (err) {
+      if (!(err instanceof HandleIssueError)) throw err
+      return {
+        status: err.status,
+        body: JSON.stringify({
+          status: 'error',
+          code: err.code,
+          description: err.message,
+          ...(err.reason ? { reason: err.reason } : {}),
+        }),
+      }
     }
   }
 

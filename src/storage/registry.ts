@@ -781,6 +781,12 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  arcUsdMarket: defineStorage({
+    key: 'handcash.brc100.arcUsdMarket',
+    owner: 'market-data',
+    scope: 'device',
+    version: 1,
+  }),
   ltcMarket: defineStorage({
     key: 'handcash.brc100.ltcMarket',
     owner: 'market-data',
@@ -951,6 +957,12 @@ export const storageRegistry = Object.freeze({
   }),
   displayCurrency: defineStorage({
     key: 'handcash.brc100.displayCurrency',
+    owner: 'shell',
+    scope: 'device',
+    version: 1,
+  }),
+  fiatCurrency: defineStorage({
+    key: 'handcash.brc100.fiatCurrency',
     owner: 'shell',
     scope: 'device',
     version: 1,

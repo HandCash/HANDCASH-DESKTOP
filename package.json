@@ -156,6 +156,12 @@
       "artifactName": "${productName}-${version}-${arch}-mac.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "HandCash uses the camera to scan payment and sign-in QR codes, and for video calls with your friends.",
+        "NSMicrophoneUsageDescription": "HandCash uses the microphone for calls with your friends."
+      },
       "notarize": true
     },
     "dmg": {

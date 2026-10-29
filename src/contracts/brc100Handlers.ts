@@ -41,6 +41,7 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   getArcUsdcWrapSpendable: 'wallet',
   listAssetProfiles: 'wallet',
   claimCloudHandle: 'identity',
+  issueHandle: 'identity',
   getClaimedCloudHandle: 'identity',
   clearClaimedCloudHandle: 'identity',
   getVersion: 'wallet',
