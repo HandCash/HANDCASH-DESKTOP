@@ -1,3 +1,5 @@
+import { authorizeDeclaredFeature, authorizeActionLabels } from './featurePermissions'
+import { dispatchEcpm, isEcpmRequest } from './ecpm'
 import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
@@ -477,7 +479,11 @@ export async function dispatchWalletMethod(
   args: unknown,
   originator?: string,
 ): Promise<unknown> {
+  const runtime = getWalletRuntime()
+  if (originator && runtime?.instance.wallet === wallet) await authorizeActionLabels(runtime, method, args, normalizeOrigin(originator))
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
+
+  if (isEcpmRequest(method, args)) return dispatchEcpm(wallet, args, normalizeOrigin(originator))
 
   const refusal = reservedKeyRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
   if (refusal) {
@@ -1111,7 +1117,7 @@ async function handleBrc100RequestInner(
 
   // Discovery / silent auth / connect prompt: skip basket rewrite. Do not
   // queue getVersion or isAuthenticated behind runExclusiveSpend.
-  if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication') {
+  if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication' && !isEcpmRequest(method, args)) {
     const prepared = prepareItemBasketArgs(args)
     if (prepared.error) {
       return {
@@ -1250,7 +1256,7 @@ async function handleBrc100RequestInner(
   }
 
   // A request the wallet will refuse is refused before it asks the user anything.
-  const reserved = reservedKeyRefusal(method, args, active.identityKey)
+  const reserved = isEcpmRequest(method, args) ? null : reservedKeyRefusal(method, args, active.identityKey)
   if (reserved) {
     appendAppLog('warn', `[brc100] refused ${method} from ${originator || 'unknown origin'}: ${reserved}`)
     return {
@@ -1259,8 +1265,11 @@ async function handleBrc100RequestInner(
     }
   }
 
+  let featureAuthorized = false
+  try { featureAuthorized = runtime && originator ? await authorizeDeclaredFeature(runtime, method, args, originator) : false }
+  catch { return { status: 403, body: JSON.stringify({ status: 'error', code: 'FEATURE_PERMISSION_DENIED', description: 'The wallet feature was not authorized.' }) } }
   let attestation: IssuanceAttestation | undefined
-  if (isActionMethod(method)) {
+  if (isActionMethod(method) && !featureAuthorized) {
     startActionPhases(event.request_id, originator, method, args)
     if (method === 'createAction') {
       const bntInput = await bntInputOf(active.wallet, args)

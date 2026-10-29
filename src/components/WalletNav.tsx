@@ -1,3 +1,4 @@
+import type { PermissionLifetime } from '../wallet/permissions'
 import {
   memo,
   startTransition,
@@ -336,9 +337,9 @@ export const WalletNav = memo(function WalletNav({
   }, [mobileInlinePermission, pendingPrompt?.id])
 
   const onPermissionAllow = useCallback(
-    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
+    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }, lifetime?: PermissionLifetime) => {
       if (!pendingPrompt) return false
-      if (!resolvePermission(pendingPrompt.id, 'allow')) return false
+      if (!resolvePermission(pendingPrompt.id, 'allow', lifetime)) return false
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
       if (pendingPrompt.kind === 'connect') {

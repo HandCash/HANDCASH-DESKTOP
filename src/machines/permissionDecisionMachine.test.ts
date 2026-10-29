@@ -16,4 +16,16 @@ describe('permissionDecisionMachine', () => {
     actor.send({ type: 'RESET' })
     expect(actor.getSnapshot().matches('pending')).toBe(true)
   })
+  it('owns lifetime selection, resets between requests and ignores changes after commitment', () => {
+    const actor = createActor(permissionDecisionMachine).start()
+    expect(actor.getSnapshot().context.lifetime).toBe('session')
+    actor.send({ type: 'CHOOSE_LIFETIME', value: 'remember' })
+    expect(actor.getSnapshot().context.lifetime).toBe('remember')
+    actor.send({ type: 'APPROVE' })
+    actor.send({ type: 'CHOOSE_LIFETIME', value: 'once' })
+    expect(actor.getSnapshot().context.lifetime).toBe('remember')
+    actor.send({ type: 'RESET' })
+    expect(actor.getSnapshot().context.lifetime).toBe('session')
+  })
+
 })

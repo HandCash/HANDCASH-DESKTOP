@@ -65,8 +65,9 @@ export const brc100Contract = Object.freeze({
   isPublicMethod: (method: string): boolean => publicMethods.has(method),
   isSilentAuthMethod: (method: string): boolean => silentAuthMethods.has(method),
   isConnectMethod: (method: string): boolean => connectMethods.has(method),
-  // No action shares consent with another: each authorizes one payload and
-  // one execution, so even byte-identical payments get their own prompt.
+  // Payments and legacy action approval authorize one payload and execution.
+  // Explicitly declared, non-financial protocol features may instead use a
+  // separately approved, scoped permission session; payment methods never do.
   isActionMethod: (method: string): boolean => actionMethods.has(method),
   isMigrationMethod: (method: string): boolean => migrationMethods.has(method),
 })

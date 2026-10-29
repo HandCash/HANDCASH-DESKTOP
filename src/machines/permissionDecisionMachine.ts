@@ -1,4 +1,4 @@
-import { setup } from 'xstate'
+import { assign, setup } from 'xstate'
 
 /**
  * One permission prompt accepts exactly one decision.
@@ -13,14 +13,18 @@ export const permissionDecisionMachine = setup({
     events: {} as
       | { type: 'RESET' }
       | { type: 'APPROVE' }
-      | { type: 'CANCEL' },
+      | { type: 'CANCEL' }
+      | { type: 'CHOOSE_LIFETIME'; value: 'once' | 'session' | 'remember' },
   },
 }).createMachine({
   id: 'permissionDecision',
+  context: { lifetime: 'session' as 'once' | 'session' | 'remember' },
   initial: 'pending',
   states: {
     pending: {
       on: {
+        RESET: { actions: assign({ lifetime: () => 'session' as const }) },
+        CHOOSE_LIFETIME: { actions: assign({ lifetime: ({ event }) => event.value }) },
         APPROVE: 'committing',
         CANCEL: 'committing',
       },
@@ -28,7 +32,7 @@ export const permissionDecisionMachine = setup({
     /** The decision was handed to the wallet; further taps are ignored. */
     committing: {
       on: {
-        RESET: 'pending',
+        RESET: { target: 'pending', actions: assign({ lifetime: () => 'session' as const }) },
       },
     },
   },

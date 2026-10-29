@@ -1,3 +1,4 @@
+import { FeatureAccessPanel } from './FeatureAccessPanel'
 import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AppAvatar } from './AppAvatar'
@@ -232,6 +233,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       data-aeon-scope="connected-apps"
       data-aeon-state={view}
     >
+      <FeatureAccessPanel />
       <div className="connected-panel-head">
         <h2>Connected apps</h2>
         <TitlebarActions section="apps" className="connected-panel-head-actions">

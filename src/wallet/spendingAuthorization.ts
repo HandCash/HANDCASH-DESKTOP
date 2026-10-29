@@ -1,3 +1,4 @@
+import { rememberFeatureManifest } from './featureManifest'
 import { storageRegistry } from '../storage/registry'
 /**
  * BRC-73 / BRC-116 spendingAuthorization — monthly satoshis grant per origin.
@@ -114,6 +115,7 @@ export async function fetchAppSpendingAuthorization(
     })
     if (!res.ok) return null
     const body = (await res.json()) as unknown
+    rememberFeatureManifest(key, body)
     return parseSpendingAuthorizationFromManifest(body)
   } catch {
     return null

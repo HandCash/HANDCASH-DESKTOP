@@ -1,3 +1,4 @@
+import type { PermissionLifetime } from '../wallet/permissions'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { useCompactShell } from '../wallet/isCompactShell'
@@ -86,9 +87,9 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile, 
   }, [compact])
 
   const onPermissionAllow = useCallback(
-    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
+    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }, lifetime?: PermissionLifetime) => {
       if (!pendingPrompt) return false
-      if (!resolvePermission(pendingPrompt.id, 'allow')) return false
+      if (!resolvePermission(pendingPrompt.id, 'allow', lifetime)) return false
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
       if (

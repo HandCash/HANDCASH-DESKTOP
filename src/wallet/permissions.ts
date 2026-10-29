@@ -1,3 +1,5 @@
+import type { EcpmAuthorizationRequest } from '@bsv/ecpm-permission-module'
+import { clearEcpmPermissions } from './ecpm'
 import {
   appDisplayName,
   normalizeAppHost,
@@ -58,6 +60,7 @@ function connectedAppsStorageKey(): string {
 }
 
 export type PermissionDecision = 'allow' | 'deny'
+export type PermissionLifetime = 'once' | 'session' | 'remember'
 
 export type ConnectedApp = {
   origin: string
@@ -89,6 +92,8 @@ export type PendingPermission = {
 }
 
 export type PendingAction = {
+  permissionLifetime?: PermissionLifetime
+  featureAccess?: { capabilities: string[]; grouped?: boolean; singleRequest?: boolean }
   id: number
   kind: 'action'
   bridgeRequestId?: number
@@ -365,6 +370,7 @@ function markRecentlyConnected(origin: string): void {
 }
 
 export function clearPermissionSession(origin?: string): void {
+  clearEcpmPermissions()
   if (!origin) {
     recentlyConnectedAt.clear()
     sessionApprovedProofs.clear()
@@ -609,13 +615,14 @@ export function subscribeAllowedOrigins(cb: (origins: string[]) => void): () => 
   return subscribeConnectedApps((apps) => cb(apps.map((a) => a.origin)))
 }
 
-export function resolvePermission(id: number, decision: PermissionDecision): boolean {
+export function resolvePermission(id: number, decision: PermissionDecision, lifetime?: PermissionLifetime): boolean {
   // Atomic decision edge. UI removal happens on React's next render, so a
   // second tap can still call here with the stale prompt. Returning false lets
   // every surface suppress duplicate sounds/toasts and, most importantly,
   // prevents callers from presenting a second approval as successful.
   if (!current || current.request.id !== id) return false
   const prompt = current.request
+  if (prompt.kind === 'action' && prompt.featureAccess && lifetime) prompt.permissionLifetime = lifetime
   const { resolve } = current
   current = null
   syncPermissionSpendPriority()
@@ -1358,6 +1365,62 @@ function rememberItemActionGrant(
 ): void {
   if (isItemReceiveArgs(method, args) || isTokenReceiveArgs(method, args)) {
     patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
+  }
+}
+
+/** Trusted feature consent reuses the same Aeon decision queue on both shells. */
+export async function requestFeatureApproval(feature: { origin: string; capabilities: string[]; details: string[]; grouped: boolean }, signal: AbortSignal): Promise<PermissionLifetime | null> {
+  if (signal.aborted || promptListeners.size === 0 || queue.length + (current ? 1 : 0) >= 64) return null
+  const prompt: PendingAction = { id: idCounter++, kind: 'action', origin: normalizeOrigin(feature.origin), method: 'getPublicKey',
+    title: feature.grouped ? 'App feature access' : 'Wallet feature access',
+    summary: 'Allow the displayed app capabilities. Session access lasts up to 30 minutes and ends on lock, account change or revocation. Remembered grants create on-chain tokens and transaction/service fees may apply.',
+    details: feature.details, featureAccess: { capabilities: feature.capabilities, grouped: feature.grouped }, createdAt: Date.now() }
+  const cancel = () => {
+    if (current?.request.id === prompt.id) { const item = current; current = null; item.resolve('deny') }
+    else { const index = queue.findIndex(item => item.request.id === prompt.id); if (index !== -1) queue.splice(index, 1)[0]!.resolve('deny') }
+    pumpQueue(); dispatchWalletUiEvent('handcash:permission-dismissed', {})
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  const timer = setTimeout(cancel, 120_000)
+  try { return await enqueuePrompt(prompt) === 'allow' && !signal.aborted ? prompt.permissionLifetime ?? 'session' : null }
+  finally { clearTimeout(timer); signal.removeEventListener('abort', cancel) }
+}
+
+/** ECPM never inherits Connect, identity-proof, Pay or Auto-pay approval. */
+export async function requestEcpmApproval(request: EcpmAuthorizationRequest, signal: AbortSignal): Promise<boolean> {
+  if (request.seekPermission === false || signal.aborted || promptListeners.size === 0 || queue.length + (current ? 1 : 0) >= 64) return false
+  const id = idCounter++
+  const cancel = () => {
+    if (current?.request.id === id) {
+      const item = current
+      current = null
+      item.resolve('deny')
+    } else {
+      const index = queue.findIndex(item => item.request.id === id)
+      if (index !== -1) queue.splice(index, 1)[0]!.resolve('deny')
+    }
+    pumpQueue()
+    dispatchWalletUiEvent('handcash:permission-dismissed', {})
+  }
+  signal.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(cancel, 120_000)
+  try {
+    return await enqueuePrompt({
+      id, kind: 'action', origin: normalizeOrigin(request.originator), method: 'getPublicKey',
+      title: 'Point masking',
+      featureAccess: { capabilities: ['Use a protected wallet key for the displayed ECPM operation.'], singleRequest: true },
+      summary: 'Apply or remove a mask for this operation only. Your private key stays in the wallet. Protected-key unlock policy still applies.',
+      // Both existing Aeon surfaces show two detail rows. Include the complete
+      // consent scope in those rows instead of truncating security information.
+      details: [
+        `Protocol: ${request.logicalProtocolID}; security level: ${request.securityLevel}; counterparty scope: ${request.securityLevel === 1 ? 'all counterparties' : request.counterparty}`,
+        `First key ID: ${request.keyID}; operation: ${request.operation}; point: ${request.point}; privileged: ${request.privileged ? 'yes' : 'no'}${request.privileged ? `; reason: ${request.privilegedReason}` : ''}`
+      ],
+      createdAt: Date.now()
+    }) === 'allow' && !signal.aborted
+  } finally {
+    clearTimeout(timeout)
+    signal.removeEventListener('abort', cancel)
   }
 }
 

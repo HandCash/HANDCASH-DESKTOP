@@ -315,6 +315,9 @@ export interface PermissionRequest {
   reason?: string // Human-readable explanation for requesting permission
   renewal?: boolean // Whether this request is for renewing an expired token
   previousToken?: PermissionToken // If renewing an expired permission, reference to the old token
+
+moduleDetails?: { scheme: string; operation: string; point: string; keyID: string }
+actionLabel?: { label: string; operation: 'apply' | 'list' }
 }
 
 /**
@@ -564,6 +567,9 @@ export interface PermissionsManagerConfig {
    * without prompting the user.
    */
   whitelistedCounterparties?: { [counterparty: PubKeyHex]: string[] }
+
+differentiateActionLabelOperations?: boolean
+preferAppPermissionGroups?: boolean
 }
 
 /**
@@ -1119,11 +1125,17 @@ export class WalletPermissionsManager implements WalletInterface {
     expiry?: number
     ephemeral?: boolean
     amount?: number
+    sessionDurationMs?: number
   }): Promise<void> {
     // 1) Identify the matching queued requests in `activeRequests`
     const matching = this.activeRequests.get(params.requestID)
     if (matching == null) {
       throw new Error('Request ID not found.')
+    }
+
+    if (params.sessionDurationMs !== undefined) {
+      if (params.ephemeral || params.expiry !== undefined) throw new Error('Choose one permission lifetime.')
+      this.saveSessionPermission(matching.request as PermissionRequest, params.sessionDurationMs)
     }
 
     // 2) Mark all matching requests as resolved, deleting the entry
@@ -1133,7 +1145,7 @@ export class WalletPermissionsManager implements WalletInterface {
     this.activeRequests.delete(params.requestID)
 
     // 3) Ephemeral permissions are one-time authorizations and never persist.
-    if (params.ephemeral) return
+    if (params.ephemeral || params.sessionDurationMs !== undefined) return
     await this.grantPersistentPermission(matching.request as PermissionRequest, params.expiry || 0, params.amount)
   }
 
@@ -1170,6 +1182,7 @@ export class WalletPermissionsManager implements WalletInterface {
   public async grantGroupedPermission(params: {
     requestID: string
     granted: Partial<GroupedPermissions>
+    sessionDurationMs?: number
     expiry?: number
   }): Promise<void> {
     const matching = this.activeRequests.get(params.requestID)
@@ -1187,6 +1200,38 @@ export class WalletPermissionsManager implements WalletInterface {
       const originLookupValues = this.buildOriginatorLookupValues(displayOriginator, originator)
 
       this.validateGrantedPermissionsSubset(params.granted, requestedPermissions)
+
+      if (params.sessionDurationMs !== undefined) {
+        this.validateSessionDuration(params.sessionDurationMs)
+        if (params.granted.spendingAuthorization != null)
+          throw new Error('Spending requires an explicit spending grant.')
+        const requests: PermissionRequest[] = [
+          ...(params.granted.protocolPermissions ?? []).map(p => ({
+            type: 'protocol' as const,
+            originator,
+            privileged: false,
+            protocolID: p.protocolID,
+            counterparty: p.protocolID[0] === 1 ? '' : (p.counterparty ?? 'self'),
+            reason: p.description
+          })),
+          ...(params.granted.basketAccess ?? []).map(b => ({
+            type: 'basket' as const,
+            originator,
+            basket: b.basket,
+            reason: b.description
+          })),
+          ...(params.granted.certificateAccess ?? []).map(c => ({
+            type: 'certificate' as const,
+            originator,
+            privileged: false,
+            certificate: { verifier: c.verifierPublicKey, certType: c.type, fields: c.fields },
+            reason: c.description
+          }))
+        ]
+        for (const request of requests) this.saveSessionPermission(request, params.sessionDurationMs)
+        this.settleActiveGrant(params.requestID, matching, 'resolve', true)
+        return
+      }
 
       const expiry = params.expiry || 0 // default: never expires
 
@@ -1442,7 +1487,8 @@ export class WalletPermissionsManager implements WalletInterface {
     counterparty,
     reason,
     seekPermission = true,
-    usageType
+    usageType,
+    moduleDetails
   }: {
     originator: string
     privileged: boolean
@@ -1450,6 +1496,7 @@ export class WalletPermissionsManager implements WalletInterface {
     counterparty: string
     reason?: string
     seekPermission?: boolean
+    moduleDetails?: PermissionRequest['moduleDetails']
     usageType: 'signing' | 'encrypting' | 'hmac' | 'publicKey' | 'identityKey' | 'linkageRevelation' | 'generic'
   }): Promise<boolean> {
     const { normalized: normalizedOriginator, lookupValues } = this.prepareOriginator(originator)
@@ -1495,6 +1542,7 @@ export class WalletPermissionsManager implements WalletInterface {
         protocolID,
         counterparty,
         usageType,
+        moduleDetails,
         reason,
         renewal: false
       })
@@ -1512,6 +1560,7 @@ export class WalletPermissionsManager implements WalletInterface {
         protocolID,
         counterparty,
         usageType,
+        moduleDetails,
         reason,
         renewal: true,
         previousToken: token
@@ -1771,27 +1820,48 @@ export class WalletPermissionsManager implements WalletInterface {
       return true
     }
 
-    const cacheKey = this.buildRequestKey({
+    if (!this.config.differentiateActionLabelOperations) {
+      return await this.ensureProtocolPermission({
+        originator,
+        privileged: false,
+        protocolID: [1, `action label ${label}`],
+        counterparty: 'self',
+        reason,
+        seekPermission,
+        usageType: 'generic'
+      })
+    }
+
+    if (
+      await this.hasProtocolPermission({
+        originator,
+        privileged: false,
+        protocolID: [1, `action label ${label}`],
+        counterparty: 'self'
+      })
+    )
+      return true
+
+    const protocolID: WalletProtocol = [1, `admin label ${usageType} ${label}`]
+    const request: PermissionRequest = {
       type: 'protocol',
       originator,
       privileged: false,
-      protocolID: [1, `action label ${label}`],
-      counterparty: 'self'
-    })
-    if (this.isPermissionCached(cacheKey)) {
+      protocolID,
+      counterparty: '',
+      usageType: usageType === 'apply' ? 'labelApply' : 'labelList',
+      actionLabel: { label, operation: usageType },
+      reason
+    }
+    const cacheKey = this.buildRequestKey(request)
+    if (await this.hasRecentOrPendingGrant(cacheKey)) return true
+    const token = await this.findProtocolToken(originator, false, protocolID, '', true)
+    if (token != null && !this.isTokenExpired(token.expiry)) {
+      this.cachePermission(cacheKey, token.expiry)
       return true
     }
-
-    // 3) Let ensureProtocolPermission handle the rest.
-    return await this.ensureProtocolPermission({
-      originator,
-      privileged: false,
-      protocolID: [1, `action label ${label}`],
-      counterparty: 'self',
-      reason,
-      seekPermission,
-      usageType: 'generic'
-    })
+    if (!seekPermission) throw new Error('Action label permission required (seekPermission=false).')
+    return await this.requestPermissionFlow({ ...request, renewal: token != null, previousToken: token })
   }
 
   /**
@@ -2452,6 +2522,8 @@ export class WalletPermissionsManager implements WalletInterface {
     await this.joinOrCreateGroupedRequest(key, originator, permissionsToRequest, currentRequest.displayOriginator)
 
     const satisfied = await this.checkSpecificPermissionAfterGroupFlow(currentRequest)
+    if (!satisfied && this.config.preferAppPermissionGroups)
+      throw Object.assign(new Error('Permission was not selected in the app group.'), { code: 'ERR_PERMISSION_DENIED' })
     return satisfied ? true : null
   }
 
@@ -2555,11 +2627,18 @@ export class WalletPermissionsManager implements WalletInterface {
     const pactResult = await this.maybeRequestPact(preparedRequest)
     if (pactResult !== null) return pactResult
 
+    if (this.config.preferAppPermissionGroups) {
+      const appGroup = await this.resolveGroupedFlow(preparedRequest, key)
+      if (appGroup !== null) return appGroup
+    }
+
     const peerGroupResult = await this.maybeRequestPeerGroupedLevel2ProtocolPermissions(preparedRequest)
     if (peerGroupResult !== null) return peerGroupResult
 
-    const groupResult = await this.resolveGroupedFlow(preparedRequest, key)
-    if (groupResult !== null) return groupResult
+    if (!this.config.preferAppPermissionGroups) {
+      const groupResult = await this.resolveGroupedFlow(preparedRequest, key)
+      if (groupResult !== null) return groupResult
+    }
 
     // Re-check after grouped flow — another waiter may have set up a queue
     if (this.isPiggybacking(key)) return await this.piggybackOnExistingQueue(key)
@@ -4140,6 +4219,8 @@ export class WalletPermissionsManager implements WalletInterface {
   }
 
   public async revokePermissions(oldTokens: PermissionToken[]): Promise<PermissionToken[]> {
+    for (const originator of new Set(oldTokens.map(token => token.originator)))
+      this.revokeSessionPermissions(originator)
     return await this.revokePermissionTokensBestEffort(oldTokens)
   }
 
@@ -4224,6 +4305,7 @@ export class WalletPermissionsManager implements WalletInterface {
    * The manager builds a BRC-100 transaction that consumes the token, effectively invalidating it.
    */
   public async revokePermission(oldToken: PermissionToken): Promise<void> {
+    this.revokeSessionPermissions(oldToken.originator)
     const oldOutpoint = `${oldToken.txid}.${oldToken.outputIndex}`
     await this.completePermissionTokenAction(
       {
@@ -5474,6 +5556,11 @@ export class WalletPermissionsManager implements WalletInterface {
    * `key` is valid and unexpired.
    */
   private isPermissionCached(key: string): boolean {
+    const session = this.sessionPermissions.get(key)
+    if (session != null) {
+      if (session.expiresAt > Date.now()) return true
+      this.sessionPermissions.delete(key)
+    }
     const entry = this.permissionCache.get(key)
     if (entry == null) return false
     if (Date.now() - entry.cachedAt > WalletPermissionsManager.CACHE_TTL_MS) {
@@ -5649,5 +5736,81 @@ export class WalletPermissionsManager implements WalletInterface {
       return `${base}:${r.usageType ?? ''}`
     }
     return base
+  }
+
+private readonly sessionPermissions = new Map<string, { request: PermissionRequest; expiresAt: number }>()
+public async hasDeclaredProtocolPermission(params: {
+    originator: string
+    protocolID: WalletProtocol
+    counterparty: string
+  }): Promise<boolean> {
+    const { normalized } = this.prepareOriginator(params.originator)
+    const group = await this.fetchManifestGroupPermissions(normalized)
+    return (
+      group != null &&
+      this.isRequestIncludedInGroupPermissions(
+        {
+          type: 'protocol',
+          originator: normalized,
+          privileged: false,
+          protocolID: params.protocolID,
+          counterparty: params.counterparty
+        },
+        group
+      )
+    )
+  }
+private copySessionRequest(request: PermissionRequest): PermissionRequest {
+    return {
+      type: request.type,
+      originator: request.originator,
+      privileged: request.privileged,
+      protocolID: request.protocolID == null ? undefined : [...request.protocolID],
+      counterparty: request.counterparty,
+      basket: request.basket,
+      reason: request.reason,
+      usageType: request.usageType,
+      actionLabel: request.actionLabel == null ? undefined : { ...request.actionLabel },
+      certificate:
+        request.certificate == null ? undefined : { ...request.certificate, fields: [...request.certificate.fields] }
+    }
+  }
+private validateSessionDuration(duration: number): void {
+    if (!Number.isSafeInteger(duration) || duration < 1 || duration > 30 * 60 * 1000) {
+      throw new Error('Session duration must be between 1 ms and 30 minutes.')
+    }
+  }
+private saveSessionPermission(request: PermissionRequest, duration: number): void {
+    this.validateSessionDuration(duration)
+    if (!['protocol', 'basket', 'certificate'].includes(request.type) || request.privileged)
+      throw new Error('Spending and protected keys require a separate grant.')
+    const key = this.buildRequestKey(request)
+    if (this.sessionPermissions.size >= 1024 && !this.sessionPermissions.has(key)) {
+      this.sessionPermissions.delete(this.sessionPermissions.keys().next().value!)
+    }
+    this.sessionPermissions.set(key, { request: this.copySessionRequest(request), expiresAt: Date.now() + duration })
+  }
+public listSessionPermissions(): Array<{ request: PermissionRequest; expiresAt: number }> {
+    for (const [key, grant] of this.sessionPermissions)
+      if (grant.expiresAt <= Date.now()) this.sessionPermissions.delete(key)
+    return [...this.sessionPermissions.values()].map(grant => ({
+      ...grant,
+      request: this.copySessionRequest(grant.request)
+    }))
+  }
+public revokeSessionPermissions(originator?: string): void {
+    this.permissionCache.clear()
+    this.recentGrants.clear()
+    const origin = originator === undefined ? undefined : this.normalizeOriginator(originator)
+    for (const [key, grant] of this.sessionPermissions) {
+      if (origin === undefined || grant.request.originator === origin) this.sessionPermissions.delete(key)
+    }
+    for (const [key, active] of this.activeRequests) {
+      if (origin === undefined || active.request.originator === origin) {
+        const error = Object.assign(new Error('Permission session ended.'), { code: 'ERR_PERMISSION_DENIED' })
+        for (const pending of active.pending) pending.reject(error)
+        this.activeRequests.delete(key)
+      }
+    }
   }
 }

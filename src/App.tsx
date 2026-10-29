@@ -516,9 +516,9 @@ export function App() {
 
             <ActionPermissionDialog
               pending={pendingAction}
-              onAllow={(autoPay) => {
+              onAllow={(autoPay, lifetime) => {
                 if (!pendingAction) return false
-                if (!resolvePermission(pendingAction.id, 'allow')) return false
+                if (!resolvePermission(pendingAction.id, 'allow', lifetime)) return false
                 if (autoPay) {
                   setAutoPaySettings(pendingAction.origin, autoPay)
                 }
