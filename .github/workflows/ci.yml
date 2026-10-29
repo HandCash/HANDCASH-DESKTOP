@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  build-test:
+  hermetic:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,14 +16,8 @@ jobs:
           node-version: '22'
           cache: npm
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install
         run: npm ci
-
-      - name: Install native shell deps (WebKitGTK)
-        run: bash scripts/ci-linux-native-deps.sh
 
       - name: Typecheck
         run: |
@@ -46,6 +40,25 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npm run test:ci
 
+  native-shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install
+        run: npm ci
+
+      - name: Install native shell deps (WebKitGTK)
+        run: bash scripts/ci-linux-native-deps.sh
+
       - name: Renderer + sidecar build
         run: |
           npm run build:renderer
@@ -57,12 +70,15 @@ jobs:
           CARGO_TARGET_DIR: ${{ github.workspace }}/native-desktop/target
         run: cargo build
 
-      - name: Upload native shell binary on failure
-        if: failure()
+      - name: Package Linux zip (smoke)
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/native-desktop/target
+          HANDCASH_SKIP_RENDERER: '1'
+        run: npm run package:linux
+
+      - name: Upload Linux zip artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-shell-build-logs
-          path: |
-            native-desktop/target/debug/handcash-shell
-            test-results/
-          if-no-files-found: ignore
+          name: handcash-linux-zip
+          path: release/HandCash-*-linux.zip
+          if-no-files-found: error
