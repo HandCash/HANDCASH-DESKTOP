@@ -40,6 +40,7 @@ import {
   type TokenViewRequest,
 } from './itemAccess'
 import { formatBsvSignificant} from './session'
+import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
@@ -871,6 +872,22 @@ export function summarizeAction(method: string, args: unknown): {
 } {
   const body = asRecord(args)
   const details: string[] = []
+
+  if (method === 'issueHandle') {
+    const handle = typeof body.handle === 'string' ? body.handle : ''
+    const identityKey = typeof body.identityKey === 'string' ? body.identityKey : ''
+    const display = `@${handle}@${HOME_HANDLE_DOMAIN}`
+    return {
+      title: 'Issue a handle',
+      summary: `Bind ${display} to your identity key`,
+      details: [
+        `Handle: ${display}`,
+        `Owner key: ${identityKey.slice(0, 8)}…${identityKey.slice(-8)}`,
+        'Spends the HandCash claim ticket the app holds for it',
+        'One use; this approval expires two minutes after you approve',
+      ],
+    }
+  }
 
   if (method === 'createAction' && isItemIssuanceArgs(method, args)) {
     const fungible = isTokenSpendArgs(method, args)

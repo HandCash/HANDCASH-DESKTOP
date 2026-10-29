@@ -254,6 +254,19 @@ export async function resolveHandleByIdentityKey(
   return settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
 }
 
+/** BRC-CLOUD refused or failed a claim; `code` is its own error code when it sent one. */
+export class HandleClaimError extends Error {
+  readonly status: number
+  readonly code?: string
+
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'HandleClaimError'
+    this.status = status
+    if (code) this.code = code
+  }
+}
+
 export async function claimHandle(args: {
   handle: string
   identityKey: string
@@ -274,14 +287,18 @@ export async function claimHandle(args: {
   if (!res.ok) {
     const raw = await res.text().catch(() => '')
     let detail = raw.slice(0, 160)
+    let code: string | undefined
     try {
       const body = JSON.parse(raw) as {
         error?: string | { code?: string; message?: string }
         message?: string
       }
       const err = body?.error
-      if (typeof err === 'string') detail = err
-      else if (err && typeof err === 'object') {
+      if (typeof err === 'string') {
+        detail = err
+        code = err
+      } else if (err && typeof err === 'object') {
+        if (typeof err.code === 'string') code = err.code
         if (err.code === 'invalid-ticket') {
           detail =
             'invalid-ticket (market HANDLE_CLAIM_SECRET ≠ BRC-CLOUD — set the same value on Vercel Preview/preprod)'
@@ -294,7 +311,7 @@ export async function claimHandle(args: {
     } catch {
       /* keep raw slice */
     }
-    throw new Error(`Handle claim failed (${res.status})${detail ? `: ${detail}` : ''}`)
+    throw new HandleClaimError(`Handle claim failed (${res.status})${detail ? `: ${detail}` : ''}`, res.status, code)
   }
   const data = (await res.json()) as ResolveRow & { display?: string }
   const certified = await certifiedHandle({

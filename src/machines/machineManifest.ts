@@ -50,6 +50,8 @@ import { relaySigninMachine } from './relaySigninMachine'
 import { onboardEmailMachine } from './onboardEmailMachine'
 import { callMachine } from './callMachine'
 import { callViewMachine } from './callViewMachine'
+import { entryMeshMachine } from './entryMeshMachine'
+import { recordingPlayerMachine } from './recordingPlayerMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -108,6 +110,8 @@ export const machineManifest = Object.freeze({
   onboardEmail: onboardEmailMachine,
   call: callMachine,
   callView: callViewMachine,
+  entryMesh: entryMeshMachine,
+  recordingPlayer: recordingPlayerMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest
