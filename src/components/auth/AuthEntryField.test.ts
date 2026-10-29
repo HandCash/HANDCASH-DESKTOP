@@ -9,6 +9,8 @@ import {
 import {
   BRIDGE_ALPHA_SCALE,
   EDGE_LINK_DIST,
+  FAR_DISTANCE_MUL,
+  FAR_SIZE_MUL,
   FIELD_MARGIN,
   FIELD_TRAVEL_X,
   FIELD_TRAVEL_Y,
@@ -39,46 +41,37 @@ describe('AuthEntryField', () => {
     expect(field).not.toContain('flowAt')
   })
 
-  it('builds five receding planes on Items Market elastic base', () => {
-    expect(DEPTH_LAYER_COUNT).toBe(5)
-    expect(MESH_DEPTH_PLANES).toHaveLength(DEPTH_LAYER_COUNT)
+  it('builds near + one far plane (3× further, 4× larger) on Items Market elastic base', () => {
+    expect(DEPTH_LAYER_COUNT).toBe(2)
+    expect(MESH_DEPTH_PLANES).toHaveLength(2)
+    expect(FAR_DISTANCE_MUL).toBe(3)
+    expect(FAR_SIZE_MUL).toBe(4)
     // Longer reach = more thin lines (not fatter strokes).
     expect(EDGE_LINK_DIST).toBeGreaterThanOrEqual(140)
     expect(EDGE_LINK_DIST).toBeLessThanOrEqual(180)
     expect(TOTAL_MESH_NODES).toBeGreaterThanOrEqual(280)
     expect(TOTAL_MESH_NODES).toBeLessThanOrEqual(420)
 
-    let nodeSum = 0
-    for (let i = 1; i < MESH_DEPTH_PLANES.length; i++) {
-      const prev = MESH_DEPTH_PLANES[i - 1]!
-      const next = MESH_DEPTH_PLANES[i]!
-      expect(prev.parallax).toBeLessThan(next.parallax)
-      expect(prev.speedMul).toBeLessThan(next.speedMul)
-      expect(prev.alphaMul).toBeLessThan(next.alphaMul)
-      expect(prev.radiusMin).toBeLessThan(next.radiusMin)
-      expect(prev.scale).toBeLessThan(next.scale)
-      // Far keeps a longer link reach so scaled-down webs still densify.
-      expect(prev.maxDist).toBeGreaterThanOrEqual(next.maxDist)
-      expect(prev.count).toBeGreaterThanOrEqual(6)
-      nodeSum += prev.count
-    }
-    nodeSum += MESH_DEPTH_PLANES[MESH_DEPTH_PLANES.length - 1]!.count
-    expect(nodeSum).toBe(TOTAL_MESH_NODES)
-
     const far = MESH_DEPTH_PLANES[0]!
-    const near = MESH_DEPTH_PLANES[MESH_DEPTH_PLANES.length - 1]!
-    // Distance stays populated and readable; near brightest / fastest.
+    const near = MESH_DEPTH_PLANES[1]!
+    expect(far.count + near.count).toBe(TOTAL_MESH_NODES)
     expect(near.count).toBeGreaterThanOrEqual(20)
     expect(far.count).toBeGreaterThanOrEqual(12)
+
+    // Far = 3× further (parallax / perspective / speed) and 4× larger radii.
+    expect(near.parallax).toBe(1)
+    expect(near.scale).toBe(1)
+    expect(near.speedMul).toBe(1)
+    expect(far.parallax).toBeCloseTo(near.parallax / FAR_DISTANCE_MUL, 6)
+    expect(far.scale).toBeCloseTo(near.scale / FAR_DISTANCE_MUL, 6)
+    expect(far.speedMul).toBeCloseTo(near.speedMul / FAR_DISTANCE_MUL, 6)
+    expect(far.radiusMin).toBeCloseTo(near.radiusMin * FAR_SIZE_MUL, 6)
+    expect(far.radiusSpan).toBeCloseTo(near.radiusSpan * FAR_SIZE_MUL, 6)
+    expect(far.maxDist).toBeGreaterThanOrEqual(near.maxDist)
+
     expect(far.alphaMul).toBeGreaterThanOrEqual(0.4)
     expect(far.alphaMul).toBeLessThan(near.alphaMul)
     expect(near.alphaMul).toBe(1)
-    expect(near.parallax - far.parallax).toBeGreaterThan(0.8)
-    expect(far.scale).toBeLessThan(near.scale)
-    expect(near.scale).toBe(1)
-    expect(near.speedMul).toBe(1)
-    expect(far.speedMul).toBeLessThanOrEqual(0.4)
-    expect(near.speedMul / far.speedMul).toBeGreaterThan(2.2)
     // Near plane matches Items Market motion knobs.
     expect(NODE_DAMPING).toBeCloseTo(0.9982, 4)
     expect(NODE_DRIFT).toBeCloseTo(0.055, 4)
@@ -86,6 +79,7 @@ describe('AuthEntryField', () => {
     expect(near.drift).toBeCloseTo(NODE_DRIFT, 4)
     expect(far.drift).toBeCloseTo(NODE_DRIFT, 4)
     expect(near.maxSpeed).toBeCloseTo(NODE_MAX_SPEED, 4)
+    expect(far.maxSpeed).toBeCloseTo(NODE_MAX_SPEED / FAR_DISTANCE_MUL, 4)
 
     const field = fs.readFileSync(path.join(root, 'auth/AuthEntryField.tsx'), 'utf8')
     expect(field).toMatch(/CAM_AMP|entryMeshMotion/)

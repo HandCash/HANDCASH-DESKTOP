@@ -8,7 +8,7 @@ describe('entryMeshMachine', () => {
     const actor = createActor(entryMeshMachine).start()
     expect(actor.getSnapshot().context.layerCount).toBe(ENTRY_MESH_LAYER_COUNT)
     expect(ENTRY_MESH_LAYER_COUNT).toBe(DEPTH_LAYER_COUNT)
-    expect(ENTRY_MESH_LAYER_COUNT).toBe(5)
+    expect(ENTRY_MESH_LAYER_COUNT).toBe(2)
     actor.stop()
   })
 

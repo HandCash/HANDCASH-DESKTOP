@@ -1,10 +1,10 @@
 import { setup } from 'xstate'
 
 /** Parallax planes this one chart owns (far → near). Physics stays pure. */
-export const ENTRY_MESH_LAYER_COUNT = 5
+export const ENTRY_MESH_LAYER_COUNT = 2
 
 export type EntryMeshContext = {
-  /** All depth planes live under this chart — not one actor per layer. */
+  /** Near + one far plane under this chart — not one actor per layer. */
   layerCount: number
 }
 
@@ -17,7 +17,7 @@ export type EntryMeshEvent =
 
 /**
  * Chart: entryMesh — Items Market mesh reverse-decomposed as one Aeon chart.
- * Context.layerCount owns many parallax planes; canvas step/paint stay pure
+ * Context.layerCount owns the near + far planes; canvas step/paint stay pure
  * (no per-frame chart events). booting → static | playing ↔ paused.
  */
 export const entryMeshMachine = setup({

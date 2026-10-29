@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.637] - 2026-10-29
+
+### Changed
+
+- Login entry mesh keeps near + one far plane only — far is 3× further and 4× larger than near.
+
 ## [1.3.636] - 2026-10-22
 
 ### Changed

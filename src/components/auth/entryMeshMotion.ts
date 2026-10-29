@@ -1,9 +1,9 @@
 /**
  * Entry mesh — Items Market HeroBackground reverse-decomposed: same floaty
- * elastic peers (damping / drift / wrap travel-by), many parallax planes owned by
+ * elastic peers (damping / drift / wrap travel-by), near + one far plane owned by
  * `entryMeshMachine`. Near = Market density + thin long-reach webs; far =
- * dissolves into backdrop (darker on dark / lighter on light). Same-depth +
- * adjacent bridges only — not an all-pair spiderweb.
+ * 3× further / 4× larger, dissolves into backdrop. Same-depth + adjacent
+ * bridges only — not an all-pair spiderweb.
  */
 import { ENTRY_MESH_LAYER_COUNT } from '../../machines/entryMeshMachine'
 
@@ -96,12 +96,55 @@ const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t ** 3 : 1 - (-2 * t + 2) *
 const easeInOutSine = (t: number) => -(Math.cos(Math.PI * t) - 1) / 2
 const easings = [easeOutQuart, easeOutCubic, easeInOutCubic, easeInOutSine]
 
+/** Near plane = Items Market knobs (parallax/scale 1). Far is derived from these. */
+const NEAR_RADIUS_MIN = 0.7
+const NEAR_RADIUS_SPAN = 1.2
+/** Extra plane sits this many times farther than near (parallax + perspective). */
+export const FAR_DISTANCE_MUL = 3
+/** Extra plane nodes are this many times larger than near (screen radius). */
+export const FAR_SIZE_MUL = 4
+
 /**
- * Build N planes: near gets Market density; far fewer/fainter/slower.
- * Exported for tests.
+ * Build N planes. Product default is 2: near Market + one far plane at
+ * FAR_DISTANCE_MUL× further and FAR_SIZE_MUL× larger. Exported for tests.
  */
 export function buildMeshDepthPlanes(n: number): MeshPlane[] {
   const layers = Math.max(2, Math.floor(n))
+
+  if (layers === 2) {
+    const farCount = Math.max(12, Math.round(TOTAL_MESH_NODES * 0.55))
+    const nearCount = Math.max(10, TOTAL_MESH_NODES - farCount)
+    const near: MeshPlane = {
+      count: nearCount,
+      speedMul: 1,
+      maxSpeed: NODE_MAX_SPEED,
+      drift: NODE_DRIFT,
+      radiusMin: NEAR_RADIUS_MIN,
+      radiusSpan: NEAR_RADIUS_SPAN,
+      alphaMul: 1,
+      edgeMul: 1,
+      maxDist: EDGE_LINK_DIST * 0.95,
+      parallax: 1,
+      scale: 1,
+    }
+    const far: MeshPlane = {
+      count: farCount,
+      speedMul: near.speedMul / FAR_DISTANCE_MUL,
+      maxSpeed: near.maxSpeed / FAR_DISTANCE_MUL,
+      drift: NODE_DRIFT,
+      radiusMin: near.radiusMin * FAR_SIZE_MUL,
+      radiusSpan: near.radiusSpan * FAR_SIZE_MUL,
+      // Far stays lit enough to read; near is full.
+      alphaMul: 0.55,
+      edgeMul: 0.6,
+      // Longer reach so the recessed web still densifies.
+      maxDist: EDGE_LINK_DIST * 1.15,
+      parallax: near.parallax / FAR_DISTANCE_MUL,
+      scale: near.scale / FAR_DISTANCE_MUL,
+    }
+    return [far, near]
+  }
+
   const weights: number[] = []
   let weightSum = 0
   for (let i = 0; i < layers; i++) {
