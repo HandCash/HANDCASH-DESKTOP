@@ -1,10 +1,16 @@
 # Changelog
 
+## [1.3.638] - 2026-10-29
+
+### Changed
+
+- Login backdrop restored to the single-plane AuthMeshBackground; light mode keeps a black web with CTA green dots.
+
 ## [1.3.637] - 2026-10-29
 
 ### Changed
 
-- Login entry mesh keeps near + one far plane only — far is 3× further and 4× larger than near.
+- Login entry mesh experiment (superseded by 1.3.638 single-plane restore).
 
 ## [1.3.636] - 2026-10-22
 
