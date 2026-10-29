@@ -28,3 +28,7 @@ export function heldBntAssets(identityKey: string | undefined): readonly HeldBnt
 export function heldBntAssetsListed(identityKey: string | undefined): boolean {
   return !!held && !!identityKey && held.identityKey === identityKey.toLowerCase()
 }
+
+export function clearHeldBntAssets(): void {
+  held = null
+}
