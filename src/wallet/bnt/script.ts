@@ -1,5 +1,6 @@
 import { Hash, LockingScript, OP, Script, TransactionSignature, UnlockingScript, Utils, type ScriptChunk } from '@bsv/sdk'
 import { decodeScriptNumber, encodeScriptNumber } from '../scriptNumber'
+import { mintCovenantBody, mintCovenantLim } from './mintCovenant'
 
 /**
  * BRC-255 (BNT) scripts. Every form is parsed exactly and re-encoded: only
@@ -10,8 +11,10 @@ import { decodeScriptNumber, encodeScriptNumber } from '../scriptNumber'
  *   held:       <"bnt" ‖ asset id> <amount> OP_2DROP <clause>
  *   authority:  <"bnt" ‖ asset id> OP_0     OP_2DROP <clause>
  *   capped:     <"bnt" ‖ asset id> OP_0 <units issued> <members issued> OP_2DROP OP_2DROP <clause>
+ *   mint:       <"bnt" ‖ asset id> OP_0 <remaining, 4 bytes LE> OP_2DROP OP_DROP <covenant>
  *
  * A countersigned clause is BRC-253 (IPT) and writes `"ipt"` in place of `"bnt"`.
+ * Open-mint covenants (§5a) are open-mode only (`"bnt"`).
  */
 
 export const BNT_MARKER = [0x62, 0x6e, 0x74] as const
@@ -44,6 +47,8 @@ export type BntOutput =
   | { form: 'deploy'; supply: bigint; payload: Uint8Array; clause: BntClause }
   | { form: 'held'; assetId: string; amount: bigint; clause: BntClause }
   | { form: 'authority'; assetId: string; clause: BntClause; issued?: BntIssued }
+  /** Open-mint covenant (§5a): `remaining` mints of `lim` units left. */
+  | { form: 'mint'; assetId: string; remaining: number; lim: bigint }
 
 /** What a capped asset's authority has issued so far: units (the deploy's supply included) and collection members. */
 export type BntIssued = { units: bigint; members: bigint }
@@ -173,6 +178,26 @@ export function bntAuthorityLock(args: { assetId: string; clause: BntClause; iss
   return script.writeOpCode(OP.OP_2DROP).writeScript(bntClause(args.clause))
 }
 
+/** Open-mint covenant (§5a): anyone may spend it to issue `lim` units, `remaining` times. */
+export function bntMintLock(args: { assetId: string; remaining: number; lim: bigint }): LockingScript {
+  if (!isBntAssetId(args.assetId)) throw new Error('An asset id is 20 bytes of hex')
+  if (!Number.isInteger(args.remaining) || args.remaining < 1 || args.remaining > 0xffffffff) {
+    throw new Error('A mint has 1 to 2^32-1 uses left')
+  }
+  if (args.lim < 1n || args.lim > BNT_MAX_AMOUNT) throw new Error('A mint writes at least one unit')
+  const remainingLe = [
+    args.remaining & 0xff,
+    (args.remaining >> 8) & 0xff,
+    (args.remaining >> 16) & 0xff,
+    (args.remaining >>> 24) & 0xff,
+  ]
+  return new LockingScript()
+    .writeBin([...BNT_MARKER, ...Utils.toArray(args.assetId, 'hex')])
+    .writeOpCode(OP.OP_0)
+    .writeBin(remainingLe)
+    .writeScript(mintCovenantBody(args.lim)) as LockingScript
+}
+
 /** The beacon (countersigned mode): `OP_IF <issuer part> OP_ELSE <release part> OP_ENDIF`. */
 export function bntBeaconLock(rules: Extract<BntRules, { mode: 'countersign' }>): LockingScript {
   const error = bntRulesError(rules)
@@ -287,7 +312,19 @@ export function readBnt(script: Script | string): BntOutput | null {
     const assetId = Utils.toHex(head.slice(3))
     const amount = chunks[1] ? decodeScriptNumber(chunks[1]) : null
     if (amount == null) return null
-    if (amount === 0n && chunks[2]?.op !== OP.OP_2DROP) {
+    if (
+      amount === 0n &&
+      chunks[2]?.data?.length === 4 &&
+      chunks[3]?.op === OP.OP_2DROP &&
+      chunks[4]?.op === OP.OP_DROP
+    ) {
+      const data = chunks[2]!.data!
+      const remaining = data[0]! | (data[1]! << 8) | (data[2]! << 16) | (data[3]! << 24)
+      if (remaining < 1) return null
+      const lim = mintCovenantLim(chunks.slice(3))
+      if (lim == null) return null
+      out = { form: 'mint', assetId, remaining, lim }
+    } else if (amount === 0n && chunks[2]?.op !== OP.OP_2DROP) {
       const units = chunks[2] ? decodeScriptNumber(chunks[2]) : null
       const members = chunks[3] ? decodeScriptNumber(chunks[3]) : null
       if (units == null || members == null || chunks[4]?.op !== OP.OP_2DROP || chunks[5]?.op !== OP.OP_2DROP) return null
@@ -307,7 +344,9 @@ export function readBnt(script: Script | string): BntOutput | null {
         ? bntDeployLock({ supply: out.supply, payload: out.payload, clause: out.clause })
         : out.form === 'held'
           ? bntHeldLock({ assetId: out.assetId, amount: out.amount, clause: out.clause })
-          : bntAuthorityLock({ assetId: out.assetId, clause: out.clause, ...(out.issued ? { issued: out.issued } : {}) })
+          : out.form === 'mint'
+            ? bntMintLock({ assetId: out.assetId, remaining: out.remaining, lim: out.lim })
+            : bntAuthorityLock({ assetId: out.assetId, clause: out.clause, ...(out.issued ? { issued: out.issued } : {}) })
     return reencoded.toHex() === hex ? out : null
   } catch {
     return null

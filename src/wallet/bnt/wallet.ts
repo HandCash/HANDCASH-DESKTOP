@@ -376,7 +376,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
   for (const o of page.outputs ?? []) {
     if (o.spendable === false || !(o.tags ?? []).includes(BNT_TAG) || !o.lockingScript) continue
     const read = readBnt(o.lockingScript)
-    if (!read) continue
+    if (!read || read.form === 'mint') continue
     const [txid, voutRaw] = o.outpoint.replace('_', '.').split('.')
     const vout = Number(voutRaw)
     const id = read.form === 'deploy' ? bntAssetId(txid!, vout) : read.assetId
@@ -1251,6 +1251,7 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
         })
       }
       for (const row of chosen.filter((r) => r.authority)) {
+        if (row.read.form === 'mint' || row.read.form === 'deploy') continue
         outputs.push(...(await carryBack(active, { ...row, amount: 0n, read: { form: 'authority', assetId, clause: row.read.clause } }, deploy, prefix, row.issued)))
       }
       chart.send({ type: 'BUILT' })
@@ -1554,7 +1555,9 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
     const remittance = readBntRemittance({ ...o, senderIdentityKey: from })
     const script = subject.outputs[o.vout]?.lockingScript
     const read = script ? readBnt(script) : null
-    if (!remittance || !read || read.form === 'deploy' || read.assetId !== wire.asset) return 'invalid'
+    if (!remittance || !read || read.form === 'deploy' || read.form === 'mint' || read.assetId !== wire.asset) {
+      return 'invalid'
+    }
     if (!(await holdsUnder(active, remittance, read.clause.holder))) return 'invalid'
     if (read.clause.mode !== 'open') return 'retry'
     mine.push({ vout: o.vout, read, remittance })

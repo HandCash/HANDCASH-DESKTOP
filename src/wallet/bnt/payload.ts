@@ -40,6 +40,8 @@ export type BntDeployFields = {
   hdl?: string
   /** A backed token: units stand for deposits on another chain, and a mint's units move only with the deposit's burial proof. */
   bk?: BntBacking
+  /** Open minting: after the issuer opens it, anyone mints `lim` units, `count` times in all (§5a). */
+  om?: BntOpenMint
 }
 
 /**
@@ -56,9 +58,13 @@ export type BntBacking = {
 }
 const MAX_RESERVE_SCRIPT = 64
 
+/** Most mints an open mint allows: every mint is one hop a first receipt walks. */
+export const BNT_MAX_OPEN_MINTS = 10_000
+export type BntOpenMint = { count: number; lim: bigint }
+
 const KNOWN = new Set([
   'v', 'mode', 'kind', 'iss', 'm', 'bcn', 'rel', 'relk', 'k', 'sil', 'auth', 'max', 'size',
-  'sym', 'name', 'dec', 'icon', 'ctype', 'c', 'col', 'hdl', 'bk', 'crit',
+  'sym', 'name', 'dec', 'icon', 'ctype', 'c', 'col', 'hdl', 'bk', 'om', 'crit',
 ])
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 const URL_RE = /[a-z][a-z0-9+.-]*:\/\//i
@@ -172,6 +178,26 @@ export function assertBntFields(fields: BntDeployFields): void {
     const n = fields.bk.reserve.length / 2
     if (!/^(?:[0-9a-f]{2})+$/.test(fields.bk.reserve) || n > MAX_RESERVE_SCRIPT) throw new Error(`bk names a reserve script of 1 to ${MAX_RESERVE_SCRIPT} bytes`)
   }
+  if (fields.om != null) {
+    const { count, lim } = fields.om
+    if (fields.mode !== 'open' || fields.kind !== 'token' || !fields.auth) {
+      throw new Error('An open mint is an open token with a mint authority')
+    }
+    if (fields.max != null || fields.size != null || fields.bk != null) {
+      throw new Error('An open mint fixes its own cap, so it has no max, size or backing')
+    }
+    if (!Number.isSafeInteger(count) || count < 1 || count > BNT_MAX_OPEN_MINTS) {
+      throw new Error(`om allows 1 to ${BNT_MAX_OPEN_MINTS} mints`)
+    }
+    if (typeof lim !== 'bigint' || lim < 1n || lim > BNT_MAX_AMOUNT) {
+      throw new Error('om mints 1 to 2^64-1 units at a time')
+    }
+  }
+}
+
+/** The most units an open-mint asset can ever have: its supply plus every mint. */
+export function bntOpenMintCap(supply: bigint, om: BntOpenMint): bigint {
+  return supply + BigInt(om.count) * om.lim
 }
 
 export function encodeBntPayload(fields: BntDeployFields): number[] {
@@ -200,10 +226,16 @@ export function encodeBntPayload(fields: BntDeployFields): number[] {
   if (fields.c) map.set('c', fields.c)
   if (fields.col) map.set('col', bytes(fields.col))
   if (fields.hdl) map.set('hdl', fields.hdl)
+  const crit: string[] = []
   if (fields.bk) {
     map.set('bk', [fields.bk.chain, bytes(fields.bk.reserve)])
-    map.set('crit', ['bk'])
+    crit.push('bk')
   }
+  if (fields.om) {
+    map.set('om', [fields.om.count, fields.om.lim])
+    crit.push('om')
+  }
+  if (crit.length) map.set('crit', crit)
   return encodeDagCbor(map)
 }
 
@@ -275,6 +307,20 @@ export function decodeBntPayload(bytes: Uint8Array): BntDeployFields | null {
     if (!Array.isArray(crit) || !crit.includes('bk')) return null
     bk = { chain: bkRaw[0] as BntBacking['chain'], reserve: Utils.toHex([...bkRaw[1]]) }
   }
+  const omRaw = map.get('om')
+  let om: BntOpenMint | undefined
+  if (omRaw != null) {
+    if (!Array.isArray(omRaw) || omRaw.length !== 2 || !Array.isArray(crit) || !crit.includes('om')) return null
+    const [countRaw, limRaw] = omRaw
+    const lim =
+      typeof limRaw === 'bigint'
+        ? limRaw
+        : typeof limRaw === 'number' && Number.isSafeInteger(limRaw)
+          ? BigInt(limRaw)
+          : null
+    if (typeof countRaw !== 'number' || !Number.isSafeInteger(countRaw) || lim == null) return null
+    om = { count: countRaw, lim }
+  }
   const fields: BntDeployFields = {
     mode,
     kind: kindRaw === 'item' ? 'item' : 'token',
@@ -297,6 +343,7 @@ export function decodeBntPayload(bytes: Uint8Array): BntDeployFields | null {
     ...(colRaw instanceof Uint8Array ? { col: Utils.toHex([...colRaw]) } : {}),
     ...(text('hdl') != null ? { hdl: text('hdl') } : {}),
     ...(bk ? { bk } : {}),
+    ...(om ? { om } : {}),
   }
   try {
     assertBntFields(fields)

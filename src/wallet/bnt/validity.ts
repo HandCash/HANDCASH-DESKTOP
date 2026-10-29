@@ -159,7 +159,7 @@ export type TxCheck =
     }
   | { ok: false; reason: TxRefusal; detail: string }
 
-type AssetInput = { vin: number; amount: bigint; authority: boolean; issued?: BntIssued }
+type AssetInput = { vin: number; amount: bigint; authority: boolean; issued?: BntIssued; mint?: number }
 
 /** What a capped asset's deploy has issued when its authority is first spent; null for any other asset. */
 export function deployIssued(deploy: Pick<BntDeploy, 'supply' | 'fields'>): BntIssued | null {
@@ -187,6 +187,7 @@ function assetInput(tx: Transaction, vin: number, deploy: BntDeploy): (AssetInpu
     return { vin, amount: deploy.supply, authority: deploy.fields.auth === true, ...(issued ? { issued } : {}), read }
   }
   if (read.assetId !== deploy.assetId) return null
+  if (read.form === 'mint') return { vin, amount: 0n, authority: true, mint: read.remaining, read }
   if (read.form === 'held') return { vin, amount: read.amount, authority: false, read }
   return { vin, amount: 0n, authority: true, ...(read.issued ? { issued: read.issued } : {}), read }
 }
@@ -203,14 +204,14 @@ export function checkBntTx(tx: Transaction, deploy: BntDeploy): TxCheck {
     if (!sourceOutputOf(tx, vin)) return { ok: false, reason: 'input', detail: `input ${vin} carries no source output` }
     const hit = assetInput(tx, vin, deploy)
     if (!hit) continue
-    if (!sameRules(rulesOf(hit.read.clause), deploy.rules)) {
+    if (hit.read.form === 'mint' ? !deploy.fields.om : !sameRules(rulesOf(hit.read.clause), deploy.rules)) {
       return { ok: false, reason: 'input', detail: `input ${vin} spends ${deploy.assetId} under another clause` }
     }
     if (!inputScriptValid(tx, vin)) return { ok: false, reason: 'input', detail: `input ${vin} does not unlock its source` }
     inputs.push(hit)
   }
   const capped = bntSupplyPolicy(deploy.fields).kind === 'capped'
-  const outputs: Array<{ vout: number; amount: bigint; authority: boolean; issued?: BntIssued }> = []
+  const outputs: Array<{ vout: number; amount: bigint; authority: boolean; issued?: BntIssued; mint?: number }> = []
   for (let vout = 0; vout < tx.outputs.length; vout++) {
     const script = tx.outputs[vout]!.lockingScript
     const hex = script?.toHex() ?? ''
@@ -218,6 +219,19 @@ export function checkBntTx(tx: Transaction, deploy: BntDeploy): TxCheck {
     const read = script ? readBnt(script) : null
     if (read?.form === 'deploy' || !marked) continue
     if (!read) return { ok: false, reason: 'output', detail: `output ${vout} names ${deploy.assetId} but is not canonical` }
+    if (read.form === 'mint') {
+      if (!deploy.fields.om || read.lim !== deploy.fields.om.lim) {
+        return { ok: false, reason: 'output', detail: `output ${vout} is a mint ${deploy.assetId} does not declare` }
+      }
+      if ((tx.outputs[vout]!.satoshis ?? 0) < 1) {
+        return { ok: false, reason: 'output', detail: `output ${vout} carries no satoshi` }
+      }
+      outputs.push({ vout, amount: 0n, authority: true, mint: read.remaining })
+      continue
+    }
+    if (read.form === 'authority' && deploy.fields.om) {
+      return { ok: false, reason: 'mint', detail: `${deploy.assetId} mints openly, so it has no authority output` }
+    }
     if (!sameRules(rulesOf(read.clause), deploy.rules)) {
       return { ok: false, reason: 'output', detail: `output ${vout} writes ${deploy.assetId} under another clause` }
     }
@@ -245,6 +259,36 @@ export function checkBntTx(tx: Transaction, deploy: BntDeploy): TxCheck {
   if (inputs.filter((i) => i.authority).length > 1) return { ok: false, reason: 'mint', detail: 'more than one authority is spent' }
   if (mints ? outs < ins : outs !== ins) {
     return { ok: false, reason: 'conservation', detail: `${deploy.assetId} writes ${outs} from ${ins}` }
+  }
+  const om = deploy.fields.om
+  if (om && mints) {
+    const spent = inputs.find((i) => i.authority)!
+    const written = outputs.find((o) => o.authority)
+    if (spent.mint == null) {
+      if (written?.mint !== om.count || outs !== ins) {
+        return {
+          ok: false,
+          reason: 'mint',
+          detail: `opening the mint of ${deploy.assetId} writes one mint of ${om.count} and issues nothing`,
+        }
+      }
+    } else {
+      const left = spent.mint - 1
+      if (outs - ins !== om.lim) {
+        return {
+          ok: false,
+          reason: 'mint',
+          detail: `an open mint of ${deploy.assetId} issues ${om.lim} units, not ${outs - ins}`,
+        }
+      }
+      if (left > 0 ? written?.mint !== left || written.vout !== 0 : written != null) {
+        return {
+          ok: false,
+          reason: 'mint',
+          detail: `an open mint of ${deploy.assetId} leaves ${left} mints at output 0`,
+        }
+      }
+    }
   }
   let issued: BntIssued | undefined
   if (capped && mints) {
@@ -280,6 +324,26 @@ export function checkBntTx(tx: Transaction, deploy: BntDeploy): TxCheck {
   const accepted =
     deploy.rules.mode === 'countersign' && inputs.every((i) => bntUnlockBranch(tx.inputs[i.vin]!.unlockingScript) === 'issuer')
   return { ok: true, inputs: inputs.map((i) => i.vin), accepted, outputs, ...(issued ? { issued } : {}), minted }
+}
+
+/**
+ * §5a: the input whose open mint the covenant carried into output 0 of `tx`,
+ * or null. Anyone can spend a mint, so a spender can add outputs that break
+ * §4; the covenant still fixed output 0, so that mint stays valid while every
+ * other output of `tx` is refused.
+ */
+export function mintCarriedFrom(tx: Transaction, deploy: BntDeploy): number | null {
+  const om = deploy.fields.om
+  const out = tx.outputs[0]?.lockingScript
+  const next = om && out ? readBnt(out) : null
+  if (!om || next?.form !== 'mint' || next.assetId !== deploy.assetId || next.lim !== om.lim) return null
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const source = sourceOutputOf(tx, vin)
+    const read = source ? readBnt(source.lockingScript) : null
+    if (read?.form !== 'mint' || read.assetId !== deploy.assetId || read.lim !== om.lim) continue
+    return read.remaining === next.remaining + 1 && inputScriptValid(tx, vin) ? vin : null
+  }
+  return null
 }
 
 export type WalkResult =
@@ -352,6 +416,8 @@ export async function walkBnt(
   const queue: Array<{ txid: string; claims: Claim[] }> = [{ txid: subject, claims: [] }]
   const loaded = new Map<string, Transaction>()
   const checked = new Set<string>()
+  /** Transactions that fail §4 but whose output-0 mint the covenant carried: nothing else of them counts. */
+  const carriedOnly = new Set<string>()
   const validated: string[] = []
   const backed: Array<{ txid: string; proof: BntBackingProof; deposit: string }> = []
   const buried = new Set<string>()
@@ -397,7 +463,12 @@ export async function walkBnt(
         depositsBacking.set(deposit, txid)
       }
     }
-    if (checked.has(txid)) continue
+    if (checked.has(txid)) {
+      if (carriedOnly.has(txid) && claims.some((c) => c.vout !== 0)) {
+        return { ok: false, reason: 'invalid', txid, detail: `only the mint at output 0 of ${txid} is valid` }
+      }
+      continue
+    }
     checked.add(txid)
     if (txid === deploy.txid) {
       const read = readBntDeploy(tx, deploy.vout)
@@ -406,7 +477,22 @@ export async function walkBnt(
     }
     if (txid !== subject && isValidated(txid)) continue
     const check = checkBntTx(tx, deploy)
-    if (!check.ok) return { ok: false, reason: 'invalid', txid, detail: `${check.reason}: ${check.detail}` }
+    if (!check.ok) {
+      const carried = claims.length > 0 && claims.every((c) => c.vout === 0) ? mintCarriedFrom(tx, deploy) : null
+      if (carried == null) return { ok: false, reason: 'invalid', txid, detail: `${check.reason}: ${check.detail}` }
+      carriedOnly.add(txid)
+      const source = sourceOutputOf(tx, carried)!
+      queue.push({
+        txid: sourceTxidOf(tx, carried),
+        claims: [{
+          child: txid,
+          vout: tx.inputs[carried]!.sourceOutputIndex,
+          scriptHex: source.lockingScript.toHex(),
+          satoshis: source.satoshis,
+        }],
+      })
+      continue
+    }
     validated.push(txid)
     if (check.accepted) continue
     const byParent = new Map<string, Claim[]>()
