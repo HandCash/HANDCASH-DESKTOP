@@ -192,3 +192,59 @@ export function updateStateAttr(value: unknown, context: UpdateContext): string 
   }
   return parts.join(' ')
 }
+
+export type UpdateView = {
+  label: string
+  title?: string
+  action: 'DOWNLOAD' | 'INSTALL' | 'CHECK' | null
+  progress?: number
+  escapes?: Array<{ event: 'DISMISS' }>
+}
+
+/**
+ * Titlebar / pill projection of the update chart. Idle and “no update” stay
+ * hidden; Later dismisses `available` for that version until a newer one lands.
+ */
+export function updateView(
+  value: string,
+  context: UpdateContext,
+  opts?: { sideloadManual?: boolean },
+): UpdateView | null {
+  const phase = value === 'notAvailable' ? 'not-available' : value
+  if (phase === 'idle' || phase === 'not-available' || phase === 'checking') return null
+  if (phase === 'available') {
+    if (
+      context.availableVersion &&
+      context.promptDismissedVersion === context.availableVersion
+    ) {
+      return null
+    }
+    return {
+      label: 'Update available',
+      action: 'DOWNLOAD',
+      escapes: [{ event: 'DISMISS' }],
+    }
+  }
+  if (phase === 'downloading') {
+    if (opts?.sideloadManual) {
+      return { label: 'Opening installer…', action: null }
+    }
+    const pct = Math.max(0, Math.min(100, context.percent ?? 0))
+    return {
+      label: `Downloading ${pct}%`,
+      progress: pct / 100,
+      action: null,
+    }
+  }
+  if (phase === 'ready') {
+    return { label: 'Restart to update', action: 'INSTALL' }
+  }
+  if (phase === 'error') {
+    return {
+      label: 'Update failed',
+      title: context.error ?? undefined,
+      action: 'CHECK',
+    }
+  }
+  return null
+}

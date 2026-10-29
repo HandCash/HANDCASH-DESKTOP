@@ -121,6 +121,39 @@ function createWebviewGuest({ host, url, emit }: GuestArgs): AppBrowserGuest {
 let nextGuestId = 0
 
 /**
+ * True when the native guest should leave the screen: parked tab, hidden
+ * document, or wallet chrome (prompt/menu) sitting over a probe point. Live
+ * regions (toasts) are allowed to sit over the page without covering it.
+ * `hitAt` is injectable for hermetic tests (defaults to `elementFromPoint`).
+ */
+export function coversGuest(
+  host: HTMLElement,
+  panel: HTMLElement,
+  hitAt: (x?: number, y?: number) => Element | null = (x, y) =>
+    document.elementFromPoint(x ?? 0, y ?? 0),
+): boolean {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return true
+  const rect = host.getBoundingClientRect()
+  if (rect.width < 2 || rect.height < 2) return true
+  if (host.closest('[data-parked], [aria-hidden="true"], [inert]')) return true
+  const inset = 6
+  const points: Array<[number, number]> = [
+    [rect.left + rect.width / 2, rect.top + rect.height / 2],
+    [rect.left + inset, rect.top + inset],
+    [rect.right - inset, rect.top + inset],
+    [rect.left + inset, rect.bottom - inset],
+    [rect.right - inset, rect.bottom - inset],
+  ]
+  for (const [x, y] of points) {
+    const hit = hitAt(x, y)
+    if (!hit || panel.contains(hit)) continue
+    if (hit.closest('[aria-live], [role="status"]')) continue
+    return true
+  }
+  return false
+}
+
+/**
  * The shell's WebView sits above the wallet's, over the panel's content box.
  * Anything the wallet draws on top of that box — a permission prompt, a menu,
  * the tab switcher — would be hidden under the page, so the page is moved off
@@ -144,29 +177,8 @@ function createNativeGuest(
       y: Math.round(rect.top),
       width: Math.round(rect.width),
       height: Math.round(rect.height),
-      visible: !suppressed && unobstructed(rect),
+      visible: !suppressed && !coversGuest(host, panel),
     }
-  }
-
-  const unobstructed = (rect: DOMRect): boolean => {
-    if (document.visibilityState === 'hidden') return false
-    if (rect.width < 2 || rect.height < 2) return false
-    if (host.closest('[data-parked], [aria-hidden="true"], [inert]')) return false
-    const inset = 6
-    const points: Array<[number, number]> = [
-      [rect.left + rect.width / 2, rect.top + rect.height / 2],
-      [rect.left + inset, rect.top + inset],
-      [rect.right - inset, rect.top + inset],
-      [rect.left + inset, rect.bottom - inset],
-      [rect.right - inset, rect.bottom - inset],
-    ]
-    for (const [x, y] of points) {
-      const hit = document.elementFromPoint(x, y)
-      if (!hit || panel.contains(hit)) continue
-      if (hit.closest('[aria-live], [role="status"]')) continue
-      return false
-    }
-    return true
   }
 
   const sync = () => {
