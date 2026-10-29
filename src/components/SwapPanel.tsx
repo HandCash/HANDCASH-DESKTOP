@@ -5,6 +5,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import { Button, ListRow, StatusBanner } from '@aeon-ui/react'
 import { Switch } from '@aeon-ui/ui'
 import { swapMachine } from '../machines/swapMachine'
+import { useHeldArcUsd } from '../features/heldCoins'
 import { useRecentSwaps, useHeldCoins } from '../features/swap'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { getCachedBsvMarket, refreshMarketBoard } from '../wallet/bsvMarket'
@@ -104,7 +105,12 @@ function defaultPair(held: Record<SwapAsset, bigint>): { from: SwapAsset; to: Sw
 export function SwapPanel({ address, identityKey, chain, onFail }: Props) {
   const bsvSats = useDisplayBalanceSats({ identityKey, chain })
   const coins = useHeldCoins()
-  const held: Record<SwapAsset, bigint> = { bsv: BigInt(Math.max(0, Math.floor(bsvSats))), ...coins }
+  const arcUsd = useHeldArcUsd()
+  const held: Record<SwapAsset, bigint> = {
+    bsv: BigInt(Math.max(0, Math.floor(bsvSats))),
+    ...coins,
+    'arc-usd': arcUsd,
+  }
   const payLabel = useId()
   const getLabel = useId()
   const payLeg = useRef<HTMLElement>(null)

@@ -21,6 +21,7 @@ import { useCoinDeposits } from '../features/coinDeposits'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { depositWaiting } from '../wallet/coins/depositPhase'
 import { COIN_INFO, isCoinChain } from '../wallet/coins/coinChains'
+import { ARC_USD_PAYMENT_ETA, arcUsdWallet } from '../wallet/arcUsdc'
 
 export type ReceiveMode = 'peerpay' | 'address'
 
@@ -51,18 +52,29 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const networkOptions = useNetworkOptions()
   const [coinAddress, setCoinAddress] = useState<{ chain: string; address: string } | null>(null)
   const coin = isCoinChain(viaId) ? viaId : null
+  const isArcUsd = viaId === 'arc-usd'
   const coinInfo = coin ? COIN_INFO[coin] : null
   const waitingDeposits = useCoinDeposits(coin).filter((d) => depositWaiting(d.phase))
 
   useEffect(() => {
-    if (!coin) return
-    // Asking for the address also tells the watcher to expect coins.
-    try {
-      setCoinAddress({ chain: coin, address: COIN_WALLETS[coin].getAddress() })
-    } catch (err) {
-      toastError(`${COIN_INFO[coin].label} address unavailable`, err instanceof Error ? err.message : String(err))
+    if (coin) {
+      // Asking for the address also tells the watcher to expect coins.
+      try {
+        setCoinAddress({ chain: coin, address: COIN_WALLETS[coin].getAddress() })
+      } catch (err) {
+        toastError(`${COIN_INFO[coin].label} address unavailable`, err instanceof Error ? err.message : String(err))
+      }
+      return
     }
-  }, [coin])
+    if (isArcUsd) {
+      try {
+        setCoinAddress({ chain: 'arc-usd', address: arcUsdWallet.getAddress() })
+        void arcUsdWallet.refresh().catch(() => {})
+      } catch (err) {
+        toastError('USDC address unavailable', err instanceof Error ? err.message : String(err))
+      }
+    }
+  }, [coin, isArcUsd])
 
   const peerpayUri = useMemo(() => {
     try {
@@ -86,21 +98,32 @@ export function ReceivePanel({ address, identityKey }: Props) {
     return () => ac.abort()
   }, [])
 
-  const value = coin
-    ? (coinAddress?.chain === coin ? coinAddress.address : '')
+  const nativeReceive = coin || isArcUsd
+  const value = nativeReceive
+    ? (coinAddress?.chain === viaId ? coinAddress.address : '')
     : mode === 'peerpay' && peerpayUri ? peerpayUri : address
-  const subtitle = coinInfo
-    ? `${coinInfo.ticker} address · send only ${coinInfo.ticker}`
-    : mode === 'peerpay'
-      ? 'PeerPay link'
-      : 'BSV address'
+  const subtitle = isArcUsd
+    ? 'USDC on Arc · send only USDC'
+    : coinInfo
+      ? `${coinInfo.ticker} address · send only ${coinInfo.ticker}`
+      : mode === 'peerpay'
+        ? 'PeerPay link'
+        : 'BSV address'
 
-  const viaIsSwap = viaId !== 'bsv' && !coin
+  const viaIsSwap = viaId !== 'bsv' && !coin && !isArcUsd
   const viaLabel =
     viaId === 'bsv'
       ? 'BSV'
-      : (swapCoins.find((c) => c.code === viaId)?.name ?? viaId)
-  const viaEta = coinInfo ? `${coinInfo.confirmations} ${coinInfo.label} confirmations` : viaIsSwap ? SWAP_ETA : NATIVE_BSV_ETA
+      : isArcUsd
+        ? 'USDC'
+        : (swapCoins.find((c) => c.code === viaId)?.name ?? viaId)
+  const viaEta = isArcUsd
+    ? ARC_USD_PAYMENT_ETA
+    : coinInfo
+      ? `${coinInfo.confirmations} ${coinInfo.label} confirmations`
+      : viaIsSwap
+        ? SWAP_ETA
+        : NATIVE_BSV_ETA
 
   useEffect(() => {
     let cancelled = false
@@ -127,7 +150,15 @@ export function ReceivePanel({ address, identityKey }: Props) {
 
   const copy = async () => {
     if (!value) return
-    await copyText(value, { label: coinInfo ? `${coinInfo.label} address` : mode === 'peerpay' ? 'PeerPay link' : 'address' })
+    await copyText(value, {
+      label: isArcUsd
+        ? 'USDC address'
+        : coinInfo
+          ? `${coinInfo.label} address`
+          : mode === 'peerpay'
+            ? 'PeerPay link'
+            : 'address',
+    })
   }
 
   const openAddMoney = (fromCoin?: string) => {
@@ -138,11 +169,11 @@ export function ReceivePanel({ address, identityKey }: Props) {
   const onViaChange = (next: string) => {
     playWalletSound('soft')
     setViaId(next)
-    if (next !== 'bsv' && !isCoinChain(next)) openAddMoney(next)
+    if (next !== 'bsv' && !isCoinChain(next) && next !== 'arc-usd') openAddMoney(next)
   }
 
   return (
-    <div className="nav-child-panel receive-panel" data-aeon-scope="receive" data-chain={coin ?? 'bsv'}>
+    <div className="nav-child-panel receive-panel" data-aeon-scope="receive" data-chain={coin ?? (isArcUsd ? 'arc-usd' : 'bsv')}>
       <AssetPicker
         label="Coin"
         value={viaId}
@@ -153,14 +184,16 @@ export function ReceivePanel({ address, identityKey }: Props) {
               : { ...o, detail: NATIVE_BSV_ETA },
           ),
           ...(networkOptions.length > 1 ? swapCoins : [])
-            .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code))
+            .filter((c) => !NETWORK_OPTIONS.some((o) => o.sym === c.code) && c.code !== 'USDC')
             .map((c) => swapCoinOption(c, `Swap · ${c.eta}`)),
         ]}
         onChange={onViaChange}
       />
       <div className="receive-layout">
         <header className="receive-panel-intro">
-          <h3 className="receive-panel-title">{coinInfo ? `Receive ${coinInfo.ticker}` : 'Receive BSV'}</h3>
+          <h3 className="receive-panel-title">
+            {isArcUsd ? 'Receive USDC' : coinInfo ? `Receive ${coinInfo.ticker}` : 'Receive BSV'}
+          </h3>
         </header>
 
         <div className="receive-qr" data-aeon-part="media">
@@ -173,7 +206,15 @@ export function ReceivePanel({ address, identityKey }: Props) {
             {dataUrl ? (
               <DeferredImage
                 src={dataUrl}
-                alt={coinInfo ? `${coinInfo.label} deposit address QR code` : mode === 'peerpay' ? 'PeerPay QR code' : 'Receive address QR code'}
+                alt={
+                  isArcUsd
+                    ? 'USDC deposit address QR code'
+                    : coinInfo
+                      ? `${coinInfo.label} deposit address QR code`
+                      : mode === 'peerpay'
+                        ? 'PeerPay QR code'
+                        : 'Receive address QR code'
+                }
                 width={260}
                 height={260}
                 skeletonWidth={260}
@@ -185,7 +226,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
               <SkeletonQr size={260} />
             )}
           </button>
-          {peerpayUri && !coin ? (
+          {peerpayUri && !nativeReceive ? (
             <div className="receive-mode-toggle" role="group" aria-label="Receive with">
               {(['peerpay', 'address'] as const).map((m) => (
                 <button
@@ -237,7 +278,15 @@ export function ReceivePanel({ address, identityKey }: Props) {
 
         <div className="actions receive-actions">
           <Button.Root variant="solid" className="btn btn-primary" disabled={!value} onClick={() => void copy()}>
-            <Button.Label>{coinInfo ? `Copy ${coinInfo.ticker} address` : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}</Button.Label>
+            <Button.Label>
+              {isArcUsd
+                ? 'Copy USDC address'
+                : coinInfo
+                  ? `Copy ${coinInfo.ticker} address`
+                  : mode === 'peerpay'
+                    ? 'Copy PeerPay'
+                    : 'Copy address'}
+            </Button.Label>
           </Button.Root>
           {coin ? null : (
             <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => openAddMoney()}>

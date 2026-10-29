@@ -14,11 +14,12 @@ import {
   satsToUsd,
   subscribeUsdRate,
 } from '../wallet/fx'
-import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
+import { getHeldArcUsd, useCoinPrices, useHeldCoins } from '../features/heldCoins'
 import { useShownCoinChains } from '../features/acceptedCoins'
-import { COIN_INFO, formatCoinShort } from '../wallet/coins/coinChains'
+import { COIN_INFO, formatCoinShort, isCoinChain } from '../wallet/coins/coinChains'
 import { coinUsd } from '../wallet/heldValue'
-import type { MarketCoin } from '../wallet/bsvMarket'
+import { formatUsdcAtoms } from '../wallet/arcUsdc'
+import { isStableMarketCoin, type MarketCoin } from '../wallet/bsvMarket'
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
@@ -301,17 +302,29 @@ export function Dashboard({
   const focus: BalancePart =
     tickerCoin === 'bsv'
       ? { coin: 'bsv', text: bsvText, unit: '', title: bsvText }
-      : (() => {
-          const units = heldCoins[tickerCoin]
-          const text = formatCoinShort(tickerCoin, units)
-          const unit = COIN_INFO[tickerCoin].ticker
-          return { coin: tickerCoin, text, unit, title: `${text} ${unit}` }
-        })()
+      : isStableMarketCoin(tickerCoin)
+        ? (() => {
+            const units = getHeldArcUsd()
+            const text = formatUsdcAtoms(units)
+            return { coin: tickerCoin, text, unit: 'USDC', title: `${text} USDC` }
+          })()
+        : isCoinChain(tickerCoin)
+          ? (() => {
+              const units = heldCoins[tickerCoin]
+              const text = formatCoinShort(tickerCoin, units)
+              const unit = COIN_INFO[tickerCoin].ticker
+              return { coin: tickerCoin, text, unit, title: `${text} ${unit}` }
+            })()
+          : { coin: 'bsv', text: bsvText, unit: '', title: bsvText }
   // Focused coin's own USD for the headline. Portfolio total stays in the pill.
   const focusUsd =
     focus.coin === 'bsv'
       ? bsvUsd
-      : coinUsd(focus.coin, heldCoins[focus.coin], coinPrices[focus.coin])
+      : isStableMarketCoin(focus.coin)
+        ? Number(getHeldArcUsd()) / 1e6
+        : isCoinChain(focus.coin)
+          ? coinUsd(focus.coin, heldCoins[focus.coin], coinPrices[focus.coin])
+          : null
   const focusUsdLabel = focusUsd == null ? '—' : formatUsd(focusUsd)
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {

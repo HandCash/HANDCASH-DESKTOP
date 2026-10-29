@@ -523,6 +523,10 @@ function swapAmountLabel(
 ): string {
   const units = BigInt(swap.receive);
   if (swap.to === "bsv") return formatPrimaryFromSats(Number(units), currency, usdPerBsv, ROW_FIGURES);
+  if (swap.to === "arc-usd") {
+    const usd = Number(units) / 1e6;
+    return currency === "usd" ? formatUsd(usd) : `${usd.toLocaleString("en-US", { maximumFractionDigits: 6 })} USDC`;
+  }
   const usd = currency === "usd" ? coinUsd(swap.to, units, coinPrices[swap.to] ?? null) : null;
   return usd == null ? `${formatCoinShort(swap.to, units)} ${COIN_INFO[swap.to].ticker}` : formatUsd(usd);
 }

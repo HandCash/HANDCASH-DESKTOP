@@ -29,11 +29,11 @@ export const TICKER_COINS: Record<MarketCoin, TickerCoinInfo> = {
     }),
   ) as Record<CoinChain, TickerCoinInfo>),
   'arc-usd': {
-    name: 'Arc USD',
+    name: 'USDC',
     sym: 'USDC',
-    aboutTitle: 'What is Arc USD?',
+    aboutTitle: 'What is USDC?',
     about:
-      'Arc USD is Circle USDC on the Arc chain — a dollar-pegged crypto, like Litecoin is a coin. It is not a government fiat. Wrapping it onto BSV is experimental under Settings → Labs.',
+      'USDC is Circle’s dollar-pegged crypto. This wallet holds native USDC on Arc (Circle’s chain) — not Ethereum or other networks. Wrapping it onto BSV is experimental under Settings → Labs.',
     url: 'https://www.circle.com/usdc',
   },
 }

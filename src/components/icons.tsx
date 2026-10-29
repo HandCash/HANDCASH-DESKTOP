@@ -313,9 +313,9 @@ export function ActivityIcon(props: IconProps) {
 }
 
 /*
- * Chain marks for native coins, glyphs from `cryptocurrency-icons` (CC0, see
- * `src/assets/brand/ATTRIBUTION.md`). Never drawn from issuer metadata;
- * colours come from the brand sheet (`[data-chain-mark]`).
+ * Coin marks (UTXO chains + Arc USDC), glyphs from `cryptocurrency-icons`
+ * (CC0, see `src/assets/brand/ATTRIBUTION.md`). Never drawn from issuer
+ * metadata; disc colours come from the brand sheet (`[data-chain-mark]`).
  */
 
 /** Each chain mark without its disc, on a 32×32 grid. */
@@ -328,6 +328,11 @@ const CHAIN_GLYPHS = {
     'M23.189 14.02c.314-2.096-1.283-3.223-3.465-3.975l.708-2.84-1.728-.43-.69 2.765c-.454-.114-.92-.22-1.385-.326l.695-2.783L15.596 6l-.708 2.839c-.376-.086-.746-.17-1.104-.26l.002-.009-2.384-.595-.46 1.846s1.283.294 1.256.312c.7.175.826.638.805 1.006l-.806 3.235c.048.012.11.03.18.057l-.183-.045-1.13 4.532c-.086.212-.303.531-.793.41.018.025-1.256-.313-1.256-.313l-.858 1.978 2.25.561c.418.105.828.215 1.231.318l-.715 2.872 1.727.43.708-2.84c.472.127.93.245 1.378.357l-.706 2.828 1.728.43.715-2.866c2.948.558 5.164.333 6.097-2.333.752-2.146-.037-3.385-1.588-4.192 1.13-.26 1.98-1.003 2.207-2.538zm-3.95 5.538c-.533 2.147-4.148.986-5.32.695l.95-3.805c1.172.293 4.929.872 4.37 3.11zm.535-5.569c-.487 1.953-3.495.96-4.47.717l.86-3.45c.975.243 4.118.696 3.61 2.733z',
   doge:
     'M13.248 14.61h4.314v2.286h-4.314v4.818h2.721c1.077 0 1.958-.145 2.644-.437.686-.291 1.224-.694 1.615-1.21a4.4 4.4 0 00.796-1.815 11.4 11.4 0 00.21-2.252 11.4 11.4 0 00-.21-2.252 4.396 4.396 0 00-.796-1.815c-.391-.516-.93-.919-1.615-1.21-.686-.292-1.567-.437-2.644-.437h-2.721v4.325zm-2.766 2.286H9v-2.285h1.482V8h6.549c1.21 0 2.257.21 3.142.627.885.419 1.607.99 2.168 1.715.56.724.977 1.572 1.25 2.543.273.971.409 2.01.409 3.115a11.47 11.47 0 01-.41 3.115c-.272.97-.689 1.819-1.25 2.543-.56.725-1.282 1.296-2.167 1.715-.885.418-1.933.627-3.142.627h-6.549v-7.104z',
+  /** Circle USDC token mark (cryptocurrency-icons CC0) — two paths: S + ring. */
+  'arc-usd': [
+    'M20.022 18.124c0-2.124-1.28-2.852-3.84-3.156-1.828-.243-2.193-.728-2.193-1.578 0-.85.61-1.396 1.828-1.396 1.097 0 1.707.364 2.011 1.275a.458.458 0 00.427.303h.975a.416.416 0 00.427-.425v-.06a3.04 3.04 0 00-2.743-2.489V9.142c0-.243-.183-.425-.487-.486h-.915c-.243 0-.426.182-.487.486v1.396c-1.829.242-2.986 1.456-2.986 2.974 0 2.002 1.218 2.791 3.778 3.095 1.707.303 2.255.668 2.255 1.639 0 .97-.853 1.638-2.011 1.638-1.585 0-2.133-.667-2.316-1.578-.06-.242-.244-.364-.427-.364h-1.036a.416.416 0 00-.426.425v.06c.243 1.518 1.219 2.61 3.23 2.914v1.457c0 .242.183.425.487.485h.915c.243 0 .426-.182.487-.485V21.34c1.829-.303 3.047-1.578 3.047-3.217z',
+    'M12.892 24.497c-4.754-1.7-7.192-6.98-5.424-11.653.914-2.55 2.925-4.491 5.424-5.402.244-.121.365-.303.365-.607v-.85c0-.242-.121-.424-.365-.485-.061 0-.183 0-.244.06a10.895 10.895 0 00-7.13 13.717c1.096 3.4 3.717 6.01 7.13 7.102.244.121.488 0 .548-.243.061-.06.061-.122.061-.243v-.85c0-.182-.182-.424-.365-.546zm6.46-18.936c-.244-.122-.488 0-.548.242-.061.061-.061.122-.061.243v.85c0 .243.182.485.365.607 4.754 1.7 7.192 6.98 5.424 11.653-.914 2.55-2.925 4.491-5.424 5.402-.244.121-.365.303-.365.607v.85c0 .242.121.424.365.485.061 0 .183 0 .244-.06a10.895 10.895 0 007.13-13.717c-1.096-3.46-3.778-6.07-7.13-7.162z',
+  ],
 } as const
 
 /** The Litecoin mark, for native LTC. */
@@ -370,35 +375,39 @@ export function DogecoinIcon({ size = 18, ...rest }: IconProps) {
   )
 }
 
-/** Arc USD (Circle USDC on Arc) — crypto mark for the ticker. */
+/** Arc USD — Circle USDC token mark (cryptocurrency-icons CC0). Disc tint from CSS. */
 export function ArcUsdIcon({ size = 18, ...rest }: IconProps) {
   return (
     <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden focusable="false" data-chain-mark="arc-usd" {...rest}>
       <circle cx="16" cy="16" r="16" className="chain-mark-disc" />
-      <path
-        className="chain-mark-glyph"
-        d="M16 6.5c-5.25 0-9.5 4.25-9.5 9.5s4.25 9.5 9.5 9.5 9.5-4.25 9.5-9.5-4.25-9.5-9.5-9.5zm.75 14.75h-1.5v-1.35c-1.85-.2-3.2-1.15-3.55-2.7l1.55-.35c.25 1.05 1.2 1.7 2.55 1.7 1.2 0 2.05-.55 2.05-1.45 0-.85-.55-1.25-2.15-1.7l-1.1-.3c-2.05-.55-3.05-1.55-3.05-3.25 0-1.85 1.4-3.15 3.4-3.4V8.5h1.5v1.25c1.55.2 2.7 1.05 3.05 2.45l-1.5.4c-.25-.9-.95-1.45-2-1.45-1.1 0-1.85.55-1.85 1.35 0 .75.5 1.15 2.05 1.55l1.1.3c2.25.6 3.2 1.65 3.2 3.4 0 2-1.5 3.35-3.7 3.65v1.35z"
-      />
+      {CHAIN_GLYPHS['arc-usd'].map((d) => (
+        <path key={d.slice(0, 24)} className="chain-mark-glyph" d={d} />
+      ))}
     </svg>
   )
 }
 
 /**
  * A coin's mark alone, no disc, in the current text colour. BSV draws the
- * Bitcoin B upright, as its own logo does; BTC keeps the tilt.
+ * Bitcoin B upright, as its own logo does; BTC keeps the tilt; Arc USD uses
+ * the USDC S + ring.
  */
 export function CoinGlyphIcon({
   coin,
   size = 18,
   ...rest
 }: IconProps & { coin: 'bsv' | keyof typeof CHAIN_GLYPHS }) {
+  const glyph = coin === 'bsv' ? CHAIN_GLYPHS.btc : CHAIN_GLYPHS[coin]
+  const paths = typeof glyph === 'string' ? [glyph] : glyph
   return (
     <svg viewBox="0 0 32 32" width={size} height={size} fill="currentColor" aria-hidden focusable="false" {...rest}>
-      {coin === 'bsv' ? (
-        <path d={CHAIN_GLYPHS.btc} transform="rotate(-14 16 16)" />
-      ) : (
-        <path d={CHAIN_GLYPHS[coin]} />
-      )}
+      {paths.map((d) => (
+        <path
+          key={d.slice(0, 24)}
+          d={d}
+          {...(coin === 'bsv' ? { transform: 'rotate(-14 16 16)' } : {})}
+        />
+      ))}
     </svg>
   )
 }

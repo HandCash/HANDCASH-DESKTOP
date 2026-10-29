@@ -204,7 +204,7 @@ export function signFeeClaim(r: FeeLockReport, secret: Bytes, keyHex: string, pa
 // ── Readers ───────────────────────────────────────────────────────────────
 
 /** A coin chain read through the wallet's own sources. Opened fresh per run: a Worker cannot share sockets across requests. */
-export function coinFeeReader(chain: Exclude<SwapAsset, 'bsv'>): FeeChainReader {
+export function coinFeeReader(chain: Exclude<SwapAsset, 'bsv' | 'arc-usd'>): FeeChainReader {
   const src: LtcChain = (() => {
     switch (chain) {
       case 'ltc':
@@ -284,5 +284,8 @@ export function bsvFeeReader(opts: { fetch?: typeof fetch; apiKey?: string } = {
   }
 }
 
-export const feeReaderOf = (chain: SwapAsset, bsv: { fetch?: typeof fetch; apiKey?: string } = {}): FeeChainReader =>
-  chain === 'bsv' ? bsvFeeReader(bsv) : coinFeeReader(chain)
+export const feeReaderOf = (chain: SwapAsset, bsv: { fetch?: typeof fetch; apiKey?: string } = {}): FeeChainReader => {
+  if (chain === 'bsv') return bsvFeeReader(bsv)
+  if (chain === 'arc-usd') throw new Error('HTLC: Arc USDC fee reader is not wired yet')
+  return coinFeeReader(chain)
+}

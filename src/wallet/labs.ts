@@ -23,9 +23,9 @@ export const LAB_FEATURES: readonly LabFeature[] = [
   },
   {
     id: 'arcUsdc',
-    label: 'Wrap Arc USD',
+    label: 'Wrap USDC (Arc)',
     description:
-      'Experimental: wrap Arc USD onto BSV claim units (Arc chain only — not Ethereum or other USDC). Holding and pricing Arc USD does not need this. Off by default; unfinished mint/redeem.',
+      'Experimental: wrap USDC on Arc onto BSV claim units (not Ethereum or other networks). Holding, send and receive do not need this. Off by default; lab wrap credits a local claim ledger (live Arc payout still unfinished).',
   },
 ]
 

@@ -121,12 +121,14 @@
   --coin-bch: #38c9b0;
   --coin-btc: #f08a3c;
   --coin-doge: #f3dd3a;
-  --coin-arc-usd: #f028b0;
+  /* Arc USD / USDC family blue — kept apart from LTC under CVD (see coinPalette.test). */
+  --coin-arc-usd: #7eaef1;
   --coin-ltc-mark: #345d9d;
   --coin-bch-mark: #078f69;
   --coin-btc-mark: #b76d13;
   --coin-doge-mark: #917c26;
-  --coin-arc-usd-mark: #86198f;
+  /* Official USDC disc from cryptocurrency-icons (CC0). */
+  --coin-arc-usd-mark: #3e73c4;
 }
 
 /* White sheet — keep hsl(var(--*)) paths in lockstep with HANDCASH_LIGHT_PALETTE.
@@ -205,7 +207,7 @@ html[data-aeon-mode='light'] {
   --coin-bch: #13958a;
   --coin-btc: #de6a10;
   --coin-doge: #6e6200;
-  --coin-arc-usd: #86198f;
+  --coin-arc-usd: #234e8b;
 }
 
 * {
@@ -1806,7 +1808,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 
 html[data-aeon-mode='light'] .wallet-balance .balance,
 html[data-aeon-mode='light'] .wallet-balance .balance-primary {
-  color: var(--coin-color-light, #0a3d22) !important;
+  /* Light sheet already redefines --coin-*; --coin-color resolves per [data-chain]. */
+  color: var(--coin-color, #0a3d22) !important;
 }
 
 .wallet-balance .balance-secondary {
@@ -19262,7 +19265,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 }
 
 html[data-aeon-mode='light'] .balance-split-share[data-chain] {
-  color: var(--coin-color-light, inherit);
+  color: var(--coin-color, inherit);
 }
 
 .balance-split-mark {

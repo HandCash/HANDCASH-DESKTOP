@@ -7,9 +7,8 @@
  * only** — never Ethereum / Solana / other USDC. Settings → Labs → Wrap Arc USD
  * must be on.
  *
- * This module plans and validates; mint / redeem against a live Arc RPC and
- * BSV BNT deploy stay behind the same gate and are unfinished until the lab
- * path is proven.
+ * This module plans and validates. Executable wrap / redeem live in `wrap.ts`
+ * (local claim ledger; Arc deposit verify + redeem payout are injectable).
  */
 
 import { isLabEnabled } from '../labs'
@@ -62,7 +61,7 @@ export function arcUsdcLabEnabled(): boolean {
 function requireLab(): void {
   if (!arcUsdcLabEnabled()) {
     throw new Error(
-      'ARC_USDC_LAB: turn on Settings → Labs → Wrap Arc USD on this device first',
+      'ARC_USDC_LAB: turn on Settings → Labs → Wrap USDC (Arc) on this device first',
     )
   }
 }

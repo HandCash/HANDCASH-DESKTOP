@@ -1,5 +1,6 @@
 import { Transaction } from '@bsv/sdk'
 import { sourceTxidOf } from '../txInputs'
+import type { LtcBurialProof } from '../ltc/verify'
 import { readBackingProof, type BntBackingProof } from './backing'
 import { checkBntTx, type BntDeploy } from './validity'
 
@@ -77,7 +78,14 @@ export function buildBntPackage(
   let complete = true
   const seen = new Set<string>([pkg.subject])
   for (const [txid, proof] of backing) {
-    const cost = 120 + proof.tx.length + proof.header.length + proof.path.length * 67
+    // LTC burial carries tx + header + merkle path; Arc receipt is a compact JSON-shaped proof.
+    let cost: number
+    if ('kind' in proof && proof.kind === 'arc-receipt') {
+      cost = 120 + proof.txHash.length + JSON.stringify(proof.log).length
+    } else {
+      const burial = proof as LtcBurialProof
+      cost = 120 + burial.tx.length + burial.header.length + burial.path.length * 67
+    }
     if (size + cost > budget) {
       complete = false
       continue

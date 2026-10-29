@@ -16,9 +16,10 @@ Brand marks are HandCash property and used here as part of the official HandCash
 
 ## Chain marks
 
-The Litecoin, Bitcoin Cash, Bitcoin and Dogecoin glyphs in `src/components/icons.tsx`
-come from [`cryptocurrency-icons`](https://github.com/spothq/cryptocurrency-icons) 0.18.1
-(CC0 1.0). Disc colours are the chains' own brand colours, set in `handcash.css`.
+The Litecoin, Bitcoin Cash, Bitcoin, Dogecoin and USDC (Arc USD) glyphs in
+`src/components/icons.tsx` come from
+[`cryptocurrency-icons`](https://github.com/spothq/cryptocurrency-icons) 0.18.1
+(CC0 1.0). Disc colours are the chains' / USDC brand colours, set in `handcash.css`.
 
 ## Import source marks
 

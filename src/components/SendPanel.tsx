@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { AssetPicker, NETWORK_OPTIONS, swapCoinOption, useNetworkOptions } from './NetworkPicker'
-import { useCoinPrices, useHeldCoins } from '../features/heldCoins'
+import { useCoinPrices, useHeldArcUsd, useHeldCoins } from '../features/heldCoins'
 import { COIN_WALLETS } from '../features/coinWallets'
 import { coinUsd as coinUnitsUsd } from '../wallet/heldValue'
 import { COIN_INFO, formatCoin, formatCoinShort, isCoinChain } from '../wallet/coins/coinChains'
 import { parseTokenAmount } from '../wallet/amounts'
 import type { MarketCoin } from '../wallet/bsvMarket'
+import {
+  ARC_USD_DECIMALS,
+  ARC_USD_PAYMENT_ETA,
+  arcUsdWallet,
+  formatUsdcAtoms,
+} from '../wallet/arcUsdc'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { sendMachine } from '../machines/sendMachine'
@@ -179,15 +185,20 @@ export function SendPanel({
 
   /** A native coin network: the same flow pays that coin from this wallet's own key on its chain. */
   const coin = isCoinChain(network) ? network : null
+  const isArcUsd = network === 'arc-usd'
   const coinInfo = coin ? COIN_INFO[coin] : null
   const coinWallet = coin ? COIN_WALLETS[coin] : null
   const heldCoins = useHeldCoins()
+  const heldArcUsd = useHeldArcUsd()
   const coinPrices = useCoinPrices()
-  const heldUnits = coin ? heldCoins[coin] : 0n
-  const usdPerCoin = coin ? coinPrices[coin] : null
-  const ticker = coinInfo?.ticker ?? 'BSV'
+  const heldUnits = isArcUsd ? heldArcUsd : coin ? heldCoins[coin] : 0n
+  const usdPerCoin = isArcUsd ? 1 : coin ? coinPrices[coin] : null
+  const ticker = isArcUsd ? 'USDC' : coinInfo?.ticker ?? 'BSV'
+  const payableDecimals = isArcUsd ? ARC_USD_DECIMALS : coinInfo?.decimals ?? null
   const destIsNative = destAssetId === 'bsv'
-  const destAsset = coin && coinInfo && coinWallet
+  const destAsset = isArcUsd
+    ? { id: 'arc-usd', label: 'USDC', eta: ARC_USD_PAYMENT_ETA }
+    : coin && coinInfo && coinWallet
     ? { id: coin, label: coinInfo.label, eta: coinWallet.binding.paymentEta }
     : destIsNative
     ? { id: 'bsv', label: 'BSV', eta: NATIVE_BSV_ETA }
@@ -196,14 +207,22 @@ export function SendPanel({
         label: swapCoins.find((c) => c.code === destAssetId)?.code ?? destAssetId,
         eta: SWAP_ETA,
       }
-  const destReady = coin !== null || destIsNative
+  const destReady = coin !== null || isArcUsd || destIsNative
   /** Every coin this wallet sends natively, with what it holds of each, then coins a recipient gets through a swap. */
   const networkOptions = useNetworkOptions()
   const nativeTickers = new Set(NETWORK_OPTIONS.map((o) => o.sym))
+  nativeTickers.add('USDC')
   const coinOptions = [
     ...networkOptions.map((o) => ({
       ...o,
-      detail: o.value === 'bsv' ? formatBsvSignificant(balanceSats, 4).replace(/\s*BSV$/, '') : isCoinChain(o.value) ? formatCoinShort(o.value, heldCoins[o.value]) : undefined,
+      detail:
+        o.value === 'bsv'
+          ? formatBsvSignificant(balanceSats, 4).replace(/\s*BSV$/, '')
+          : isCoinChain(o.value)
+            ? formatCoinShort(o.value, heldCoins[o.value])
+            : o.value === 'arc-usd'
+              ? formatUsdcAtoms(heldArcUsd)
+              : undefined,
     })),
     ...(networkOptions.length > 1 ? swapCoins : [])
       .filter((c) => !nativeTickers.has(c.code))
@@ -246,20 +265,28 @@ export function SendPanel({
     [recipientQuery, friends],
   )
 
-  const coinUsd = coin ? usdPerCoin : usdPerBsv
+  const coinUsd = coin || isArcUsd ? usdPerCoin : usdPerBsv
   /** The amount in the network's smallest unit: satoshis on BSV, the coin's own smallest unit elsewhere. */
   const amountUnits = (draft: string) =>
-    coinInfo && currency === 'bsv'
-      ? Number(parseTokenAmount(draft.trim(), coinInfo.decimals) ?? 0)
+    payableDecimals != null && currency === 'bsv'
+      ? Number(parseTokenAmount(draft.trim(), payableDecimals) ?? 0)
       : amountToSats(draft, currency, coinUsd)
   const amountSats = amountUnits(amountDraft)
-  const coinAmountUsd = coin ? coinUnitsUsd(coin, BigInt(amountSats), usdPerCoin) : null
-  const amountLabel = coin ? `${formatCoin(coin, BigInt(amountSats))} ${ticker}` : formatTypedAmount(amountDraft, currency)
+  const coinAmountUsd = isArcUsd
+    ? Number(BigInt(amountSats)) / 10 ** ARC_USD_DECIMALS
+    : coin
+      ? coinUnitsUsd(coin, BigInt(amountSats), usdPerCoin)
+      : null
+  const amountLabel = isArcUsd
+    ? `${formatUsdcAtoms(BigInt(amountSats))} USDC`
+    : coin
+      ? `${formatCoin(coin, BigInt(amountSats))} ${ticker}`
+      : formatTypedAmount(amountDraft, currency)
   const amountSecondary =
     amountSats <= 0 ? null
-    : coin ? (coinAmountUsd == null ? null : formatUsd(coinAmountUsd))
+    : coin || isArcUsd ? (coinAmountUsd == null ? null : formatUsd(coinAmountUsd))
     : formatSecondaryFromSats(amountSats, currency, usdPerBsv)
-  const overHeld = coin !== null && BigInt(amountSats) > heldUnits
+  const overHeld = (coin !== null || isArcUsd) && BigInt(amountSats) > heldUnits
 
   const canReview =
     destReady &&
@@ -281,10 +308,14 @@ export function SendPanel({
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
     send({ type: 'CHECK' })
-    if (coinWallet) {
+    if (coinWallet || isArcUsd) {
       try {
         // A payment to an identity is refused here, before review, unless its wallet's signed record says it receives the coin.
-        await coinWallet.preflightRecipient(coinRecipientArgs(String(amountSats)))
+        if (isArcUsd) {
+          await arcUsdWallet.preflightRecipient(coinRecipientArgs(String(amountSats)))
+        } else {
+          await coinWallet!.preflightRecipient(coinRecipientArgs(String(amountSats)))
+        }
         send({ type: 'REVIEW' })
       } catch (err) {
         send({ type: 'REFUSE' })
@@ -449,22 +480,25 @@ export function SendPanel({
   const confirmSend = () => {
     if (!destReady) return
     syncAmountToMachine(amountDraft)
-    if (coinWallet && coinInfo) {
+    if ((coinWallet && coinInfo) || isArcUsd) {
       const args = coinRecipientArgs(String(amountSats))
       const label = recipientLabel
       const toLabel = sendSnap.context.friendLabel ?? undefined
       const sent = amountLabel
+      const networkLabel = isArcUsd ? 'Arc' : coinInfo!.label
       send({ type: 'CONFIRM' })
       onClose()
       void (async () => {
         try {
-          const paid = await coinWallet.send(args, { toLabel })
+          const paid = isArcUsd
+            ? await arcUsdWallet.send(args, { toLabel })
+            : await coinWallet!.send(args, { toLabel })
           playPaymentSuccessSound()
           toastSuccess(
             paid.status === 'sent' ? 'Sent' : 'Signed',
             paid.status === 'sent'
               ? `${sent} on the way to ${label}.`
-              : `${sent} to ${label} is signed; ${coinInfo.label} did not take it yet, so the wallet keeps broadcasting it.`,
+              : `${sent} to ${label} is signed; ${networkLabel} did not take it yet, so the wallet keeps broadcasting it.`,
           )
         } catch (err) {
           onFail(err instanceof Error ? err.message : String(err))
@@ -679,13 +713,21 @@ export function SendPanel({
                     {fiatOption.iso} rate unavailable — switch to {ticker} or refresh
                   </span>
                 ) : overHeld ? (
-                  <span className="send-amount-warning">More than this wallet can send on {coinInfo?.label}</span>
+                  <span className="send-amount-warning">
+                    More than this wallet can send on {isArcUsd ? 'Arc' : coinInfo?.label}
+                  </span>
                 ) : amountSecondary ? (
                   <span className="send-amount-secondary">≈ {amountSecondary}</span>
                 ) : null}
               </div>
               <p className="send-available">
-                {coin && coinInfo ? (
+                {isArcUsd ? (
+                  <>
+                    Available {formatUsdcAtoms(heldUnits)} USDC
+                    {` · ${formatUsd(Number(heldUnits) / 10 ** ARC_USD_DECIMALS)}`}
+                    {' · less the Arc fee'}
+                  </>
+                ) : coin && coinInfo ? (
                   <>
                     Available {formatCoin(coin, heldUnits)} {ticker}
                     {usdPerCoin != null ? ` · ${formatUsd(coinUnitsUsd(coin, heldUnits, usdPerCoin) ?? 0)}` : ''}
@@ -737,7 +779,13 @@ export function SendPanel({
                       onBlur={() => {
                         window.setTimeout(() => setShowFriendMatches(false), 120)
                       }}
-                      placeholder={coinInfo ? `Friend, $handle, wallet key, or ${coinInfo.label} address (${coinInfo.addressHint})` : 'Friend, $handle, peerpay:, address, or wallet key'}
+                      placeholder={
+                        isArcUsd
+                          ? '0x Arc address'
+                          : coinInfo
+                            ? `Friend, $handle, wallet key, or ${coinInfo.label} address (${coinInfo.addressHint})`
+                            : 'Friend, $handle, peerpay:, address, or wallet key'
+                      }
                       autoComplete="off"
                       spellCheck={false}
                     />
@@ -823,10 +871,12 @@ export function SendPanel({
               <p className="send-confirm-to">
                 to <strong>{recipientLabel}</strong>
               </p>
-              {sendSnap.context.friendLabel || coin ? (
+              {sendSnap.context.friendLabel || coin || isArcUsd ? (
                 <p className="mono send-confirm-address">{sendSnap.context.to}</p>
               ) : null}
-              {coinInfo ? (
+              {isArcUsd ? (
+                <p className="send-confirm-note">Plus the Arc network fee. Can't be undone.</p>
+              ) : coinInfo ? (
                 <p className="send-confirm-note">
                   Plus the {coinInfo.label} network fee. Can't be undone.
                 </p>

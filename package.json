@@ -70,6 +70,7 @@
     "@google/model-viewer": "^4.3.1",
     "@handcash/wallet-engine": "file:packages/wallet-engine",
     "@noble/hashes": "^2.4.0",
+    "@noble/secp256k1": "^2.3.0",
     "@xstate/react": "^5.0.3",
     "@zxing/browser": "^0.1.5",
     "@zxing/library": "^0.21.3",

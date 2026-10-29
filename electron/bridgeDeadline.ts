@@ -60,6 +60,12 @@ const READ_METHODS = new Set(
     'listCoins',
     'listAssetProfiles',
     'getClaimedCloudHandle',
+    'getArcUsdAddress',
+    'listArcUsd',
+    'listArcUsdcWrapClaims',
+    'getArcUsdcWrapSpendable',
+    'planArcUsdcFractionalize',
+    'planArcUsdcRedeem',
   ].map((m) => m.toLowerCase()),
 )
 

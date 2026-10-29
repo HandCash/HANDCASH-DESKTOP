@@ -621,6 +621,89 @@ export async function dispatchWalletMethod(
       const chain = coinChainOf(args)
       return sendCoinsResult(chain, await (await coinWalletOf(chain)).send(coinPaymentArgs(args), { origin: originator }))
     }
+    case 'getArcUsdAddress': {
+      const { arcUsdWallet } = await import('./arcUsdc')
+      return { chain: 'arc-usd', ...arcUsdWallet.addressForApp() }
+    }
+    case 'listArcUsd': {
+      const { arcUsdWallet } = await import('./arcUsdc')
+      const report = await arcUsdWallet.refresh()
+      return {
+        chain: 'arc-usd',
+        address: report.address,
+        balance: report.balance.spendable,
+        locked: report.balance.confirming,
+      }
+    }
+    case 'sendArcUsd': {
+      const { arcUsdWallet } = await import('./arcUsdc')
+      const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+      const paid = await arcUsdWallet.send(
+        { address: body.address, amount: body.amount ?? body.litoshi },
+        { origin: originator },
+      )
+      return { chain: 'arc-usd', txid: paid.txid, amount: paid.amount, fee: paid.fee, status: paid.status }
+    }
+    case 'planArcUsdcFractionalize': {
+      const { planFractionalize, arcUsdcLabEnabled } = await import('./arcUsdc')
+      if (!arcUsdcLabEnabled()) {
+        throw new Error('ARC_USDC_LAB: turn on Settings → Labs → Wrap USDC (Arc) on this device first')
+      }
+      const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+      return planFractionalize({
+        chainId: Number(body.chainId),
+        txHash: String(body.txHash ?? ''),
+        logIndex: Number(body.logIndex),
+        atoms: String(body.atoms ?? ''),
+        ...(typeof body.tokenAddress === 'string' ? { tokenAddress: body.tokenAddress } : {}),
+      })
+    }
+    case 'planArcUsdcRedeem': {
+      const { planRedeem, arcUsdcLabEnabled } = await import('./arcUsdc')
+      if (!arcUsdcLabEnabled()) {
+        throw new Error('ARC_USDC_LAB: turn on Settings → Labs → Wrap USDC (Arc) on this device first')
+      }
+      const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+      return planRedeem({
+        chainId: Number(body.chainId),
+        atoms: String(body.atoms ?? ''),
+        to: String(body.to ?? ''),
+      })
+    }
+    case 'executeArcUsdcFractionalize': {
+      const { executeFractionalize } = await import('./arcUsdc')
+      const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+      return await executeFractionalize({
+        chainId: Number(body.chainId),
+        txHash: String(body.txHash ?? ''),
+        logIndex: Number(body.logIndex),
+        atoms: String(body.atoms ?? ''),
+        ...(typeof body.tokenAddress === 'string' ? { tokenAddress: body.tokenAddress } : {}),
+      })
+    }
+    case 'executeArcUsdcRedeem': {
+      const { executeRedeem } = await import('./arcUsdc')
+      const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+      return await executeRedeem({
+        chainId: Number(body.chainId),
+        atoms: String(body.atoms ?? ''),
+        to: String(body.to ?? ''),
+      })
+    }
+    case 'listArcUsdcWrapClaims': {
+      const { listWrapClaims, getWrapSpendable, arcUsdcLabEnabled } = await import('./arcUsdc')
+      if (!arcUsdcLabEnabled()) {
+        throw new Error('ARC_USDC_LAB: turn on Settings → Labs → Wrap USDC (Arc) on this device first')
+      }
+      return { claims: listWrapClaims(), spendable: getWrapSpendable() }
+    }
+    case 'getArcUsdcWrapSpendable': {
+      const { getWrapSpendable, arcUsdcLabEnabled } = await import('./arcUsdc')
+      if (!arcUsdcLabEnabled()) {
+        throw new Error('ARC_USDC_LAB: turn on Settings → Labs → Wrap USDC (Arc) on this device first')
+      }
+      return { spendable: getWrapSpendable() }
+    }
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -1207,6 +1290,33 @@ async function handleBrc100RequestInner(
         // The prompt shows the payment's dollar value and Auto-pay counts it.
         await refreshCoinPrices(coinChain)
       } catch (err) {
+        const mapped = brcSpendErrorCode(err)
+        return {
+          status: mapped.status,
+          body: JSON.stringify({ status: 'error', code: mapped.code, description: mapped.description }),
+        }
+      }
+    }
+    if (method === 'sendArcUsd') {
+      const { arcUsdWallet, ArcUsdRefusalError } = await import('./arcUsdc')
+      try {
+        assertOnlineForPayment()
+        const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
+        await arcUsdWallet.preflightRecipient({
+          address: body.address,
+          amount: body.amount ?? body.litoshi,
+        })
+      } catch (err) {
+        if (err instanceof ArcUsdRefusalError) {
+          return {
+            status: 400,
+            body: JSON.stringify({
+              status: 'error',
+              code: `ARC_USD_${err.reason.toUpperCase().replace(/-/g, '_')}`,
+              description: err.message,
+            }),
+          }
+        }
         const mapped = brcSpendErrorCode(err)
         return {
           status: mapped.status,

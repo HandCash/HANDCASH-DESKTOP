@@ -12,7 +12,15 @@ export type SwapLegId = 'taker' | 'maker'
 export type SwapFee = { leg: SwapLegId; amount: string }
 
 /** Upper bounds, in smallest units of each chain, of one claim transaction on a direct swap. */
-export const DIRECT_CLAIM_COST: Record<SwapAsset, bigint> = { bsv: 100n, ltc: 1_000n, bch: 500n, btc: 5_000n, doge: 200_000n }
+export const DIRECT_CLAIM_COST: Record<SwapAsset, bigint> = {
+  bsv: 100n,
+  ltc: 1_000n,
+  bch: 500n,
+  btc: 5_000n,
+  doge: 200_000n,
+  /** Upper bound on Arc claim gas paid in USDC atoms (6-dec). */
+  'arc-usd': 100_000n,
+}
 
 /** HandCash's swap fee key: claims fee outputs once their swap has happened (BRC-CLOUD `swapFees.js`). */
 export const HANDCASH_SWAP_FEE_PUB = '03a7844691b951beb4261441a53e5248fba582babb72ce189e8b21e8dfe8442487'

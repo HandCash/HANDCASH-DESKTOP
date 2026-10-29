@@ -1,4 +1,4 @@
-import { COIN_INFO } from '../coins/coinChains'
+import { COIN_INFO, isCoinChain } from '../coins/coinChains'
 import type { SwapAsset } from './assets'
 import { swapLegs } from './settle'
 import type { SettleRecord } from './settleStore'
@@ -16,8 +16,8 @@ export type LockConfirming = { chain: SwapAsset; counted: number; needed: number
 
 const clock = (ms: number | undefined) => (ms ? new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'later')
 
-/** A BSV lock is buried once a block holds it; a coin lock at its chain's depth. */
-const depthOf = (chain: SwapAsset) => (chain === 'bsv' ? 1 : COIN_INFO[chain].confirmations)
+/** BSV and Arc settle at depth 1 (Instant); UTXO coins use their chain's burial depth. */
+const depthOf = (chain: SwapAsset) => (chain === 'bsv' || chain === 'arc-usd' ? 1 : isCoinChain(chain) ? COIN_INFO[chain].confirmations : 1)
 
 function lockConfirming(chain: SwapAsset, c: { have: number; need: number } | undefined): LockConfirming {
   return c ? { chain, counted: Math.min(c.have, c.need), needed: c.need } : { chain, counted: 0, needed: depthOf(chain) }

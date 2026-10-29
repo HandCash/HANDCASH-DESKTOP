@@ -1,3 +1,4 @@
+import { keccak_256 } from '@noble/hashes/sha3.js'
 import { BigNumber, ECDSA, Hash, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 import { encodeCashAddr } from '../bch/bitcoincash'
 import { BTC_HRP } from '../btc/bitcoin'
@@ -35,6 +36,10 @@ import type { SwapAsset } from './assets'
  * before 1.3.609 name a co-signer instead (`cosignPub`), who pre-signed the
  * refund with nLockTime = `locktime` before the output was funded.
  *
+ * Arc USDC (`arc-usd`) is EVM: the lock encoding is a canonical parameter
+ * blob (hash ‖ claim ‖ refund ‖ locktime) that both wallets compare and that
+ * funds an ERC-20 hashed-timelock contract — not a Bitcoin script.
+ *
  * The preimage must be exactly 32 bytes on every chain, so a secret that
  * opens one leg of a swap always opens the other.
  */
@@ -50,7 +55,7 @@ export type HtlcTerms = {
   cosignPub?: Bytes
 }
 
-export type HtlcKind = 'p2wsh' | 'p2sh' | 'bare'
+export type HtlcKind = 'p2wsh' | 'p2sh' | 'bare' | 'erc20'
 
 const OP = {
   0: 0x00,
@@ -96,7 +101,28 @@ const fail = (message: string): never => {
 }
 
 export function htlcKind(chain: SwapAsset): HtlcKind {
+  if (chain === 'arc-usd') return 'erc20'
   return chain === 'ltc' || chain === 'btc' ? 'p2wsh' : chain === 'bsv' ? 'bare' : 'p2sh'
+}
+
+/** EIP-55-ready 20-byte address from a compressed secp256k1 pubkey (same curve as Arc). */
+function ethAddressOfPub(pub: Bytes): Bytes {
+  const uncompressed = Uint8Array.from(PublicKey.fromString(toHex(pub)).encode(false) as number[])
+  if (uncompressed.length !== 65 || uncompressed[0] !== 0x04) fail('claim/refund keys must decompress')
+  return keccak_256(uncompressed.subarray(1)).subarray(12)
+}
+
+/**
+ * Canonical Arc USDC HTLC lock encoding: version ‖ hash ‖ claimAddr ‖ refundAddr ‖ locktime.
+ * Peers compare these bytes; the funded contract is derived from them.
+ */
+function arcUsdcHtlcScript(t: HtlcTerms): Bytes {
+  const lock = new Uint8Array(4)
+  lock[0] = (t.locktime >>> 24) & 0xff
+  lock[1] = (t.locktime >>> 16) & 0xff
+  lock[2] = (t.locktime >>> 8) & 0xff
+  lock[3] = t.locktime & 0xff
+  return concat(Uint8Array.of(0x01), t.hash, ethAddressOfPub(t.claimPub), ethAddressOfPub(t.refundPub), lock)
 }
 
 export const sha256 = (b: Bytes): Bytes => Uint8Array.from(Hash.sha256(Array.from(b)))
@@ -184,9 +210,10 @@ function checkTerms(chain: SwapAsset, t: HtlcTerms): void {
   if (chain !== 'bsv' && t.cosignPub) fail('only a BSV HTLC has a refund co-signer')
 }
 
-/** The script that holds the coins (the witness or redeem script on the coin chains, the locking script on BSV). */
+/** The script that holds the coins (the witness or redeem script on the coin chains, the locking script on BSV, the ERC-20 HTLC encoding on Arc). */
 export function htlcScript(chain: SwapAsset, t: HtlcTerms): Bytes {
   checkTerms(chain, t)
+  if (chain === 'arc-usd') return arcUsdcHtlcScript(t)
   const secretCheck = concat(Uint8Array.of(OP.SIZE), push(Uint8Array.of(SECRET_BYTES)), Uint8Array.of(OP.EQUALVERIFY, OP.SHA256), push(t.hash), Uint8Array.of(OP.EQUALVERIFY))
   if (chain === 'bsv') {
     const refund = t.cosignPub ? concat(push(t.refundPub), Uint8Array.of(OP.CHECKSIGVERIFY), push(t.cosignPub), Uint8Array.of(OP.CHECKSIG)) : bsvRefundPath(t)
@@ -209,6 +236,11 @@ export function htlcOutput(chain: SwapAsset, script: Bytes): { scriptPubKey: Byt
   switch (htlcKind(chain)) {
     case 'bare':
       return { scriptPubKey: script, address: null }
+    case 'erc20': {
+      // Deterministic lock id (0x + 20 bytes) from the encoding — funds land at the HTLC contract derived from these terms.
+      const id = keccak_256(script).subarray(12)
+      return { scriptPubKey: script, address: `0x${toHex(id)}` }
+    }
     case 'p2wsh': {
       const program = sha256(script)
       return { scriptPubKey: concat(Uint8Array.of(0x00, 0x20), program), address: encodeSegwitAddress(chain === 'ltc' ? LTC_HRP : BTC_HRP, 0, program) }
@@ -254,6 +286,7 @@ export type HtlcPath = { kind: 'claim'; preimage: Bytes; sig: Bytes } | { kind: 
 export function htlcUnlock(chain: SwapAsset, script: Bytes, path: HtlcPath): { scriptSig: Bytes; witness: Bytes[] } {
   if (path.kind === 'claim' && path.preimage.length !== SECRET_BYTES) fail('the secret is 32 bytes')
   const kind = htlcKind(chain)
+  if (kind === 'erc20') fail('Arc USDC HTLC spends are not a Bitcoin script unlock')
   if (kind === 'p2wsh') {
     const items = path.kind === 'claim' ? [path.sig, path.preimage, Uint8Array.of(1)] : [path.sig, new Uint8Array()]
     return { scriptSig: new Uint8Array(), witness: [...items, script] }
@@ -317,6 +350,7 @@ export function signHtlcSpend(
     feeRate?: number
   },
 ): { tx: LtcTx; hex: string; txid: string; fee: bigint } {
+  if (htlcKind(chain) === 'erc20') fail('Arc USDC HTLC spends are not a Bitcoin script unlock')
   const { coins, to, key, path } = args
   const total = coins.reduce((s, c) => s + c.amount, 0n)
   const locktime = path.kind === 'refund' ? path.locktime : 0

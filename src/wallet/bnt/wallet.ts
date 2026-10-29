@@ -613,7 +613,11 @@ function bntActivityItem(active: ActiveWallet, assetId: string, fields: BntDeplo
     tokenId: assetId,
     amt: amount.toString(),
     dec: fields.dec ?? 0,
-    ...(fields.bk?.chain === 'ltc' && fields.iss.some((k) => k.toLowerCase() === selfOf(active)) ? { backedBy: 'ltc' as const } : {}),
+    // Activity `backedBy` is a CoinChain (UTXO). Arc USDC wrap is shown as a
+    // BNT token row; listBntAssets still exposes backedBy: 'arc'.
+    ...(fields.bk?.chain === 'ltc' && fields.iss.some((k) => k.toLowerCase() === selfOf(active))
+      ? { backedBy: 'ltc' as const }
+      : {}),
   }
 }
 

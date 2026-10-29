@@ -130,12 +130,18 @@ describe('coin palette', () => {
   }
 
   it('gives every chain logo disc 4:1 under its white glyph, the same on both sheets', () => {
-    for (const chain of COIN_CHAINS) {
+    for (const chain of [...COIN_CHAINS, 'arc-usd'] as const) {
       const mark = dark[`--coin-${chain}-mark`]
       expect(mark, chain).toMatch(/^#[0-9a-f]{6}$/)
       expect(light[`--coin-${chain}-mark`]).toBe(mark)
       expect(contrastRatio(mark!, '#ffffff'), chain).toBeGreaterThanOrEqual(4)
       expect(css).toContain(`[data-chain-mark='${chain}'] .chain-mark-disc {\n  fill: var(--coin-${chain}-mark);`)
     }
+  })
+
+  it('never uses the broken --coin-color-light fallback for light-mode figures', () => {
+    // Light sheet redefines --coin-*; figures must read --coin-color so each
+    // ticker keeps its own ink (the old -light alias was undefined → all green).
+    expect(css).not.toMatch(/--coin-color-light/)
   })
 })

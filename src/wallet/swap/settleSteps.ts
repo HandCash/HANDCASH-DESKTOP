@@ -89,6 +89,8 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
     updateSwap(r.terms.swapId, (x) => ({ ...x, own: { ...x.own, funding, fundingStartedAt: Date.now() } }))
     await commitBsvLock(prepared.txid, prepared.beef)
     beef = prepared.beef
+  } else if (leg.chain === 'arc-usd') {
+    throw new Error('HTLC: Arc USDC locking scripts are ready; settle/spend on Arc is not wired yet')
   } else {
     const { coinWalletOf } = await import('../coinMethods')
     const wallet = await coinWalletOf(leg.chain)

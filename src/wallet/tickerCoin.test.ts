@@ -15,4 +15,12 @@ describe('ticker coin copy', () => {
       expect(about).not.toMatch(/\([A-Z]{3,5}\)/)
     }
   })
+
+  it('names Circle’s token USDC, not Arc USD', () => {
+    expect(TICKER_COINS['arc-usd'].name).toBe('USDC')
+    expect(TICKER_COINS['arc-usd'].sym).toBe('USDC')
+    expect(TICKER_COINS['arc-usd'].aboutTitle).toBe('What is USDC?')
+    expect(TICKER_COINS['arc-usd'].about).toMatch(/USDC/)
+    expect(TICKER_COINS['arc-usd'].about).not.toMatch(/Arc USD/)
+  })
 })

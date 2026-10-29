@@ -1,11 +1,12 @@
-import { useId, type ReactNode, type RefObject } from 'react'
+import { useId, useMemo, type ReactNode, type RefObject } from 'react'
 import { Select } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { TickerCoinMark } from './TickerCoinSelector'
 import { DeferredImage } from './DeferredImage'
-import type { MarketCoin } from '../wallet/bsvMarket'
+import { isStableMarketCoin, type MarketCoin } from '../wallet/bsvMarket'
 import { COIN_CHAINS, COIN_INFO } from '../wallet/coins/coinChains'
-import { useShownCoinChains } from '../features/acceptedCoins'
+import { useShownCoinChains, useShownMarketCoins } from '../features/acceptedCoins'
+import { TICKER_COINS } from '../wallet/tickerCoin'
 import type { MarketSwapCurrency } from '../wallet/marketSwap'
 
 const MARK_SIZE = 22
@@ -32,9 +33,24 @@ export const NETWORK_OPTIONS: readonly AssetOption[] = [
 
 const BSV_NETWORK_ONLY: readonly AssetOption[] = NETWORK_OPTIONS.slice(0, 1)
 
-/** Bitcoin SV, then the other coins the wallet accepts. */
+/** Bitcoin SV, then the other coins the wallet accepts (UTXO coins + Arc USD). */
 export function useNetworkOptions(): readonly AssetOption[] {
-  return useShownCoinChains().length > 0 ? NETWORK_OPTIONS : BSV_NETWORK_ONLY
+  const chains = useShownCoinChains()
+  const markets = useShownMarketCoins()
+  return useMemo(() => {
+    if (chains.length === 0) return BSV_NETWORK_ONLY
+    const stables = markets.filter(isStableMarketCoin)
+    if (stables.length === 0) return NETWORK_OPTIONS
+    return [
+      ...NETWORK_OPTIONS,
+      ...stables.map((coin) => ({
+        value: coin,
+        name: TICKER_COINS[coin].name,
+        sym: TICKER_COINS[coin].sym,
+        mark: <TickerCoinMark coin={coin} size={MARK_SIZE} />,
+      })),
+    ]
+  }, [chains, markets])
 }
 
 /** A coin from the market swap catalog, by its own icon or its ticker's initial. */

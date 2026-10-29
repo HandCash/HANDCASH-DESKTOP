@@ -544,6 +544,10 @@ async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
   void import('./coinMethods').then(({ COIN_CHAINS, coinWalletOf }) => {
     for (const chain of COIN_CHAINS) void coinWalletOf(chain).then((coin) => coin.startWatcher())
   })
+  void import('./arcUsdc').then(({ arcUsdWallet }) => {
+    arcUsdWallet.ensureMigrated()
+    arcUsdWallet.startWatcher()
+  })
   // Senders refuse coins to an identity whose wallet has not said it receives them.
   void import('./walletProtocols').then(({ publishWalletProtocols }) => publishWalletProtocols(wallet))
   // Sync pill + chain-ingest status rebind inside the runtime lifecycle

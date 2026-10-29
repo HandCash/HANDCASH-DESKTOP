@@ -4,13 +4,85 @@ use crate::device_auth;
 use crate::durable::DurableStore;
 use crate::sidecar::BridgeSidecar;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::io::Write;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 pub struct HostState {
     pub store: Arc<DurableStore>,
     pub sidecar: Arc<BridgeSidecar>,
     pub platform: String,
     pub app_version: String,
+    /// Kept for the life of the process so Wayland paste clients can still
+    /// fetch the last copy (arboard serves the selection while this lives).
+    clipboard: Mutex<Option<arboard::Clipboard>>,
+}
+
+impl HostState {
+    pub fn new(
+        store: Arc<DurableStore>,
+        sidecar: Arc<BridgeSidecar>,
+        platform: String,
+        app_version: String,
+    ) -> Self {
+        Self {
+            store,
+            sidecar,
+            platform,
+            app_version,
+            clipboard: Mutex::new(None),
+        }
+    }
+}
+
+/// Prefer `wl-copy` on Wayland (forks a helper that owns the selection). Fall
+/// back to a process-long arboard handle for X11 / when wl-copy is missing.
+fn write_clipboard_text(state: &HostState, text: &str) -> Result<(), String> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        match wl_copy(text) {
+            Ok(()) => return Ok(()),
+            Err(_e) => {
+                // Fall through to arboard — e.g. wl-copy not on PATH.
+            }
+        }
+    }
+    let mut slot = state
+        .clipboard
+        .lock()
+        .map_err(|e| format!("clipboard lock: {e}"))?;
+    if slot.is_none() {
+        *slot = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+    }
+    slot.as_mut()
+        .expect("clipboard slot just set")
+        .set_text(text.to_owned())
+        .map_err(|e| e.to_string())
+}
+
+fn wl_copy(text: &str) -> Result<(), String> {
+    let mut child = Command::new("wl-copy")
+        .arg("--type")
+        .arg("text/plain;charset=utf-8")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("wl-copy: {e}"))?;
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "wl-copy: no stdin".to_string())?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("wl-copy write: {e}"))?;
+    }
+    let status = child.wait().map_err(|e| format!("wl-copy wait: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("wl-copy exited {status}"))
+    }
 }
 
 pub enum HostReply {
@@ -110,15 +182,12 @@ pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> 
         },
         "clipboardWrite" => {
             let text = params.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            match arboard::Clipboard::new().and_then(|mut c| c.set_text(text.to_string())) {
+            match write_clipboard_text(state, text) {
                 Ok(()) => HostReply::Ok {
                     id,
                     value: Value::Bool(true),
                 },
-                Err(e) => HostReply::Err {
-                    id,
-                    error: e.to_string(),
-                },
+                Err(e) => HostReply::Err { id, error: e },
             }
         }
         "safeStorageAvailable" => HostReply::Ok {

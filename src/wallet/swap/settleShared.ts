@@ -27,6 +27,10 @@ export async function canLock(role: SwapRole, terms: SwapTerms): Promise<string 
       await assertSendableBalanceForReview(Number(units), { fresh: true })
       return null
     }
+    if (leg.chain === 'arc-usd') {
+      const spendable = BigInt((await import('../arcUsdc')).arcUsdWallet.readBalance().spendable)
+      return spendable >= units ? null : 'insufficient'
+    }
     const { coinWalletOf } = await import('../coinMethods')
     const spendable = BigInt((await coinWalletOf(leg.chain)).readBalance().spendable)
     return spendable >= units ? null : 'insufficient'

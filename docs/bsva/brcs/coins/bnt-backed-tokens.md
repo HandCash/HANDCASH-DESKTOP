@@ -4,7 +4,10 @@
 
 ## Backed tokens
 
-A backed token stands for value held on another chain. Each unit is one base unit (a litoshi for Litecoin) held at the reserve script named in `bk`, and someone who holds the reserve key, the issuer acting as a federation, pays it out. The issuer is trusted to hold the reserve and not to mint one deposit twice. Every reader checks that each unit was minted against a real deposit, buried deep enough, that pays the reserve at least that much.
+A backed token stands for value held on another chain. Each unit is one base unit (a litoshi for Litecoin; a USDC atom for Arc) held at the reserve named in `bk`, and someone who holds the reserve key, the issuer acting as a federation, pays it out. The issuer is trusted to hold the reserve and not to mint one deposit twice. Every reader checks that each unit was minted against a real deposit that pays the reserve at least that much.
+
+- **`ltc`:** PoW burial proof (BRC-212); `bk.reserve` is the foreign output script; deposit outpoint is a UTXO.
+- **`arc`:** Arc Transfer receipt to a 20-byte Eth address (`bk.reserve`); deposit outpoint is `(txHash, logIndex)` in the same `bntb` wire form. Instant finality — not PoW SPV. Labs wrap: `src/wallet/arcUsdc/wrap.ts`.
 
 **Backing output.** The deploy transaction, and every transaction that spends the authority and writes more units than it spends (a mint), MUST carry exactly one backing output for the asset:
 

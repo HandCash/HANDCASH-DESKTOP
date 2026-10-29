@@ -3,10 +3,17 @@ import { subscribeAppActivity } from './activity'
 import { getCachedBsvMarket, refreshMarketBoard, subscribeBsvMarket } from '../wallet/bsvMarket'
 import { COIN_CHAINS, type CoinChain } from '../wallet/coins/coinChains'
 import { COIN_WALLETS as WALLETS } from './coinWallets'
+import { arcUsdWallet } from '../wallet/arcUsdc'
 
 /** Smallest units of `chain` the open account can spend now. The record is durable, so the first paint already has it. */
 export function getHeldCoin(chain: CoinChain): bigint {
   return BigInt(WALLETS[chain].readBalance().spendable)
+}
+
+/** Arc USD atoms (6-dec) the open account can spend now. */
+export function getHeldArcUsd(): bigint {
+  arcUsdWallet.ensureMigrated()
+  return BigInt(arcUsdWallet.readBalance().spendable)
 }
 
 /**
@@ -18,7 +25,11 @@ export function subscribeHeldCoins(listener: () => void): () => void {
     WALLETS[chain].ensureMigrated()
     return WALLETS[chain].subscribe(listener)
   })
-  if (COIN_CHAINS.some((chain) => getHeldCoin(chain) > 0n)) void refreshMarketBoard()
+  arcUsdWallet.ensureMigrated()
+  stops.push(arcUsdWallet.subscribe(listener))
+  if (COIN_CHAINS.some((chain) => getHeldCoin(chain) > 0n) || getHeldArcUsd() > 0n) {
+    void refreshMarketBoard()
+  }
   stops.push(subscribeAppActivity(listener))
   return () => {
     for (const stop of stops) stop()
@@ -33,7 +44,7 @@ function getHeldAll(): Record<CoinChain, bigint> {
   return heldCache.held
 }
 
-/** What the open account can spend now on every chain, in smallest units. */
+/** What the open account can spend now on every UTXO chain, in smallest units. */
 export function useHeldCoins(): Record<CoinChain, bigint> {
   return useSyncExternalStore(subscribeHeldCoins, getHeldAll, getHeldAll)
 }
@@ -41,6 +52,11 @@ export function useHeldCoins(): Record<CoinChain, bigint> {
 /** What the open account can spend now on `chain`, in smallest units. */
 export function useHeldCoin(chain: CoinChain): bigint {
   return useHeldCoins()[chain]
+}
+
+/** Arc USD atoms the open account can spend now. */
+export function useHeldArcUsd(): bigint {
+  return useSyncExternalStore(subscribeHeldCoins, getHeldArcUsd, getHeldArcUsd)
 }
 
 let priceCache: { key: string; prices: Record<CoinChain, number | null> } | null = null

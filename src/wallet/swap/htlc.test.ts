@@ -39,13 +39,19 @@ const coin = (chain: SwapAsset, amount = 100_000n): HtlcCoin => ({ txid: 'cd'.re
 const payTo = fromHex('76a914' + '00'.repeat(20) + '88ac')
 
 describe('HTLC outputs', () => {
-  it('locks segwit chains to P2WSH, BCH and Dogecoin to P2SH, BSV bare', () => {
+  it('locks segwit chains to P2WSH, BCH and Dogecoin to P2SH, BSV bare, Arc USDC as erc20', () => {
     expect(htlcOutput('ltc', coin('ltc').script).address).toMatch(/^ltc1q[a-z0-9]{58}$/)
     expect(htlcOutput('btc', coin('btc').script).address).toMatch(/^bc1q[a-z0-9]{58}$/)
     expect(htlcOutput('bch', coin('bch').script).address).toMatch(/^bitcoincash:p/)
     expect(htlcOutput('doge', coin('doge').script).address).toMatch(/^A/)
     expect(htlcOutput('bsv', coin('bsv').script)).toEqual({ scriptPubKey: coin('bsv').script, address: null })
     expect(htlcKind('bsv')).toBe('bare')
+    expect(htlcKind('arc-usd')).toBe('erc20')
+    const arc = htlcOutput('arc-usd', coin('arc-usd').script)
+    expect(arc.address).toMatch(/^0x[0-9a-f]{40}$/)
+    expect(arc.scriptPubKey.length).toBe(1 + 32 + 20 + 20 + 4)
+    expect(toHex(arc.scriptPubKey.slice(0, 1))).toBe('01')
+    expect(toHex(arc.scriptPubKey.slice(1, 33))).toBe(toHex(sha256(secret)))
   })
 
   it("each chain's own address decoder reads the HTLC address back to its output script", () => {

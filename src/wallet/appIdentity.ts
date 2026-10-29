@@ -309,6 +309,8 @@ export function humanActionCopy(
       const chain = coinChainOfApprovalTitle(title)
       return { eyebrow: 'Payment request', verb: chain ? `wants to make a ${COIN_INFO[chain].label} payment` : 'wants to make a payment' }
     }
+    case 'sendArcUsd':
+      return { eyebrow: 'Payment request', verb: 'wants to make a USDC payment' }
     case 'signAction':
       return { eyebrow: 'Confirm payment', verb: 'wants you to confirm a payment' }
     case 'internalizeAction':

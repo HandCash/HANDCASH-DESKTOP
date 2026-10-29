@@ -21,18 +21,28 @@ is the source, so copy changes from here (absolute BRC links become `../`).
 ## Arc USD (crypto) and wrap (Labs)
 
 **Arc USD** (Circle USDC on Arc) is a crypto like Litecoin: ticker / accept-crypto
-lists it as `arc-usd`, and BRC-214 exposes a payment-scope asset profile. It is
-not a government fiat. Holding / pricing does not need Labs.
+lists it as `arc-usd`, Send / Receive pick it beside BCH, and BRC-214 exposes a
+payment-scope asset profile with `getArcUsdAddress` / `listArcUsd` / `sendArcUsd`.
+It is not a government fiat. Holding, pricing, send and receive do **not** need Labs.
 
-**Wrap** onto BSV claim units is experimental (`src/wallet/arcUsdc/`). Settings →
-Labs → **Wrap Arc USD** (`arcUsdc`), off by default.
+Native path (`src/wallet/arcUsdc/arcUsdWallet.ts`): BRC-42 key → EIP-55 address,
+ERC-20 balance / `transfer` over Arc JSON-RPC (not the UTXO `createCoinWallet`
+engine — Arc is EVM).
+
+**Wrap** onto BSV claim units is experimental. Settings → Labs → **Wrap Arc USD**
+(`arcUsdc`), off by default. Methods `planArcUsdcFractionalize` /
+`planArcUsdcRedeem` / `executeArcUsdcFractionalize` / `executeArcUsdcRedeem` /
+`listArcUsdcWrapClaims` / `getArcUsdcWrapSpendable` attach when the lab is on.
 
 - **Arc only** — chain id `5042` (mainnet) / `5042002` (testnet); token
   `0x3600…0000`. Ethereum / Solana / other USDC is refused at the plan gate.
 - Not the BSV Association **ARC** broadcaster (`packages/wallet-engine` ARC
   provider).
-- Mint / redeem against live Arc RPC + BSV deploy are unfinished; `planFractionalize`
-  / `planRedeem` validate and return `status: 'planned'` while the lab flag is on.
+- Execute path mints **BNT-backed** units (`bk: { chain: "arc", reserve }`) with
+  an Arc Transfer receipt as the backing proof (`arcUsdc/backing.ts` →
+  `bnt/backing.ts`). Redeem burns those BNT units then pays USDC on Arc.
+  Deposit verify / mint / burn / payout are injectable in tests. Arc proof is
+  receipt-based (not PoW burial like LTC).
 
 Bindings shipped, each with its own key, address form, signature hash, header
 rules and burial depth:

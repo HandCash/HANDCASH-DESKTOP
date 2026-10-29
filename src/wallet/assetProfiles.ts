@@ -24,17 +24,27 @@ export type AssetProfile = {
   experimental?: boolean
 }
 
-/** Arc USD (Circle USDC on Arc) — a normal payment currency. Wrap methods attach only when Labs wrap is on. */
+/** USDC on Arc — payment currency with its own address / send methods (BCH-shaped). */
+const ARC_USD_METHODS = ['getArcUsdAddress', 'listArcUsd', 'sendArcUsd'] as const
+const ARC_USD_WRAP_METHODS = [
+  'planArcUsdcFractionalize',
+  'planArcUsdcRedeem',
+  'executeArcUsdcFractionalize',
+  'executeArcUsdcRedeem',
+  'listArcUsdcWrapClaims',
+  'getArcUsdcWrapSpendable',
+] as const
+
 const ARC_USD_PROFILE: AssetProfile = Object.freeze({
   id: 'arc-usd',
   scope: 'payment',
   spec: ['arc-usd'],
   chain: 'arc',
   decimals: ARC_USDC_DECIMALS,
-  spendLabel: 'Arc USD',
+  minConfirmations: 1,
+  methods: [...ARC_USD_METHODS],
+  spendLabel: 'USDC',
 })
-
-const ARC_USD_WRAP_METHODS = ['planArcUsdcFractionalize', 'planArcUsdcRedeem'] as const
 
 export const ASSET_PROFILES: readonly AssetProfile[] = Object.freeze([
   { id: 'bsv', scope: 'payment', spec: ['BRC-100'] },
@@ -68,10 +78,10 @@ export function listAssetProfiles(): { profiles: AssetProfile[] } {
   if (arcUsdcLabEnabled()) {
     const arc = profiles.find((p) => p.id === 'arc-usd')
     if (arc) {
-      arc.methods = [...ARC_USD_WRAP_METHODS]
+      arc.methods = [...ARC_USD_METHODS, ...ARC_USD_WRAP_METHODS]
       arc.experimental = true
       arc.spec = ['arc-usd', 'lab:arcUsdc']
-      arc.spendLabel = 'Arc USD (wrap lab on)'
+      arc.spendLabel = 'USDC (wrap lab on)'
     }
   }
   return { profiles }

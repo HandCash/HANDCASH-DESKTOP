@@ -106,9 +106,9 @@ describe('BRC-214 asset profiles', () => {
     expect(arcUsd).toMatchObject({
       chain: 'arc',
       decimals: 6,
-      spendLabel: 'Arc USD',
+      spendLabel: 'USDC',
+      methods: ['getArcUsdAddress', 'listArcUsd', 'sendArcUsd'],
     })
-    expect(arcUsd?.methods).toBeUndefined()
     expect(arcUsd?.experimental).toBeUndefined()
     expect(profiles.find((p) => p.id === 'coin:bch')).toMatchObject({ chain: 'bch', decimals: 8, minConfirmations: 6 })
     expect(profiles.find((p) => p.id === 'coin:btc')).toMatchObject({ chain: 'btc', decimals: 8, minConfirmations: 3 })

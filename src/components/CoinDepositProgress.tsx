@@ -26,7 +26,7 @@ export function ConfirmationBadge({
   label,
   title,
 }: {
-  chain: CoinChain | 'bsv'
+  chain: CoinChain | 'bsv' | 'arc-usd'
   state: string
   counted: number
   needed: number

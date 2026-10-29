@@ -1,4 +1,9 @@
 import { Transaction, Utils } from '@bsv/sdk'
+import {
+  checkArcReceiptProof,
+  readArcReceiptProof,
+  type ArcReceiptProof,
+} from '../arcUsdc/backing'
 import { checkLtcBurial, type LtcBurialProof } from '../ltc/verify'
 import type { BntBacking } from './payload'
 
@@ -12,10 +17,13 @@ import type { BntBacking } from './payload'
  * Units a backed transaction writes are credited at once, but they move only
  * in a transaction that comes with the deposit's burial proof. The rule is
  * peer to peer: no script enforces it, every reader's walk does.
+ *
+ * `arc` deposits use the same `bntb` wire form with txid = Arc tx hash and
+ * vout = ERC-20 logIndex; the proof is an Arc Transfer receipt, not PoW burial.
  */
 
 export type BackingOutpoint = { txid: string; vout: number }
-export type BntBackingProof = LtcBurialProof
+export type BntBackingProof = LtcBurialProof | ArcReceiptProof
 
 const PREFIX = '006a04626e7462'
 const TXID = /^[0-9a-f]{64}$/
@@ -70,8 +78,11 @@ export function backingCount(tx: Transaction, txid: string, assetId: string, dep
 
 /** Strict read of a proof from a package or a store; null when malformed, or in the header-run form before 1.3.604. */
 export function readBackingProof(value: unknown): BntBackingProof | null {
+  const arc = readArcReceiptProof(value)
+  if (arc) return arc
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const v = value as Record<string, unknown>
+  if (v.kind === 'arc-receipt') return null
   if (typeof v.tx !== 'string' || !HEX.test(v.tx) || v.tx.length === 0 || v.tx.length > MAX_TX_HEX) return null
   if (!Number.isSafeInteger(v.pos) || (v.pos as number) < 0) return null
   if (!Number.isSafeInteger(v.height) || (v.height as number) <= 0) return null
@@ -86,8 +97,21 @@ export type BackingCheck = { ok: true } | { ok: false; detail: string; missing: 
 /** Check that `proof` buries `deposit` on this wallet's own chain of the backing, paying the reserve at least `minted` units. */
 export async function checkBackingProof(bk: BntBacking, proof: BntBackingProof, deposit: BackingOutpoint, minted: bigint): Promise<BackingCheck> {
   if (bk.chain === 'ltc') {
-    const check = await checkLtcBurial(proof, deposit, Uint8Array.from(Utils.toArray(bk.reserve, 'hex')), minted)
+    if ('kind' in proof && proof.kind === 'arc-receipt') {
+      return { ok: false, detail: 'ARC_USDC_PROOF: Litecoin backing needs a burial proof, not an Arc receipt', missing: false }
+    }
+    const burial = proof as Exclude<BntBackingProof, ArcReceiptProof>
+    const check = await checkLtcBurial(burial, deposit, Uint8Array.from(Utils.toArray(bk.reserve, 'hex')), minted)
     return check.ok ? { ok: true } : { ok: false, detail: `${check.reason}: ${check.detail}`, missing: check.missing }
+  }
+  if (bk.chain === 'arc') {
+    if (!('kind' in proof) || proof.kind !== 'arc-receipt') {
+      return { ok: false, detail: 'ARC_USDC_PROOF: Arc backing needs an arc-receipt proof', missing: false }
+    }
+    if (bk.reserve.length !== 40) {
+      return { ok: false, detail: 'ARC_USDC_RESERVE: Arc reserve is a 20-byte Eth address', missing: false }
+    }
+    return checkArcReceiptProof(bk.reserve, proof, deposit, minted)
   }
   return { ok: false, detail: `no reader for chain ${String(bk.chain)}`, missing: false }
 }

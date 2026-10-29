@@ -49,12 +49,12 @@ fn main() -> wry::Result<()> {
             .expect("durable sync http");
 
     let sidecar = BridgeSidecar::new();
-    let state = Arc::new(HostState {
-        store: Arc::clone(&store),
-        sidecar: Arc::clone(&sidecar),
-        platform: platform.clone(),
-        app_version: std::env::var("HANDCASH_APP_VERSION").unwrap_or_else(|_| "0.0.0-native".into()),
-    });
+    let state = Arc::new(HostState::new(
+        Arc::clone(&store),
+        Arc::clone(&sidecar),
+        platform.clone(),
+        std::env::var("HANDCASH_APP_VERSION").unwrap_or_else(|_| "0.0.0-native".into()),
+    ));
 
     #[derive(Debug)]
     enum UserEvent {

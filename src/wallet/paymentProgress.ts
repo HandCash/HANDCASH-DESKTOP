@@ -313,6 +313,10 @@ const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
     label: 'Sending…',
     detail: 'Signing the payment on its own chain, then broadcasting',
   },
+  sendArcUsd: {
+    label: 'Sending…',
+    detail: 'Signing the Arc USDC transfer, then broadcasting',
+  },
 }
 
 /** Copy for a market method that keeps the wallet busy after approval. */

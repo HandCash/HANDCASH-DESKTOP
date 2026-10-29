@@ -566,6 +566,12 @@ describe('bnt backed tokens', () => {
     expect(decodeBntPayload(bytes)).toEqual(backedFields)
     expect(() => encodeBntPayload({ ...backedFields, auth: undefined })).toThrow(/authority/)
     expect(() => encodeBntPayload({ ...backedFields, bk: { chain: 'doge' as 'ltc', reserve } })).toThrow(/chain/)
+    const arcReserve = '11'.repeat(20)
+    expect(
+      decodeBntPayload(
+        Uint8Array.from(encodeBntPayload({ ...backedFields, bk: { chain: 'arc', reserve: arcReserve } })),
+      ),
+    ).toEqual({ ...backedFields, bk: { chain: 'arc', reserve: arcReserve } })
   })
 
   it('writes the deposit outpoint in a backing output and reads it back', () => {

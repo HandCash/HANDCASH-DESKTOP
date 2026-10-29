@@ -1258,6 +1258,63 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'sendArcUsd') {
+    const raw = String(body.amount ?? body.litoshi ?? '')
+    const units = /^\d+$/.test(raw) ? BigInt(raw) : null
+    const address = typeof body.address === 'string' ? body.address : ''
+    const usd = units != null ? Number(units) / 1e6 : null
+    return {
+      title: 'Approve USDC payment',
+      summary:
+        typeof body.description === 'string' && body.description.trim()
+          ? body.description.trim()
+          : 'Payment from a connected app',
+      amountLabel: units != null ? `${(Number(units) / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} USDC` : undefined,
+      amountNote: usd != null ? formatUsd(usd) : undefined,
+      budgetSats: usd != null ? Math.round(usd * 1e8) : undefined,
+      details: [
+        address ? `To: ${address}` : 'Unknown address',
+        'Paid as USDC on Arc from this wallet; the Arc network fee is added on top',
+        "Counts toward this app's Auto-pay limit at its dollar value",
+      ],
+    }
+  }
+
+  if (method === 'executeArcUsdcFractionalize') {
+    const atoms = String(body.atoms ?? '')
+    const units = /^\d+$/.test(atoms) ? BigInt(atoms) : null
+    return {
+      title: 'Wrap USDC',
+      summary: 'Credit BSV claim units from a USDC deposit on Arc (Labs)',
+      amountLabel:
+        units != null
+          ? `${(Number(units) / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} USDC`
+          : undefined,
+      details: [
+        typeof body.txHash === 'string' ? `Deposit: ${body.txHash.slice(0, 18)}…` : 'Deposit tx required',
+        'Lab wrap: verifies the Arc Transfer and credits a local claim ledger',
+      ],
+    }
+  }
+
+  if (method === 'executeArcUsdcRedeem') {
+    const atoms = String(body.atoms ?? '')
+    const units = /^\d+$/.test(atoms) ? BigInt(atoms) : null
+    const to = typeof body.to === 'string' ? body.to : ''
+    return {
+      title: 'Redeem USDC wrap',
+      summary: 'Burn claim units and pay USDC on Arc (Labs)',
+      amountLabel:
+        units != null
+          ? `${(Number(units) / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} USDC`
+          : undefined,
+      details: [
+        to ? `To: ${to}` : 'Payout address required',
+        'Lab redeem: spends held wrap claims and pays USDC on Arc',
+      ],
+    }
+  }
+
 
 
 

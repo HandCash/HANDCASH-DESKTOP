@@ -42,9 +42,18 @@ export type BntDeployFields = {
   bk?: BntBacking
 }
 
-/** Chains a backed token may name. A reader that knows none of them cannot check a mint, so `bk` is always critical. */
-export const BNT_BACKING_CHAINS = ['ltc'] as const
-export type BntBacking = { chain: (typeof BNT_BACKING_CHAINS)[number]; /** The reserve's output script, hex. */ reserve: string }
+/**
+ * Chains a backed token may name. A reader that knows none of them cannot check
+ * a mint, so `bk` is always critical.
+ * - `ltc`: PoW burial (BRC-212); reserve = foreign output script hex.
+ * - `arc`: EVM Transfer receipt to a 20-byte Eth address (USDC on Arc wrap).
+ */
+export const BNT_BACKING_CHAINS = ['ltc', 'arc'] as const
+export type BntBacking = {
+  chain: (typeof BNT_BACKING_CHAINS)[number]
+  /** LTC: reserve output script hex. Arc: 20-byte Eth address hex (no 0x). */
+  reserve: string
+}
 const MAX_RESERVE_SCRIPT = 64
 
 const KNOWN = new Set([

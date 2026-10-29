@@ -129,8 +129,8 @@ export type ActivitySwap = {
   /** `direct:<swapId>` or `exolix:<exchange id>`. */
   id: string;
   route: "direct" | "exolix";
-  from: CoinChain | "bsv";
-  to: CoinChain | "bsv";
+  from: CoinChain | "bsv" | "arc-usd";
+  to: CoinChain | "bsv" | "arc-usd";
   state: string;
   tone: "done" | "moving" | "returned" | "stopped";
   /** "Swapped BSV for LTC": the verb says where it stands, like every other row. */
@@ -139,7 +139,7 @@ export type ActivitySwap = {
   /** What this wallet receives, in units of `to` (8 decimals). */
   receive: string;
   /** The lock the swap waits on to be buried, counted toward the depth its reader needs. */
-  confirming?: { chain: CoinChain | "bsv"; counted: number; needed: number };
+  confirming?: { chain: CoinChain | "bsv" | "arc-usd"; counted: number; needed: number };
   /** This wallet's signature is the swap's next move: the deadline auto-lock waits to, null mid-step. */
   signs?: { until: number | null };
 };

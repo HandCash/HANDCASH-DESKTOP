@@ -16,7 +16,9 @@ aes-gcm = "0.10"
 rand = "0.8"
 base64 = "0.22"
 keyring = "3"
-arboard = "3"
+# wayland-data-control: Hyprland / wlroots paste without relying on Xwayland.
+# Clipboard must stay alive after set_text or Wayland clears the selection.
+arboard = { version = "3", features = ["wayland-data-control"] }
 open = "5"
 tiny_http = "0.12"
 ctrlc = "3"

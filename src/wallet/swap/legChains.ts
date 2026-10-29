@@ -77,7 +77,7 @@ export type StoredClaimTemplate = ClaimTemplate & { remittance?: SelfRemittance 
 
 // ── Coins of other chains ───────────────────────────────────────────────────
 
-export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv'>): Promise<SwapLegChain> {
+export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv' | 'arc-usd'>): Promise<SwapLegChain> {
   const { coinWalletOf } = await import('../coinMethods')
   const wallet = await coinWalletOf(chain)
   return {
@@ -381,5 +381,9 @@ export async function abortBsvLock(txid: string): Promise<void> {
 }
 
 export async function legChainOf(chain: SwapAsset): Promise<SwapLegChain> {
-  return chain === 'bsv' ? bsvLegChain : coinLegChain(chain)
+  if (chain === 'bsv') return bsvLegChain
+  if (chain === 'arc-usd') {
+    throw new Error('HTLC: Arc USDC locking scripts are ready; settle/spend on Arc is not wired yet')
+  }
+  return coinLegChain(chain)
 }

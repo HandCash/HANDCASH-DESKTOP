@@ -21,7 +21,9 @@ function openExternal(url: string) {
 const short = (txid: string) => `${txid.slice(0, 10)}…${txid.slice(-6)}`
 
 function legUrl(leg: SwapLeg, chain: Chain): string {
-  return leg.asset === 'bsv' ? txExplorerUrl(leg.txid, chain) : coinTxExplorerUrl(leg.asset as Exclude<SwapAsset, 'bsv'>, leg.txid)
+  if (leg.asset === 'bsv') return txExplorerUrl(leg.txid, chain)
+  if (leg.asset === 'arc-usd') return `https://explorer.arc.io/tx/${leg.txid}`
+  return coinTxExplorerUrl(leg.asset, leg.txid)
 }
 
 type SwapStep = { key: string; label: string; asset: SwapAsset; leg?: SwapLeg; state: 'done' | 'active' | 'pending'; confirming?: SwapView['confirming'] }

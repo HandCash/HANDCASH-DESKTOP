@@ -20,13 +20,14 @@ import {
   type MarketCoin,
 } from '../wallet/bsvMarket'
 import { TICKER_COINS } from '../wallet/tickerCoin'
-import { useHeldCoins } from '../features/heldCoins'
+import { getHeldArcUsd, useHeldCoins } from '../features/heldCoins'
 import { useShownMarketCoins } from '../features/acceptedCoins'
 import { useFiatCurrency } from '../hooks/useFiatCurrency'
 import { coinUsd } from '../wallet/heldValue'
 import { COIN_INFO, formatCoinShort, isCoinChain, type CoinChain } from '../wallet/coins/coinChains'
 import { formatBsvSignificant } from '../wallet/session'
 import { formatUsd, formatUsdFromSats } from '../wallet/fx'
+import { formatUsdcAtoms } from '../wallet/arcUsdc'
 
 /** What the wallet holds of `coin`, short, with its value at the ticker's quote; null when none. */
 export function heldIn(
@@ -42,7 +43,13 @@ export function heldIn(
       usd: priceUsd == null ? null : formatUsdFromSats(heldBsvSats, priceUsd),
     }
   }
-  if (isStableMarketCoin(coin) || !isCoinChain(coin)) return null
+  if (isStableMarketCoin(coin)) {
+    const units = getHeldArcUsd()
+    if (units === 0n) return null
+    const usd = Number(units) / 1e6
+    return { amount: `${formatUsdcAtoms(units)} USDC`, usd: formatUsd(usd) }
+  }
+  if (!isCoinChain(coin)) return null
   const units = heldCoins[coin]
   if (units === 0n) return null
   const usd = coinUsd(coin, units, priceUsd)

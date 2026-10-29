@@ -15,13 +15,16 @@ export async function copyText(text: string, opts?: { label?: string; quiet?: bo
 }
 
 async function writeClipboard(text: string): Promise<boolean> {
-  try {
-    if (window.handcash?.clipboardWrite) {
+  // Native shell first: WebKit often blocks navigator.clipboard, and on Wayland
+  // the host must own the selection (wl-copy / long-lived arboard).
+  if (window.handcash?.clipboardWrite) {
+    try {
       await window.handcash.clipboardWrite(text)
       return true
+    } catch (err) {
+      console.warn('[clipboard] native write failed', err)
+      // Still try browser paths — e.g. Chromium Electron where IPC is optional.
     }
-  } catch {
-    // fall through
   }
 
   try {
@@ -38,7 +41,9 @@ async function writeClipboard(text: string): Promise<boolean> {
     el.style.position = 'fixed'
     el.style.left = '-9999px'
     document.body.appendChild(el)
+    el.focus()
     el.select()
+    el.setSelectionRange(0, el.value.length)
     const ok = document.execCommand('copy')
     document.body.removeChild(el)
     return ok

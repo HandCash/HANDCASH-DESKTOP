@@ -1,3 +1,4 @@
+import { isEthAddress } from '../arcUsdc/address'
 import { SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from './assets'
 import { createExolixExchange, isBsvAddress, SwapRefusal, writeSwapRecord, type AddressCheck, type SwapRecord } from './exolixSwap'
 import type { SignedSwapOffer } from './offer'
@@ -82,17 +83,20 @@ async function runExolix(route: Extract<SwapRoute, { kind: 'exolix' }>, wallet: 
   }
 }
 
-/** The open wallet: its BSV payment address, and its LTC / BCH coin keys. */
+/** The open wallet: its BSV payment address, UTXO coin keys, and Arc USDC. */
 export function walletSwapPorts(bsvAddress: string): SwapWallet {
-  const coin = async (asset: Exclude<SwapAsset, 'bsv'>) => (await import('../coinMethods')).coinWalletOf(asset)
-  const coins: Partial<Record<SwapAsset, Awaited<ReturnType<typeof coin>>>> = {}
-  const coinOf = async (asset: Exclude<SwapAsset, 'bsv'>) => (coins[asset] ??= await coin(asset))
+  const coin = async (asset: Exclude<SwapAsset, 'bsv' | 'arc-usd'>) => (await import('../coinMethods')).coinWalletOf(asset)
+  const coins: Partial<Record<Exclude<SwapAsset, 'bsv' | 'arc-usd'>, Awaited<ReturnType<typeof coin>>>> = {}
+  const coinOf = async (asset: Exclude<SwapAsset, 'bsv' | 'arc-usd'>) => (coins[asset] ??= await coin(asset))
   return {
     async ownAddress(asset) {
-      return asset === 'bsv' ? bsvAddress : (await coinOf(asset)).getAddress()
+      if (asset === 'bsv') return bsvAddress
+      if (asset === 'arc-usd') return (await import('../arcUsdc')).arcUsdWallet.getAddress()
+      return (await coinOf(asset)).getAddress()
     },
     validAddress(asset, address) {
       if (asset === 'bsv') return isBsvAddress(address)
+      if (asset === 'arc-usd') return isEthAddress(address)
       const wallet = coins[asset]
       if (!wallet) return false
       try {
@@ -108,6 +112,16 @@ export function walletSwapPorts(bsvAddress: string): SwapWallet {
         await assertSendableBalanceForReview(Number(units))
         return
       }
+      if (asset === 'arc-usd') {
+        const spendable = BigInt((await import('../arcUsdc')).arcUsdWallet.readBalance().spendable)
+        if (spendable < units) {
+          throw new SwapRefusal(
+            'insufficient',
+            `This wallet can spend ${unitsToDecimal(asset, spendable)} ${SWAP_ASSET_INFO[asset].ticker}, less than ${unitsToDecimal(asset, units)}.`,
+          )
+        }
+        return
+      }
       const spendable = BigInt((await coinOf(asset)).readBalance().spendable)
       if (spendable < units) {
         throw new SwapRefusal('insufficient', `This wallet can spend ${unitsToDecimal(asset, spendable)} ${SWAP_ASSET_INFO[asset].ticker}, less than ${unitsToDecimal(asset, units)}.`)
@@ -118,6 +132,10 @@ export function walletSwapPorts(bsvAddress: string): SwapWallet {
         const { sendSatsToAddress } = await import('../sendPayment')
         const sent = await sendSatsToAddress({ to: address, satoshis: Number(units), friendLabel: 'Exolix swap' })
         return { txid: sent.txid, status: 'sent' }
+      }
+      if (asset === 'arc-usd') {
+        const paid = await (await import('../arcUsdc')).arcUsdWallet.send({ address, litoshi: units.toString() })
+        return { txid: paid.txid, status: paid.status }
       }
       const sent = await (await coinOf(asset)).send({ address, litoshi: units.toString() })
       return { txid: sent.ltcTxid, status: sent.status }

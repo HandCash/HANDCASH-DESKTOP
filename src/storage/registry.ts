@@ -487,6 +487,20 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Cached Arc USD (Circle USDC on Arc) spendable atoms for the open account. */
+  arcUsd: defineStorage({
+    key: 'handcash.arcUsd.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
+  /** Lab wrap claim ledger: Arc USDC deposits credited as local BSV claim units. */
+  arcUsdWrap: defineStorage({
+    key: 'handcash.arcUsdWrap.v1',
+    owner: 'balance',
+    scope: 'wallet',
+    version: 1,
+  }),
   /** IndexedDB: the wallet's Bitcoin header chain from the shipped checkpoint (hashes only), for BRC-213 burial checks. Chain facts. */
   btcHeaders: defineStorage({
     key: 'handcash-btc-headers',

@@ -27,7 +27,7 @@ export const ACCEPTED_COINS_CHOICES: readonly { id: AcceptedCoins; title: string
   {
     id: 'all',
     title: 'Bitcoin SV and crypto',
-    description: `Bitcoin SV and its tokens, plus ${otherTickers}, Arc USD, and tokens backed by them.`,
+    description: `Bitcoin SV and its tokens, plus ${otherTickers}, USDC on Arc, and tokens backed by them.`,
   },
 ]
 
