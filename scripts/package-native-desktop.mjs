@@ -70,11 +70,16 @@ if (process.env.HANDCASH_SKIP_RENDERER !== '1') {
 console.log('==> build:sidecar')
 run('npm', ['run', 'build:sidecar'])
 
+// Keep artifacts in-tree (Cursor sandboxes otherwise redirect CARGO_TARGET_DIR).
+const cargoTargetDir = path.join(crate, 'target')
 console.log('==> cargo build --release (native-desktop)')
-run('cargo', ['build', '--release'], { cwd: crate })
+run('cargo', ['build', '--release'], {
+  cwd: crate,
+  env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+})
 
 const binName = target === 'win' ? 'handcash-shell.exe' : 'handcash-shell'
-const binSrc = path.join(crate, 'target', 'release', binName)
+const binSrc = path.join(cargoTargetDir, 'release', binName)
 if (!fs.existsSync(binSrc)) {
   throw new Error(`missing ${binSrc} — build on ${target} (or install the Rust target)`)
 }

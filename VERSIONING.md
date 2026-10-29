@@ -8,7 +8,7 @@ Semver while **BETA**: `MAJOR.MINOR.PATCH` in root `package.json`.
 | **minor** (`1.1.0` → `1.2.0`) | New features (collectables, settings, Aeon shell, …) |
 | **major** (`1.x` → `2.0.0`) | Breaking wallet/migrate/data changes |
 
-`electron-builder` and `electron-updater` both read **`package.json` `version`**. Artifact names are `HandCash-${version}-…`.
+Artifact names are `HandCash-${version}-…`. Linux ships the **thin native shell** zip (`npm run package:linux`); Mac still uses its host packager. Electron AppImage/NSIS paths remain under `package:electron:*` for legacy only.
 
 ## Release flow
 
@@ -16,30 +16,24 @@ Semver while **BETA**: `MAJOR.MINOR.PATCH` in root `package.json`.
 # 1. Bump (creates commit + tag vX.Y.Z)
 npm run version:minor   # or version:patch / version:major
 
-# 2. Push commit + tag — Linux AppImage builds on GitHub Actions
+# 2. Push commit + tag — Linux thin-shell zip builds on GitHub Actions
 git push && git push origin vX.Y.Z
-# Workflow: .github/workflows/release-linux.yml → uploads AppImage + latest-linux.yml
+# Workflow: .github/workflows/release-linux.yml → uploads HandCash-*-linux.zip
 
 # 3. Build + upload Mac (local or future macOS CI) to the same tag
 npm run package:mac
-# Upload DMG/zip + latest-mac.yml to the GitHub prerelease
+# Upload DMG/zip (+ latest-mac.yml while Mac auto-update is live)
 ```
 
 **Backfill Linux onto an existing tag** (Actions → Release Linux → Run workflow → tag `v1.0.0`).
 
 The migrate / wallet download site (`items-market` `/api/desktop-downloads`) resolves the **newest GitHub release automatically** (including prereleases). No manual version pin after publish. Optional emergency pin: `NEXT_PUBLIC_DESKTOP_VERSION` / `NEXT_PUBLIC_DESKTOP_RELEASE_TAG`.
 
-Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
-
-Each platform needs its updater metadata on the release:
-
-| Platform | Required artifact |
-|----------|-------------------|
-| macOS | `latest-mac.yml` (+ dmg/zip) |
-| Linux | `latest-linux.yml` (+ AppImage) — **built on GitHub Actions** |
-| Windows | `latest.yml` (+ NSIS) |
-
-A Mac-only prerelease makes Linux **Check for Updates** report no update until an AppImage is published.
+| Platform | Ship artifact (Actions / package script) |
+|----------|------------------------------------------|
+| macOS | DMG/zip via `package:mac` (+ `latest-mac.yml` while updater is live) |
+| Linux | `HandCash-*-linux.zip` — **built on GitHub Actions** (thin shell; auto-update stubbed) |
+| Windows | zip via `package:win` (NSIS/Electron path still `package:electron:win`) |
 
 ## Do not
 

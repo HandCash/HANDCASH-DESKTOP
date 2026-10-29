@@ -64,10 +64,10 @@
 ## Commands
 
 ```bash
-npm run dev          # Vite + Electron
+npm run dev          # Vite + native shell (Mac / Win / Linux)
 npm run launch:mac   # packaged Mac local run
-npm run launch       # packaged Linux local run (Linux host)
 npm run package:mac
+npm run package:linux  # thin shell zip → release/HandCash-*-linux.zip
 npm run brc:map # Jev: every wallet feature → BRC, plus features that need one → docs/brc-coverage.md
-# Linux AppImage: push tag vX.Y.Z → GitHub Actions Release Linux
+# Linux zip: push tag vX.Y.Z → GitHub Actions Release Linux
 ```

@@ -1,5 +1,5 @@
-# Build Linux AppImage on GitHub and publish to the matching GitHub Release
-# (latest-linux.yml + AppImage for electron-updater).
+# Build the thin Linux shell zip and publish to the matching GitHub Release.
+# (handcash-shell + Node sidecar + UI — not Electron AppImage.)
 #
 # Triggers:
 #   - push of tag v* (after `npm run version:*` + `git push origin vX.Y.Z`)
@@ -40,8 +40,14 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Install native shell deps (WebKitGTK)
+        run: bash scripts/ci-linux-native-deps.sh
 
       - name: Hermetic regression suite
         env:
@@ -62,12 +68,10 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Building HandCash ${VERSION} → release ${TAG}"
 
-      - name: Build Linux AppImage
+      - name: Build Linux native shell zip
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Ensure electron-builder can create/update the prerelease
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:linux -- --publish never
+          CARGO_TARGET_DIR: ${{ github.workspace }}/native-desktop/target
+        run: npm run package:linux
 
       - name: Ensure GitHub Release exists
         env:
@@ -80,7 +84,7 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
-              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — Linux AppImage from CI." \
+              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — Linux thin native shell zip from CI." \
               --prerelease \
               --target "${{ github.sha }}"
           fi
@@ -91,13 +95,13 @@ jobs:
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           shopt -s nullglob
-          files=(release/*.AppImage release/*.AppImage.blockmap release/latest-linux.yml)
+          files=(release/HandCash-*-linux.zip)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No Linux artifacts found under release/" >&2
+            echo "No Linux zip found under release/" >&2
             ls -la release/ || true
             exit 1
           fi
-          # Replace prior Linux assets on re-run
+          # Replace prior Linux zip assets on re-run
           for f in "${files[@]}"; do
             name="$(basename "$f")"
             gh release delete-asset "$TAG" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true

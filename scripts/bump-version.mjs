@@ -151,7 +151,7 @@ if (!noCommit) {
     console.warn(`Tag v${next} already exists`)
   }
   console.log(`Tagged v${next}.`)
-  console.log('Pushing the tag runs Release Linux (GitHub Actions) → AppImage + latest-linux.yml')
+  console.log('Pushing the tag runs Release Linux (GitHub Actions) → HandCash-*-linux.zip (thin shell)')
 }
 
 if (doPush) {

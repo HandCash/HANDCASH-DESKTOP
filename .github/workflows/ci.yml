@@ -16,11 +16,14 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install
         run: npm ci
 
-      - name: Install Xvfb for Electron smoke
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Install native shell deps (WebKitGTK)
+        run: bash scripts/ci-linux-native-deps.sh
 
       - name: Typecheck
         run: |
@@ -43,19 +46,23 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
         run: npm run test:ci
 
-      - name: Renderer build
-        run: npm run build:renderer
+      - name: Renderer + sidecar build
+        run: |
+          npm run build:renderer
+          npm run build:sidecar
 
-      - name: Electron build
-        run: npm run build:electron
+      - name: Native shell cargo build
+        working-directory: native-desktop
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/native-desktop/target
+        run: cargo build
 
-      - name: Electron smoke and visual regressions
-        run: xvfb-run -a npm run test:e2e
-
-      - name: Upload Electron test artifacts
+      - name: Upload native shell binary on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: electron-test-results
-          path: test-results/
+          name: native-shell-build-logs
+          path: |
+            native-desktop/target/debug/handcash-shell
+            test-results/
           if-no-files-found: ignore

@@ -24,5 +24,5 @@ function getSnapshot(): boolean {
 
 /** React: re-render when Desktop toggles portrait/narrow compact layout. */
 export function useCompactShell(): boolean {
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return useSyncExternalStore(subscribe, getSnapshot, () => false)
 }
