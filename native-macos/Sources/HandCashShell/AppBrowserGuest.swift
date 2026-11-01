@@ -32,6 +32,8 @@ final class AppBrowserGuestHost: NSObject, WKNavigationDelegate {
         }
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = self
+        // Guest tabs need their own open-panel delegate; main DurableStorePrompt is not shared.
+        view.uiDelegate = GuestFileChooser.shared
         view.setValue(false, forKey: "drawsBackground")
 
         let guest = Guest(id: id, view: view)
@@ -190,5 +192,25 @@ final class AppBrowserGuestHost: NSObject, WKNavigationDelegate {
 
     enum GuestError: Error {
         case noParent
+    }
+}
+
+/// File chooser for guest WKWebViews (app tabs).
+private final class GuestFileChooser: NSObject, WKUIDelegate {
+    static let shared = GuestFileChooser()
+
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.begin { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
     }
 }

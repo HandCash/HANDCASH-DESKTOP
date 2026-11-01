@@ -8,6 +8,8 @@
 mod bridge;
 mod device_auth;
 mod durable;
+#[cfg(target_os = "linux")]
+mod file_chooser;
 mod seal;
 mod sidecar;
 
@@ -136,7 +138,10 @@ fn main() -> wry::Result<()> {
         use tao::platform::unix::WindowExtUnix;
         use wry::WebViewBuilderExtUnix;
         let vbox = window.default_vbox().expect("gtk vbox");
-        builder.build_gtk(vbox)?
+        let webview = builder.build_gtk(vbox)?;
+        // wry leaves WebKitGTK file chooser unwired — ambient <input type=file> is dead without this.
+        file_chooser::attach(&webview);
+        webview
     };
 
     let webview = Arc::new(webview);

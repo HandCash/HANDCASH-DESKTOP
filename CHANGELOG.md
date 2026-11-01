@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.3.639] - 2026-11-01
+
+### Fixed
+
+- **Shell file upload:** Linux thin shell now handles WebKitGTK `run-file-chooser` so chat attach / Aeon FileUpload / import pickers open an OS dialog. Mac `DurableStorePrompt` implements `runOpenPanelWith` (and forwards other UIDelegate methods); app-tab guests get the same open panel.
 ## [1.3.638] - 2026-10-29
 
 ### Changed

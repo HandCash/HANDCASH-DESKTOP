@@ -1,3 +1,4 @@
+import AppKit
 import CryptoKit
 import Foundation
 import WebKit
@@ -313,6 +314,15 @@ final class DurableStorePrompt: NSObject, WKUIDelegate {
         return prompt
     }
 
+    override func responds(to aSelector: Selector!) -> Bool {
+        super.responds(to: aSelector) || (fallback?.responds(to: aSelector) ?? false)
+    }
+
+    override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if let fallback = fallback, fallback.responds(to: aSelector) { return fallback }
+        return super.forwardingTarget(for: aSelector)
+    }
+
     func webView(
         _ webView: WKWebView,
         runJavaScriptTextInputPanelWithPrompt prompt: String,
@@ -324,7 +334,42 @@ final class DurableStorePrompt: NSObject, WKUIDelegate {
             completionHandler(reply)
             return
         }
-        completionHandler(nil)
+        guard let fallback = fallback,
+              fallback.responds(
+                to: #selector(
+                    WKUIDelegate.webView(
+                        _:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:
+                        completionHandler:
+                    )
+                )
+              )
+        else {
+            completionHandler(nil)
+            return
+        }
+        fallback.webView?(
+            webView,
+            runJavaScriptTextInputPanelWithPrompt: prompt,
+            defaultText: defaultText,
+            initiatedByFrame: frame,
+            completionHandler: completionHandler
+        )
+    }
+
+    /// Ambient `<input type="file">` — WKWebView needs this on the UI delegate.
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.begin { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
     }
 
     private func answer(_ prompt: String, frame: WKFrameInfo) -> String? {

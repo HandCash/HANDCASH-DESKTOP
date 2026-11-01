@@ -28,6 +28,11 @@ tao = "0.30"
 wry = "0.48"
 http = "1"
 
+# Match wry 0.48's webkit2gtk pin so `<input type=file>` can use run-file-chooser.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "=2.0.1", features = ["v2_38"] }
+gtk = "0.18"
+
 [profile.release]
 lto = true
 codegen-units = 1

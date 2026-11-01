@@ -86,6 +86,11 @@ invent a second partition.
   shell + sidecar + UI (see `STUBS.txt` in the folder). NSIS / AppImage / `.deb`
   are not produced yet — never pretend they are.
 
+**File upload (`<input type=file>`):** Linux thin shell wires WebKitGTK
+`run-file-chooser` (`native-desktop/src/file_chooser.rs`). Mac
+`DurableStorePrompt` implements `runOpenPanelWith` (and guest tabs use
+`GuestFileChooser`). Windows WebView2 hosts the dialog itself.
+
 See `native-desktop/README.md`, `native-windows/`, `native-linux/`.
 
 ## Run (dev)
