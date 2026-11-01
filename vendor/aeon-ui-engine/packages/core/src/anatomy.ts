@@ -123,6 +123,18 @@ export const fieldAnatomy = anatomy('field', [
 export const scrollAnatomy = anatomy('scroll', ['root', 'viewport', 'content'] as const)
 
 /**
+ * Constrained text slot — truncate (ellipsis) or carousel (marquee) when the
+ * label does not fit. Derived layout state (Scroll pattern), not an XState chart.
+ * States: fits | truncate | carousel | paused
+ */
+export const textOverflowAnatomy = anatomy('text-overflow', [
+  'root',
+  'viewport',
+  'track',
+  'item',
+] as const)
+
+/**
  * Spatial play surface — universal mat + regions + entities (not a specific game).
  * App logic names regions; entity labels come from compose `items`. See LAYOUT_COORDINATES.md.
  */

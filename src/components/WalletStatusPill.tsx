@@ -1,4 +1,5 @@
 import { stateToAttr } from '@aeon-ui/core'
+import { TextOverflow } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect } from 'react'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
@@ -280,7 +281,9 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
         onClick={handleManualSync}
       >
         <span className="status-dot" data-tone={display.tone} aria-hidden />
-        <span className="status-pill-label">{label}</span>
+        <TextOverflow.Root mode="carousel" className="status-pill-label" watch={label}>
+          {label}
+        </TextOverflow.Root>
       </button>
     )
   }
@@ -295,7 +298,9 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
       aria-live="polite"
     >
       <span className="status-dot" data-tone={display.tone} aria-hidden />
-      <span className="status-pill-label">{label}</span>
+      <TextOverflow.Root mode="carousel" className="status-pill-label" watch={label}>
+        {label}
+      </TextOverflow.Root>
     </div>
   )
 }

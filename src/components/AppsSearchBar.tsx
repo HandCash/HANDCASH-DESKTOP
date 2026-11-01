@@ -40,7 +40,7 @@ type Props = {
 }
 
 /**
- * Apps search as a head chrome button — typing filters connected apps, and a
+ * Apps search as a head chrome button — typing filters peer apps, and a
  * web address opens in the wallet browser where there is one.
  */
 export function AppsSearchBar({ query, onQueryChange, topMatch, canOpen }: Props) {
@@ -77,7 +77,7 @@ export function AppsSearchBar({ query, onQueryChange, topMatch, canOpen }: Props
 
   return (
     <TopBarPopover
-      ariaLabel={canOpen ? 'Search apps or open a web address' : 'Search connected apps'}
+      ariaLabel={canOpen ? 'Search apps or open a web address' : 'Search peer apps'}
       title="Search"
       className="panel-search-popover"
       triggerClassName="wallet-nav-chrome-btn"
@@ -106,7 +106,7 @@ export function AppsSearchBar({ query, onQueryChange, topMatch, canOpen }: Props
       >
         <SearchField
           id={inputId}
-          label={canOpen ? 'Search apps or open a web address' : 'Search connected apps'}
+          label={canOpen ? 'Search apps or open a web address' : 'Search peer apps'}
           value={query}
           onValueChange={(value) => {
             onQueryChange(value)

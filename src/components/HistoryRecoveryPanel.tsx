@@ -146,7 +146,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
     >
       <h2>Restore your history</h2>
       <p className="auth-lede">
-        Keys are on this device. Activity, UTXOs, friends, and connected apps live in your encrypted
+        Keys are on this device. Activity, UTXOs, friends, and peer apps live in your encrypted
         history backup — sealed to this wallet’s key, not your unlock password.
       </p>
       {note ? (

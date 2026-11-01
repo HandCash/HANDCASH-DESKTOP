@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.640] - 2026-11-01
+
+### Added
+
+- **Aeon TextOverflow** (`aeon-ui-engine` 1.11.0): constrained labels can `mode="carousel"` instead of ellipsis; top-bar wallet status uses it.
+- Mobile/compact Balance chrome squashes to `~` when space is tight.
+
+### Changed
+
+- Connected apps section copy → **Peer apps**.
+- Collection / panel action pills stay one row on mobile (same nowrap rule as the top bar).
+
 ## [1.3.639] - 2026-11-01
 
 ### Fixed

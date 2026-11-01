@@ -627,6 +627,22 @@ export const componentSchemas = {
     slots: { Root: 'prose.root' },
   }),
 
+  textOverflow: componentSchema({
+    id: 'https://aeon-ui.com/schemas/text-overflow.json',
+    title: 'TextOverflow',
+    description:
+      'Constrained text slot: truncate (ellipsis) or carousel (marquee) when the label does not fit. Layout-derived like Scroll.',
+    scope: 'text-overflow',
+    parts: ['root', 'viewport', 'track', 'item'],
+    states: ['fits', 'truncate', 'carousel', 'paused'],
+    machine: null,
+    runtime: 'layout',
+    props: {
+      mode: { type: 'string', enum: ['truncate', 'carousel'] },
+    },
+    slots: { Root: 'text-overflow.root' },
+  }),
+
   textarea: componentSchema({
     id: 'https://aeon-ui.com/schemas/textarea.json',
     title: 'Textarea',

@@ -390,15 +390,77 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   line-height: inherit;
   flex: 1 1 auto;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+/* Aeon TextOverflow — truncate | carousel alternative to ellipsis. */
+[data-aeon-scope='text-overflow'] {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+[data-aeon-scope='text-overflow'] > [data-aeon-part='viewport'] {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+[data-aeon-scope='text-overflow'] [data-aeon-part='track'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 2rem;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='text-overflow'] [data-aeon-part='item'] {
+  display: inline-block;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='text-overflow'][data-aeon-state='truncate'] [data-aeon-part='item'] {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: normal;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='text-overflow'][data-aeon-state='truncate'] [data-aeon-part='track'] {
+  width: 100%;
+  max-width: 100%;
+}
+
+[data-aeon-scope='text-overflow'][data-aeon-state='carousel'] [data-aeon-part='track'] {
+  animation: aeon-text-overflow-carousel var(--aeon-text-overflow-duration, 9s) linear infinite;
+}
+
+[data-aeon-scope='text-overflow'][data-aeon-state='paused'] [data-aeon-part='track'] {
+  animation: aeon-text-overflow-carousel var(--aeon-text-overflow-duration, 9s) linear infinite;
+  animation-play-state: paused;
+}
+
+@keyframes aeon-text-overflow-carousel {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-50% - 1rem));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='text-overflow'][data-aeon-state='carousel'] [data-aeon-part='track'],
+  [data-aeon-scope='text-overflow'][data-aeon-state='paused'] [data-aeon-part='track'] {
+    animation: none;
+  }
 }
 
 /* Titlebar sync chip: capped width; wrap to 2 lines rather than ellipsis. */
@@ -420,12 +482,8 @@ html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill {
 }
 
 html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .status-pill-label {
-  display: inline;
+  display: inline-flex;
   white-space: nowrap;
-  overflow-wrap: normal;
-  word-break: normal;
-  -webkit-line-clamp: none;
-  line-clamp: none;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
@@ -441,14 +499,9 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-pill-label {
-  display: block;
+  display: inline-flex;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
-  -webkit-line-clamp: 1;
-  line-clamp: 1;
-  overflow-wrap: normal;
-  word-break: keep-all;
 }
 
 
@@ -4620,6 +4673,19 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   color: #fafafa;
 }
 
+.wallet-hero-title-approx {
+  display: none;
+}
+
+/* Compact/mobile: squish "Balance" to "~". */
+html:is(.platform-mobile, .layout-compact) .wallet-hero-title-full {
+  display: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-hero-title-approx {
+  display: inline;
+}
+
 html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   color: hsl(var(--primary));
 }
@@ -6555,14 +6621,36 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  /*
-   * Activity can show Publish / Rebroadcast / Clear alongside the filter
-   * toggle. On a phone those labels are wider than the row, and a rigid
-   * inline-flex pushed the trailing toggle off the right edge. Wrap instead.
-   */
-  flex-wrap: wrap;
   justify-content: flex-end;
   min-width: 0;
+  margin-left: auto;
+}
+
+/* Titlebar-style action pills stay one row (same as top bar) — no two-column wrap. */
+.wallet-nav-actions-pill.connected-panel-head-actions {
+  flex-wrap: nowrap;
+  gap: 2px;
+}
+
+html:is(.platform-mobile, .layout-compact) .connected-panel-head {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > h2:not(.wallet-hero-title):not(.nav-breadcrumb) {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > .wallet-nav-actions-pill {
+  flex: 0 0 auto;
   margin-left: auto;
 }
 

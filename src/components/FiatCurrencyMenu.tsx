@@ -5,8 +5,9 @@ import { useFiatCurrency } from '../hooks/useFiatCurrency'
 import { openFiatCurrency } from '../wallet/navStore'
 
 /**
- * Your-balance chrome: total in the preferred government currency.
+ * Balance chrome: total in the preferred government currency.
  * Opens Activity / Currency — not an in-pill ticker or coin list.
+ * Compact/mobile uses "~" when the label needs to squish.
  */
 export function FiatCurrencyMenu({
   amountLabel,
@@ -35,7 +36,12 @@ export function FiatCurrencyMenu({
           openFiatCurrency()
         }}
       >
-        <h2 className="wallet-hero-title">Your balance</h2>
+        <h2 className="wallet-hero-title" aria-label="Balance">
+          <span className="wallet-hero-title-full">Balance</span>
+          <span className="wallet-hero-title-approx" aria-hidden="true">
+            ~
+          </span>
+        </h2>
         <span className="wallet-hero-metric-amount" aria-busy={pending || undefined}>
           {pending ? '—' : amountLabel}
         </span>

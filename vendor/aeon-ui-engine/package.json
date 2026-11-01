@@ -1,6 +1,6 @@
 {
   "name": "aeon-ui-engine",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "private": false,
   "type": "module",
   "bin": {
@@ -29,6 +29,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
+    "postinstall": "node ./scripts/link-scoped-packages.mjs",
     "link:scoped": "node ./scripts/link-scoped-packages.mjs",
     "build": "pnpm --filter @aeon-ui/panda run codegen && pnpm -r run build",
     "build:headless": "pnpm --filter @aeon-ui/core --filter @aeon-ui/primitives --filter @aeon-ui/react run build",

@@ -233,7 +233,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Connected apps</h2>
+        <h2>Peer apps</h2>
         <TitlebarActions section="apps" className="connected-panel-head-actions">
           {apps.length > 0 || canOpen ? (
             <AppsSearchBar
@@ -269,7 +269,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           >
             <CodeIcon size={16} />
           </Button.Root>
-          <CollectionViewToggle label="Connected apps view" scope="apps" />
+          <CollectionViewToggle label="Peer apps view" scope="apps" />
         </TitlebarActions>
       </div>
       {apps.length === 0 ? (
