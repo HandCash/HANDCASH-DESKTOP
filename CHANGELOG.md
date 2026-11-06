@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.653] - 2026-11-06
+
+### Fixed
+
+- Sync status pill ("Synced") is one fixed size in every state, with token radius and padding.
+
 ## [1.3.652] - 2026-11-06
 
 ### Fixed

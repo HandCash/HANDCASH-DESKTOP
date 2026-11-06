@@ -20030,3 +20030,39 @@ html[data-aeon-mode='light']
     max-width: 40rem;
   }
 }
+
+/* Sync status pill: one fixed size in every state and layout. Label length or
+   tone never resizes it (long labels scroll via Aeon TextOverflow carousel).
+   Radius and padding come from the design tokens. */
+.status-pill,
+.titlebar-end > .status-pill,
+html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill,
+html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 7.5rem;
+  min-width: 7.5rem;
+  max-width: 7.5rem;
+  height: 2rem;
+  min-height: 2rem;
+  max-height: 2rem;
+  padding: 0 var(--hc-space-2);
+  gap: var(--hc-space-2);
+  border-radius: var(--hc-radius);
+  justify-content: flex-start;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.status-pill .status-dot {
+  flex: 0 0 auto;
+}
+
+.status-pill .status-pill-label,
+html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .status-pill-label,
+html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-pill-label {
+  display: inline-flex;
+  white-space: nowrap;
+  overflow: hidden;
+}
