@@ -17,6 +17,7 @@ import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
+import { readWalletSummary } from './walletSummary'
 import { selfFundsRewriteActive } from './selfFundsRewrite'
 import { deferWhileHidden } from './deferWhileHidden'
 import {
@@ -799,6 +800,7 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
   void state.flight
 }
 
+const balanceReadVersions = new WeakMap<object, number>()
 const spendableBalanceCache = new WeakMap<object, number>()
 /** Confirmed-only totals (creditUnconfirmed:false) for spend preflight under IDB load. */
 const confirmedSpendableCache = new WeakMap<object, number>()
@@ -826,6 +828,7 @@ export function invalidateBalanceReads(
         ? session.wallet
         : null
   if (!target) return
+  balanceReadVersions.set(target, (balanceReadVersions.get(target) ?? 0) + 1)
   spendableBalanceCache.delete(target)
   confirmedSpendableCache.delete(target)
   balanceReadFlights.delete(target)
@@ -877,13 +880,28 @@ export function debitProvenConfirmedSpendable(
   }
 }
 
+/** Local-state revalidation is independent of the network/recompose settle. */
+export async function refreshSelectedWalletBalance(runtime: WalletRuntime): Promise<void> {
+  const { yieldToUi } = await import('./yieldToUi')
+  await yieldToUi()
+  if (!runtimeIsCurrent(runtime)) return
+  const read = await coalescedBalanceRead(runtime.instance.wallet)
+  if (read.kind !== 'ok' || !runtimeIsCurrent(runtime)) return
+  const { publishDisplayBalanceRefresh } = await import('./displayBalanceRefresh')
+  if (runtimeIsCurrent(runtime)) publishDisplayBalanceRefresh(read.sats, runtime.instance.identityKey)
+}
+
 export async function fetchBalanceRead(
   wallet?: Wallet | WalletInterface,
   opts?: { creditUnconfirmed?: boolean },
 ): Promise<BalanceRead> {
   const session = getActiveWallet()
+  const runtime = getWalletRuntime()
   const w = wallet ?? session?.wallet
   if (!w) return { kind: 'unavailable', reason: 'noWallet' }
+  const version = balanceReadVersions.get(w) ?? 0
+  const current = () => getActiveWallet() === session && getWalletRuntime() === runtime &&
+    (balanceReadVersions.get(w) ?? 0) === version
   // A self-consolidation has retired its inputs and not yet internalized their
   // replacement. Reading now is a torn read, not an empty wallet.
   if (selfFundsRewriteActive()) {
@@ -892,7 +910,27 @@ export async function fetchBalanceRead(
   let spendable = 0
   let haveSpendable = false
   const asToolbox = w as Wallet
-  if (typeof asToolbox.balance === 'function') {
+  let summary: Awaited<ReturnType<typeof readWalletSummary>> = null
+  // Display projections are bounded, revision-fenced pages. Confirmed spend
+  // checks deliberately retain the authoritative Toolbox operation below.
+  if (opts?.creditUnconfirmed !== false && session && w === session.wallet) {
+    try {
+      summary = await readWalletSummary(
+        w as unknown as Parameters<typeof readWalletSummary>[0],
+        session.identityKey,
+        current,
+      )
+      if (summary) {
+        spendable = summary.sats
+        haveSpendable = true
+      }
+    } catch {
+      // A send, rewrite or switch interrupted the projection. Keep the last
+      // display snapshot; never fall back to an unbounded read under contention.
+      return { kind: 'unavailable', reason: 'storageUnreadable' }
+    }
+  }
+  if (!haveSpendable && typeof asToolbox.balance === 'function') {
     try {
       const sats = await asToolbox.balance()
       if (Number.isFinite(sats)) {
@@ -958,6 +996,10 @@ export async function fetchBalanceRead(
     return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
 
+  // An awaited old-wallet result must never mutate the new session's globals
+  // or combine its cash with the new wallet's pending change.
+  if (!current()) return { kind: 'unavailable', reason: 'storageUnreadable' }
+
   // Foreign toolbox while another identity is unlocked:
   // never mix the *active* wallet's unconfirmed change or overwrite
   // lastKnownBalanceSats — that doubled balances after root→child transfers.
@@ -981,11 +1023,21 @@ export async function fetchBalanceRead(
   let pendingChange = 0
   try {
     const { unconfirmedChangeSats } = await import('./balanceView')
-    pendingChange = await unconfirmedChangeSats()
+    pendingChange = await unconfirmedChangeSats({ background: true })
     spendable += pendingChange
   } catch (err) {
     console.warn('[balance] unconfirmed change credit skipped', err)
   }
+  if (summary) {
+    try {
+      // Pending-change inspection yielded between pages too. A send during
+      // either scan must not combine pre-send cash with post-send change.
+      await summary.validate()
+    } catch {
+      return { kind: 'unavailable', reason: 'storageUnreadable' }
+    }
+  }
+  if (!current() || selfFundsRewriteActive()) return { kind: 'unavailable', reason: 'storageUnreadable' }
   const breakdown = `${spendable - pendingChange}:${pendingChange}:${spendable}`
   if (breakdown !== lastBalanceBreakdown) {
     lastBalanceBreakdown = breakdown
@@ -1005,7 +1057,9 @@ export async function fetchBalanceRead(
     spendableBalanceCache.set(w, spendable)
   }
   if (session && w === session.wallet) {
-    writeTrustedBalance(session.identityKey, session.chain, spendable)
+    writeTrustedBalance(session.identityKey, session.chain, spendable, summary ? {
+      spendableSats: summary.sats, outputCount: summary.outputCount, rowCount: summary.rowCount,
+    } : undefined)
   }
   return { kind: 'ok', sats: spendable }
 }

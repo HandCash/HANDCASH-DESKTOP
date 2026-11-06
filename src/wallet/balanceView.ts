@@ -1,5 +1,6 @@
 import { getActiveWallet } from './session'
 import { yieldToUi } from './yieldToUi'
+import { foregroundSpendWaiting } from './walletCoordinator'
 
 /**
  * Owned-cash heuristic for the displayed BSV balance (`balanceView`).
@@ -122,13 +123,15 @@ function settledTxIdsOf(storage: object): Set<number> {
  * wait before `createAction`; one session for the whole scan held the FIFO
  * lock 11s after unlock with a send queued behind it. Per page, a queued
  * `createAction` takes its turn between pages. Liveness answers are kept
- * across pages.
+ * across pages. Native IDB uses 100-physical-row keyset pages; legacy
+ * providers retain their bounded matching-row offset scan.
  *
  * `needAtLeast` stops early once enough credit is found (send gate only needs
  * to know the payment is covered, not the full hero total).
  */
 export async function unconfirmedChangeSats(opts?: {
   needAtLeast?: number
+  background?: boolean
 }): Promise<number> {
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
@@ -139,6 +142,7 @@ export async function unconfirmedChangeSats(opts?: {
       : 0
 
   type ScanStorage = {
+    readPendingChangePage?: (identityKey: string, after: number) => Promise<{ outputs: ScanRow[]; next: number | null }>
     findOutputs?: (args: unknown) => Promise<unknown[] | undefined>
     findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
   }
@@ -146,6 +150,8 @@ export async function unconfirmedChangeSats(opts?: {
   const txCache = new Map<number, TxLiveness>()
   const settled = settledTxIdsOf(storage)
   let extra = 0
+  let after = 0
+  let keyset = false
 
   const livenessOf = async (sp: ScanStorage, txId: number | null): Promise<TxLiveness> => {
     if (txId == null) return 'none'
@@ -174,15 +180,25 @@ export async function unconfirmedChangeSats(opts?: {
 
   /** Credits one page; `true` when the scan is finished. */
   const scanPage = async (sp: ScanStorage, page: number): Promise<boolean> => {
-    if (typeof sp.findOutputs !== 'function') return true
+    if (typeof sp.findOutputs !== 'function' && !sp.readPendingChangePage) return true
     let batch: ScanRow[] = []
-    try {
-      batch = ((await sp.findOutputs({
+    let finished = false
+    if (sp.readPendingChangePage) {
+      keyset = true
+      const result = await sp.readPendingChangePage(active!.identityKey, after)
+      batch = result.outputs
+      finished = result.next == null
+      if (result.next != null) {
+        if (result.next <= after) throw new Error('Pending-change cursor did not advance')
+        after = result.next
+      }
+    } else try {
+      batch = ((await sp.findOutputs!({
         partial: { spendable: false, change: true },
         paged: { limit: PAGE, offset: page * PAGE },
       })) ?? []) as ScanRow[]
     } catch {
-      batch = ((await sp.findOutputs({
+      batch = ((await sp.findOutputs!({
         partial: { spendable: false },
         paged: { limit: PAGE, offset: page * PAGE },
       })) ?? []) as ScanRow[]
@@ -207,11 +223,17 @@ export async function unconfirmedChangeSats(opts?: {
         if (needAtLeast > 0 && extra >= needAtLeast) return true
       }
     }
-    return batch.length < PAGE
+    return keyset ? finished : batch.length < PAGE
   }
 
   try {
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    for (let page = 0; page === 0 || keyset || page < MAX_PAGES; page += 1) {
+      if (getActiveWallet() !== active) return 0
+      // Spend preflight can call this reader itself; only display work waits.
+      while (opts?.background && foregroundSpendWaiting()) {
+        await new Promise(resolve => setTimeout(resolve, 25))
+        if (getActiveWallet() !== active) return 0
+      }
       const done = await withStorageLockLabel('balanceView(change)', () =>
         storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page)),
       )

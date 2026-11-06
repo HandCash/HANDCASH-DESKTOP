@@ -81,6 +81,8 @@ import {
 } from './methods/managedChangePolicy'
 import type { Brc177NoSendExpiryState } from '../utility/brc177NoSendExpiry'
 
+import { readCashSummaryPageIdb, outputTransactionEligible, type CashSummaryPage } from './methods/cashSummaryIdb'
+
 export interface StorageIdbOptions extends StorageProviderOptions {}
 
 /**
@@ -129,6 +131,54 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   dbName: string
   db?: IDBPDatabase<StorageIdbSchema>
   private managedChangeDefaultsMigrated = false
+  private cashSummaryRevision = 0
+  private cashSummaryWrites = 0
+  private readonly cashSummaryTransactions = new WeakSet<object>()
+
+  /** Display-only cache fence, never a spend authorization or a durable DB revision. */
+  getCashSummaryRevision(): number {
+    if (this.cashSummaryWrites > 0) throw new WERR_INVALID_OPERATION('Cash summary is changing')
+    return this.cashSummaryRevision
+  }
+
+  async readCashSummaryPage(identityKey: string, after = 0, revision?: number): Promise<CashSummaryPage> {
+    const current = this.getCashSummaryRevision()
+    if (revision != null && current !== revision) throw new WERR_INVALID_OPERATION('Cash summary changed')
+    const page = await readCashSummaryPageIdb(this, identityKey, after)
+    if (this.getCashSummaryRevision() !== current) throw new WERR_INVALID_OPERATION('Cash summary changed')
+    return { ...page, revision: current }
+  }
+
+  validateCashSummaryRevision(revision: number): void {
+    if (this.getCashSummaryRevision() !== revision) throw new WERR_INVALID_OPERATION('Cash summary changed')
+  }
+
+  /** Physical keyset page; display readers must yield outside the provider lock. */
+  async readPendingChangePage(identityKey: string, after: number): Promise<{ outputs: TableOutput[]; next: number | null }> {
+    if (!Number.isSafeInteger(after) || after < 0) throw new WERR_INVALID_OPERATION('Invalid pending-change cursor')
+    const tx = this.toDbTrx(['users', 'outputs'], 'readonly')
+    const user = await tx.objectStore('users').index('identityKey').get(identityKey)
+    if (!user) throw new WERR_INVALID_OPERATION('Pending-change owner is unavailable')
+    const rows = await tx.objectStore('outputs').getAll(IDBKeyRange.lowerBound(after, true), 100)
+    await tx.done
+    return {
+      outputs: rows.filter(row => row.userId === user.userId && !row.spendable && row.change === true),
+      next: rows.length === 100 ? rows[rows.length - 1]!.outputId : null,
+    }
+  }
+
+  private observeCashSummaryWrite(trx: { mode: IDBTransactionMode; done: Promise<unknown> }): void {
+    if (trx.mode !== 'readwrite' || this.cashSummaryTransactions.has(trx)) return
+    this.cashSummaryTransactions.add(trx)
+    this.cashSummaryRevision++
+    this.cashSummaryWrites++
+    const settled = () => {
+      this.cashSummaryRevision++
+      this.cashSummaryWrites--
+    }
+    // Even an aborted write invalidates an in-progress projection.
+    void trx.done.then(settled, settled)
+  }
 
   constructor(options: StorageIdbOptions) {
     super(options)
@@ -196,12 +246,14 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   ): IDBPTransaction<StorageIdbSchema, string[], 'readwrite' | 'readonly'> {
     if (trx != null) {
       const t = trx as IDBPTransaction<StorageIdbSchema, string[], 'readwrite' | 'readonly'>
+      this.observeCashSummaryWrite(t)
       return t
     } else {
       if (this.db == null) throw new Error('not initialized')
       const db = this.db
       const trx = db.transaction(stores.length > 0 ? stores : this.allStores, mode)
       this.whenLastAccess = new Date()
+      this.observeCashSummaryWrite(trx)
       return trx
     }
   }
@@ -268,6 +320,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   private async migrateManagedChangeDefaults(db: IDBPDatabase<StorageIdbSchema>): Promise<void> {
     if (this.managedChangeDefaultsMigrated) return
     const trx = db.transaction('output_baskets', 'readwrite')
+    this.observeCashSummaryWrite(trx)
     let cursor = await trx.store.openCursor()
     while (cursor != null) {
       const basket = cursor.value
@@ -1544,6 +1597,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
 
     const db = await this.verifyDB()
     const tx = db.transaction(stores, 'readwrite')
+    this.observeCashSummaryWrite(tx)
 
     try {
       const r = await scope(tx as TrxToken)
@@ -1779,22 +1833,6 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     return store.openCursor(null, direction)
   }
 
-  private async eligibleOutputTransactionIds(
-    args: FindOutputsArgs,
-    dbTrx: IDBPTransaction<StorageIdbSchema, string[], 'readwrite' | 'readonly'>
-  ): Promise<Set<number> | undefined> {
-    if (args.txStatus == null) return undefined
-    const validTransactionIds = new Set<number>()
-    const transactions = dbTrx.objectStore('transactions')
-    for (const status of args.txStatus) {
-      const index =
-        args.partial.userId === undefined ? transactions.index('status') : transactions.index('status_userId')
-      const key = args.partial.userId === undefined ? status : [status, args.partial.userId]
-      for (const transactionId of await index.getAllKeys(key)) validTransactionIds.add(Number(transactionId))
-    }
-    return validTransactionIds
-  }
-
   async filterOutputs(
     args: FindOutputsArgs,
     filtered: (v: TableOutput) => void,
@@ -1814,7 +1852,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const dbTrx = this.toDbTrx(stores, 'readonly', args.trx)
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('outputs')
-    const validTransactionIds = await this.eligibleOutputTransactionIds(args, dbTrx)
+    const transactionEligibility = new Map<number, boolean>()
     const cursor = await this.openOutputsCursor(store, args.partial, direction)
     await scanCursor<TableOutput>(
       cursor,
@@ -1824,7 +1862,14 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       async r => {
         if (!matchesOutputPartial(r, args.partial)) return false
         if (args.managedOnly && !isAutoSpendableChangeOutput(r)) return false
-        if (validTransactionIds != null && !validTransactionIds.has(r.transactionId)) return false
+        if (args.txStatus != null) {
+          let eligible = transactionEligibility.get(r.transactionId)
+          if (eligible == null) {
+            eligible = await outputTransactionEligible(dbTrx.objectStore('transactions'), r.transactionId, args.txStatus, args.partial.userId)
+            transactionEligibility.set(r.transactionId, eligible)
+          }
+          if (!eligible) return false
+        }
         if (
           tagIds != null &&
           tagIds.length > 0 &&

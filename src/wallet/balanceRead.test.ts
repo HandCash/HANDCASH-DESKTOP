@@ -36,6 +36,70 @@ describe('fetchBalanceRead', () => {
     unconfirmedChangeSats.mockResolvedValue(0)
   })
 
+  it('uses the paged summary for display, never for confirmed spend checks', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const { installWalletRuntime, disposeWalletRuntime } = await import('./walletRuntime')
+    const readCashSummaryPage = vi.fn(async () => ({
+      sats: 700, outputCount: 2, rowCount: 9, next: null, revision: 4,
+    }))
+    const provider = { readCashSummaryPage, validateCashSummaryRevision: vi.fn() }
+    const wallet = {
+      balance: vi.fn(async () => 650),
+      storage: { runAsStorageProvider: async (read: (sp: typeof provider) => Promise<unknown>) => read(provider) },
+    }
+    installWalletRuntime({ identityKey: 'summary-owner', chain: 'main', accountIndex: 0, wallet } as never)
+    try {
+      await expect(fetchBalanceRead(wallet as never)).resolves.toEqual({ kind: 'ok', sats: 700 })
+      expect(wallet.balance).not.toHaveBeenCalled()
+      await expect(fetchBalanceRead(wallet as never, { creditUnconfirmed: false })).resolves.toEqual({ kind: 'ok', sats: 650 })
+      expect(wallet.balance).toHaveBeenCalledTimes(1)
+      expect(readCashSummaryPage).toHaveBeenCalledTimes(1)
+    } finally {
+      disposeWalletRuntime('test')
+    }
+  })
+
+  it('rejects a send that changes storage between cash and pending-change scans', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const { installWalletRuntime, disposeWalletRuntime } = await import('./walletRuntime')
+    const provider = {
+      readCashSummaryPage: vi.fn(async () => ({
+        sats: 700, outputCount: 2, rowCount: 9, next: null, revision: 4,
+      })),
+      validateCashSummaryRevision: vi.fn()
+        .mockImplementationOnce(() => {})
+        .mockImplementationOnce(() => { throw new Error('send changed storage') }),
+    }
+    const wallet = {
+      balance: vi.fn(async () => 650),
+      storage: { runAsStorageProvider: async (read: (sp: typeof provider) => Promise<unknown>) => read(provider) },
+    }
+    installWalletRuntime({ identityKey: 'summary-owner', chain: 'main', accountIndex: 0, wallet } as never)
+    try {
+      await expect(fetchBalanceRead(wallet as never)).resolves.toMatchObject({ kind: 'unavailable' })
+      expect(wallet.balance).not.toHaveBeenCalled()
+    } finally {
+      disposeWalletRuntime('test')
+    }
+  })
+
+  it('keeps a failed display projection unavailable instead of scanning the wallet again', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const { installWalletRuntime, disposeWalletRuntime } = await import('./walletRuntime')
+    const provider = { readCashSummaryPage: vi.fn(async () => { throw new Error('changed') }) }
+    const wallet = {
+      balance: vi.fn(async () => 650),
+      storage: { runAsStorageProvider: async (read: (sp: typeof provider) => Promise<unknown>) => read(provider) },
+    }
+    installWalletRuntime({ identityKey: 'summary-owner', chain: 'main', accountIndex: 0, wallet } as never)
+    try {
+      await expect(fetchBalanceRead(wallet as never)).resolves.toMatchObject({ kind: 'unavailable' })
+      expect(wallet.balance).not.toHaveBeenCalled()
+    } finally {
+      disposeWalletRuntime('test')
+    }
+  })
+
   it('reports unavailable instead of zero when every strategy fails', async () => {
     const { fetchBalanceRead } = await import('./session')
     const read = await fetchBalanceRead(unreadableWallet() as never)
@@ -195,8 +259,24 @@ describe('fetchBalanceRead', () => {
     expect(reads).toBe(1)
   })
 
+  it('does not publish an old-wallet read after the runtime changes', async () => {
+    const { fetchBalanceRead, lastKnownBalance } = await import('./session')
+    const { installWalletRuntime, disposeWalletRuntime } = await import('./walletRuntime')
+    let release!: (sats: number) => void
+    const pending = new Promise<number>(resolve => { release = resolve })
+    const old = { balance: () => pending }
+    const flight = fetchBalanceRead(old as never)
+    const active = { identityKey: 'new-wallet', chain: 'main', accountIndex: 1, wallet: readableWallet(900) }
+    installWalletRuntime(active as never)
+    release(42_000)
+    expect(await flight).toMatchObject({ kind: 'unavailable' })
+    expect(lastKnownBalance()).toBeNull()
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+    disposeWalletRuntime('test')
+  })
+
   it('invalidates coalesced flights so a post-credit read is fresh', async () => {
-    const { fetchBalanceSats, invalidateBalanceReads } = await import('./session')
+    const { fetchBalanceSats, coalescedBalanceRead, invalidateBalanceReads } = await import('./session')
     let reads = 0
     let release!: (sats: number) => void
     const pending = new Promise<number>((resolve) => {
@@ -211,12 +291,13 @@ describe('fetchBalanceRead', () => {
       listOutputs: async () => ({ outputs: [] }),
     }
 
-    const stale = fetchBalanceSats(wallet as never)
+    const stale = coalescedBalanceRead(wallet as never)
     invalidateBalanceReads(wallet)
     const fresh = fetchBalanceSats(wallet as never)
     release(12_345)
 
-    await expect(stale).resolves.toBe(12_345)
+    // The pre-credit read is discarded; it cannot repopulate display caches.
+    await expect(stale).resolves.toMatchObject({ kind: 'unavailable' })
     await expect(fresh).resolves.toBe(99_000)
     expect(reads).toBe(2)
   })

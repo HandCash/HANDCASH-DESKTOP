@@ -201,6 +201,32 @@ describe('unconfirmedChangeSats', () => {
     })
   })
 
+  it('uses bounded keyset pages beyond 2000 physical rows without offset rescans', async () => {
+    let locked = false
+    const readPendingChangePage = vi.fn(async (_identity: string, after: number) => ({
+      outputs: after < 2100 ? [] : [{
+        satoshis: 9000, change: true, spendable: false, transactionId: 9,
+        lockingScript: sampleScript, txid: LIVE_TXID, vout: 0,
+      }],
+      next: after < 2100 ? after + 100 : null,
+    }))
+    const provider = { readPendingChangePage, findTransactions }
+    const run = async (fn: (sp: typeof provider) => Promise<unknown>) => {
+      expect(locked).toBe(false)
+      locked = true
+      try { return await fn(provider) } finally { locked = false }
+    }
+    mockGetActiveWallet.mockReturnValue({
+      identityKey: 'owner', wallet: { storage: { runAsStorageProvider: run } },
+    })
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+    await expect(unconfirmedChangeSats()).resolves.toBe(9000)
+    expect(readPendingChangePage).toHaveBeenCalledTimes(22)
+    expect(readPendingChangePage).toHaveBeenLastCalledWith('owner', 2100)
+    expect(findOutputs).not.toHaveBeenCalled()
+    expect(locked).toBe(false)
+  })
+
   it('credits change of a live send without paging the spent graveyard', async () => {
     findOutputs.mockResolvedValue([
       {
