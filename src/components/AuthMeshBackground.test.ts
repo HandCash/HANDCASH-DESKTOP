@@ -1,8 +1,23 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { scaleNodes, wrapPan } from './AuthMeshBackground'
 
 describe('AuthMeshBackground', () => {
+  it('wraps a panned node back into the padded mesh', () => {
+    expect(wrapPan(500, 1000)).toBe(500)
+    expect(wrapPan(-201, 1000)).toBe(1199)
+    expect(wrapPan(1201, 1000)).toBe(-199)
+  })
+
+  it('carries nodes across a resize instead of clamping them onto the new edge', () => {
+    const nodes = [{ x: 900, y: 400 }, { x: 100, y: 50 }]
+    scaleNodes(nodes, 0.5, 0.25)
+    expect(nodes).toEqual([{ x: 450, y: 100 }, { x: 50, y: 12.5 }])
+    const mesh = fs.readFileSync(path.resolve(process.cwd(), 'src/components/AuthMeshBackground.tsx'), 'utf8')
+    expect(mesh).toContain('new ResizeObserver(resize)')
+  })
+
   const root = path.resolve(process.cwd(), 'src/components')
 
   it('is a single-plane decorative canvas mesh, not subtitle copy', () => {

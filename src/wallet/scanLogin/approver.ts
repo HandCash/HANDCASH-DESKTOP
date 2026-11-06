@@ -84,6 +84,9 @@ export async function helloScanLogin(
     }
     return { payload, url: base, approverKey, code: scanLoginCode(payload.secret, payload.loginKey, pub) }
   }
+  const failures = (await Promise.allSettled(attempts)).map((s) =>
+    s.status === 'rejected' ? String((s.reason as Error)?.message ?? s.reason) : `http-${s.value.res.status}`)
+  console.warn('[scan-login] hello failed', JSON.stringify({ urls: payload.urls, failures, refusal }))
   if (refusal) throw new Error(refusal)
   throw new ScanLoginUnreachable()
 }

@@ -19,6 +19,16 @@ import {
 } from './approver'
 import { signinAlertText, signinRowView, type SigninRowView } from './view'
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  if (typeof error === 'string') return error
+  try {
+    return JSON.stringify(error, Object.getOwnPropertyNames(error as object)) ?? String(error)
+  } catch {
+    return String(error)
+  }
+}
+
 export const SIGNIN_POLL_MS = 5_000
 /** A wallet with no sign-in email checks rarely; registering on any device wakes it. */
 export const SIGNIN_IDLE_POLL_MS = 60_000
@@ -99,7 +109,7 @@ async function tick(): Promise<void> {
   } catch (error) {
     if (round !== generation) return
     lastPollFailed = true
-    console.warn('[signin] poll deferred', error instanceof Error ? error.message : String(error))
+    console.warn('[signin] poll deferred', describeError(error))
   } finally {
     running = false
     schedule()

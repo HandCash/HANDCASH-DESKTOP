@@ -9,7 +9,7 @@
  * approve.
  */
 import { stateToAttr } from '@aeon-ui/core'
-import { Button, StatusBanner } from '@aeon-ui/react'
+import { Button, Field, StatusBanner } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import QRCode from 'qrcode'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -105,7 +105,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
       }
       const payload = startScanLoginSession({ urls, label: localDeviceLabel() })
       const dataUrl = await QRCode.toDataURL(scanLoginQrText(payload), {
-        width: 240,
+        width: 200,
         margin: 2,
         color: { dark: '#000000', light: '#FFFFFF' },
         errorCorrectionLevel: 'M',
@@ -125,12 +125,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
   }, [scanning, qrRound])
 
   useEffect(() => () => endScanLoginSession(), [])
-
-  const switchToEmail = () => {
-    endScanLoginSession()
-    setError(null)
-    setPhase({ step: 'email' })
-  }
 
   const sendCode = async () => {
     setBusy(true)
@@ -180,29 +174,21 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
 
       {phase.step === 'scan' ? (
         <div className="scan-login" data-aeon-part="scan">
-          <p className="auth-lede">
-            On a device you&rsquo;re signed in on, open Scan and point it at this code. Both devices need the same
-            network.
-          </p>
+          <p className="auth-lede">Scan with a signed-in device on this network.</p>
           {qr ? (
             <DeferredImage
               className="scan-login-qr"
               src={qr}
               alt="Sign-in code for this device"
-              width={240}
-              height={240}
-              skeletonWidth={240}
-              skeletonHeight={240}
+              width={200}
+              height={200}
+              skeletonWidth={200}
+              skeletonHeight={200}
               skeletonRadius="var(--hc-radius)"
             />
           ) : (
             <div className="scan-login-qr" aria-busy="true" />
           )}
-          <p className="auth-alt">
-            <button type="button" className="auth-alt-link" data-aeon-part="email-fallback" onClick={switchToEmail}>
-              Different network? Sign in with email
-            </button>
-          </p>
         </div>
       ) : null}
 
@@ -231,17 +217,17 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
             Enter your wallet&rsquo;s email. Then approve this device on one you&rsquo;re already signed in on;
             HandCash relays it but can&rsquo;t read it.
           </p>
-          <label className="field">
-            <span className="field-label">Email</span>
-            <input
-              className="input"
+          <Field.Root className="field">
+            <Field.Label htmlFor="signin-email">Email</Field.Label>
+            <Field.Control
+              id="signin-email"
               type="email"
               autoComplete="email"
               autoFocus
               value={email}
               onChange={(event) => setEmail(event.target.value)}
             />
-          </label>
+          </Field.Root>
           <div className="actions">
             <Button.Root type="submit" className="btn btn-primary" disabled={busy || !email.trim()}>
               {busy ? 'Sending…' : 'Send code'}
@@ -262,10 +248,10 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           }}
         >
           <p className="auth-lede">Enter the 6-digit code sent to {email.trim()}. It expires in 10 minutes.</p>
-          <label className="field">
-            <span className="field-label">Code</span>
-            <input
-              className="input"
+          <Field.Root className="field">
+            <Field.Label htmlFor="signin-code">Code</Field.Label>
+            <Field.Control
+              id="signin-code"
               inputMode="numeric"
               autoComplete="one-time-code"
               autoFocus
@@ -273,7 +259,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
               value={code}
               onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
             />
-          </label>
+          </Field.Root>
           <div className="actions">
             <Button.Root type="submit" className="btn btn-primary" disabled={busy || code.trim().length !== 6}>
               {busy ? 'Checking…' : 'Continue'}
@@ -333,20 +319,17 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
         </p>
       ) : null}
 
-      {phase.step === 'scan' ? (
-        <p className="auth-alt">
-          <button type="button" className="auth-alt-link" onClick={onCancel}>
-            Back
-          </button>
-        </p>
-      ) : null}
-
       {phase.step === 'scan' || phase.step === 'email' || phase.step === 'code' ? (
-        <p className="auth-alt">
-          <button type="button" className="auth-alt-link" onClick={onOtherWays}>
-            Other ways to sign in
-          </button>
-        </p>
+        <div className="actions" data-aeon-part="exits">
+          {phase.step === 'scan' ? (
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={onCancel}>
+              Back
+            </Button.Root>
+          ) : null}
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={onOtherWays}>
+            Other ways
+          </Button.Root>
+        </div>
       ) : null}
     </div>
   )

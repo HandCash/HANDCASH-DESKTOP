@@ -24,7 +24,7 @@
   --ring: 0 0% 83.1%;
   --dark-green: 143 58% 54%;
   --bg-light: 0 0% 7%;
-  --radius: 0.5rem;
+  --radius: 0.25rem;
 
   /* Brand neon, independent of --primary. On the light sheet --primary is
      near-black (as on handcash.io), so anything that must stay green for
@@ -53,7 +53,7 @@
   --hc-font: var(--aeon-font, 'Archivo', ui-sans-serif, system-ui, sans-serif);
   --hc-display: var(--aeon-font-display, 'Syncopate', 'Archivo', ui-sans-serif, sans-serif);
   --hc-radius: var(--aeon-radius, var(--radius));
-  --hc-radius-sm: 4px;
+  --hc-radius-sm: 2px;
   --hc-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --hc-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
 
@@ -748,7 +748,7 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
   min-height: 0;
   display: grid;
   align-content: center;
-  gap: 1.5rem;
+  gap: 1.25rem;
   animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -19905,13 +19905,34 @@ html[data-aeon-mode='light']
 
 .scan-login {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   justify-items: center;
+  text-align: center;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: calc(var(--hc-radius) * 2);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.scan-login .auth-lede {
+  margin: 0;
 }
 
 .scan-login-qr {
-  width: 240px;
-  height: 240px;
+  width: 200px;
+  height: 200px;
   border-radius: var(--hc-radius);
   background: #fff;
+  object-fit: contain;
+}
+
+.device-signin > .auth-title {
+  text-align: center;
+}
+
+.device-signin > .actions[data-aeon-part="exits"] {
+  justify-content: center;
+  gap: 4px;
 }

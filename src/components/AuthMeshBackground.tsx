@@ -34,6 +34,17 @@ const SPLIT_CHANCE = 0.28
 const SPLIT_COUNT_MIN = 3
 const SPLIT_COUNT_MAX = 6
 
+/** Nodes live this far past each edge so a pan reveals web, not a gap. */
+const PAN_PAD = 200
+/** Phone tilt to pan: pixels per degree. */
+const TILT_PX_PER_DEG = 7
+
+/** Wraps a coordinate into [-PAN_PAD, size + PAN_PAD). */
+export function wrapPan(v: number, size: number): number {
+  const span = size + PAN_PAD * 2
+  return ((((v + PAN_PAD) % span) + span) % span) - PAN_PAD
+}
+
 const easeOutQuart = (t: number) => 1 - (1 - t) ** 4
 const easeInQuart = (t: number) => t ** 4
 const easeInOutCubic = (t: number) =>
@@ -82,6 +93,14 @@ function readMeshTone(): {
   }
 }
 
+/** Moves nodes with a resize, keeping each at the same place relative to the mesh. */
+export function scaleNodes(nodes: { x: number; y: number }[], scaleX: number, scaleY: number): void {
+  for (const node of nodes) {
+    node.x *= scaleX
+    node.y *= scaleY
+  }
+}
+
 export function AuthMeshBackground() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const nodesRef = useRef<MeshNode[]>([])
@@ -111,17 +130,45 @@ export function AuthMeshBackground() {
 
     const resize = () => {
       const parent = canvas.parentElement
-      const w = parent?.clientWidth ?? canvas.offsetWidth
-      const h = parent?.clientHeight ?? canvas.offsetHeight
-      canvas.width = Math.max(1, w)
-      canvas.height = Math.max(1, h)
+      const w = Math.max(1, parent?.clientWidth ?? canvas.offsetWidth)
+      const h = Math.max(1, parent?.clientHeight ?? canvas.offsetHeight)
+      if (w === canvas.width && h === canvas.height) return
+      // Carry the web across the new size: left in place, nodes past the edge would clamp onto it and pile up.
+      scaleNodes(nodesRef.current, w / Math.max(1, canvas.width), h / Math.max(1, canvas.height))
+      canvas.width = w
+      canvas.height = h
     }
     resize()
-    window.addEventListener('resize', resize)
+    // The box, not the window: it also catches layout changes that fire no window resize.
+    const boxes = new ResizeObserver(resize)
+    if (canvas.parentElement) boxes.observe(canvas.parentElement)
+
+    // Pan: the web holds its place on the desktop (window moves) or the room (phone tilts),
+    // so each node is shifted against the window's motion.
+    let lastScreenX = window.screenX
+    let lastScreenY = window.screenY
+    let tiltDx = 0
+    let tiltDy = 0
+    let lastBeta: number | null = null
+    let lastGamma: number | null = null
+    const onTilt = (e: DeviceOrientationEvent) => {
+      if (e.beta == null || e.gamma == null) return
+      if (lastBeta !== null && lastGamma !== null) {
+        let db = e.beta - lastBeta
+        if (db > 180) db -= 360
+        if (db < -180) db += 360
+        tiltDx -= (e.gamma - lastGamma) * TILT_PX_PER_DEG
+        tiltDy -= db * TILT_PX_PER_DEG
+      }
+      lastBeta = e.beta
+      lastGamma = e.gamma
+    }
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false
+    if (coarse) window.addEventListener('deviceorientation', onTilt)
 
     nodesRef.current = Array.from({ length: NODE_COUNT }, () => ({
-      x: Math.random() * Math.max(canvas.width, 1),
-      y: Math.random() * Math.max(canvas.height, 1),
+      x: Math.random() * (Math.max(canvas.width, 1) + PAN_PAD * 2) - PAN_PAD,
+      y: Math.random() * (Math.max(canvas.height, 1) + PAN_PAD * 2) - PAN_PAD,
       vx: (Math.random() - 0.5) * 1.4,
       vy: (Math.random() - 0.5) * 1.4,
       radius: Math.random() * 1.2 + 0.6,
@@ -140,7 +187,18 @@ export function AuthMeshBackground() {
       const nodeAlpha = dark ? 0.5 : 0.55
       const pulseCore = dark ? 'rgba(255,255,255,0.9)' : 'rgba(10,18,14,0.85)'
 
+      const panX = lastScreenX - window.screenX + tiltDx
+      const panY = lastScreenY - window.screenY + tiltDy
+      lastScreenX = window.screenX
+      lastScreenY = window.screenY
+      tiltDx = 0
+      tiltDy = 0
+
       for (const n of nodes) {
+        if (panX !== 0 || panY !== 0) {
+          n.x = wrapPan(n.x + panX, w)
+          n.y = wrapPan(n.y + panY, h)
+        }
         n.vx *= NODE_DAMPING
         n.vy *= NODE_DAMPING
         n.vx += (Math.random() - 0.5) * NODE_DRIFT
@@ -155,20 +213,20 @@ export function AuthMeshBackground() {
         n.x += n.vx
         n.y += n.vy
 
-        if (n.x < 0) {
-          n.x = 0
+        if (n.x < -PAN_PAD) {
+          n.x = -PAN_PAD
           n.vx = Math.abs(n.vx)
         }
-        if (n.x > w) {
-          n.x = w
+        if (n.x > w + PAN_PAD) {
+          n.x = w + PAN_PAD
           n.vx = -Math.abs(n.vx)
         }
-        if (n.y < 0) {
-          n.y = 0
+        if (n.y < -PAN_PAD) {
+          n.y = -PAN_PAD
           n.vy = Math.abs(n.vy)
         }
-        if (n.y > h) {
-          n.y = h
+        if (n.y > h + PAN_PAD) {
+          n.y = h + PAN_PAD
           n.vy = -Math.abs(n.vy)
         }
       }
@@ -266,7 +324,8 @@ export function AuthMeshBackground() {
 
     return () => {
       cancelAnimationFrame(rafRef.current)
-      window.removeEventListener('resize', resize)
+      boxes.disconnect()
+      window.removeEventListener('deviceorientation', onTilt)
     }
   }, [])
 

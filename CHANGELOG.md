@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.3.648] - 2026-11-06
+
+### Changed
+
+- Mobile scan sign-in: the LAN peer answers the private-network preflight so the phone can reach it.
+
+## [1.3.647] - 2026-11-06
+
+### Changed
+
+- Sign-in: poll errors and scan-login failures now log their real cause.
+
+## [1.3.646] - 2026-11-06
+
+### Changed
+
+- Sign-in QR screen: removed the "Use email" button.
+
+## [1.3.645] - 2026-11-06
+
+### Changed
+
+- Sign-in QR screen: translucent card, shorter text, one row of exits.
+
+## [1.3.644] - 2026-11-06
+
+### Changed
+
+- Sign-in QR screen: framed code, separator, Aeon Field inputs.
+
+## [1.3.643] - 2026-11-06
+
+### Changed
+
+- Sign-in screen links now use Aeon ghost buttons.
+- Tighter corner radius and screen spacing.
+
 ## [1.3.642] - 2026-11-06
 
 ### Changed

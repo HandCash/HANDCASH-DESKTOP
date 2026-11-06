@@ -24,6 +24,8 @@ export function devicePeerCorsHeaders(origin: string | undefined): Record<string
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Headers': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    // Mobile's https WebView calls a LAN address: Chrome asks for this in the preflight.
+    'Access-Control-Allow-Private-Network': 'true',
     Vary: 'Origin',
   }
 }
