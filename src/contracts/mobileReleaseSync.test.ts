@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const script = path.resolve(__dirname, '../../scripts/release-mobile.mjs')
@@ -9,7 +10,8 @@ const root = path.resolve(__dirname, '../..')
 const sha = 'a'.repeat(40)
 
 async function load() {
-  return (await import(/* @vite-ignore */ script)) as {
+  // A file URL: Windows absolute paths ("D:\...") are not valid import specifiers.
+  return (await import(/* @vite-ignore */ pathToFileURL(script).href)) as {
     nextMobileVersion(v: string): string
     syncProblems(i: { desktopVersion: string; walletUiVersion: string; pin: unknown }): string[]
     pinMobile(dir: string, i: { desktopVersion: string; sha: string }): string
