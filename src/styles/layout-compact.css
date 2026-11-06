@@ -156,15 +156,21 @@ html:is(.platform-mobile, .layout-compact) .wallet-balance-block {
   gap: 4px;
 }
 
+/* Handle sits directly on the balance: no gap, hairline or spare slot height between them. */
+html:is(.platform-mobile, .layout-compact) .wallet-hero {
+  gap: 0;
+}
+
 html:is(.platform-mobile, .layout-compact) .wallet-hero > .wallet-hero-head.connected-panel-head {
-  padding: 0 0 6px;
+  padding: 0;
+  border-bottom: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-balance-slot {
   flex: 0 0 auto;
   width: 100%;
   max-width: none;
-  min-height: 2.75rem;
+  min-height: 2rem;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions {

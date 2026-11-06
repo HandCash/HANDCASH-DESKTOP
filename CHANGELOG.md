@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.652] - 2026-11-06
+
+### Fixed
+
+- Mobile wallet home: the handle sits directly on the balance, with no gap or hairline between them.
+
 ## [1.3.651] - 2026-11-06
 
 ### Fixed
