@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.654] - 2026-11-06
+
+### Fixed
+
+- Mobile items grid is four items wide on every phone width, with token spacing and square thumbnails.
+
 ## [1.3.653] - 2026-11-06
 
 ### Fixed

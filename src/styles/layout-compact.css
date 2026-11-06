@@ -1088,10 +1088,14 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions:has(> .btn:nth-child(
   padding-inline: 8px;
 }
 
-/* Collect: six fixed columns on phones; Send lives in the item's details. */
+/* Collect: four fixed columns on every phone width; Send lives in the item's details. */
 html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collection-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--hc-space-2);
+}
+
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card .collection-grid-main {
+  padding: var(--hc-space-1) var(--hc-space-1) var(--hc-space-2);
 }
 
 html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions .collectable-send-btn {
