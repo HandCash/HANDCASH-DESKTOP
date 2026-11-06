@@ -4,7 +4,15 @@ Working name only; trademark/name availability is not cleared. Target: a genuine
 
 ## Architecture
 
-One shared TypeScript domain engine serves Desktop and Mobile; shells supply secure storage, networking and lifecycle capabilities. UI remains a projection of existing state machines. No alternate application-wallet protocol.
+One shared TypeScript domain engine serves Desktop and Mobile; shells supply secure storage, networking and lifecycle capabilities. UI remains a projection of existing state machines. BRC-100 remains supported unchanged; it is not the engine's only possible standards adapter.
+
+### Scoped request language — design boundary, not implemented
+
+The user's target is independently authored multicurrency behavior from first principles, not a Toolbox-shaped rewrite. Use a small internal, versioned request model behind standards adapters, not a competing public wallet protocol. BRC-100 preserves its own wire semantics/errors; other standards get explicit adapters only after revision, copyright and patent review. Do not infer BRC specification permissions from implementation licenses or unrelated TSC grants.
+
+Every internal request must bind authenticated origin/session, account and generation, chain/network/asset, operation and validated typed parameters, permission scope, expiry and request/replay identity. Adapter-supplied origin is not trusted without host authentication. Authorization is per capability, never a generic arbitrary-method or cross-chain signing grant. Preserve standard-specific signing domains and responses; fail closed for unknown versions, operations, networks or unsupported semantics. Amounts use exact integers/units, not floating-point currency values. No keys or unrestricted executable scripts in the request language.
+
+Next deliverable before runtime expansion: a revision/rights/provenance ledger and request-to-capability matrix for actual BRC-100 calls and the first non-BSV standard selected for a supported chain. Define independent positive/negative vectors for origin spoofing, wrong account/network, stale generations, replay, expiry and permission escalation. Review that contract before schema/adapters; do not invent compatibility claims for unspecified standards. This extends the earlier BRC-only architecture decision at the internal boundary, not the existing BRC-100 public contract.
 
 | Domain | Responsibility and boundary |
 | --- | --- |
