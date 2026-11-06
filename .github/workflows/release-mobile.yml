@@ -1,0 +1,66 @@
+# On a Desktop release tag, pin the same Desktop core in HANDCASH-MOBILE, bump
+# Mobile's version and tag it. Mobile's own Release Android APK workflow builds
+# the tag. Needs secret MOBILE_RELEASE_TOKEN (contents:write on HandCash/HANDCASH-MOBILE);
+# without it the job fails loudly. Manual run: Actions → Release Mobile → tag.
+
+name: Release Mobile
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Desktop tag to pin in Mobile (e.g. v1.3.656)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-mobile-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mobile:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require Mobile token
+        env:
+          TOKEN: ${{ secrets.MOBILE_RELEASE_TOKEN }}
+        run: |
+          test -n "$TOKEN" || { echo "Missing secret MOBILE_RELEASE_TOKEN — Mobile was NOT released" >&2; exit 1; }
+
+      - name: Checkout Desktop
+        uses: actions/checkout@v4
+        with:
+          path: HANDCASH-DESKTOP
+          ref: ${{ inputs.tag || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Checkout Mobile
+        uses: actions/checkout@v4
+        with:
+          repository: HandCash/HANDCASH-MOBILE
+          path: HANDCASH-MOBILE
+          token: ${{ secrets.MOBILE_RELEASE_TOKEN }}
+          fetch-depth: 0
+
+      - name: Pin, bump, tag and push Mobile
+        working-directory: HANDCASH-DESKTOP
+        env:
+          GITHUB_REF_NAME: ${{ inputs.tag || github.ref_name }}
+        run: |
+          git config --global user.name "handcash-release-bot"
+          git config --global user.email "release-bot@users.noreply.github.com"
+          node scripts/release-mobile.mjs --mobile-dir ../HANDCASH-MOBILE --push
+
+      - name: Verify Mobile is in sync
+        working-directory: HANDCASH-DESKTOP
+        run: node scripts/release-mobile.mjs --mobile-dir ../HANDCASH-MOBILE --check

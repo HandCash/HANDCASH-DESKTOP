@@ -54,6 +54,8 @@
     "version:minor": "node scripts/bump-version.mjs minor",
     "version:major": "node scripts/bump-version.mjs major",
     "version:push": "node scripts/bump-version.mjs patch --push",
+    "mobile:check": "node scripts/release-mobile.mjs --mobile-dir ../HANDCASH-MOBILE --check",
+    "mobile:release": "node scripts/release-mobile.mjs --mobile-dir ../HANDCASH-MOBILE",
     "version:sync-market": "node scripts/bump-version.mjs --sync-market",
     "version:check": "node scripts/require-version-bump.mjs",
     "icons:tray": "node scripts/build-tray-icons.mjs",

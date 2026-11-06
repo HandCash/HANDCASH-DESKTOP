@@ -25,6 +25,21 @@ npm run package:mac
 # Upload DMG/zip (+ latest-mac.yml while Mac auto-update is live)
 ```
 
+### Mobile follows every Desktop tag
+
+Mobile (`HANDCASH-MOBILE`) is a shell over this repo's `src/` and ships under its own `0.1.x` version. It pins the Desktop it builds in its `ui-core-source.json` (`{ gitSha, version }`); the pinned `version` must equal Desktop's `package.json` version.
+
+Pushing `vX.Y.Z` also runs `.github/workflows/release-mobile.yml`, which runs `scripts/release-mobile.mjs`:
+
+1. Sets Mobile's pin to Desktop `X.Y.Z` and the tag's commit.
+2. Bumps Mobile's patch version, commits, tags `v0.1.N` and pushes both.
+3. Mobile's own `Release Android APK` workflow builds that tag.
+4. Runs `--check`: fails unless the pin matches Desktop.
+
+No prompts. It fails loudly if secret `MOBILE_RELEASE_TOKEN` (contents write on `HandCash/HANDCASH-MOBILE`) is missing, the tag differs from `package.json`, or Mobile's worktree is dirty. Re-running for an already pinned version does nothing. `src/contracts/mobileReleaseSync.test.ts` guards the script and that `package.json`, `src/version.ts` and `@handcash/wallet-ui` agree.
+
+Local: `npm run mobile:check` (sibling `../HANDCASH-MOBILE`) shows drift; `npm run mobile:release` pins, bumps and tags locally without pushing.
+
 **Backfill Linux onto an existing tag** (Actions → Release Linux → Run workflow → tag `v1.0.0`).
 
 The migrate / wallet download site (`items-market` `/api/desktop-downloads`) resolves the **newest GitHub release automatically** (including prereleases). No manual version pin after publish. Optional emergency pin: `NEXT_PUBLIC_DESKTOP_VERSION` / `NEXT_PUBLIC_DESKTOP_RELEASE_TAG`.
