@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Release Mobile for a Desktop release. Mobile is a Capacitor shell over this
  * repo's src/, so Mobile pins the Desktop commit it builds (ui-core-source.json
