@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const durable = new Map<string, string>()
+const flags = { failVaultWrite: false }
 
 vi.mock('./durableStorage.js', () => ({
   durableGetItem: (key: string) => durable.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
+    if (flags.failVaultWrite && key === 'handcash.brc100.vault.v1') return false
     if (value === '') durable.delete(key)
     else durable.set(key, value)
     return true
@@ -40,6 +42,7 @@ const local = new Map<string, string>()
 describe('vault multi-factor unlock', () => {
   beforeEach(() => {
     durable.clear()
+    flags.failVaultWrite = false
     local.clear()
     deviceStore.secret = null
     vi.resetModules()
@@ -85,6 +88,33 @@ describe('vault multi-factor unlock', () => {
 
     const unlocked = await vault.unlockVaultWithDevice()
     expect(unlocked.master).toEqual(created.master)
+  })
+
+  it('keeps the device seal when turning off device unlock fails to save', async () => {
+    const vault = await import('./vault.js')
+    await vault.createVault({ chain: 'main', password: 'CorrectHorse1', useDevice: true })
+    flags.failVaultWrite = true
+    await expect(vault.disableDeviceUnlock('CorrectHorse1')).rejects.toThrow(/Failed to persist/)
+    flags.failVaultWrite = false
+    expect(vault.readVaultUnlockFactors()).toEqual({ password: true, device: true })
+    expect(deviceStore.secret).not.toBeNull()
+    await expect(vault.unlockVaultWithDevice()).resolves.toBeTruthy()
+
+    await vault.disableDeviceUnlock('CorrectHorse1')
+    expect(vault.readVaultUnlockFactors()).toEqual({ password: true, device: false })
+    expect(deviceStore.secret).toBeNull()
+  })
+
+  it('does not unlock from a stolen blob with the wrong password or a forged device flag', async () => {
+    const vault = await import('./vault.js')
+    await vault.createVault({ chain: 'main', password: 'CorrectHorse1' })
+    await expect(vault.unlockVault('WrongHorse9')).rejects.toThrow(/Incorrect password/)
+    const key = 'handcash.brc100.vault.v1'
+    const forged = JSON.parse(durable.get(key)!)
+    forged.wraps.device = { enrolled: true }
+    durable.set(key, JSON.stringify(forged))
+    // Nothing is sealed on this device, so the claimed device factor opens nothing.
+    await expect(vault.unlockVaultWithDevice()).rejects.toThrow()
   })
 
   it('migrates legacy password vaults to v3 on unlock', async () => {
