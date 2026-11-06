@@ -7,7 +7,7 @@ import { TICKER_COIN_ORDER } from './tickerCoin'
 import { COIN_CHAINS } from './coins/coinChains'
 import { coinAccentVar } from './coinHoldings'
 
-const css = readFileSync(fileURLToPath(new URL('../styles/handcash.css', import.meta.url)), 'utf8')
+const css = readFileSync(fileURLToPath(new URL('../styles/handcash.css', import.meta.url)), 'utf8').replace(/\r\n/g, '\n')
 
 function block(selector: string): string {
   const start = css.indexOf(`${selector} {`)

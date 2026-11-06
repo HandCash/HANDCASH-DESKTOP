@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.660] - 2026-11-06
+
+### Changed
+
+- The coin palette test reads the stylesheet with Windows line endings normalised, so the Windows release suite passes.
+
 ## [1.3.659] - 2026-11-06
 
 ### Changed
