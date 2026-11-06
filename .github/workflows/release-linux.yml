@@ -27,7 +27,16 @@ concurrency:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,7 +95,8 @@ jobs:
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
               --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — Linux thin native shell zip from CI." \
               --prerelease \
-              --target "${{ github.sha }}"
+              --target "${{ github.sha }}" || \
+              gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null
           fi
 
       - name: Upload Linux artifacts
