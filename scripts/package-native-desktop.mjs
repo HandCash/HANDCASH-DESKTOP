@@ -32,7 +32,8 @@ function run(cmd, args, opts = {}) {
     cwd: opts.cwd ?? root,
     stdio: 'inherit',
     env: opts.env ?? process.env,
-    shell: opts.shell ?? false,
+    // Windows npm is a .cmd shim and must be launched through cmd.exe.
+    shell: opts.shell ?? (process.platform === 'win32' && cmd === 'npm'),
   })
   if (r.status !== 0) throw new Error(`${cmd} ${args.join(' ')} exited ${r.status}`)
 }
