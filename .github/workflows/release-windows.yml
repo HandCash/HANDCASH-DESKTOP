@@ -1,5 +1,4 @@
-# Build Windows NSIS + portable on GitHub and publish to the matching GitHub Release
-# (latest.yml + installers for electron-updater).
+# Build the thin native Windows zip on GitHub and publish to the matching GitHub Release.
 #
 # Triggers:
 #   - push of tag v* (after `npm run version:*` + `git push origin vX.Y.Z`)
@@ -63,31 +62,24 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "Building HandCash ${VERSION} → release ${TAG}"
 
-      - name: Build Windows installers
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
-        # Windows runners default to PowerShell, where `rm` is Remove-Item and
-        # rejects `-rf`. Every other step here is bash for the same reason.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows thin native package
         shell: bash
         run: |
           set -euo pipefail
-          # package.json forces code signing. Until the certificate secrets exist
-          # the release is built through the explicit unsigned opt-out and
-          # flagged on the run, never silently.
-          if [[ -n "$WIN_CSC_LINK" && -n "$WIN_CSC_KEY_PASSWORD" ]]; then
-            echo "Signing with the Windows code-signing certificate"
-          else
-            echo "::warning title=Unsigned Windows release::Add the WIN_CSC_LINK and WIN_CSC_KEY_PASSWORD secrets to sign the installer."
-            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
-            export HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false
-          fi
+          # Thin native shell (no Electron): zip only. NSIS and code signing
+          # return with a native installer; electron-builder no longer applies
+          # because dist-electron is not built.
           rm -rf release
-          npm run build
-          npx electron-builder --win nsis --publish never
-          node scripts/write-latest-yml.mjs
-          node scripts/verify-update-yml.mjs
+          npm run package:win
+          VERSION="${{ steps.meta.outputs.version }}"
+          DIR=release/win-x64/HandCash
+          for f in handcash-shell.exe node.exe bridgeSidecar.cjs uiSidecar.cjs handcash-page.js app/index.html HandCash.cmd; do
+            test -f "$DIR/$f" || { echo "missing $DIR/$f" >&2; exit 1; }
+          done
+          test -f "release/HandCash-${VERSION}-x64-win.zip"
 
       - name: Ensure GitHub Release exists
         env:
@@ -112,20 +104,7 @@ jobs:
         shell: bash
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
-          shopt -s nullglob
-          artifacts=(release/HandCash-Setup-*.exe release/HandCash-Setup-*.exe.blockmap)
-          metadata=release/latest.yml
-          if [ ${#artifacts[@]} -eq 0 ] || [ ! -f "$metadata" ]; then
-            echo "No Windows artifacts found under release/" >&2
-            ls -la release/ || true
-            exit 1
-          fi
-          for f in "${artifacts[@]}" "$metadata"; do
-            name="$(basename "$f")"
-            gh release delete-asset "$TAG" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
-          done
-          # Installers first; channel metadata last (matches macOS release workflow).
-          gh release upload "$TAG" "${artifacts[@]}" --repo "${{ github.repository }}" --clobber
-          gh release upload "$TAG" "$metadata" --repo "${{ github.repository }}" --clobber
-          echo "Uploaded to $TAG:"
-          printf '  %s\n' "${artifacts[@]}" "$metadata"
+          f="release/HandCash-${{ steps.meta.outputs.version }}-x64-win.zip"
+          test -f "$f" || { echo "No Windows zip at $f" >&2; ls -la release/ || true; exit 1; }
+          gh release upload "$TAG" "$f" --repo "${{ github.repository }}" --clobber
+          echo "Uploaded $f to $TAG"

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.661] - 2026-11-06
+
+### Changed
+
+- The Windows release builds the thin native shell zip (Rust shell, Node sidecars, UI) instead of the removed Electron installer, so it no longer fails on a missing `dist-electron/main.js`. NSIS and signing return with a native installer.
+
 ## [1.3.660] - 2026-11-06
 
 ### Changed
