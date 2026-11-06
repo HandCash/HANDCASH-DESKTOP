@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.657] - 2026-11-06
+
+### Changed
+
+- Mac release check verifies the thin native app for the runner's architecture instead of the old Electron layout, so Mac installers publish again.
+- Windows call-recording test no longer expects POSIX file modes.
+
 ## [1.3.656] - 2026-11-06
 
 ### Changed

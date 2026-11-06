@@ -87,43 +87,35 @@ jobs:
       - name: Verify Mac package integrity
         run: |
           set -euo pipefail
+          # package:mac builds the thin native shell for the runner's own
+          # architecture only (macos-latest is arm64), so verify that one app.
+          if [[ "$(uname -m)" == "arm64" ]]; then ARCH=arm64; DIR=release/mac-arm64; else ARCH=x64; DIR=release/mac; fi
+          APP="$DIR/HandCash.app"
           fail=0
-          for arch_dir in release/mac-arm64 release/mac; do
-            APP="$arch_dir/HandCash.app"
-            if [[ ! -d "$APP" ]]; then
-              echo "MISSING $APP" >&2
-              fail=1
-              continue
-            fi
-            PLIST="$APP/Contents/Info.plist"
-            BIN="$APP/Contents/MacOS/HandCash"
-            ASAR="$APP/Contents/Resources/app.asar"
-            EF="$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
-            ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$PLIST" 2>/dev/null || true)"
-            VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST" 2>/dev/null || true)"
-            echo "== $APP =="
-            echo "  CFBundleIdentifier=$ID"
-            echo "  version=$VER"
-            [[ "$ID" == "io.handcash.brc100" ]] || { echo "bad bundle id" >&2; fail=1; }
-            [[ -x "$BIN" ]] || { echo "missing binary" >&2; fail=1; }
-            [[ -f "$ASAR" ]] || { echo "missing app.asar" >&2; fail=1; }
-            [[ -f "$EF" ]] || { echo "missing Electron Framework" >&2; fail=1; }
-            # A linker-only signature (Identifier=Electron, no sealed resources)
-            # makes Gatekeeper report "damaged" on Apple Silicon. afterPack.cjs
-            # ad-hoc signs the bundle; refuse to ship if that did not stick.
-            codesign --verify --deep --strict "$APP" || { echo "invalid code signature" >&2; fail=1; }
-            codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Identifier=io.handcash.brc100" \
-              || { echo "signature not bound to app bundle" >&2; fail=1; }
-            # electron-builder --mac dmg/zip should embed updater metadata
-            if [[ ! -f "$APP/Contents/Resources/app-update.yml" ]]; then
-              echo "WARN: app-update.yml missing in $APP — copying from build/" >&2
-              cp build/app-update.yml "$APP/Contents/Resources/app-update.yml"
-            fi
+          [[ -d "$APP" ]] || { echo "MISSING $APP" >&2; exit 1; }
+          PLIST="$APP/Contents/Info.plist"
+          RES="$APP/Contents/Resources"
+          ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$PLIST" 2>/dev/null || true)"
+          VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST" 2>/dev/null || true)"
+          echo "== $APP =="
+          echo "  CFBundleIdentifier=$ID"
+          echo "  version=$VER"
+          [[ "$ID" == "io.handcash.brc100" ]] || { echo "bad bundle id" >&2; fail=1; }
+          [[ "$VER" == "${{ steps.meta.outputs.version }}" ]] || { echo "bundle version $VER != ${{ steps.meta.outputs.version }}" >&2; fail=1; }
+          [[ -x "$APP/Contents/MacOS/HandCash" ]] || { echo "missing binary" >&2; fail=1; }
+          [[ -x "$RES/node" ]] || { echo "missing bundled node" >&2; fail=1; }
+          for f in bridgeSidecar.cjs uiSidecar.cjs handcash-page.js app/index.html; do
+            [[ -f "$RES/$f" ]] || { echo "missing Resources/$f" >&2; fail=1; }
           done
+          # A linker-only signature (Identifier=Electron, no sealed resources)
+          # makes Gatekeeper report "damaged" on Apple Silicon. The packager
+          # signs the bundle; refuse to ship if that did not stick.
+          codesign --verify --deep --strict "$APP" || { echo "invalid code signature" >&2; fail=1; }
+          codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Identifier=io.handcash.brc100" \
+            || { echo "signature not bound to app bundle" >&2; fail=1; }
           ls -lh release/*.dmg release/*.zip release/latest-mac.yml
-          # Ensure both arch DMGs exist (CI previously succeeded without catching empty apps)
-          test -f release/HandCash-*-arm64-mac.dmg
-          test -f release/HandCash-*-x64-mac.dmg
+          test -f "release/HandCash-${{ steps.meta.outputs.version }}-$ARCH-mac.dmg" || { echo "missing $ARCH dmg" >&2; fail=1; }
+          test -f "release/HandCash-${{ steps.meta.outputs.version }}-$ARCH-mac.zip" || { echo "missing $ARCH zip" >&2; fail=1; }
           exit "$fail"
 
       - name: Ensure GitHub Release exists

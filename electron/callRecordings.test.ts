@@ -42,7 +42,8 @@ describe('call recordings on disk', () => {
     const [entry] = store.listRecordings(IDENTITY)
     expect(entry).toMatchObject({ id: ID, parts: 2, bytes: 5 })
     const file = path.join(userData, 'call-recordings', IDENTITY, ID, '000000.part')
-    expect(fs.statSync(file).mode & 0o777).toBe(0o600)
+    // Windows has no POSIX file modes (reports 0o666).
+    if (process.platform !== 'win32') expect(fs.statSync(file).mode & 0o777).toBe(0o600)
   })
 
   it('stops at a missing part rather than splicing around it', async () => {
