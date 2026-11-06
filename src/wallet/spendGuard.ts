@@ -20,6 +20,7 @@ import {
 } from './session'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { ensureHoldingFresh } from './accountMove'
+import { moveActiveAccountForSpend, spendNeedsMove } from './spendAutoMove'
 import { activeAccountSpendRefusal } from './vaultAccountHolding'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 import {
@@ -226,7 +227,19 @@ export function runExclusiveSpend<T>(
   }
   // One install per account: an account another device holds never signs here.
   const heldElsewhere = activeAccountSpendRefusal(runtime?.instance ?? null)
-  if (heldElsewhere) throw new Error(heldElsewhere)
+  if (heldElsewhere) {
+    const instance = runtime?.instance
+    // BRC-249 "Moving on demand": a spend the user asked for moves the wallet
+    // here first. Background work never takes a wallet from another device.
+    if (spendNeedsMove(heldElsewhere) && instance?.vaultMaster && !opts?.background) {
+      return moveActiveAccountForSpend({
+        identityKey: instance.identityKey,
+        accountIndex: instance.accountIndex,
+        vaultMaster: instance.vaultMaster,
+      }).then(() => runExclusiveSpend(fn, onSpendRegion, opts))
+    }
+    throw new Error(heldElsewhere)
+  }
   // Spending known local UTXOs is the wallet's primary path. Maintenance is
   // demand-driven: only a real local-balance shortage may promote chained
   // change. Callers doing explicit-input work (items/burns) use `false`; repair

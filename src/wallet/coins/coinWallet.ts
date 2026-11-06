@@ -13,6 +13,7 @@ import { assertOnlineForPayment } from '../paymentPolicy'
 import type { CoinChain } from './coinChains'
 import type { ActiveWallet } from '../session'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
+import { moveIfHeldElsewhere, spendNeedsMove } from '../spendAutoMove'
 import { getWalletRuntime } from '../walletRuntime'
 
 /**
@@ -689,10 +690,16 @@ export function createCoinWallet(binding: CoinBinding) {
     if (heldElsewhere) refuse('held-elsewhere', heldElsewhere)
   }
 
+  /** BRC-249: a wallet another install holds moves here as part of the spend. Before the send's own lock. */
+  async function moveHere(): Promise<void> {
+    await moveIfHeldElsewhere(requireActive())
+  }
+
   /** Refuse a payment the wallet would refuse anyway, before anyone is asked to approve it. Local state only. */
   function preflightSend(args: SendCoinArgs): void {
     const active = requireActive()
-    refuseHeldElsewhere(active)
+    // A wallet held elsewhere is moved by the send itself; only other refusals stop it here.
+    if (!spendNeedsMove(activeAccountSpendRefusal(active))) refuseHeldElsewhere(active)
     migrate()
     const units = unitsOf(args.litoshi)
     const recipient = recipientOf(active, args)
@@ -749,7 +756,9 @@ export function createCoinWallet(binding: CoinBinding) {
    * which never gates the payment. `origin` is the app that asked, for its
    * Activity row; `toLabel` names the recipient there.
    */
-  function send(args: SendCoinArgs, opts: { origin?: string; toLabel?: string } = {}): Promise<SendCoinResult> {
+  async function send(args: SendCoinArgs, opts: { origin?: string; toLabel?: string } = {}): Promise<SendCoinResult> {
+    assertOnlineForPayment()
+    await moveHere()
     return serial(async () => {
       const active = requireActive()
       assertOnlineForPayment()
@@ -818,10 +827,12 @@ export function createCoinWallet(binding: CoinBinding) {
    * payment is signed and recorded before it is broadcast, and kept alive
    * until it confirms. Output `i` of the transaction is `outputs[i]`.
    */
-  function fundLocks(
+  async function fundLocks(
     outputs: ReadonlyArray<{ script: Uint8Array; litoshi: bigint; address: string }>,
     opts: { swapId: string; origin?: string; note: string },
   ): Promise<SendCoinResult> {
+    assertOnlineForPayment()
+    await moveHere()
     return serial(async () => {
       const active = requireActive()
       assertOnlineForPayment()
