@@ -6,17 +6,19 @@
 
 import { requestImportKind } from './import'
 import { openSetting } from './navStore'
-import { MIGRATE_URL } from './walletConfig'
+import { MIGRATE_LOGIN_URL } from './walletConfig'
+import { storageRegistry } from '../storage/registry'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
-let pending = false
+const KEY = storageRegistry.cloudMigrationIntent.key
 
 /** Remember that create/onboard should finish into cloud migration import. */
 export function armCloudMigrationIntent(): void {
-  pending = true
+  if (!durableSetItem(KEY, 'pending')) throw new Error('Could not save the migration checkpoint on this device.')
 }
 
 export function peekCloudMigrationIntent(): boolean {
-  return pending
+  return durableGetItem(KEY) === 'pending'
 }
 
 /**
@@ -24,18 +26,19 @@ export function peekCloudMigrationIntent(): boolean {
  * Call once the wallet is unlocked after onboarding create.
  */
 export function consumeCloudMigrationIntent(): boolean {
-  if (!pending) return false
-  pending = false
+  if (!peekCloudMigrationIntent()) return false
   requestImportKind('handcash')
   openSetting('import')
+  durableRemoveItem(KEY)
   if (typeof window !== 'undefined') {
-    void window.handcash?.openExternal?.(MIGRATE_URL)
-    void window.handcash?.focusWindow?.()
+    void window.handcash?.openExternal?.(MIGRATE_LOGIN_URL).catch(() => undefined)
   }
   return true
 }
 
 /** Test helper. */
 export function resetCloudMigrationIntentForTests(): void {
-  pending = false
+  durableRemoveItem(KEY)
 }
+
+export function cancelCloudMigrationIntent(): void { durableRemoveItem(KEY) }

@@ -1074,6 +1074,14 @@ const LEGACY_IMPORT = `stateDiagram-v2
   list --> picking : ADD
   list --> source : OPEN
   list --> entering : PICK (openKeyRecovery from migrate page)
+  list --> awaitingImport : SIGN_IN
+  picking --> awaitingImport : SIGN_IN
+  entering --> awaitingImport : SIGN_IN
+  awaitingImport --> list : BACK / FAIL
+  awaitingImport --> source : IMPORTED (save then scan; never sweep)
+  list --> source : IMPORTED
+  picking --> source : IMPORTED
+  entering --> source : IMPORTED
   picking --> entering : PICK (HandCash first)
   picking --> list : BACK
   entering --> saving : SUBMIT
@@ -1082,6 +1090,8 @@ const LEGACY_IMPORT = `stateDiagram-v2
   saving --> entering : FAIL
 
   state source {
+    viewing --> scanning : IMPORTED
+    awaitingHints --> scanning : IMPORTED
     [*] --> viewing
     viewing --> scanning : RESCAN
     viewing --> awaitingHints : ASK_HINTS (HandCash · opens /migrate)

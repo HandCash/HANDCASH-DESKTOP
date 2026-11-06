@@ -321,7 +321,8 @@ export function ImportSourceView(props: {
 
       {source.lastSweep ? (
         <p className="settings-row-desc" data-aeon-part="last-sweep">
-          Last import {new Date(source.lastSweep.at).toLocaleDateString()} ·{' '}
+          Last import {new Date(source.lastSweep.at).toLocaleDateString()}
+          {source.lastSweep.status === 'paused' ? ' · paused' : source.lastSweep.status === 'partial' ? ' · needs attention' : ''} ·{' '}
           {formatBsv(source.lastSweep.cashSats)} BSV · {source.lastSweep.items.toLocaleString()} items
           {source.lastSweep.failed > 0 ? ` · ${source.lastSweep.failed} failed` : ''}
           {source.lastSweep.notes.length > 0 ? ` — ${source.lastSweep.notes.join(' ')}` : ''}
@@ -330,7 +331,9 @@ export function ImportSourceView(props: {
 
       {face === 'viewing' && scan && !movable ? (
         <p className="settings-hint" data-aeon-part="empty">
-          Nothing here to import. Rescan if coins or items arrived since {new Date(scan.at).toLocaleDateString()}.
+          {scan.complete
+            ? `No compatible assets found in the last scan. Rescan if coins or items arrived since ${new Date(scan.at).toLocaleDateString()}.`
+            : 'The scan is incomplete. Rescan to check your remaining assets; an unfinished scan does not mean the old wallet is empty.'}
         </p>
       ) : null}
 

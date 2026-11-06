@@ -82,7 +82,8 @@ import {
   isRestoreMethod,
   type FormMode,
 } from './auth/authModes'
-import { armCloudMigrationIntent } from '../wallet/cloudMigrationIntent'
+import { armCloudMigrationIntent, cancelCloudMigrationIntent } from '../wallet/cloudMigrationIntent'
+import { toastError } from '../wallet/toast'
 import { readCloudPriorSession } from '../wallet/cloudPriorSession'
 import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
 import { setSigninEmail } from '../wallet/deviceSignin'
@@ -840,11 +841,15 @@ export function AuthScreen({
     return (
       <OnboardEntryPanel
         session={readCloudPriorSession()}
-        onSignIn={() => setFormMode(EXISTING_WALLET_MODE)}
-        onCreate={() => setFormMode('create')}
+        onSignIn={() => { cancelCloudMigrationIntent(); setFormMode(EXISTING_WALLET_MODE) }}
+        onCreate={() => { cancelCloudMigrationIntent(); setFormMode('create') }}
         onMigrate={() => {
-          armCloudMigrationIntent()
-          setFormMode('create')
+          try {
+            armCloudMigrationIntent()
+            setFormMode('create')
+          } catch {
+            toastError('Could not start migration', 'The migration checkpoint could not be saved. Check device storage and try again.')
+          }
         }}
       />
     )
@@ -1141,7 +1146,7 @@ export function AuthScreen({
               type="button"
               className="auth-alt-link"
               data-aeon-part="existing-wallet"
-              onClick={() => setFormMode(EXISTING_WALLET_MODE)}
+              onClick={() => { cancelCloudMigrationIntent(); setFormMode(EXISTING_WALLET_MODE) }}
             >
               Sign in
             </button>

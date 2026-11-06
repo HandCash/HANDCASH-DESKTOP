@@ -5,10 +5,32 @@ import { legacyImportMachine, type LegacyImportEvent } from './legacyImportMachi
 function run(...events: LegacyImportEvent[]) {
   const actor = createActor(legacyImportMachine).start()
   for (const event of events) actor.send(event)
-  return actor.getSnapshot()
+  const snapshot = actor.getSnapshot()
+  actor.stop()
+  return snapshot
 }
 
 describe('legacyImportMachine', () => {
+  it('all encrypted entry routes save then scan; an imported source never confirms a sweep', () => {
+    for (const entry of [
+      [],
+      [{ type: 'SIGN_IN' }],
+      [{ type: 'PICK', kind: 'handcash' }],
+      [{ type: 'OPEN', sourceId: 'prior' }],
+    ] as LegacyImportEvent[][]) {
+      const snapshot = run({ type: 'LOADED' }, ...entry, { type: 'IMPORTED', sourceId: 'received' }, { type: 'CONFIRM' })
+      expect(snapshot.matches({ source: 'scanning' })).toBe(true)
+      expect(snapshot.context.sourceId).toBe('received')
+    }
+  })
+
+  it('sign-in can be cancelled and an incoming import does not interrupt a sweep', () => {
+    expect(run({ type: 'LOADED' }, { type: 'SIGN_IN' }, { type: 'BACK' }).matches('list')).toBe(true)
+    const snap = run({ type: 'LOADED' }, { type: 'OPEN', sourceId: 'current' },
+      { type: 'REVIEW' }, { type: 'CONFIRM' }, { type: 'IMPORTED', sourceId: 'incoming' })
+    expect(snap.matches({ source: 'sweeping' })).toBe(true)
+    expect(snap.context.sourceId).toBe('current')
+  })
   it('saves then scans a new source, never sweeps on its own', () => {
     const snap = run(
       { type: 'LOADED' },

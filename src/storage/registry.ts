@@ -232,6 +232,12 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  cloudMigrationIntent: defineStorage({
+    key: 'handcash.cloud.migrationIntent.v1',
+    owner: 'onboard',
+    scope: 'device',
+    version: 1,
+  }),
   blockedSenders: defineStorage({
     key: 'handcash.blockedSenders.v1',
     owner: 'friends',

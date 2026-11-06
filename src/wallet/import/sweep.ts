@@ -83,7 +83,7 @@ export async function sweepImportedSource(args: {
   const job = beginWalletJob({ kind: 'wallet-sweep', identityKey: active.identityKey, startedAt })
   try {
     const { summary, paused } = await runSweep(args, source, plan, active, job)
-    if (paused) job.stop(paused)
+    if (summary.status !== 'completed') job.stop(paused ?? 'Some assets remain. Rescan and review the import report.')
     else job.finish(`${summary.items.toLocaleString()} collectable(s) moved`)
     appendAppLog(
       'info',
@@ -118,12 +118,14 @@ async function runSweep(
   let cashSats = 0
   let items = 0
   let failed = 0
+  let incomplete = source.scan?.complete === false || plan.totals.partial > 0
   /** Why the sweep stopped short and resumes on the next one; null when it ran out of work. */
   let paused: string | null = null
 
   const candidateFor = (h: AddressHoldings): PhraseCandidate | null => {
     const key = deriver.privateKeyAt(h.path)
     if (key.toPublicKey().toString().toLowerCase() === active.identityKey.toLowerCase()) {
+      incomplete = true
       notes.push(`${h.label} is this wallet’s own key — use Refresh instead.`)
       return null
     }
@@ -156,6 +158,7 @@ async function runSweep(
           const scan = await scanAddressAny(candidate.address, active.chain)
           if (scan.utxos.length > 0) sources.push({ candidate, utxos: scan.utxos })
         } catch {
+          failed += 1
           notes.push(`${candidate.label} could not be read. Sweep again to move its BSV.`)
         }
         read += 1
@@ -184,6 +187,7 @@ async function runSweep(
     report('items', 'Listing collectables…')
     const listing = await syncImportItems({ sourceId: source.id, shouldStop: stop })
     if (!listing.complete && !stop()) {
+      incomplete = true
       notes.push('Some addresses could not be read. Sweep again to move what they hold.')
     }
     const listed = [...(await listedImportOutpoints(source.id))]
@@ -211,6 +215,10 @@ async function runSweep(
         if (result.kind === 'moved') items += 1
         else if (result.kind === 'skipped') held = addHeld(held, 'notCollectable', 1)
         else if (result.kind === 'failed' || result.kind === 'unreadable') failed += 1
+        else {
+          incomplete = true
+          notes.push(result.message)
+        }
       }
       const lastError = chunk.results.find((r) => r.result.kind === 'failed')?.result
       if (lastError && 'message' in lastError) notes.push(lastError.message)
@@ -241,8 +249,11 @@ async function runSweep(
     held,
     failed,
     notes: [...new Set(notes)].slice(0, 8),
+    status: paused ? 'paused' : failed > 0 || incomplete || Object.values(held).some((n) => (n ?? 0) > 0) ? 'partial' : 'completed',
   }
   await clearImportItems(source.id)
-  await updateImportedSource(source.id, { lastSweep: summary })
+  // A sweep changes the source. Never reuse its pre-transfer totals for a new
+  // confirmation; the next attempt must scan the remaining outputs first.
+  await updateImportedSource(source.id, { lastSweep: summary, scan: null })
   return { summary, paused }
 }

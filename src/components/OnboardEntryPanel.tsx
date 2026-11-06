@@ -1,7 +1,7 @@
 /**
  * First onboarding screen.
  *
- * Not signed in: Sign in + Create new wallet.
+ * Not signed in: bring an old HandCash wallet, sign in to a new wallet, or create.
  * Signed in (prior cloud context): single Migrate CTA — Create hidden.
  */
 
@@ -37,8 +37,8 @@ export function OnboardEntryPanel({ session, onSignIn, onCreate, onMigrate }: Pr
           <h1 className="auth-title">Migrate your wallet</h1>
           <p className="auth-lede">
             {handleLabel
-              ? `You're signed in as ${handleLabel}. Bring your handle, keys, and holdings into this app.`
-              : "You're signed in to HandCash. Bring your handle, keys, and holdings into this app."}
+              ? `Continue recovering ${handleLabel}. Sign in to verify your old account, then review what moves.`
+              : 'Sign in to your old HandCash account, then review what moves into this app.'}
           </p>
         </div>
         <div className="auth-entry-actions" data-aeon-part="entry-actions">
@@ -83,6 +83,11 @@ export function OnboardEntryPanel({ session, onSignIn, onCreate, onMigrate }: Pr
           <Button.Label>Create new wallet</Button.Label>
         </Button.Root>
       </div>
+      <p className="auth-alt">
+        <Button.Root variant="ghost" className="auth-alt-link" data-aeon-part="migrate" onClick={onMigrate}>
+          <Button.Label>Recover an old HandCash wallet</Button.Label>
+        </Button.Root>
+      </p>
       <AuthEntryTaglines />
     </section>
   )

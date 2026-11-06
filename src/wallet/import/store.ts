@@ -43,6 +43,8 @@ export type SweepSummary = {
   held: HeldTally
   failed: number
   notes: string[]
+  /** Absent on older receipts; distinguish a successful call from a completed migration. */
+  status?: 'completed' | 'partial' | 'paused'
 }
 
 export type ImportedSource = {
@@ -129,7 +131,11 @@ async function writeAll(o: Owner, sources: ImportedSource[]): Promise<void> {
     new TextEncoder().encode(JSON.stringify(sources)),
   )
   const record: SealedRecord = { v: 1, iv: bytesToBase64(iv), ct: bytesToBase64(new Uint8Array(ct)) }
-  durableSetItem(storageKey(o), JSON.stringify(record))
+  const current = owner()
+  if (current.identityKey !== o.identityKey || current.chain !== o.chain || current.accountIndex !== o.accountIndex) throw new Error('The receiving wallet changed.')
+  if (!durableSetItem(storageKey(o), JSON.stringify(record))) {
+    throw new Error('Could not save this import on the device. Free some storage and try again.')
+  }
   notify(sources)
 }
 
@@ -160,9 +166,11 @@ export function loadImportedSources(): Promise<ImportedSource[]> {
 
 export type AddSourceResult = { source: ImportedSource; existing: boolean }
 
-export function addImportedSource(secret: ImportSecret, label?: string): Promise<AddSourceResult> {
+export function addImportedSource(secret: ImportSecret, label?: string, expectedIdentityKey?: string, expectedChain?: string): Promise<AddSourceResult> {
   return exclusive(async () => {
     const o = owner()
+    if (expectedIdentityKey && o.identityKey !== expectedIdentityKey) throw new Error('The receiving wallet changed.')
+    if (expectedChain && o.chain !== expectedChain) throw new Error('The receiving wallet network changed.')
     const sources = await readAll(o)
     const fingerprint = sourceFingerprint(secret)
     const prior = sources.find((s) => s.fingerprint === fingerprint && s.kind === secret.kind)

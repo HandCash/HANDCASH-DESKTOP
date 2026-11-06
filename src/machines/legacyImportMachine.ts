@@ -21,6 +21,8 @@ export type LegacyImportEvent =
   | { type: 'PICK'; kind: ImportSourceKind }
   | { type: 'SUBMIT' }
   | { type: 'SAVED'; sourceId: string }
+  | { type: 'SIGN_IN' }
+  | { type: 'IMPORTED'; sourceId: string }
   | { type: 'OPEN'; sourceId: string }
   | { type: 'RESCAN' }
   | { type: 'ASK_HINTS' }
@@ -45,6 +47,7 @@ export type LegacyImportContext = {
   percent: number | null
   /** Long work polls this between batches; set by PAUSE. */
   stopRequested: boolean
+  waitStartedAt: number
 }
 
 const INITIAL: LegacyImportContext = {
@@ -54,6 +57,7 @@ const INITIAL: LegacyImportContext = {
   progress: null,
   percent: null,
   stopRequested: false,
+  waitStartedAt: 0,
 }
 
 export const legacyImportMachine = setup({
@@ -66,7 +70,7 @@ export const legacyImportMachine = setup({
     clearError: assign({ error: null }),
     pick: assign(({ event }) => (event.type === 'PICK' ? { kind: event.kind, error: null } : {})),
     select: assign(({ event }) =>
-      event.type === 'SAVED' || event.type === 'OPEN'
+      event.type === 'SAVED' || event.type === 'OPEN' || event.type === 'IMPORTED'
         ? { sourceId: event.sourceId, error: null }
         : {},
     ),
@@ -96,12 +100,16 @@ export const legacyImportMachine = setup({
         ADD: { target: 'picking' },
         // The migrate page opens key recovery with the kind already chosen.
         PICK: { target: 'entering', actions: 'pick' },
+        SIGN_IN: { target: 'awaitingImport' },
+        IMPORTED: { target: 'source.scanning', actions: 'select' },
         OPEN: { target: 'source', actions: 'select' },
         FAIL: { actions: 'fail' },
       },
     },
     picking: {
       on: {
+        SIGN_IN: { target: 'awaitingImport' },
+        IMPORTED: { target: 'source.scanning', actions: 'select' },
         PICK: { target: 'entering', actions: 'pick' },
         BACK: { target: 'list' },
       },
@@ -109,6 +117,8 @@ export const legacyImportMachine = setup({
     /** Secret entry for the picked kind. Nothing is stored until SUBMIT. */
     entering: {
       on: {
+        SIGN_IN: { target: 'awaitingImport' },
+        IMPORTED: { target: 'source.scanning', actions: 'select' },
         SUBMIT: { target: 'saving', actions: 'clearError' },
         BACK: { target: 'picking', actions: 'clearError' },
         FAIL: { actions: 'fail' },
@@ -120,12 +130,31 @@ export const legacyImportMachine = setup({
         FAIL: { target: 'entering', actions: 'fail' },
       },
     },
+    awaitingImport: {
+      entry: ['beginWork', assign({ waitStartedAt: () => Date.now() })],
+      exit: 'endWork',
+      initial: 'waiting',
+      states: {
+        waiting: {
+          after: {
+            1000: { target: 'waiting', reenter: true, actions: assign({ progress: ({ context }) =>
+              `Waiting for your browser · ${Math.max(1, Math.floor((Date.now() - context.waitStartedAt) / 1000))}s` }) },
+          },
+        },
+      },
+      on: {
+        IMPORTED: { target: 'source.scanning', actions: 'select' },
+        BACK: { target: 'list', actions: 'clearError' },
+        FAIL: { target: 'list', actions: 'fail' },
+      },
+    },
     /** One saved source: view, scan, browse its items, or sweep on confirm. */
     source: {
       initial: 'viewing',
       states: {
         viewing: {
           on: {
+            IMPORTED: { target: 'scanning', actions: 'select' },
             RESCAN: { target: 'scanning' },
             ASK_HINTS: { target: 'awaitingHints', actions: 'clearError' },
             BROWSE: { target: 'browsing', actions: 'clearError' },
@@ -137,6 +166,7 @@ export const legacyImportMachine = setup({
         /** The migrate page is open in the browser; the user signs in there. */
         awaitingHints: {
           on: {
+            IMPORTED: { target: 'scanning', actions: 'select' },
             HINTS: { target: 'scanning' },
             FAIL: { target: 'viewing', actions: 'fail' },
             BACK: { target: 'viewing' },

@@ -27,3 +27,22 @@ export function subscribeImportIntent(cb: (kind: ImportSourceKind | null) => voi
     listeners.delete(cb)
   }
 }
+
+// A received encrypted export opens its saved source, never an empty key form.
+let receivedSource: string | null = null
+const sourceListeners = new Set<() => void>()
+export function requestImportedSource(sourceId: string): void {
+  receivedSource = sourceId
+  for (const cb of sourceListeners) cb()
+}
+export function peekImportedSource(): string | null { return receivedSource }
+export function takeImportedSource(): string | null {
+  const id = receivedSource
+  receivedSource = null
+  return id
+}
+export function subscribeReceivedSource(cb: () => void): () => void {
+  sourceListeners.add(cb)
+  cb()
+  return () => { sourceListeners.delete(cb) }
+}

@@ -181,7 +181,10 @@ async function requestPage(
   try {
     const opened = (await openSealed(answer, pair.privateKey, nonce)) as { utxos?: unknown; next?: unknown }
     if (!Array.isArray(opened.utxos)) throw new Error('no utxos')
-    const utxos = opened.utxos.map(parseRow).filter((u): u is HandCashUtxo => u != null)
+    const parsed = opened.utxos.map(parseRow)
+    if (parsed.some((row) => row == null)) throw new Error('invalid utxo row')
+    const utxos = parsed as HandCashUtxo[]
+    if (opened.next != null && (typeof opened.next !== 'string' || !/^[0-9a-f]{24}$/.test(opened.next))) throw new Error('invalid next cursor')
     const next = typeof opened.next === 'string' && /^[0-9a-f]{24}$/.test(opened.next) ? opened.next : null
     return { kind: 'page', utxos, next }
   } catch (err) {

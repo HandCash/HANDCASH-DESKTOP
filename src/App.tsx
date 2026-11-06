@@ -50,6 +50,8 @@ import { DISPLAY_BALANCE_REFRESH_EVENT, publishDisplayBalanceRefresh } from './w
 import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
 import { swapUnlockHold } from './wallet/swap/unlockHold'
 import { getPaymentProgress } from './wallet/paymentProgress'
+import { consumeCloudMigrationIntent } from './wallet/cloudMigrationIntent'
+import { clearEncryptedImports } from './wallet/import/encryptedImport'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 const SWAP_HOLD_RECHECK_MS = 60 * 1000
@@ -61,6 +63,7 @@ export function App() {
   const lockWallet = useCallback(
     (reason: 'manual' | 'idle' = 'manual') => {
       clearActiveWallet()
+      clearEncryptedImports()
       clearRemoteSnapshots()
       cancelPendingPermissions(reason)
       clearPermissionSession()
@@ -70,6 +73,10 @@ export function App() {
   )
 
   const walletReady = snapshot.matches('ready')
+
+  useEffect(() => {
+    if (walletReady) consumeCloudMigrationIntent()
+  }, [walletReady])
 
   useEffect(() => {
     // Never interrupt a legal spend phase. Once the chart returns to ready, a

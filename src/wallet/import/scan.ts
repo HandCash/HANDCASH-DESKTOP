@@ -130,8 +130,8 @@ export async function utxoSetScan(
   })
   if (set.kind === 'refused') return null
   const verified = await verifyUtxoSet(deriver, set.utxos, known)
-  if (set.utxos.length > 0 && verified.addresses.length === 0) {
-    appendAppLog('warn', `[import] utxo set refused reason=underived rows=${set.utxos.length} — falling back`)
+  if (verified.rejected > 0) {
+    appendAppLog('warn', `[import] utxo set refused reason=underived rejected=${verified.rejected} — falling back`)
     return null
   }
   const cash = await readUnspentOnChain({
@@ -174,7 +174,7 @@ export async function utxoSetScan(
   const stopped = cash.stopped || items.stopped || args.shouldStop?.() === true || read.length < toRead.length
   return {
     at: Date.now(),
-    complete: !stopped && items.failed === 0,
+    complete: !stopped && items.failed === 0 && holdings.every((h) => !h.error),
     checked: verified.addresses.length,
     addresses: verified.addresses,
     holdings,

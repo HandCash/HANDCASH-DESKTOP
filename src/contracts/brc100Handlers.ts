@@ -11,6 +11,8 @@ export const BRC100_HANDLER_MANIFEST = Object.freeze({
   refreshLegacyAddress: 'migration',
   listMigrationTxids: 'migration',
   openKeyRecovery: 'migration',
+  beginHandCashImport: 'migration',
+  completeHandCashImport: 'migration',
   createMarketListingAdvert: 'market',
   createMarketPurchaseIntent: 'market',
   verifyMarketListingProvenance: 'market',

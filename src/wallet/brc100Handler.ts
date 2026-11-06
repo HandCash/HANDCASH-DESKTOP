@@ -99,6 +99,8 @@ import {
   listMigrationTxids,
   openKeyRecoveryPayload,
   refreshLegacyAddressPayload,
+  beginHandCashImport,
+  completeHandCashImport,
 } from './migration'
 import {
   createCancelMarketListingAdvert,
@@ -557,6 +559,10 @@ export async function dispatchWalletMethod(
       return openKeyRecoveryPayload(
         args && typeof args === 'object' && !Array.isArray(args) ? (args as { hints?: unknown }) : undefined,
       )
+    case 'beginHandCashImport':
+      return beginHandCashImport(originator ?? '')
+    case 'completeHandCashImport':
+      return completeHandCashImport(originator ?? '', args)
     case 'createMarketListingAdvert':
       return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
     case 'createMarketPurchaseIntent':

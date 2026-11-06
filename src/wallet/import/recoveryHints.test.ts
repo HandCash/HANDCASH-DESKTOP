@@ -357,10 +357,10 @@ describe('judgeHintedScan', () => {
     expect(verdict.kind).toBe('settled')
   })
 
-  it('accepts a capped item count as a floor that may cover the claim', () => {
+  it('does not treat a capped count below the claim as a complete inventory', () => {
     const verdict = judgeHintedScan(hints({ itemCount: 9_000 }), clean, [
       holding({ cashSats: 10_000, itemCount: 5_000, itemCountCapped: true }),
     ])
-    expect(verdict.kind).toBe('settled')
+    expect(verdict.kind).toBe('fallback')
   })
 })

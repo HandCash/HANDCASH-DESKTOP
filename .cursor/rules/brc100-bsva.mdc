@@ -28,6 +28,7 @@ Desktop is a **BRC-100** wallet bridge (BSVA / Babbage-style local HTTP). Follow
 ## HandCash migrate contract (keep mirrored)
 
 Methods (migration origins only): `getLegacyAddress`, `refreshLegacyAddress({ txids?, items? })`, `listMigrationTxids`.
+Encrypted exported-key import: `beginHandCashImport`, `completeHandCashImport` (HandCash extensions; see mirrored `items-market/docs/migrate-brc100.md`). They save a source and scan; they never sweep or return decrypted shares.
 
 Allowed hosts: `handcash.io`, `market.handcash.io`, `preprod-market.handcash.io`, localhost.
 

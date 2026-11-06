@@ -438,14 +438,12 @@ export function judgeHintedScan(
   if (hints.satoshis === 0 && hints.itemCount === 0) return { kind: 'fallback', reason: 'empty-claim' }
   let foundSats = 0
   let foundItems = 0
-  let itemsCapped = false
   for (const h of holdings) {
     if (h.uncompressed) continue
     foundSats += h.cashSats + (h.dustSats ?? 0)
     foundItems += h.itemCount
-    itemsCapped ||= h.itemCountCapped
   }
   if (foundSats < hints.satoshis) return { kind: 'fallback', reason: 'balance-short' }
-  if (!itemsCapped && foundItems < hints.itemCount) return { kind: 'fallback', reason: 'items-short' }
+  if (foundItems < hints.itemCount) return { kind: 'fallback', reason: 'items-short' }
   return { kind: 'settled', foundSats, foundItems }
 }

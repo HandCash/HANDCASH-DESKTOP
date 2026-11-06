@@ -18,6 +18,8 @@ import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { accountLocalKey } from './accountLocalKeys'
 import { refreshFromChainExclusive } from './chainIngest'
 import { runChainIngest } from './walletCoordinator'
+export { beginHandCashImport, completeHandCashImport } from './import/encryptedImport'
+export type { HandCashImportRequest, HandCashImportReceipt } from './import/encryptedImport'
 
 const TXID_STORAGE_KEY = storageRegistry.migrationTxids.key
 const MAX_TXIDS = 200

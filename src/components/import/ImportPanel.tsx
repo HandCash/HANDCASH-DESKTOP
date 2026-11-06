@@ -33,8 +33,9 @@ import {
   type SweepProgress,
 } from '../../wallet/import'
 import { playWalletSound } from '../../wallet/soundService'
-import { toastError, toastSuccess } from '../../wallet/toast'
-import { MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
+import { showToast, toastError, toastSuccess } from '../../wallet/toast'
+import { MIGRATE_HINTS_URL, MIGRATE_LOGIN_URL } from '../../wallet/walletConfig'
+import { peekImportedSource, takeImportedSource, subscribeReceivedSource } from '../../wallet/import/importIntent'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { AsyncActionPrompt } from '../AsyncActionPrompt'
 import { ImportSecretForm, type SecretFields } from './ImportSecretForm'
@@ -121,6 +122,7 @@ function SourceKindList({ onPick }: { onPick: (kind: ImportSourceKind) => void }
 function sourceSummary(source: ImportedSource): string {
   const kind = IMPORT_SOURCE_LABELS[source.kind]
   if (!source.scan) return `${kind} · not scanned yet`
+  if (!source.scan.complete) return `${kind} · scan incomplete — rescan to check remaining assets`
   const { cashSats, itemCount, itemCountCapped } = planSweep(source).totals
   const held = [
     cashSats > 0 ? `${formatBsv(cashSats)} BSV` : null,
@@ -168,6 +170,28 @@ export function ImportPanel() {
   const platform = window.handcash?.platform
   // The migrate page reaches Desktop's bridge and the Android app's :3321 bridge.
   const canAskHints = platform != null && platform !== 'web' && platform !== 'ios'
+  const canSignIn = canAskHints
+
+  useEffect(() => subscribeReceivedSource(() => {
+    const id = peekImportedSource()
+    if (!id || !actor.getSnapshot().can({ type: 'IMPORTED', sourceId: id })) return
+    // Source ids are account-scoped. A result from a different wallet must not
+    // select or scan anything after an account switch.
+    void loadImportedSources().then((list) => {
+      if (peekImportedSource() !== id || !actor.getSnapshot().can({ type: 'IMPORTED', sourceId: id })) return
+      takeImportedSource()
+      if (!list.some((s) => s.id === id)) return
+      send({ type: 'IMPORTED', sourceId: id })
+      void runScan(id)
+    }).catch((err) => send({ type: 'FAIL', error: errorText(err) }))
+  }), [snapshot.value, actor, send])
+
+  const signInToHandCash = () => {
+    send({ type: 'SIGN_IN' })
+    void window.handcash?.openExternal?.(MIGRATE_LOGIN_URL).catch((err: unknown) => {
+      send({ type: 'FAIL', error: errorText(err) })
+    })
+  }
 
   const handcashOpen = source?.kind === 'handcash' || context.kind === 'handcash'
   const intentRoute: IntentRoute = snapshot.matches({ source: 'awaitingHints' })
@@ -260,12 +284,21 @@ export function ImportPanel() {
         onProgress: (p) => send({ type: 'PROGRESS', message: p.message, percent: sweepPercent(p) }),
       })
       send({ type: 'SWEPT' })
-      playWalletSound('success')
       const parts = [
         summary.cashSats > 0 ? `${formatBsv(summary.cashSats)} BSV` : null,
         summary.items > 0 ? `${summary.items.toLocaleString()} items` : null,
       ].filter(Boolean)
-      toastSuccess('Sweep finished', parts.length > 0 ? `Moved ${parts.join(' · ')}` : 'Nothing compatible moved.')
+      const moved = parts.length > 0 ? `Moved ${parts.join(' · ')}.` : 'Nothing compatible moved.'
+      if (summary.status === 'completed') {
+        playWalletSound('success')
+        toastSuccess('Import finished', `${moved} Rescan to check what remains.`)
+      } else {
+        showToast({
+          title: summary.status === 'paused' ? 'Import paused' : 'Import needs attention',
+          body: `${moved} ${summary.notes[0] ?? 'Some assets remain at the source.'} Rescan to continue.`,
+          tone: 'neutral',
+        })
+      }
     } catch (err) {
       send({ type: 'FAIL', error: errorText(err) })
       playWalletSound('error')
@@ -311,8 +344,8 @@ export function ImportPanel() {
       {snapshot.matches('list') ? (
         <>
           <p className="settings-hint">
-            Bring coins, items and tokens over from another wallet. Its keys stay on this device, apart
-            from your HandCash identity.
+            Bring compatible BSV and 1-sat items from another wallet. Tokens, including issuer-permissioned
+            tokens, stay at the source. Imported keys are stored separately from your HandCash identity.
           </p>
           {pending ? (
             <StatusBanner.Root tone="warning" status="paused-items">
@@ -376,6 +409,33 @@ export function ImportPanel() {
             </Button.Root>
           </div>
         </>
+      ) : null}
+
+      {canSignIn && (snapshot.matches('list') || snapshot.matches('picking') ||
+        (snapshot.matches('entering') && context.kind === 'handcash')) ? (
+        <div className="actions">
+          <Button.Root variant="solid" className="btn btn-primary" onClick={signInToHandCash}>
+            <Button.Label>Sign in to your old HandCash wallet</Button.Label>
+          </Button.Root>
+        </div>
+      ) : null}
+
+      {snapshot.matches('awaitingImport') ? (
+        <StatusBanner.Root tone="info" status="awaiting">
+          <StatusBanner.Copy>
+            <StatusBanner.Title>Continue in your browser</StatusBanner.Title>
+            <StatusBanner.Body>Sign in, then choose Import wallet. Return here to review the scan before moving funds.</StatusBanner.Body>
+          </StatusBanner.Copy>
+          <p className="settings-hint" role="status" aria-live="off">{context.progress ?? 'Waiting for your browser…'}</p>
+          <div className="actions">
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => void window.handcash?.openExternal?.(MIGRATE_LOGIN_URL)}>
+              <Button.Label>Open sign-in again</Button.Label>
+            </Button.Root>
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
+              <Button.Label>Back to imports</Button.Label>
+            </Button.Root>
+          </div>
+        </StatusBanner.Root>
       ) : null}
 
       {(snapshot.matches('entering') || snapshot.matches('saving')) && context.kind ? (

@@ -240,6 +240,22 @@ describe('utxoSetScan', () => {
     })
   })
 
+  it('falls back when only some rows derive, rather than hiding rejected assets', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [
+      row(1, 'm/0/4', 9_000),
+      { ...row(2, 'm/0/5', 4_000), address: PrivateKey.fromRandom().toAddress() },
+    ] })
+    expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toBeNull()
+    expect(readUnspentOnChain).not.toHaveBeenCalled()
+  })
+
+  it('marks unreadable live addresses incomplete', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [row(1, 'm/0/4', 1, 'instrument')] })
+    vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 0, stopped: false })
+    chainHolds({ [at('m/0/4')]: { error: 'network unavailable' } })
+    expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toMatchObject({ complete: false })
+  })
+
   it('marks the scan incomplete when an item check failed', async () => {
     vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [row(2, 'm/9/1', 1)] })
     vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 1, stopped: false })

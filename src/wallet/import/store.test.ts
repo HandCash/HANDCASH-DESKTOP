@@ -5,7 +5,7 @@ let rootKeyHex = '11'.repeat(32)
 
 vi.mock('../durableStorage', () => ({
   durableGetItem: (k: string) => disk.get(k) ?? null,
-  durableSetItem: (k: string, v: string) => void disk.set(k, v),
+  durableSetItem: (k: string, v: string) => { disk.set(k, v); return true },
   durableRemoveItem: (k: string) => void disk.delete(k),
 }))
 vi.mock('../walletRuntime', () => ({

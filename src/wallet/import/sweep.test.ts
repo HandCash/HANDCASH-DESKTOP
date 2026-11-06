@@ -77,6 +77,9 @@ describe('sweepImportedSource progress', () => {
     const summary = await sweepImportedSource({ sourceId: 'src1', onProgress: (p) => progress.push(p) })
 
     expect(summary.items).toBe(150)
+    expect(summary.status).toBe('completed')
+    const { updateImportedSource } = await import('./store')
+    expect(updateImportedSource).toHaveBeenCalledWith('src1', expect.objectContaining({ scan: null }))
     const moving = progress.filter((p) => p.message.startsWith('Moving collectables'))
     expect(moving.map(({ done, total }) => ({ done, total }))).toEqual([
       { done: 0, total: 150 },
@@ -85,5 +88,24 @@ describe('sweepImportedSource progress', () => {
       { done: 125, total: 150 },
     ])
     expect(moving[1]!.message).toBe('Moving collectables… 25 of 150')
+  })
+
+  it('reports partial delivery instead of a completed migration', async () => {
+    importItems.mockImplementation(async ({ outpoints }: { outpoints: string[] }) => ({
+      ...moved(outpoints),
+      results: outpoints.map((outpoint) => ({ outpoint, result: { kind: 'unreadable', message: 'network unavailable' } })),
+    }))
+    const { sweepImportedSource } = await import('./sweep')
+    const summary = await sweepImportedSource({ sourceId: 'src1' })
+    expect(summary.status).toBe('partial')
+    expect(summary.failed).toBe(150)
+  })
+
+  it('reports a fee pause distinctly', async () => {
+    importItems.mockResolvedValue({ results: [], stopped: 'funds' })
+    const { sweepImportedSource } = await import('./sweep')
+    const summary = await sweepImportedSource({ sourceId: 'src1' })
+    expect(summary.status).toBe('paused')
+    expect(summary.notes.join(' ')).toContain('low on BSV')
   })
 })

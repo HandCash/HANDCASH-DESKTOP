@@ -105,6 +105,8 @@ export const MIGRATE_URL =
 
 /** `/migrate` opened by a saved import that is waiting for the account's history. */
 export const MIGRATE_HINTS_URL = `${MIGRATE_URL}?from=wallet-import`
+/** Login/export from onboarding or an existing wallet's Settings. */
+export const MIGRATE_LOGIN_URL = `${MIGRATE_URL}?from=wallet-login`
 
 export type WalletConfigMode = 'history' | 'none'
 

@@ -49,6 +49,8 @@ export const MIGRATION_BRC100_METHODS = [
   'refreshLegacyAddress',
   'listMigrationTxids',
   'openKeyRecovery',
+  'beginHandCashImport',
+  'completeHandCashImport',
 ] as const
 
 export type PublicBrc100Method = (typeof PUBLIC_BRC100_METHODS)[number]
