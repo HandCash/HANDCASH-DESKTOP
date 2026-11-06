@@ -60,7 +60,17 @@ const url = (path: string) => `${DEFAULT_BRC_CLOUD_BASE_URL}${path}`
 
 async function parse<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
-  if (!res.ok) throw new SigninError(String(body.error ?? `http-${res.status}`), res.status, body)
+  if (!res.ok) {
+    // The Worker answers `{error:'code'}` from the sign-in routes but `{error:{code}}` from its router.
+    const err = body.error as unknown
+    const code =
+      typeof err === 'string'
+        ? err
+        : err && typeof err === 'object' && typeof (err as { code?: unknown }).code === 'string'
+          ? (err as { code: string }).code
+          : `http-${res.status}`
+    throw new SigninError(code, res.status, body)
+  }
   return body as T
 }
 

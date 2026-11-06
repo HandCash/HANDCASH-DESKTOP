@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.651] - 2026-11-06
+
+### Fixed
+
+- Device sign-in errors from the server show their code in the log instead of `[object Object]`.
+
 ## [1.3.650] - 2026-11-06
 
 ### Changed
