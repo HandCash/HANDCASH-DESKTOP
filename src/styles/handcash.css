@@ -19936,3 +19936,97 @@ html[data-aeon-mode='light']
   justify-content: center;
   gap: 4px;
 }
+
+/* Migration spatial rhythm: one vertical scale (space-3 within a group, space-5 between groups),
+   left-aligned copy, primary action first and full width on phones. Layout only. */
+[data-aeon-scope='legacy-import'] {
+  display: grid;
+  gap: var(--hc-space-5);
+  align-content: start;
+}
+
+[data-aeon-scope='legacy-import'] .settings-hint {
+  margin: 0;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='sources'] {
+  margin: 0;
+}
+
+[data-aeon-scope='legacy-import'] .actions {
+  margin-top: 0;
+  gap: var(--hc-space-3);
+  align-items: center;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='source'] {
+  gap: var(--hc-space-5);
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='review'] {
+  gap: var(--hc-space-5);
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='work'] {
+  display: grid;
+  gap: var(--hc-space-3);
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='work'] .settings-hint {
+  margin: 0;
+}
+
+[data-aeon-scope='legacy-import'] [data-aeon-part='danger'] {
+  justify-content: flex-start;
+}
+
+.import-source-head {
+  gap: var(--hc-space-3);
+  flex-wrap: wrap;
+}
+
+.import-source-head > div {
+  flex: 1 1 10rem;
+}
+
+.auth-screen[data-aeon-state^='onboard-entry'] {
+  gap: var(--hc-space-6);
+  justify-items: stretch;
+}
+
+.auth-screen[data-aeon-state^='onboard-entry'] .auth-copy {
+  gap: var(--hc-space-2);
+  text-align: center;
+}
+
+.auth-screen[data-aeon-state^='onboard-entry'] .auth-entry-brand {
+  margin: 0;
+}
+
+.auth-screen[data-aeon-state^='onboard-entry'] .auth-entry-actions {
+  gap: var(--hc-space-3);
+}
+
+.auth-screen[data-aeon-state^='onboard-entry'] .auth-alt {
+  margin: calc(var(--hc-space-2) * -1) 0 0;
+}
+
+@media (max-width: 520px) {
+  [data-aeon-scope='legacy-import'] .actions > .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  [data-aeon-scope='legacy-import'] [data-aeon-part='danger'] > .btn {
+    flex: 0 0 auto;
+  }
+  .import-source-head > [data-aeon-scope='badge'] {
+    flex-basis: 100%;
+    justify-self: start;
+  }
+}
+
+@media (min-width: 900px) {
+  [data-aeon-scope='legacy-import'] {
+    max-width: 40rem;
+  }
+}
