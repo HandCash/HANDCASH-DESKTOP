@@ -68,7 +68,7 @@ const pubOf = (key: PrivateKey) => key.toPublicKey().toString().toLowerCase()
 export async function relayRequest(
   approverKey: PrivateKey,
   loginKey: string,
-  step: 'hello' | 'vault' | 'refuse',
+  step: 'hello' | 'confirm' | 'vault' | 'refuse',
   fields: Record<string, unknown>,
   args: RelayOptions & { timeoutMs: number; pollMs?: number },
 ): Promise<{ status: number; body: Record<string, unknown> }> {

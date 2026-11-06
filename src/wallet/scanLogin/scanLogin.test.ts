@@ -3,12 +3,20 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openVaultTransfer, type VaultTransfer } from '../deviceTransfer'
 import {
   approveScanLogin,
+  confirmScanLoginCode,
   listScanLoginRows,
   setScanLoginDeps,
   startScanLoginApproval,
 } from './approvals'
 import { runScanLoginRelay } from './relay'
-import { helloScanLogin, refuseScanLogin, ScanLoginUnreachable, sendScanLoginVault } from './approver'
+import {
+  confirmPairingCode,
+  helloScanLogin,
+  PairingCodeRejected,
+  refuseScanLogin,
+  ScanLoginUnreachable,
+  sendScanLoginVault,
+} from './approver'
 import { scanLoginQrText, tryParseScanLoginPayload, type ScanLoginPayload } from './payload'
 import {
   endScanLoginSession,
@@ -50,6 +58,14 @@ function pair(): { payload: ScanLoginPayload; events: ScanLoginEvent[]; off: () 
 
 afterEach(() => endScanLoginSession())
 
+/** The code exists only on the new device's screen: read it from what that screen is told. */
+function shownCode(events: ScanLoginEvent[]): string {
+  const hello = events.find((event) => event.type === 'connected')
+  if (hello?.type !== 'connected') throw new Error('no approver yet')
+  return hello.code
+}
+const wrongFor = (code: string) => (code === '000000' ? '111111' : '000000')
+
 describe('scan-to-login QR', () => {
   it('carries a one-time secret and the new device key, and nothing else secret', () => {
     const { payload, off } = pair()
@@ -72,12 +88,19 @@ describe('scan-to-login QR', () => {
 })
 
 describe('scan-to-login pairing and approval', () => {
-  it('both screens show the same 6-digit code and the approver name', async () => {
+  it('the new device shows a 6-digit code and the approver name; the approver is never given the code', async () => {
     const { payload, events, off } = pair()
-    const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl: lanFetch() })
+    const seen: string[] = []
+    const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl: lanFetch(seen) })
     off()
-    expect(conn.code).toMatch(/^\d{6}$/)
-    expect(events).toEqual([{ type: 'connected', approverLabel: 'Mac', code: conn.code }])
+    const code = shownCode(events)
+    expect(code).toMatch(/^\d{6}$/)
+    expect(events[0]).toMatchObject({ type: 'connected', approverLabel: 'Mac' })
+    expect(JSON.stringify(conn)).not.toContain(code)
+    expect(JSON.stringify(payload)).not.toContain(code)
+    expect(scanLoginQrText(payload)).not.toContain(code)
+    const hello = handleScanLoginRequest({ method: 'POST', path: '/handcash-device/v1/scan-login/hello', body: '{}' })
+    expect(hello.body).not.toContain(code)
   })
 
   it('a device without the secret cannot pair', async () => {
@@ -99,6 +122,7 @@ describe('scan-to-login pairing and approval', () => {
     const { payload, events, off } = pair()
     const seen: string[] = []
     const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl: lanFetch(seen) })
+    await confirmPairingCode(conn, shownCode(events), lanFetch(seen))
     await sendScanLoginVault(conn, transfer, lanFetch(seen))
     off()
     const vault = events.find((event) => event.type === 'vault')
@@ -117,14 +141,18 @@ describe('scan-to-login pairing and approval', () => {
     expect(events.at(-1)).toEqual({ type: 'refused' })
   })
 
-  it('approval waits on presence and on the compared code', async () => {
+  it('approval waits on presence and on the typed code', async () => {
     const confirm = vi.fn(async () => undefined)
     setScanLoginDeps({ fetchImpl: lanFetch(), label: () => 'Mac', vault: () => transfer, confirm })
     const { payload, events, off } = pair()
     await startScanLoginApproval(payload)
     const [row] = listScanLoginRows()
     expect(row).toMatchObject({ face: 'comparing', via: 'local', label: 'Windows PC', live: true })
-    expect(row?.code).toMatch(/^\d{6}$/)
+    expect(row?.code).toBeNull()
+    expect(row?.pairing).toEqual({ length: 6, attemptsLeft: 3, confirmed: false })
+    await expect(approveScanLogin(payload.loginKey)).rejects.toThrow(/Type the code/)
+    expect(events.some((event) => event.type === 'vault')).toBe(false)
+    expect(await confirmScanLoginCode(payload.loginKey, shownCode(events))).toEqual({ ok: true })
     await approveScanLogin(payload.loginKey)
     off()
     expect(confirm).toHaveBeenCalledWith('approve sign-in on Windows PC')
@@ -157,7 +185,10 @@ describe('scan-to-login session limits', () => {
     const sent: string[] = []
     setScanLoginDeps({ fetchImpl: lanFetch(sent), label: () => 'Mac', vault: () => transfer, confirm: async () => undefined })
     const { payload, off } = pair()
+    const events: ScanLoginEvent[] = []
+    subscribeScanLoginSession((event) => events.push(event))
     await startScanLoginApproval(payload)
+    await confirmScanLoginCode(payload.loginKey, shownCode(events))
     sent.length = 0
     const results = await Promise.allSettled([approveScanLogin(payload.loginKey), approveScanLogin(payload.loginKey)])
     off()
@@ -167,9 +198,10 @@ describe('scan-to-login session limits', () => {
   })
 
   it('a captured QR cannot open the wallet: it is sealed to a key the QR does not carry', async () => {
-    const { payload, off } = pair()
+    const { payload, events, off } = pair()
     const seen: string[] = []
     const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl: lanFetch(seen) })
+    await confirmPairingCode(conn, shownCode(events), lanFetch(seen))
     await sendScanLoginVault(conn, transfer, lanFetch(seen))
     off()
     const sealed = JSON.parse(seen.find((body) => body.includes('sealedVault'))!).sealedVault as string
@@ -192,7 +224,7 @@ describe('scan-to-login fallback', () => {
     const [row] = listScanLoginRows()
     expect(row).toMatchObject({ face: 'unreachable', live: false, title: "Couldn't reach Windows PC" })
     expect(row?.detail).toMatch(/fresh code/)
-    await expect(approveScanLogin(away.loginKey)).rejects.toThrow(/Compare the codes/)
+    await expect(approveScanLogin(away.loginKey)).rejects.toThrow()
   })
 })
 
@@ -226,10 +258,11 @@ describe('scan-to-login relay (different networks)', () => {
     const stop = runScanLoginRelay({ fetchImpl, pollMs: 5 })
     const conn = await helloScanLogin(payload, { label: 'Phone', fetchImpl, relayMs: 3000 })
     expect(conn.url).toBe('relay')
-    expect(events[0]).toEqual({ type: 'connected', approverLabel: 'Phone', code: conn.code })
+    expect(events[0]).toMatchObject({ type: 'connected', approverLabel: 'Phone' })
+    await confirmPairingCode(conn, shownCode(events), fetchImpl)
     await sendScanLoginVault(conn, transfer, fetchImpl)
     stop()
-    expect(events[1]).toMatchObject({ type: 'vault', transfer: { master: transfer.master } })
+    expect(events.find((e) => e.type === 'vault')).toMatchObject({ type: 'vault', transfer: { master: transfer.master } })
   })
 
   it('a forged proof over the relay is refused', async () => {
@@ -237,6 +270,131 @@ describe('scan-to-login relay (different networks)', () => {
     const payload = startScanLoginSession({ urls: [], label: 'Windows PC' })
     const stop = runScanLoginRelay({ fetchImpl, pollMs: 5 })
     await expect(helloScanLogin({ ...payload, secret: '11'.repeat(32) }, { label: 'x', fetchImpl, relayMs: 3000 })).rejects.toThrow()
+    stop()
+  })
+})
+
+
+describe('typed pairing code (BRC-249): the code is typed, checked on the new device, and never travels', () => {
+  const VAULT = '/handcash-device/v1/scan-login/vault'
+
+  async function paired(fetchImpl = lanFetch()) {
+    const { payload, events, off } = pair()
+    const conn = await helloScanLogin(payload, { label: 'Mac', fetchImpl })
+    return { payload, events, off, conn, fetchImpl }
+  }
+
+  it('a wrong code is refused and counted, and the vault stays closed', async () => {
+    const { events, conn, fetchImpl, off } = await paired()
+    const bad = wrongFor(shownCode(events))
+    await expect(confirmPairingCode(conn, bad, fetchImpl)).rejects.toMatchObject({ reason: 'wrong', attemptsLeft: 2 })
+    await expect(sendScanLoginVault(conn, transfer, fetchImpl)).rejects.toThrow()
+    off()
+    expect(events.some((event) => event.type === 'vault' || event.type === 'confirmed')).toBe(false)
+  })
+
+  it('three wrong codes lock the session for good, even for the right code', async () => {
+    const { events, conn, fetchImpl, off } = await paired()
+    const code = shownCode(events)
+    const bad = wrongFor(code)
+    await expect(confirmPairingCode(conn, bad, fetchImpl)).rejects.toMatchObject({ attemptsLeft: 2 })
+    await expect(confirmPairingCode(conn, bad, fetchImpl)).rejects.toMatchObject({ attemptsLeft: 1 })
+    await expect(confirmPairingCode(conn, bad, fetchImpl)).rejects.toMatchObject({ reason: 'locked' })
+    await expect(confirmPairingCode(conn, code, fetchImpl)).rejects.toBeInstanceOf(PairingCodeRejected)
+    await expect(sendScanLoginVault(conn, transfer, fetchImpl)).rejects.toThrow()
+    off()
+    expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'locked' })
+    expect(events.some((event) => event.type === 'vault')).toBe(false)
+  })
+
+  it('a code older than two minutes is refused and ends the session', async () => {
+    const { events, conn, fetchImpl, off } = await paired()
+    const code = shownCode(events)
+    vi.useFakeTimers({ now: Date.now() + 2 * 60_000 + 1 })
+    try {
+      await expect(confirmPairingCode(conn, code, fetchImpl)).rejects.toMatchObject({ reason: 'expired' })
+    } finally {
+      vi.useRealTimers()
+    }
+    await expect(sendScanLoginVault(conn, transfer, fetchImpl)).rejects.toThrow()
+    off()
+    expect(events.at(-1)).toMatchObject({ type: 'failed', reason: 'expired' })
+  })
+
+  it('a captured confirm request cannot be replayed', async () => {
+    const seen: string[] = []
+    const { events, conn, fetchImpl, off } = await paired(lanFetch(seen))
+    await confirmPairingCode(conn, shownCode(events), fetchImpl)
+    const captured = seen.at(-1)!
+    expect(JSON.parse(captured).nonce).toBeTruthy()
+    expect(captured).not.toContain(shownCode(events))
+    const replay = handleScanLoginRequest({
+      method: 'POST',
+      path: '/handcash-device/v1/scan-login/confirm',
+      body: captured,
+    })
+    off()
+    expect(replay.status).toBe(409)
+  })
+
+  it('the vault is refused until the code is confirmed, then accepted once', async () => {
+    const { payload, events, conn, fetchImpl, off } = await paired()
+    const approverKey = conn.approverKey.toPublicKey().toString().toLowerCase()
+    const early = handleScanLoginRequest({ method: 'POST', path: VAULT, body: JSON.stringify({ approverKey, sealedVault: 'x', proof: 'y' }) })
+    expect(early.status).toBe(403)
+    await confirmPairingCode(conn, shownCode(events), fetchImpl)
+    await sendScanLoginVault(conn, transfer, fetchImpl)
+    off()
+    expect(events.map((event) => event.type)).toEqual(['connected', 'confirmed', 'vault'])
+    expect(payload.secret).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('a second hello does not reset the code or the attempts', async () => {
+    const { payload, events, conn, fetchImpl, off } = await paired()
+    await expect(confirmPairingCode(conn, wrongFor(shownCode(events)), fetchImpl)).rejects.toMatchObject({ attemptsLeft: 2 })
+    await expect(helloScanLogin(payload, { label: 'iPhone', fetchImpl })).rejects.toThrow(/already answered/)
+    await expect(confirmPairingCode(conn, wrongFor(shownCode(events)), fetchImpl)).rejects.toMatchObject({ attemptsLeft: 1 })
+    off()
+  })
+
+  it('the approver checks digits before sending anything', async () => {
+    const sent: string[] = []
+    setScanLoginDeps({ fetchImpl: lanFetch(sent), label: () => 'Mac', vault: () => transfer, confirm: async () => undefined })
+    const { payload, events, off } = pair()
+    await startScanLoginApproval(payload)
+    sent.length = 0
+    await expect(confirmScanLoginCode(payload.loginKey, '12 34')).rejects.toThrow(/6 numbers/)
+    expect(sent).toEqual([])
+    const wrong = await confirmScanLoginCode(payload.loginKey, wrongFor(shownCode(events)))
+    expect(wrong).toMatchObject({ ok: false, ended: false, attemptsLeft: 2 })
+    expect(listScanLoginRows()[0]?.pairing).toMatchObject({ attemptsLeft: 2, confirmed: false })
+    off()
+  })
+
+  it('through the relay a wrong code is refused the same way', async () => {
+    const boxes = new Map<string, { messageId: string; sender: string; body: string }[]>()
+    let n = 0
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const route = String(input).split('/').pop()
+      const identity = new Headers(init?.headers).get('X-BRC33-Identity')!
+      const body = JSON.parse(String(init?.body))
+      const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 })
+      if (route === 'sendMessage') {
+        const list = boxes.get(body.message.recipient) ?? []
+        list.push({ messageId: String(++n), sender: identity, body: body.message.body })
+        boxes.set(body.message.recipient, list)
+        return json({ status: 'success' })
+      }
+      if (route === 'listMessages') return json({ status: 'success', messages: boxes.get(identity) ?? [] })
+      boxes.set(identity, (boxes.get(identity) ?? []).filter((m) => !body.messageIds.includes(m.messageId)))
+      return json({ status: 'success' })
+    }) as typeof fetch
+    const payload = startScanLoginSession({ urls: [], label: 'Windows PC' })
+    const events: ScanLoginEvent[] = []
+    subscribeScanLoginSession((e) => events.push(e))
+    const stop = runScanLoginRelay({ fetchImpl, pollMs: 5 })
+    const conn = await helloScanLogin(payload, { label: 'Phone', fetchImpl, relayMs: 3000 })
+    await expect(confirmPairingCode(conn, wrongFor(shownCode(events)), fetchImpl)).rejects.toMatchObject({ reason: 'wrong' })
     stop()
   })
 })

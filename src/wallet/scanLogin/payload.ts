@@ -51,9 +51,34 @@ export function tryParseScanLoginPayload(raw: string, now = Date.now()): ScanLog
 }
 
 /** HMAC over one step of the exchange, keyed by the pairing secret. */
-export function scanLoginProof(secret: string, step: 'hello' | 'vault' | 'refuse', subject: string): string {
+export function scanLoginProof(
+  secret: string,
+  step: 'hello' | 'vault' | 'refuse',
+  subject: string,
+): string {
   return Utils.toHex(
     Hash.sha256hmac(Utils.toArray(secret, 'hex'), Utils.toArray(`handcash-scan-login\n${step}\n${subject}`, 'utf8')),
+  )
+}
+
+/** Digits of the pairing code. It is typed by a person; it is never transported. */
+export const PAIRING_CODE_LENGTH = 6
+/** Wrong codes allowed before the new device ends the session. */
+export const PAIRING_MAX_ATTEMPTS = 3
+/** How long a shown code can be typed, counted from the approver reaching the new device. */
+export const PAIRING_CODE_TTL_MS = 2 * 60_000
+
+/**
+ * Proof that the approver was given the code the new device shows (BRC-249 pairing).
+ * Bound to the pairing secret (session), the approver's key (device) and a fresh
+ * nonce (no replay). The code itself never goes on the wire.
+ */
+export function pairingConfirmProof(secret: string, approverKey: string, nonce: string, code: string): string {
+  return Utils.toHex(
+    Hash.sha256hmac(
+      Utils.toArray(secret, 'hex'),
+      Utils.toArray(`handcash-scan-login\nconfirm\n${approverKey.toLowerCase()}\n${nonce}\n${code}`, 'utf8'),
+    ),
   )
 }
 
@@ -66,13 +91,4 @@ export function proofMatches(expected: string, given: unknown): boolean {
 
 export function sha256Hex(text: string): string {
   return Utils.toHex(Hash.sha256(Utils.toArray(text, 'utf8')))
-}
-
-/** 6 digits both screens show: bound to the secret, the new device's key and the approver's key. */
-export function scanLoginCode(secret: string, loginKey: string, approverKey: string): string {
-  const digest = Hash.sha256(
-    Utils.toArray(`handcash-scan-login-code\n${secret}\n${loginKey.toLowerCase()}\n${approverKey.toLowerCase()}`, 'utf8'),
-  )
-  const n = ((digest[0]! << 24) | (digest[1]! << 16) | (digest[2]! << 8) | digest[3]!) >>> 0
-  return String(n % 1_000_000).padStart(6, '0')
 }

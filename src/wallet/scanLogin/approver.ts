@@ -4,9 +4,9 @@
  * from the QR. No HandCash server is in the path.
  */
 import { PrivateKey } from '@bsv/sdk'
-import { sealVaultTransfer, type VaultTransfer } from '../deviceTransfer'
+import { randomHex, sealVaultTransfer, type VaultTransfer } from '../deviceTransfer'
 import { relayRequest } from './relay'
-import { scanLoginCode, scanLoginProof, sha256Hex, type ScanLoginPayload } from './payload'
+import { pairingConfirmProof, scanLoginProof, sha256Hex, type ScanLoginPayload } from './payload'
 
 export const SCAN_LOGIN_REACH_MS = 3_000
 export const SCAN_LOGIN_RELAY_MS = 20_000
@@ -16,7 +16,6 @@ export type ScanLoginConnection = {
   /** The new device's local address, or 'relay' when reached through the mailbox. */
   url: string
   approverKey: PrivateKey
-  code: string
 }
 
 /** Neither the local network nor the relay reached the new device. */
@@ -54,6 +53,8 @@ function refusalText(error: unknown): string {
   switch (error) {
     case 'already-paired':
       return 'Another device already answered this code.'
+    case 'not-confirmed':
+      return 'Type the code shown on the new device first.'
     case 'no-scan-login':
       return 'This code expired. Ask the new device for a fresh one.'
     default:
@@ -65,7 +66,7 @@ type Reply = { status: number; body: Record<string, unknown> }
 
 async function viaConn(
   conn: ScanLoginConnection,
-  step: 'hello' | 'vault' | 'refuse',
+  step: 'hello' | 'confirm' | 'vault' | 'refuse',
   body: Record<string, unknown>,
   timeoutMs: number,
   fetchImpl: Fetch,
@@ -98,7 +99,7 @@ export async function helloScanLogin(
     }
     if (pending === 0) resolve(null)
     for (const route of routes) {
-      const conn: ScanLoginConnection = { payload, url: route.url, approverKey, code: '' }
+      const conn: ScanLoginConnection = { payload, url: route.url, approverKey }
       viaConn(conn, 'hello', body, route.timeout, fetchImpl)
         .then((res) => {
           if (res.status !== 200) {
@@ -107,7 +108,7 @@ export async function helloScanLogin(
           } else if (String(res.body.loginKey ?? '').toLowerCase() !== payload.loginKey) {
             refusal ??= 'The device that answered is not the one in the code.'
           } else {
-            resolve({ ...conn, code: scanLoginCode(payload.secret, payload.loginKey, pub) })
+            resolve(conn)
             return
           }
           settle()
@@ -122,6 +123,51 @@ export async function helloScanLogin(
   console.warn('[scan-login] hello failed', JSON.stringify({ urls: payload.urls, failures, refusal }))
   if (refusal) throw new Error(refusal)
   throw new ScanLoginUnreachable()
+}
+
+/** The typed code was not accepted; `attemptsLeft` 0 means the new device ended the session. */
+export class PairingCodeRejected extends Error {
+  constructor(
+    readonly reason: 'wrong' | 'locked' | 'expired' | 'replayed' | 'ended',
+    readonly attemptsLeft: number,
+  ) {
+    super(`pairing-code-${reason}`)
+    this.name = 'PairingCodeRejected'
+  }
+}
+
+/**
+ * Prove the digits a person typed from the new device's screen. Each call uses a
+ * fresh nonce; the new device counts wrong codes and ends the session at the limit.
+ */
+export async function confirmPairingCode(
+  conn: ScanLoginConnection,
+  typed: string,
+  fetchImpl: Fetch = fetch,
+): Promise<void> {
+  const pub = conn.approverKey.toPublicKey().toString().toLowerCase()
+  const nonce = randomHex(16)
+  const res = await viaConn(
+    conn,
+    'confirm',
+    { approverKey: pub, nonce, proof: pairingConfirmProof(conn.payload.secret, pub, nonce, typed) },
+    conn.url === 'relay' ? SCAN_LOGIN_RELAY_MS : SCAN_LOGIN_REACH_MS,
+    fetchImpl,
+  )
+  if (res.status === 200) return
+  const left = Number(res.body.attemptsLeft ?? 0)
+  switch (res.body.error) {
+    case 'wrong-code':
+      throw new PairingCodeRejected('wrong', left)
+    case 'locked':
+      throw new PairingCodeRejected('locked', 0)
+    case 'code-expired':
+      throw new PairingCodeRejected('expired', 0)
+    case 'replayed':
+      throw new PairingCodeRejected('replayed', left)
+    default:
+      throw new PairingCodeRejected('ended', 0)
+  }
 }
 
 export async function sendScanLoginVault(

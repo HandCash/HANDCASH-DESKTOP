@@ -61,7 +61,9 @@ export type SigninPhase =
   | { step: 'code'; requestId: string }
   | { step: 'relay'; signin: NewDeviceSignin }
   | { step: 'restoring' }
-  | { step: 'ended'; reason: 'refused' | 'expired' }
+  /** The other device accepted the typed code; the wallet is on its way. */
+  | { step: 'scan-confirmed'; approverLabel: string }
+  | { step: 'ended'; reason: 'refused' | 'expired' | 'locked' }
 
 export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCancel }: Props) {
   const [phase, setPhase] = useState<SigninPhase>({ step: 'scan' })
@@ -72,7 +74,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const scanning = phase.step === 'scan' || phase.step === 'scan-comparing'
+  const scanning = phase.step === 'scan' || phase.step === 'scan-comparing' || phase.step === 'scan-confirmed'
   useEffect(() => {
     if (!scanning) return
     let cancelled = false
@@ -81,8 +83,15 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     const off = subscribeScanLoginSession((event) => {
       if (event.type === 'connected') {
         setPhase({ step: 'scan-comparing', code: event.code, approverLabel: event.approverLabel })
+      } else if (event.type === 'confirmed') {
+        setPhase((now) => ({
+          step: 'scan-confirmed',
+          approverLabel: now.step === 'scan-comparing' ? now.approverLabel : 'your other device',
+        }))
       } else if (event.type === 'refused') {
         setPhase({ step: 'ended', reason: 'refused' })
+      } else if (event.type === 'failed') {
+        setPhase({ step: 'ended', reason: event.reason === 'locked' ? 'locked' : 'expired' })
       } else {
         setPhase({ step: 'restoring' })
         onSignedIn({
@@ -195,10 +204,18 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
             {formatComparisonCode(phase.code)}
           </span>
           <p className="auth-lede">
-            Approve on {phase.approverLabel} only if it shows this same code. The wallet comes straight over your
-            network.
+            Type these numbers on {phase.approverLabel} to let it sign this device in. Only {phase.approverLabel} can
+            send the wallet, and only after the right numbers. Don&rsquo;t share them with anyone else.
           </p>
         </div>
+      ) : null}
+
+      {phase.step === 'scan-confirmed' ? (
+        <StatusBanner.Root tone="info" status="confirmed">
+          <StatusBanner.Copy>
+            <StatusBanner.Title>Code accepted by {phase.approverLabel}. Receiving your wallet…</StatusBanner.Title>
+          </StatusBanner.Copy>
+        </StatusBanner.Root>
       ) : null}
 
       {phase.step === 'email' ? (
@@ -300,7 +317,11 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           <StatusBanner.Root tone="warning" status={phase.reason}>
             <StatusBanner.Copy>
               <StatusBanner.Title>
-                {phase.reason === 'refused' ? 'Your other device refused this sign-in' : 'Nobody approved this sign-in in 10 minutes'}
+                {phase.reason === 'refused'
+                  ? 'Your other device refused this sign-in'
+                  : phase.reason === 'locked'
+                    ? 'Too many wrong codes. This sign-in was stopped'
+                    : 'Nobody approved this sign-in in time'}
               </StatusBanner.Title>
             </StatusBanner.Copy>
             <StatusBanner.Action onClick={restart}>Start again</StatusBanner.Action>
