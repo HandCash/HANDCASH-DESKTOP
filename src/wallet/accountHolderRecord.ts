@@ -65,6 +65,12 @@ export async function writeHolderRecord(
 ): Promise<HolderWrite> {
   const url = holderObjectUrl(account.identityKey)
   if (!url) return { kind: 'unsupported' }
+  // A replace with no version to match would be a blind overwrite that can
+  // silently displace a holder another device just wrote (BRC-249: hosts MUST
+  // return an ETag). Refuse it rather than send an unconditional PUT.
+  if (!condition.create && !condition.etag) {
+    return { kind: 'unreachable', reason: 'backup host sent no ETag for the holder record' }
+  }
   const record = signHolderRecord(account.rootKeyHex, fields)
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

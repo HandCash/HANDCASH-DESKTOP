@@ -406,6 +406,9 @@ export function markVaultTakeover(master: VaultMaster): void {
   writeVaultAccounts(store)
 }
 
+/** No real vault lists more accounts than this; a larger index in a sent list is dropped. */
+const MAX_APPROVED_INDEX = 10_000
+
 /**
  * Install the account list a signed-in device sent with its approval. The
  * approver's accounts arrive held elsewhere at the seq it knew, so a holder
@@ -424,15 +427,37 @@ export function installApproverAccounts(master: VaultMaster, sent: unknown): Vau
   ) {
     return ensureVaultAccounts(master)
   }
-  const accounts = store.accounts.map((account): VaultAccount => {
-    const holding = holdingOf(account)
-    return holding.kind === 'here'
-      ? { ...account, holding: { kind: 'elsewhere', seq: holding.seq, deviceId: null } }
-      : account
-  })
+  // The list crosses a link and is stored as-is, so keep only fields of the
+  // right shape: a bad index, duplicate, or odd seq must not reach allocation
+  // (`nextAccountIndex`) or the holding checks. Identity keys are re-derived
+  // from the master by `ensureVaultAccounts`.
+  const seen = new Set<number>()
+  const accounts: VaultAccount[] = []
+  for (const entry of store.accounts as unknown[]) {
+    const account = entry as Partial<VaultAccount> | null
+    const index = account?.index
+    if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < 0 || index > MAX_APPROVED_INDEX) continue
+    if (seen.has(index)) continue
+    seen.add(index)
+    const sent = account?.holding as Partial<AccountHolding> | undefined
+    const seq = typeof sent?.seq === 'number' && Number.isSafeInteger(sent.seq) && sent.seq >= 0 ? sent.seq : 0
+    // Whatever the approver held, or did not announce, this install holds none of it yet.
+    const holding: AccountHolding =
+      sent?.kind === 'elsewhere' && typeof sent.deviceId === 'string'
+        ? { kind: 'elsewhere', seq, deviceId: sent.deviceId }
+        : { kind: 'elsewhere', seq, deviceId: null }
+    accounts.push({
+      index,
+      name: typeof account?.name === 'string' && account.name.trim() ? account.name.trim().slice(0, 80) : `Wallet ${index}`,
+      identityKey: '',
+      holding,
+    })
+  }
+  accounts.sort((a, b) => a.index - b.index)
   writeVaultAccounts({
-    ...(store as VaultAccountStore),
+    version: 1,
     masterIdentityKey,
+    activeIndex: 0,
     accounts,
     takeover: false,
     discovered: false,
