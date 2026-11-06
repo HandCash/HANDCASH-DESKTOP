@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.662] - 2026-11-06
+
+### Changed
+
+- Wallet selection shows cached display totals while bounded local reads refresh them in the background. Summary reads yield to the UI and waiting sends, and reject stale sessions or intervening writes. Cached totals never authorize spending.
+
 ## [1.3.661] - 2026-11-06
 
 ### Changed
