@@ -246,6 +246,9 @@ export function AuthScreen({
         if (!unlockScreenLive()) return
         const message = err instanceof Error ? err.message : String(err)
         send({ type: 'FAIL', error: message })
+        // The open secret is the only factor and the holder has no password to
+        // retry, so a failure here must lead to restore, never a dead end.
+        setOfferRestoreOnLock(true)
         onFail(message)
       })
   }
