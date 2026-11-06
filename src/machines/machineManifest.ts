@@ -46,6 +46,7 @@ import { txLifecycleMachine } from '../wallet/txLifecycleMachine'
 import { walletCoordinatorMachine } from '../wallet/walletCoordinatorMachine'
 import { accountMoveMachine } from '../wallet/accountMoveMachine'
 import { emailRecoveryMachine } from './emailRecoveryMachine'
+import { pairingCodeMachine } from './pairingCodeMachine'
 import { relaySigninMachine } from './relaySigninMachine'
 import { onboardEmailMachine } from './onboardEmailMachine'
 import { callMachine } from './callMachine'
@@ -107,6 +108,7 @@ export const machineManifest = Object.freeze({
   accountMove: accountMoveMachine,
   emailRecovery: emailRecoveryMachine,
   relaySignin: relaySigninMachine,
+  pairingCode: pairingCodeMachine,
   onboardEmail: onboardEmailMachine,
   call: callMachine,
   callView: callViewMachine,

@@ -24,6 +24,11 @@ export type SigninRowView = {
   createdAt: number
   expiresAt: number
   code: string | null
+  /**
+   * Scanned sign-ins: a person types the digits the new device shows. The code
+   * is never part of this view; `confirmed` flips once the new device accepts it.
+   */
+  pairing?: { length: number; attemptsLeft: number; confirmed: boolean } | null
   /** Still waits on someone: approve and refuse apply. */
   live: boolean
 }

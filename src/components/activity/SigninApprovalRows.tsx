@@ -5,6 +5,8 @@
  */
 import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { DevicesIcon } from '../icons'
+import { PairingCodeEntry } from './PairingCodeEntry'
+import type { PairingOutcome } from '../../machines/pairingCodeMachine'
 import { LoadingSpinner } from '../LoadingSpinner'
 import {
   brc250OwnChallenge,
@@ -28,6 +30,7 @@ import { signinRowView } from '../../wallet/deviceSignin/view'
 import { approvalComparisonCode, formatComparisonCode } from '../../wallet/deviceTransfer'
 import {
   approveScanLogin,
+  confirmScanLoginCode,
   listScanLoginRows,
   refuseScanLoginFor,
   subscribeScanLogins,
@@ -40,6 +43,8 @@ export type SigninApprovalRow = {
   open: () => Promise<void>
   approve: () => Promise<void>
   refuse: () => Promise<void>
+  /** Checks the digits a person typed (scan sign-in only). */
+  confirm?: (digits: string) => Promise<PairingOutcome>
 }
 
 const BRC250_CONTEXT_PREFIX = /^Sign in to HandCash on\s+/i
@@ -94,6 +99,7 @@ export function useSigninApprovals(): readonly SigninApprovalRow[] {
       open: async () => undefined,
       approve: () => approveScanLogin(view.binding),
       refuse: () => refuseScanLoginFor(view.binding),
+      confirm: (digits) => confirmScanLoginCode(view.binding, digits),
     }))
     const rows: SigninApprovalRow[] = signin.rows.map((view) => ({
       view,
@@ -198,6 +204,16 @@ export function SigninApprovalRowItem({ row }: { row: SigninApprovalRow }) {
               </>
             ) : null}
           </dl>
+          {view.face === 'comparing' && view.pairing && row.confirm && view.live ? (
+            <PairingCodeEntry
+              key={view.key}
+              label={view.label}
+              length={view.pairing.length}
+              attemptsLeft={view.pairing.attemptsLeft}
+              confirm={row.confirm}
+              approve={row.approve}
+            />
+          ) : null}
           {view.face === 'comparing' && view.code ? (
             <div className="signin-code-block">
               <span className="signin-code" aria-label={`Code ${view.code.split('').join(' ')}`}>
@@ -215,7 +231,7 @@ export function SigninApprovalRowItem({ row }: { row: SigninApprovalRow }) {
           ) : null}
           {view.live ? (
             <div className="signin-actions">
-              {view.face === 'comparing' ? (
+              {view.face === 'comparing' && !view.pairing ? (
                 <button
                   type="button"
                   className="btn btn-primary"
