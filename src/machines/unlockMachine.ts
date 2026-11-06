@@ -11,6 +11,8 @@ export type UnlockFailReason =
   | 'open-secret-failed'
   | 'password-failed'
   | 'setup-failed'
+  /** The vault opened, but no wallet could be held here: see `HoldingBlockedError`. */
+  | 'holding-blocked'
 
 /** What the auth screen shows while the vault opens. */
 export type UnlockProgress = { title: string; lede: string }
@@ -23,6 +25,8 @@ export type UnlockContext = {
   progress: UnlockProgress | null
   /** The lock screen prompts this device by itself at most once. */
   deviceTried: boolean
+  /** The holder chose a new wallet here although the host cannot record its holder. */
+  allowUnrecorded: boolean
 }
 
 export type UnlockEvent =
@@ -35,8 +39,9 @@ export type UnlockEvent =
   | { type: 'UNLOCKED' }
   | { type: 'PROGRESS'; progress: UnlockProgress }
   | { type: 'SUCCESS' }
-  | { type: 'FAIL'; error: string; cancelled?: boolean }
+  | { type: 'FAIL'; error: string; cancelled?: boolean; blocked?: boolean }
   | { type: 'RETRY' }
+  | { type: 'USE_NEW_WALLET' }
 
 export const DEVICE_PROGRESS: UnlockProgress = {
   title: 'Unlocking',
@@ -82,12 +87,14 @@ export const unlockMachine = setup({
     deviceShown: ({ context, event }) =>
       event.type === 'DEVICE' && event.visible && !(event.auto && context.deviceTried),
     manualDevice: ({ event }) => event.type === 'DEVICE' && !event.auto,
+    holdingBlocked: ({ context }) => context.reason === 'holding-blocked',
   },
   actions: {
     typePassword: assign(({ event }) =>
       event.type === 'CHANGE' ? { password: event.password, error: null, reason: null } : {},
     ),
     clearFailure: assign({ error: null, reason: null }),
+    allowNewWallet: assign({ allowUnrecorded: true, error: null, reason: null }),
     startPassword: assign({ factor: 'password', progress: PASSWORD_PROGRESS }),
     startSetup: assign(({ event }) =>
       event.type === 'START' ? { factor: event.factor, progress: event.progress } : {},
@@ -107,7 +114,9 @@ export const unlockMachine = setup({
       event.type === 'FAIL'
         ? {
             error: event.cancelled ? '' : event.error,
-            reason: failReason(context.factor, Boolean(event.cancelled)),
+            reason: event.blocked
+              ? 'holding-blocked'
+              : failReason(context.factor, Boolean(event.cancelled)),
           }
         : {},
     ),
@@ -122,6 +131,7 @@ export const unlockMachine = setup({
     reason: null,
     progress: null,
     deviceTried: false,
+    allowUnrecorded: false,
   },
   states: {
     idle: {
@@ -165,6 +175,7 @@ export const unlockMachine = setup({
       entry: 'clearProgress',
       on: {
         RETRY: { target: 'idle', actions: 'clearFailure' },
+        USE_NEW_WALLET: { guard: 'holdingBlocked', target: 'idle', actions: 'allowNewWallet' },
         CHANGE: { target: 'idle', actions: 'typePassword' },
         SUBMIT: { guard: 'passwordLongEnough', target: 'opening', actions: 'startPassword' },
         START: { target: 'opening', actions: 'startSetup' },

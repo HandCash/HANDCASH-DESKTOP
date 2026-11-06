@@ -151,6 +151,47 @@ describe('unlockForm chart', () => {
     expect(actor.getSnapshot().can({ type: 'OPEN_SECRET' })).toBe(true)
   })
 
+  it('a vault that opens but cannot hold a wallet here fails with choices, never success', () => {
+    const actor = start()
+    actor.send({ type: 'OPEN_SECRET' })
+    actor.send({ type: 'PROGRESS', progress: ALMOST_READY })
+    actor.send({ type: 'FAIL', error: 'Another device holds this vault', blocked: true })
+    expect(actor.getSnapshot().value).toBe('failed')
+    expect(actor.getSnapshot().context).toMatchObject({
+      reason: 'holding-blocked',
+      factor: 'open-secret',
+      progress: null,
+      allowUnrecorded: false,
+    })
+    actor.send({ type: 'RETRY' })
+    expect(actor.getSnapshot().value).toBe('idle')
+    expect(actor.getSnapshot().context.reason).toBeNull()
+  })
+
+  it('choosing a new wallet here is allowed only after a blocked holding, and re-opens with the same factor', () => {
+    const other = start()
+    other.send({ type: 'OPEN_SECRET' })
+    other.send({ type: 'FAIL', error: 'vault unreadable' })
+    expect(other.getSnapshot().can({ type: 'USE_NEW_WALLET' })).toBe(false)
+
+    const actor = start()
+    actor.send({ type: 'OPEN_SECRET' })
+    actor.send({ type: 'FAIL', error: 'blocked', blocked: true })
+    expect(actor.getSnapshot().can({ type: 'USE_NEW_WALLET' })).toBe(true)
+    actor.send({ type: 'USE_NEW_WALLET' })
+    expect(actor.getSnapshot().value).toBe('idle')
+    expect(actor.getSnapshot().context).toMatchObject({
+      allowUnrecorded: true,
+      factor: 'open-secret',
+      error: null,
+      reason: null,
+    })
+    expect(actor.getSnapshot().can({ type: 'OPEN_SECRET' })).toBe(true)
+    actor.send({ type: 'OPEN_SECRET' })
+    actor.send({ type: 'SUCCESS' })
+    expect(actor.getSnapshot().value).toBe('success')
+  })
+
   it('only one attempt runs at a time', () => {
     const actor = start()
     actor.send({ type: 'OPEN_SECRET' })

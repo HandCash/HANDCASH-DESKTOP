@@ -19,6 +19,7 @@ import {
   markVaultTakeover,
   prepareAddedDevice,
   resolveBootAccount,
+  HoldingBlockedError,
 } from '../wallet/vaultAccountHolding'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import {
@@ -220,6 +221,10 @@ export function AuthScreen({
         if (!unlockScreenLive()) return
         const message = err instanceof Error ? err.message : String(err)
         const cancelled = message === 'cancelled'
+        if (err instanceof HoldingBlockedError) {
+          send({ type: 'FAIL', error: message, blocked: true })
+          return
+        }
         send({ type: 'FAIL', error: message, cancelled })
         if (cancelled) return
         playWalletSound('error')
@@ -245,6 +250,11 @@ export function AuthScreen({
       .catch((err) => {
         if (!unlockScreenLive()) return
         const message = err instanceof Error ? err.message : String(err)
+        if (err instanceof HoldingBlockedError) {
+          // The vault opened; the chart shows the choices, not a dead-end line.
+          send({ type: 'FAIL', error: message, blocked: true })
+          return
+        }
         send({ type: 'FAIL', error: message })
         // The open secret is the only factor and the holder has no password to
         // retry, so a failure here must lead to restore, never a dead end.
@@ -304,7 +314,9 @@ export function AuthScreen({
 
 
   const bootFromUnlocked = async (unlocked: UnlockedVault) => {
-    const resolved = await resolveBootAccount(unlocked.master)
+    const resolved = await resolveBootAccount(unlocked.master, {
+      allowUnrecorded: unlockActor.getSnapshot().context.allowUnrecorded,
+    })
     return bootWallet({
       rootKeyHex: resolved.rootKeyHex,
       handle: unlocked.record.handle,
@@ -326,7 +338,10 @@ export function AuthScreen({
         type: 'PROGRESS',
         progress: { title: 'Almost ready', lede: 'Finding the wallets your other device holds…' },
       })
-      await prepareAddedDevice({ master: unlocked.master })
+      await prepareAddedDevice({
+        master: unlocked.master,
+        allowUnrecorded: unlockActor.getSnapshot().context.allowUnrecorded,
+      })
     } else if (kind === 'restore') {
       markVaultTakeover(unlocked.master)
     }
@@ -604,6 +619,10 @@ export function AuthScreen({
       const unlocked = await unlockVault(password!)
       await finishUnlock(unlocked, password)
     } catch (err) {
+      if (err instanceof HoldingBlockedError) {
+        send({ type: 'FAIL', error: err.message, blocked: true })
+        return
+      }
       const failure = classifyUnlockFailure(err)
       if (failure.kind !== 'other') {
         // Chromium's own text is what support needs; the holder sees the translation.
@@ -639,14 +658,46 @@ export function AuthScreen({
     }
   }
 
-  const title = isRestoreMethod(formMode)
-    ? 'Restore on this device'
-    : formMode === 'create'
-      ? 'Create wallet'
-      : 'Welcome back'
+  const holdingBlocked =
+    snapshot.matches('failed') && snapshot.context.reason === 'holding-blocked'
 
-  const lede =
-    formMode === 'phrase'
+  /** Run the attempt that just ended again, with the factor it used. */
+  const rerunAttempt = () => {
+    const { factor } = unlockActor.getSnapshot().context
+    if (factor === 'open-secret') unlockWithOpenSecret()
+    else if (factor === 'password') void submit()
+    else if (factor === 'device') {
+      const ask = { type: 'DEVICE', auto: false, visible: true } as const
+      if (!unlockActor.getSnapshot().can(ask)) return
+      send(ask)
+      promptDevice(false)
+    }
+  }
+  const retryHolding = () => {
+    send({ type: 'RETRY' })
+    rerunAttempt()
+  }
+  const useNewWalletHere = () => {
+    send({ type: 'USE_NEW_WALLET' })
+    rerunAttempt()
+  }
+  const restoreInstead = () => {
+    setOfferRestoreOnLock(true)
+    setFormMode('phrase')
+    send({ type: 'RETRY' })
+  }
+
+  const title = holdingBlocked
+    ? 'Another device holds your wallets'
+    : isRestoreMethod(formMode)
+      ? 'Restore on this device'
+      : formMode === 'create'
+        ? 'Create wallet'
+        : 'Welcome back'
+
+  const lede = holdingBlocked
+    ? 'This device is unlocked, but no wallet is open yet. Your backup host cannot record which device holds a new wallet, so a second device could pick the same one.'
+    : formMode === 'phrase'
       ? 'Enter your recovery phrase, 12 or 24 words. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
           ? 'Paste every BRC-140 key slice you have, one per line. HandCash finds two from the same set.'
@@ -654,7 +705,7 @@ export function AuthScreen({
             ? 'Paste your emergency root key (64 hex chars).'
             : formMode === 'create'
               ? 'Your keys stay on this device.'
-              : shouldAutoUnlock() || isNoDeviceLock()
+              : (shouldAutoUnlock() || isNoDeviceLock()) && !snapshot.matches('failed')
                 ? 'Opening your wallet on this device.'
                 : readVaultUnlockFactors().device
                   ? hasMemorablePassword()
@@ -908,6 +959,24 @@ export function AuthScreen({
       <div className="auth-copy">
         <h1 className="auth-title">{title}</h1>
         <p className="auth-lede">{lede}</p>
+        {holdingBlocked ? (
+          <div className="auth-holding" data-aeon-part="holding-blocked" role="alert">
+            <p className="auth-lede">
+              Add a new wallet on this device, try again once the host is reachable, or restore
+              with your recovery phrase. Your existing wallets and keys are not touched.
+            </p>
+            <Button.Root variant="solid" type="button" className="btn btn-primary" onClick={useNewWalletHere}>
+              <Button.Label>Use a new wallet on this device</Button.Label>
+            </Button.Root>
+            <button type="button" className="auth-alt-link" onClick={retryHolding}>
+              Try again
+            </button>
+            {' · '}
+            <button type="button" className="auth-alt-link" onClick={restoreInstead}>
+              Restore instead
+            </button>
+          </div>
+        ) : null}
         {unlockNudge && mode === 'locked' ? (
           <p className="auth-unlock-nudge" role="status">
             An app needs this wallet — unlock to continue.
@@ -1106,7 +1175,7 @@ export function AuthScreen({
           </>
         ) : null}
 
-        {(error || snapshot.context.error) && (
+        {!holdingBlocked && (error || snapshot.context.error) && (
           <p className="error auth-error" role="alert">
             {error || snapshot.context.error}
           </p>

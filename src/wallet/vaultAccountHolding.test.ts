@@ -16,6 +16,7 @@ import {
   activeAccountSpendRefusal,
   checkVaultAccountHoldings,
   claimVaultAccount,
+  HoldingBlockedError,
   installApproverAccounts,
   markVaultTakeover,
   prepareAddedDevice,
@@ -196,9 +197,33 @@ describe('one install per account across devices', () => {
     const store = await claimVaultAccount({ master: MASTER, io, probe: async () => 'unused' })
     expect(store.accounts.map((a) => a.index)).toEqual([0, 1])
     createVaultAccount({ master: MASTER, name: 'x', index: 2, holding: { kind: 'elsewhere', seq: 1, deviceId: 'B' } })
-    await expect(claimVaultAccount({ master: MASTER, io, probe: async () => 'unused' })).rejects.toThrow(
-      /Another device holds wallets/,
-    )
+    const refused = claimVaultAccount({ master: MASTER, io, probe: async () => 'unused' })
+    await expect(refused).rejects.toBeInstanceOf(HoldingBlockedError)
+    await expect(refused).rejects.toThrow(/Another device holds this vault/)
+    expect(readVaultAccounts(MASTER_IK).accounts.map((a) => a.index)).toEqual([0, 1, 2])
+  })
+
+  it('a holder who chose a new wallet gets one above every known account, held here', async () => {
+    const io: HolderIo = {
+      deviceId: () => 'A',
+      read: async () => ({ kind: 'unsupported' }),
+      write: async () => ({ kind: 'unsupported' }),
+    }
+    initCreatedVaultAccounts(MASTER)
+    createVaultAccount({ master: MASTER, name: 'x', index: 1, holding: { kind: 'elsewhere', seq: 1, deviceId: 'B' } })
+    const store = await claimVaultAccount({
+      master: MASTER,
+      io,
+      probe: async () => 'unused',
+      allowUnrecorded: true,
+    })
+    expect(store.accounts.map((a) => a.index)).toEqual([0, 1, 2])
+    expect(store.accounts.find((a) => a.index === 1)?.holding).toEqual({
+      kind: 'elsewhere',
+      seq: 1,
+      deviceId: 'B',
+    })
+    expect(store.accounts.find((a) => a.index === 2)?.holding?.kind).toBe('here')
   })
 
   it('moving an account: release on one device, take without confirmation on the other', async () => {

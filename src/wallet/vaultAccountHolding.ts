@@ -189,6 +189,16 @@ function handOverDisplaced(master: VaultMaster, indices: number[]): void {
 export class AccountAllocationError extends Error {}
 
 /**
+ * Every wallet this install knows is held elsewhere and the backup host cannot
+ * record a new holder, so nothing can stop a second device taking the same new
+ * index. Not a failure to retry blindly: the holder chooses (new wallet here
+ * with `allowUnrecorded`, restore, or fix the host).
+ */
+export class HoldingBlockedError extends AccountAllocationError {
+  readonly code = 'host-cannot-record'
+}
+
+/**
  * Allocate the next account under the vault and hold it here.
  *
  * The index is reserved with a create-only holder record, so two devices that
@@ -201,6 +211,8 @@ export async function claimVaultAccount(args: {
   name?: string
   io?: HolderIo
   probe?: AccountProbe
+  /** The holder chose a new wallet here although the host cannot record who holds it. */
+  allowUnrecorded?: boolean
 }): Promise<VaultAccountStore> {
   const started = Date.now()
   const { master } = args
@@ -238,9 +250,9 @@ export async function claimVaultAccount(args: {
     }
     if (read.kind === 'unsupported') {
       const store = readVaultAccounts(masterIdentityKey)
-      if (store.accounts.some((a) => !isHeldHere(a))) {
-        throw new AccountAllocationError(
-          'Another device holds wallets in this vault, and your backup host cannot record which device holds a new one.',
+      if (!args.allowUnrecorded && store.accounts.some((a) => !isHeldHere(a))) {
+        throw new HoldingBlockedError(
+          'Another device holds this vault’s wallets, and your backup host cannot record which device holds a new one.',
         )
       }
       return done(createVaultAccount({ master, name: nameFor(index), index }), 'local')
@@ -437,6 +449,7 @@ export async function prepareAddedDevice(args: {
   master: VaultMaster
   io?: HolderIo
   probe?: AccountProbe
+  allowUnrecorded?: boolean
 }): Promise<VaultAccount> {
   const started = Date.now()
   const { master } = args
@@ -461,7 +474,12 @@ export async function prepareAddedDevice(args: {
   const masterIdentityKey = vaultIdentityKey(master)
   let held = readVaultAccounts(masterIdentityKey).accounts.find(isHeldHere)
   if (!held) {
-    const claimed = await claimVaultAccount({ master, io, probe })
+    const claimed = await claimVaultAccount({
+      master,
+      io,
+      probe,
+      allowUnrecorded: args.allowUnrecorded,
+    })
     held = claimed.accounts.filter(isHeldHere).at(-1)
   }
   if (!held) throw new AccountAllocationError('The new wallet for this device was not saved.')
@@ -471,13 +489,16 @@ export async function prepareAddedDevice(args: {
 }
 
 /** The account to boot: the active held one, else a new one reserved for this install. */
-export async function resolveBootAccount(master: VaultMaster): Promise<{
+export async function resolveBootAccount(
+  master: VaultMaster,
+  opts: { allowUnrecorded?: boolean } = {},
+): Promise<{
   rootKeyHex: string
   accountIndex: number
 }> {
   const resolved = resolveActiveRootKeyHex(master)
   if (resolved) return resolved
-  const store = await claimVaultAccount({ master })
+  const store = await claimVaultAccount({ master, allowUnrecorded: opts.allowUnrecorded })
   const held = store.accounts.filter(isHeldHere).at(-1)
   if (!held) throw new AccountAllocationError('The new wallet for this device was not saved.')
   setActiveVaultAccountIndex(store.masterIdentityKey, held.index)
