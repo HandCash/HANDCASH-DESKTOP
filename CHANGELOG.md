@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.658] - 2026-11-06
+
+### Changed
+
+- The Desktop/Mobile release-sync test loads its script by file URL, so it passes on Windows.
+
 ## [1.3.657] - 2026-11-06
 
 ### Changed
