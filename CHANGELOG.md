@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.659] - 2026-11-06
+
+### Changed
+
+- The Mobile release script no longer starts with a shebang line, which broke loading it in the Windows test run.
+
 ## [1.3.658] - 2026-11-06
 
 ### Changed
