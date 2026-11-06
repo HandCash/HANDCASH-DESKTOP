@@ -97,7 +97,7 @@ describe('fetchHandCashUtxoSet', () => {
     const deriver = makeDeriver()
     const worker = fakeWorker([
       { utxos: [utxo(1)], next: 'a'.repeat(24) },
-      { utxos: [utxo(2), { txid: 'bad' }], next: null },
+      { utxos: [utxo(2)], next: null },
     ])
     const progress: number[] = []
     const set = await fetchHandCashUtxoSet({ deriver, baseUrl: 'https://utxos.test', fetchImpl: worker.fetchImpl, onProgress: (n) => progress.push(n) })
@@ -110,6 +110,21 @@ describe('fetchHandCashUtxoSet', () => {
     )
     expect(new Set(worker.seen.map((b) => b.responseKey)).size).toBe(2)
     expect(new Set(worker.seen.map((b) => b.nonce)).size).toBe(2)
+  })
+
+  it('refuses a page with a malformed row or cursor instead of dropping rows', async () => {
+    const badRow = fakeWorker([{ utxos: [utxo(1), { txid: 'bad' }], next: null }])
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: badRow.fetchImpl })).toMatchObject({
+      kind: 'refused',
+      reason: 'bad-response',
+      detail: 'invalid utxo row',
+    })
+    const badCursor = fakeWorker([{ utxos: [utxo(1)], next: 'nope' }])
+    expect(await fetchHandCashUtxoSet({ deriver: makeDeriver(), fetchImpl: badCursor.fetchImpl })).toMatchObject({
+      kind: 'refused',
+      reason: 'bad-response',
+      detail: 'invalid next cursor',
+    })
   })
 
   it('refuses an answer that was altered or sealed to another key', async () => {
