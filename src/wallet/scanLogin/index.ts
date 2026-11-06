@@ -19,3 +19,4 @@ export {
   startScanLoginApproval,
   subscribeScanLogins,
 } from './approvals'
+export { runScanLoginRelay } from './relay'

@@ -22,10 +22,10 @@ import {
 } from '../wallet/deviceSignin'
 import { formatComparisonCode, localDeviceLabel, type VaultTransfer } from '../wallet/deviceTransfer'
 import { relaySigninMachine } from '../machines/relaySigninMachine'
-import { firstSigninStep } from './auth/authModes'
 import { DeferredImage } from './DeferredImage'
 import {
   endScanLoginSession,
+  runScanLoginRelay,
   scanLoginQrText,
   startScanLoginSession,
   subscribeScanLoginSession,
@@ -67,7 +67,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
   const [phase, setPhase] = useState<SigninPhase>({ step: 'scan' })
   const [qr, setQr] = useState<string | null>(null)
   const [qrRound, setQrRound] = useState(0)
-  const [noLocalNetwork, setNoLocalNetwork] = useState(false)
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
@@ -78,6 +77,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     if (!scanning) return
     let cancelled = false
     let renew: ReturnType<typeof setTimeout> | null = null
+    let stopRelay: (() => void) | null = null
     const off = subscribeScanLoginSession((event) => {
       if (event.type === 'connected') {
         setPhase({ step: 'scan-comparing', code: event.code, approverLabel: event.approverLabel })
@@ -98,12 +98,8 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
       const status = await window.handcash?.getBridgeStatus?.().catch(() => null)
       const urls = status?.devicePeerLanUrls ?? []
       if (cancelled) return
-      if (firstSigninStep(urls) === 'email') {
-        setNoLocalNetwork(true)
-        setPhase({ step: 'email' })
-        return
-      }
       const payload = startScanLoginSession({ urls, label: localDeviceLabel() })
+      stopRelay = runScanLoginRelay()
       const dataUrl = await QRCode.toDataURL(scanLoginQrText(payload), {
         width: 200,
         margin: 2,
@@ -119,6 +115,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     return () => {
       cancelled = true
       off()
+      stopRelay?.()
       if (renew) clearTimeout(renew)
     }
     // A new QR only after the last one expires; comparing keeps the same session.
@@ -157,7 +154,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
     setCode('')
     setError(null)
     setQr(null)
-    setPhase({ step: noLocalNetwork ? 'email' : 'scan' })
+    setPhase({ step: 'scan' })
   }
 
   const recoveryChoices = (
@@ -174,7 +171,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
 
       {phase.step === 'scan' ? (
         <div className="scan-login" data-aeon-part="scan">
-          <p className="auth-lede">Scan with a signed-in device on this network.</p>
+          <p className="auth-lede">Scan with a signed-in device.</p>
           {qr ? (
             <DeferredImage
               className="scan-login-qr"
@@ -213,7 +210,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           }}
         >
           <p className="auth-lede">
-            {noLocalNetwork ? 'This device has no local network connection for scanning. ' : ''}
             Enter your wallet&rsquo;s email. Then approve this device on one you&rsquo;re already signed in on;
             HandCash relays it but can&rsquo;t read it.
           </p>
@@ -232,8 +228,8 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
             <Button.Root type="submit" className="btn btn-primary" disabled={busy || !email.trim()}>
               {busy ? 'Sending…' : 'Send code'}
             </Button.Root>
-            <Button.Root variant="ghost" className="btn btn-ghost" onClick={noLocalNetwork ? onCancel : restart}>
-              {noLocalNetwork ? 'Back' : 'Scan instead'}
+            <Button.Root variant="ghost" className="btn btn-ghost" onClick={restart}>
+              Scan instead
             </Button.Root>
           </div>
         </form>

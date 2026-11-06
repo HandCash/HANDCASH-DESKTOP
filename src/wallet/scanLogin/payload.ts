@@ -14,7 +14,7 @@ export const SCAN_LOGIN_TTL_MS = 10 * 60_000
 export type ScanLoginPayload = {
   kind: typeof SCAN_LOGIN_KIND
   v: 1
-  /** The new device's peer server, one per local address. */
+  /** The new device's peer server, one per local address; empty when only the relay applies. */
   urls: string[]
   loginKey: string
   secret: string
@@ -44,7 +44,6 @@ export function tryParseScanLoginPayload(raw: string, now = Date.now()): ScanLog
   const urls = Array.isArray(o.urls)
     ? o.urls.filter((u): u is string => typeof u === 'string' && /^http:\/\/[\w.:-]+$/i.test(u)).slice(0, 4)
     : []
-  if (urls.length === 0) return null
   const expiresAt = Number(o.expiresAt)
   if (!Number.isFinite(expiresAt) || expiresAt <= now) return null
   const label = typeof o.label === 'string' && o.label.trim() ? o.label.trim().slice(0, 60) : 'New device'

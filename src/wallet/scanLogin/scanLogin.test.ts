@@ -7,6 +7,7 @@ import {
   setScanLoginDeps,
   startScanLoginApproval,
 } from './approvals'
+import { runScanLoginRelay } from './relay'
 import { helloScanLogin, refuseScanLogin, ScanLoginUnreachable, sendScanLoginVault } from './approver'
 import { scanLoginQrText, tryParseScanLoginPayload, type ScanLoginPayload } from './payload'
 import {
@@ -65,7 +66,7 @@ describe('scan-to-login QR', () => {
     off()
     expect(tryParseScanLoginPayload(scanLoginQrText(payload), payload.expiresAt + 1)).toBeNull()
     expect(tryParseScanLoginPayload(JSON.stringify({ ...payload, secret: '' }))).toBeNull()
-    expect(tryParseScanLoginPayload(JSON.stringify({ ...payload, urls: ['https://evil.example'] }))).toBeNull()
+    expect(tryParseScanLoginPayload(JSON.stringify({ ...payload, urls: ['https://evil.example'] }))?.urls).toEqual([])
     expect(tryParseScanLoginPayload('{"v":3,"identityKey":"02"}')).toBeNull()
   })
 })
@@ -180,7 +181,7 @@ describe('scan-to-login session limits', () => {
 })
 
 describe('scan-to-login fallback', () => {
-  it('devices on different networks are told to use email sign-in', async () => {
+  it('devices that answer on neither network are told to show a fresh code', async () => {
     const { payload, off } = pair()
     const away = { ...payload, urls: ['http://10.9.9.9:3340'] }
     await expect(helloScanLogin(away, { label: 'Mac', fetchImpl: lanFetch() })).rejects.toBeInstanceOf(ScanLoginUnreachable)
@@ -190,7 +191,52 @@ describe('scan-to-login fallback', () => {
     off()
     const [row] = listScanLoginRows()
     expect(row).toMatchObject({ face: 'unreachable', live: false, title: "Couldn't reach Windows PC" })
-    expect(row?.detail).toMatch(/Sign in with email/)
+    expect(row?.detail).toMatch(/fresh code/)
     await expect(approveScanLogin(away.loginKey)).rejects.toThrow(/Compare the codes/)
+  })
+})
+
+describe('scan-to-login relay (different networks)', () => {
+  /** An in-memory BRC-33 messagebox: recipient comes from the signing identity header. */
+  function mailbox(): typeof fetch {
+    const boxes = new Map<string, { messageId: string; sender: string; body: string }[]>()
+    let n = 0
+    return (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const route = String(input).split('/').pop()
+      const identity = new Headers(init?.headers).get('X-BRC33-Identity')!
+      const body = JSON.parse(String(init?.body))
+      const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 })
+      if (route === 'sendMessage') {
+        const list = boxes.get(body.message.recipient) ?? []
+        list.push({ messageId: String(++n), sender: identity, body: body.message.body })
+        boxes.set(body.message.recipient, list)
+        return json({ status: 'success' })
+      }
+      if (route === 'listMessages') return json({ status: 'success', messages: boxes.get(identity) ?? [] })
+      boxes.set(identity, (boxes.get(identity) ?? []).filter((m) => !body.messageIds.includes(m.messageId)))
+      return json({ status: 'success' })
+    }) as typeof fetch
+  }
+
+  it('pairs and delivers the vault with no shared network', async () => {
+    const fetchImpl = mailbox()
+    const payload = startScanLoginSession({ urls: [], label: 'Windows PC' })
+    const events: ScanLoginEvent[] = []
+    subscribeScanLoginSession((e) => events.push(e))
+    const stop = runScanLoginRelay({ fetchImpl, pollMs: 5 })
+    const conn = await helloScanLogin(payload, { label: 'Phone', fetchImpl, relayMs: 3000 })
+    expect(conn.url).toBe('relay')
+    expect(events[0]).toEqual({ type: 'connected', approverLabel: 'Phone', code: conn.code })
+    await sendScanLoginVault(conn, transfer, fetchImpl)
+    stop()
+    expect(events[1]).toMatchObject({ type: 'vault', transfer: { master: transfer.master } })
+  })
+
+  it('a forged proof over the relay is refused', async () => {
+    const fetchImpl = mailbox()
+    const payload = startScanLoginSession({ urls: [], label: 'Windows PC' })
+    const stop = runScanLoginRelay({ fetchImpl, pollMs: 5 })
+    await expect(helloScanLogin({ ...payload, secret: '11'.repeat(32) }, { label: 'x', fetchImpl, relayMs: 3000 })).rejects.toThrow()
+    stop()
   })
 })

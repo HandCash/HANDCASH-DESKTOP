@@ -20,7 +20,7 @@ export type ScanLoginEvent =
   | { type: 'vault'; transfer: VaultTransfer }
   | { type: 'refused' }
 
-type Session = {
+export type Session = {
   payload: ScanLoginPayload
   key: PrivateKey
   approverKey: string | null
@@ -47,6 +47,11 @@ export function startScanLoginSession(args: { urls: string[]; label: string; now
   }
   session = { payload, key, approverKey: null, done: false }
   return payload
+}
+
+/** The live session's one-time key, for the mailbox relay. */
+export function getScanLoginSession(): Session | null {
+  return session
 }
 
 export function endScanLoginSession(): void {
@@ -77,6 +82,7 @@ export function handleScanLoginRequest(
   } catch {
     return reply(400, { error: 'invalid-body' })
   }
+  // approverKey comes from the transport: the mailbox sender is authenticated.
   const approverKey = typeof body.approverKey === 'string' ? body.approverKey.toLowerCase() : ''
   if (!/^(02|03)[0-9a-f]{64}$/.test(approverKey)) return reply(400, { error: 'invalid-body' })
   const { secret, loginKey } = live.payload

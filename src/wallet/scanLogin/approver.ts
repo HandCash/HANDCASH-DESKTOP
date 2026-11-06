@@ -5,18 +5,21 @@
  */
 import { PrivateKey } from '@bsv/sdk'
 import { sealVaultTransfer, type VaultTransfer } from '../deviceTransfer'
+import { relayRequest } from './relay'
 import { scanLoginCode, scanLoginProof, sha256Hex, type ScanLoginPayload } from './payload'
 
 export const SCAN_LOGIN_REACH_MS = 3_000
+export const SCAN_LOGIN_RELAY_MS = 20_000
 
 export type ScanLoginConnection = {
   payload: ScanLoginPayload
+  /** The new device's local address, or 'relay' when reached through the mailbox. */
   url: string
   approverKey: PrivateKey
   code: string
 }
 
-/** No address in the QR answered: the devices are not on one local network. */
+/** Neither the local network nor the relay reached the new device. */
 export class ScanLoginUnreachable extends Error {
   constructor() {
     super('scan-login-unreachable')
@@ -58,34 +61,64 @@ function refusalText(error: unknown): string {
   }
 }
 
+type Reply = { status: number; body: Record<string, unknown> }
+
+async function viaConn(
+  conn: ScanLoginConnection,
+  step: 'hello' | 'vault' | 'refuse',
+  body: Record<string, unknown>,
+  timeoutMs: number,
+  fetchImpl: Fetch,
+): Promise<Reply> {
+  if (conn.url === 'relay') {
+    return relayRequest(conn.approverKey, conn.payload.loginKey, step, body, { timeoutMs, fetchImpl })
+  }
+  return postJson(fetchImpl, `${conn.url}/handcash-device/v1/scan-login/${step}`, body, timeoutMs)
+}
+
 export async function helloScanLogin(
   payload: ScanLoginPayload,
-  args: { label: string; fetchImpl?: Fetch; timeoutMs?: number },
+  args: { label: string; fetchImpl?: Fetch; timeoutMs?: number; relayMs?: number; relay?: boolean },
 ): Promise<ScanLoginConnection> {
   const fetchImpl = args.fetchImpl ?? fetch
   const approverKey = PrivateKey.fromRandom()
   const pub = approverKey.toPublicKey().toString().toLowerCase()
   const body = { approverKey: pub, label: args.label, proof: scanLoginProof(payload.secret, 'hello', pub) }
-  const attempts = payload.urls.map(async (base) => {
-    const res = await postJson(fetchImpl, `${base}/handcash-device/v1/scan-login/hello`, body, args.timeoutMs ?? SCAN_LOGIN_REACH_MS)
-    return { base, res }
-  })
+  const routes = [
+    ...payload.urls.map((url) => ({ url, timeout: args.timeoutMs ?? SCAN_LOGIN_REACH_MS })),
+    ...(args.relay === false ? [] : [{ url: 'relay', timeout: args.relayMs ?? SCAN_LOGIN_RELAY_MS }]),
+  ]
   let refusal: string | null = null
-  for (const settled of await Promise.allSettled(attempts)) {
-    if (settled.status !== 'fulfilled') continue
-    const { base, res } = settled.value
-    if (res.status !== 200) {
-      refusal ??= refusalText(res.body.error)
-      continue
+  const failures: string[] = []
+  // First route to answer wins; the local network is simply usually faster.
+  const winner = await new Promise<ScanLoginConnection | null>((resolve) => {
+    let pending = routes.length
+    const settle = () => {
+      if (--pending === 0) resolve(null)
     }
-    if (String(res.body.loginKey ?? '').toLowerCase() !== payload.loginKey) {
-      refusal ??= 'The device that answered is not the one in the code.'
-      continue
+    if (pending === 0) resolve(null)
+    for (const route of routes) {
+      const conn: ScanLoginConnection = { payload, url: route.url, approverKey, code: '' }
+      viaConn(conn, 'hello', body, route.timeout, fetchImpl)
+        .then((res) => {
+          if (res.status !== 200) {
+            refusal ??= refusalText(res.body.error)
+            failures.push(`${route.url}: http-${res.status}`)
+          } else if (String(res.body.loginKey ?? '').toLowerCase() !== payload.loginKey) {
+            refusal ??= 'The device that answered is not the one in the code.'
+          } else {
+            resolve({ ...conn, code: scanLoginCode(payload.secret, payload.loginKey, pub) })
+            return
+          }
+          settle()
+        })
+        .catch((error) => {
+          failures.push(`${route.url}: ${error instanceof Error ? error.message : String(error)}`)
+          settle()
+        })
     }
-    return { payload, url: base, approverKey, code: scanLoginCode(payload.secret, payload.loginKey, pub) }
-  }
-  const failures = (await Promise.allSettled(attempts)).map((s) =>
-    s.status === 'rejected' ? String((s.reason as Error)?.message ?? s.reason) : `http-${s.value.res.status}`)
+  })
+  if (winner) return winner
   console.warn('[scan-login] hello failed', JSON.stringify({ urls: payload.urls, failures, refusal }))
   if (refusal) throw new Error(refusal)
   throw new ScanLoginUnreachable()
@@ -98,21 +131,23 @@ export async function sendScanLoginVault(
 ): Promise<void> {
   const sealedVault = sealVaultTransfer(transfer, conn.approverKey, conn.payload.loginKey)
   const pub = conn.approverKey.toPublicKey().toString().toLowerCase()
-  const res = await postJson(
-    fetchImpl,
-    `${conn.url}/handcash-device/v1/scan-login/vault`,
+  const res = await viaConn(
+    conn,
+    'vault',
     { approverKey: pub, sealedVault, proof: scanLoginProof(conn.payload.secret, 'vault', sha256Hex(sealedVault)) },
-    30_000,
+    conn.url === 'relay' ? SCAN_LOGIN_RELAY_MS : 30_000,
+    fetchImpl,
   )
   if (res.status !== 200) throw new Error(refusalText(res.body.error))
 }
 
 export async function refuseScanLogin(conn: ScanLoginConnection, fetchImpl: Fetch = fetch): Promise<void> {
   const pub = conn.approverKey.toPublicKey().toString().toLowerCase()
-  await postJson(
-    fetchImpl,
-    `${conn.url}/handcash-device/v1/scan-login/refuse`,
+  await viaConn(
+    conn,
+    'refuse',
     { approverKey: pub, proof: scanLoginProof(conn.payload.secret, 'refuse', pub) },
-    SCAN_LOGIN_REACH_MS,
+    conn.url === 'relay' ? SCAN_LOGIN_RELAY_MS : SCAN_LOGIN_REACH_MS,
+    fetchImpl,
   )
 }

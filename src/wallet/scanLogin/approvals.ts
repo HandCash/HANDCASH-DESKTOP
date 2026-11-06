@@ -129,12 +129,12 @@ export function scanLoginRowView(entry: Entry, now = Date.now()): SigninRowView 
     case 'comparing':
       return { ...base, title: requested, detail: 'Compare the code, then approve', code: entry.conn?.code ?? null, live: true }
     case 'approved':
-      return { ...base, title: `Signed in on ${label}`, detail: 'Approved here, sent over your local network', live: false }
+      return { ...base, title: `Signed in on ${label}`, detail: 'Approved here', live: false }
     case 'unreachable':
       return {
         ...base,
         title: `Couldn't reach ${label}`,
-        detail: `Not on this network. On ${label}, choose Sign in with email`,
+        detail: `${label} didn't answer. Show a fresh code there`,
         live: false,
       }
     case 'refused':
@@ -142,7 +142,7 @@ export function scanLoginRowView(entry: Entry, now = Date.now()): SigninRowView 
     case 'expired':
       return { ...base, title: 'Sign-in expired', detail: `${label} · nobody approved it`, live: false }
     default:
-      return { ...base, title: requested, detail: `Connecting to ${label} on this network`, live: true }
+      return { ...base, title: requested, detail: `Connecting to ${label}`, live: true }
   }
 }
 

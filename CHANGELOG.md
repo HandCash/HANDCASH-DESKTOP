@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.650] - 2026-11-06
+
+### Changed
+
+- Scan sign-in works across networks: the approval travels peer to peer through the end-to-end sealed BRC-33 mailbox, keyed by one-time keys. The local network stays as the fast path.
+
 ## [1.3.649] - 2026-11-06
 
 ### Changed
