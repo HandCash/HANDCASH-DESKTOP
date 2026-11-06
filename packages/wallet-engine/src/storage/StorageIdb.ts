@@ -1823,6 +1823,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       args.paged?.limit,
       async r => {
         if (!matchesOutputPartial(r, args.partial)) return false
+        if (args.managedOnly && !isAutoSpendableChangeOutput(r)) return false
         if (validTransactionIds != null && !validTransactionIds.has(r.transactionId)) return false
         if (
           tagIds != null &&

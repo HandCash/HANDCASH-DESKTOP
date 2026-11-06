@@ -97,8 +97,10 @@ async function loadIdbOutputs(query: IdbOutputQuery): Promise<{ outputs: TableOu
     noScript: specOp?.includeOutputScripts !== true,
     orderDescending
   }
-  const pageManagedChange = specOp?.managedChangeOnly === true && specOp.ignoreLimit !== true
-  const applyPaging = !specOp?.ignoreLimit && !pageManagedChange
+  // BRC-100 listOutputs: filter eligible managed change inside the cursor,
+  // before paging, rather than materialising the entire wallet on every page.
+  args.managedOnly = specOp?.managedChangeOnly === true
+  const applyPaging = !specOp?.ignoreLimit
   if (applyPaging) {
     args.paged = { limit, offset }
   } else if (specOp?.maximumCandidateCount != null) {
@@ -112,11 +114,6 @@ async function loadIdbOutputs(query: IdbOutputQuery): Promise<{ outputs: TableOu
   }
   if (specOp?.managedChangeOnly) {
     outputs = outputs.filter(output => isManagedChangeOutput(output) && output.spentBy == null)
-  }
-  if (pageManagedChange) {
-    const totalManagedOutputs = outputs.length
-    outputs = outputs.slice(offset, offset + limit)
-    return { outputs, totalOutputs: totalManagedOutputs }
   }
   if (outputs.length !== limit) {
     // A short page ends the result set, so the total is the rows the offset

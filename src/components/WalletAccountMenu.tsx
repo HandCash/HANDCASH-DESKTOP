@@ -5,7 +5,7 @@ import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
 import { moveAccountHere } from '../wallet/accountMove'
 import type { AccountMovePhase } from '../wallet/accountMoveMachine'
-import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
+import { readTrustedBalance } from '../wallet/balanceSnapshot'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
@@ -13,7 +13,7 @@ import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { setNavSection } from '../wallet/navStore'
 import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
 import { refreshAfterAccountSwitch } from '../wallet/recompose'
-import { fetchBalanceSats, switchVaultAccount } from '../wallet/session'
+import { switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
@@ -206,16 +206,10 @@ export function WalletAccountMenu({
       // The balance is explicitly pending until this wallet's Toolbox answers;
       // never leave the prior wallet's amount beside the new identity.
       onAccountSwitchStarted(nextProfile)
-      let balanceSats = readTrustedBalance(next.identityKey, next.chain) ?? 0
-      try {
-        balanceSats = await fetchBalanceSats(next.wallet, {
-          creditUnconfirmed: false,
-        })
-      } catch (error) {
-        console.warn('[vault-account] local balance read failed', messageOf(error))
-      }
+      // Display-only identity-scoped cache. Dashboard owns the fresh local read;
+      // never keep the switch chart busy behind Toolbox's reader queue.
+      const balanceSats = readTrustedBalance(next.identityKey, next.chain) ?? 0
       if (!runtimeIsCurrent(runtime)) return false
-      writeTrustedBalance(next.identityKey, next.chain, balanceSats)
       onAccountSwitched(nextProfile, balanceSats)
       playWalletSound('soft')
       send({ type: 'SWITCHED' })

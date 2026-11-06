@@ -216,7 +216,7 @@ describe('unconfirmedChangeSats', () => {
     await expect(unconfirmedChangeSats()).resolves.toBe(9_000)
     expect(findOutputs).toHaveBeenCalledWith({
       partial: { spendable: false, change: true },
-      paged: { limit: 200, offset: 0 },
+      paged: { limit: 100, offset: 0 },
     })
   })
 

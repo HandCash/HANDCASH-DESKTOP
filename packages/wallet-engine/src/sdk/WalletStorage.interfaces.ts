@@ -278,6 +278,8 @@ export interface FindOutputBasketsArgs extends FindSincePagedArgs {
 }
 
 export interface FindOutputsArgs extends FindSincePagedArgs {
+  /** IDB managed-coin query: apply eligibility before offset/limit. */
+  managedOnly?: boolean
   partial: Partial<TableOutput>
   noScript?: boolean
   txStatus?: TransactionStatus[]

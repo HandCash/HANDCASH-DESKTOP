@@ -17,6 +17,7 @@ const siblingMarketTests = [
 export default defineConfig({
   resolve: {
     alias: {
+      '@handcash/wallet-engine': path.resolve(root, 'packages/wallet-engine/src/index.ts'),
       '@aeon-ui/tree': path.resolve(root, 'vendor/aeon-ui-engine/packages/tree/src/index.ts'),
       '@aeon-ui/core': path.resolve(root, 'vendor/aeon-ui-engine/packages/core/src/index.ts'),
       '@aeon-ui/primitives': path.resolve(root, 'vendor/aeon-ui-engine/packages/primitives/src/index.ts'),

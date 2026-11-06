@@ -32,6 +32,7 @@ export const walletAccountMenuMachine = setup({
       | { type: 'CLOSE' }
       | { type: 'CHOOSE'; accountIndex: number }
       | { type: 'EDIT_PROFILE'; accountIndex: number; active: boolean }
+      // Runtime selected and cached projection painted; local reads continue outside the menu.
       | { type: 'SWITCHED' }
       | { type: 'CREATE' }
       | { type: 'CREATED' }
