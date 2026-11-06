@@ -1190,14 +1190,16 @@ export async function disableDeviceUnlock(password?: string): Promise<void> {
   if (password) {
     await unlockVault(password)
   }
-  await deviceAuthClear()
   const raw = readVaultRaw()
   if (!raw) throw new Error('No wallet found')
   const record = JSON.parse(raw) as VaultRecord
   const wraps: VaultWraps = { ...(record.wraps ?? {}) }
   delete wraps.device
   assertAtLeastOneFactor(wraps)
+  // Record first, clear the seal after: a failed write must not leave a vault
+  // that still lists device unlock with its seal already gone.
   persistVault({ ...record, version: 3, wraps }, 'password')
+  await deviceAuthClear()
 }
 
 /** Remove the HandCash password wrap. Requires device unlock enrolled + keys backup. */
