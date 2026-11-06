@@ -1,5 +1,8 @@
-import { BigNumber, ECDSA, Hash, PrivateKey, Utils } from '@bsv/sdk'
+import { BigNumber, ECDSA, PrivateKey, Utils } from '@bsv/sdk'
 import { scrypt } from '@noble/hashes/scrypt.js'
+import { hash160, sha256d } from '../primitives/hashes'
+
+export { hash160, sha256d } from '../primitives/hashes'
 
 /**
  * Litecoin mainnet primitives the wallet checks received coins and signs
@@ -31,8 +34,6 @@ export function fromHex(hex: string): Bytes {
 }
 
 export const reversed = (b: Bytes): Bytes => Uint8Array.from(b).reverse()
-export const sha256d = (b: Bytes): Bytes => Uint8Array.from(Hash.hash256(Array.from(b)))
-export const hash160 = (b: Bytes): Bytes => Uint8Array.from(Hash.hash160(Array.from(b)))
 
 export function concat(...parts: Bytes[]): Bytes {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
