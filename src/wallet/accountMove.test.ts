@@ -421,6 +421,51 @@ describe('the holder serving its holding channel', () => {
     expect(left.map((m) => m.type).sort()).toEqual(['handover', 'release-accept'])
   })
 
+  it('a request replayed after the account moved away and back is dropped, not answered (BRC-249 replay)', async () => {
+    const { target, calls } = holder(4)
+    const b = box()
+    const request = signReleaseRequest(KEYS.rootKeyHex, { deviceId: 'B', seq: 4 })
+    b.post(request)
+    expect(await serveHoldingChannel(target, b.channel)).toEqual({ kind: 'released', to: 'B' })
+    expect(calls.release).toBe(1)
+    // B took it (seq 5) and A took it back (seq 6); an attacker with the box re-posts B's old request.
+    devices.clear()
+    on('A')
+    initCreatedVaultAccounts(MASTER)
+    createVaultAccount({ master: MASTER, name: 'Wallet 1', index: INDEX, holding: { kind: 'here', seq: 6 } })
+    b.messages.length = 0
+    b.post(request)
+    expect(await serveHoldingChannel(target, b.channel)).toEqual({ kind: 'idle' })
+    expect(calls.release).toBe(1)
+    expect(b.messages).toHaveLength(0)
+  })
+
+  it('a replayed request answers nothing while the account is held elsewhere, over the box or the link', async () => {
+    const { target, calls } = holder(4)
+    const request = signReleaseRequest(KEYS.rootKeyHex, { deviceId: 'B', seq: 4 })
+    devices.clear()
+    on('A')
+    initCreatedVaultAccounts(MASTER)
+    createVaultAccount({ master: MASTER, name: 'Wallet 1', index: INDEX, holding: { kind: 'elsewhere', seq: 5, deviceId: 'B' } })
+    const b = box()
+    const link = linkEnd()
+    b.post(request)
+    expect(await serveHoldingChannel(target, b.channel)).toEqual({ kind: 'not-holder' })
+    expect(await answerDirectRequest(target, JSON.stringify(request), 'B', b.channel, link.link)).toEqual({ kind: 'not-holder' })
+    expect(calls.release).toBe(0)
+    expect(link.sent).toHaveLength(0)
+  })
+
+  it('a replayed request over the link for an older seq is refused', async () => {
+    const { target, calls } = holder(7)
+    const b = box()
+    const link = linkEnd()
+    const old = signReleaseRequest(KEYS.rootKeyHex, { deviceId: 'B', seq: 4 })
+    expect(await answerDirectRequest(target, JSON.stringify(old), 'B', b.channel, link.link)).toEqual({ kind: 'idle' })
+    expect(calls.release).toBe(0)
+    expect(link.sent).toHaveLength(0)
+  })
+
   it('keeps the account when the release after an accept fails (the mover forces later)', async () => {
     const { target } = holder(2)
     target.release = async () => {

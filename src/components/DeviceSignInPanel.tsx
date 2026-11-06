@@ -1,27 +1,16 @@
 /**
  * Sign in to an existing wallet on this device.
  *
- * Default: this device shows a QR, a signed-in device scans it, the user
- * approves there and the wallet comes straight over the local network,
- * encrypted to this device's one-time key. Fallback when the devices can't
- * reach each other: the account email's code, then the same approval relayed
- * by HandCash, still end to end. Recovery is offered only when no device can
- * approve.
+ * This device shows a QR, a signed-in device scans it, and its user types the
+ * 6-digit code shown here before the wallet is sent, encrypted to this
+ * device's one-time key. Email is not a sign-in method (it belongs to
+ * migration only). Recovery is offered when the sign-in expires.
  */
-import { stateToAttr } from '@aeon-ui/core'
-import { Button, Field, StatusBanner } from '@aeon-ui/react'
-import { useMachine } from '@xstate/react'
+import { Button, StatusBanner } from '@aeon-ui/react'
 import QRCode from 'qrcode'
-import { useEffect, useState, type ReactNode } from 'react'
-import {
-  confirmNewDeviceSigninReceived,
-  requestSigninCode,
-  signinErrorText,
-  startNewDeviceSignin,
-  type NewDeviceSignin,
-} from '../wallet/deviceSignin'
+import { useEffect, useState } from 'react'
+import { signinErrorText } from '../wallet/deviceSignin'
 import { formatComparisonCode, localDeviceLabel, type VaultTransfer } from '../wallet/deviceTransfer'
-import { relaySigninMachine } from '../machines/relaySigninMachine'
 import { DeferredImage } from './DeferredImage'
 import {
   endScanLoginSession,
@@ -35,7 +24,7 @@ export type ApprovedVault = {
   master: VaultTransfer['master']
   enrollment: VaultTransfer['enrollment']
   accounts: VaultTransfer['accounts']
-  /** Set when the email fallback was used. */
+  /** Always null: email is not a sign-in method. */
   signinEmail: string | null
   /** Call once the vault is saved here; until then the relay keeps its sealed copy. */
   acknowledge: () => Promise<void>
@@ -57,9 +46,6 @@ type Props = {
 export type SigninPhase =
   | { step: 'scan' }
   | { step: 'scan-comparing'; code: string; approverLabel: string }
-  | { step: 'email' }
-  | { step: 'code'; requestId: string }
-  | { step: 'relay'; signin: NewDeviceSignin }
   | { step: 'restoring' }
   /** The other device accepted the typed code; the wallet is on its way. */
   | { step: 'scan-confirmed'; approverLabel: string }
@@ -69,9 +55,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
   const [phase, setPhase] = useState<SigninPhase>({ step: 'scan' })
   const [qr, setQr] = useState<string | null>(null)
   const [qrRound, setQrRound] = useState(0)
-  const [email, setEmail] = useState('')
-  const [code, setCode] = useState('')
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const scanning = phase.step === 'scan' || phase.step === 'scan-comparing' || phase.step === 'scan-confirmed'
@@ -132,35 +115,7 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
 
   useEffect(() => () => endScanLoginSession(), [])
 
-  const sendCode = async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      const issued = await requestSigninCode(email.trim(), 'signin')
-      setCode(issued.devCode ?? '')
-      setPhase({ step: 'code', requestId: issued.requestId })
-    } catch (cause) {
-      setError(signinErrorText(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const confirmCode = async (requestId: string) => {
-    setBusy(true)
-    setError(null)
-    try {
-      const started = await startNewDeviceSignin(requestId, code.trim())
-      setPhase({ step: 'relay', signin: started })
-    } catch (cause) {
-      setError(signinErrorText(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const restart = () => {
-    setCode('')
     setError(null)
     setQr(null)
     setPhase({ step: 'scan' })
@@ -218,92 +173,6 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
         </StatusBanner.Root>
       ) : null}
 
-      {phase.step === 'email' ? (
-        <form
-          className="auth-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (!busy && email.trim()) void sendCode()
-          }}
-        >
-          <p className="auth-lede">
-            Enter your wallet&rsquo;s email. Then approve this device on one you&rsquo;re already signed in on;
-            HandCash relays it but can&rsquo;t read it.
-          </p>
-          <Field.Root className="field">
-            <Field.Label htmlFor="signin-email">Email</Field.Label>
-            <Field.Control
-              id="signin-email"
-              type="email"
-              autoComplete="email"
-              autoFocus
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </Field.Root>
-          <div className="actions">
-            <Button.Root type="submit" className="btn btn-primary" disabled={busy || !email.trim()}>
-              {busy ? 'Sending…' : 'Send code'}
-            </Button.Root>
-            <Button.Root variant="ghost" className="btn btn-ghost" onClick={restart}>
-              Scan instead
-            </Button.Root>
-          </div>
-        </form>
-      ) : null}
-
-      {phase.step === 'code' ? (
-        <form
-          className="auth-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            if (!busy && code.trim()) void confirmCode(phase.requestId)
-          }}
-        >
-          <p className="auth-lede">Enter the 6-digit code sent to {email.trim()}. It expires in 10 minutes.</p>
-          <Field.Root className="field">
-            <Field.Label htmlFor="signin-code">Code</Field.Label>
-            <Field.Control
-              id="signin-code"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              autoFocus
-              maxLength={6}
-              value={code}
-              onChange={(event) => setCode(event.target.value.replace(/\D/g, ''))}
-            />
-          </Field.Root>
-          <div className="actions">
-            <Button.Root type="submit" className="btn btn-primary" disabled={busy || code.trim().length !== 6}>
-              {busy ? 'Checking…' : 'Continue'}
-            </Button.Root>
-            <Button.Root variant="ghost" className="btn btn-ghost" disabled={busy} onClick={() => void sendCode()}>
-              Send a new code
-            </Button.Root>
-          </div>
-        </form>
-      ) : null}
-
-      {phase.step === 'relay' ? (
-        <RelaySigninWait
-          key={phase.signin.start.binding}
-          signin={phase.signin}
-          recoveryChoices={recoveryChoices}
-          onApproved={(transfer) => {
-            const signin = phase.signin
-            setPhase({ step: 'restoring' })
-            onSignedIn({
-              master: transfer.master,
-              enrollment: transfer.enrollment,
-              accounts: transfer.accounts,
-              signinEmail: email.trim().toLowerCase(),
-              acknowledge: () => confirmNewDeviceSigninReceived(signin),
-            })
-          }}
-          onEnded={(reason) => setPhase({ step: 'ended', reason })}
-        />
-      ) : null}
-
       {phase.step === 'restoring' ? (
         <StatusBanner.Root tone="info" status="restoring">
           <StatusBanner.Copy>
@@ -336,73 +205,15 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
         </p>
       ) : null}
 
-      {phase.step === 'scan' || phase.step === 'email' || phase.step === 'code' ? (
+      {phase.step === 'scan' ? (
         <div className="actions" data-aeon-part="exits">
-          {phase.step === 'scan' ? (
-            <Button.Root variant="ghost" className="btn btn-ghost" onClick={onCancel}>
-              Back
-            </Button.Root>
-          ) : null}
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={onCancel}>
+            Back
+          </Button.Root>
           <Button.Root variant="ghost" className="btn btn-ghost" onClick={onOtherWays}>
             Other ways
           </Button.Root>
         </div>
-      ) : null}
-    </div>
-  )
-}
-
-type RelayWaitProps = {
-  signin: NewDeviceSignin
-  recoveryChoices: ReactNode
-  onApproved: (transfer: VaultTransfer) => void
-  onEnded: (reason: 'refused' | 'expired') => void
-}
-
-/** Waits on the relay through `relaySigninMachine`; the chart reports each outcome once. */
-function RelaySigninWait({ signin, recoveryChoices, onApproved, onEnded }: RelayWaitProps) {
-  const [snapshot] = useMachine(relaySigninMachine, { input: { signin } })
-  const { code, error, transfer } = snapshot.context
-  const outcome = snapshot.status === 'done' ? stateToAttr(snapshot.value) : null
-
-  useEffect(() => {
-    if (outcome === 'approved' && transfer) onApproved(transfer)
-    else if (outcome === 'refused' || outcome === 'expired') onEnded(outcome)
-    // Reported once, when the chart reaches its final state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outcome])
-
-  const noneOnline = signin.start.online === 0
-  const devices = signin.start.devices.map((device) => device.label)
-
-  return (
-    <div data-aeon-scope="relay-signin" data-aeon-state={stateToAttr(snapshot.value)}>
-      {code ? (
-        <div className="signin-code-block">
-          <span className="signin-code" data-aeon-part="comparison-code">
-            {formatComparisonCode(code)}
-          </span>
-          <p className="auth-lede">Approve on your other device only if it shows this same code.</p>
-        </div>
-      ) : (
-        <>
-          <StatusBanner.Root tone={noneOnline ? 'warning' : 'info'} status="waiting">
-            <StatusBanner.Copy>
-              <StatusBanner.Title>Waits on one of your signed-in devices</StatusBanner.Title>
-              <StatusBanner.Body>
-                {noneOnline
-                  ? 'None of your devices checked in during the last 10 minutes. Open HandCash on one, or recover instead.'
-                  : `Open Activity on ${devices.slice(0, 2).join(' or ') || 'a signed-in device'} and choose the sign-in request.`}
-              </StatusBanner.Body>
-            </StatusBanner.Copy>
-          </StatusBanner.Root>
-          {noneOnline ? recoveryChoices : null}
-        </>
-      )}
-      {error ? (
-        <p className="signin-error" role="status" data-aeon-part="relay-error">
-          {error}
-        </p>
       ) : null}
     </div>
   )
