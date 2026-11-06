@@ -1,4 +1,5 @@
 import { getActiveWallet } from './session'
+import { yieldToUi } from './yieldToUi'
 
 /**
  * Owned-cash heuristic for the displayed BSV balance (`balanceView`).
@@ -53,8 +54,8 @@ export type OwnedCashFate =
       reason: 'noValue' | 'item' | 'token' | 'spentLive' | 'notOurs'
     }
 
-const PAGE = 200
-const MAX_PAGES = 10
+const PAGE = 100
+const MAX_PAGES = 20
 
 /**
  * One output's contribution to displayed owned cash.
@@ -215,6 +216,8 @@ export async function unconfirmedChangeSats(opts?: {
         storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page)),
       )
       if (done) break
+      // The manager lock is released before yielding: queued sends run first.
+      await yieldToUi()
     }
     return extra
   } catch (err) {
