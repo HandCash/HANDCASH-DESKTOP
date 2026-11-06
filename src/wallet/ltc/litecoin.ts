@@ -1,6 +1,7 @@
 import { BigNumber, ECDSA, PrivateKey, Utils } from '@bsv/sdk'
 import { scrypt } from '@noble/hashes/scrypt.js'
 import { hash160, sha256d } from '../primitives/hashes'
+import { decodeHex, encodeHex } from '../../meridian/encoding'
 
 export { hash160, sha256d } from '../primitives/hashes'
 
@@ -25,12 +26,12 @@ const fail = (message: string): never => {
   throw new LtcFormatError(message)
 }
 
-export const toHex = (b: Bytes): string => Utils.toHex(Array.from(b))
+export const toHex = (b: Bytes): string => encodeHex(b)
 
 export function fromHex(hex: string): Bytes {
   const clean = hex.trim().toLowerCase()
   if (clean.length % 2 !== 0 || !/^[0-9a-f]*$/.test(clean)) fail('not hex')
-  return Uint8Array.from(Utils.toArray(clean, 'hex'))
+  return decodeHex(clean)
 }
 
 export const reversed = (b: Bytes): Bytes => Uint8Array.from(b).reverse()
