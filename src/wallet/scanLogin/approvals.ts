@@ -67,10 +67,13 @@ export async function startScanLoginApproval(payload: ScanLoginPayload): Promise
   const key = payload.loginKey
   entries.set(key, { payload, face: 'claimed', conn: null, error: null, createdAt: Date.now() })
   changed()
+  console.info('[scan-login] scanned', JSON.stringify({ label: payload.label, urls: payload.urls, expiresAt: payload.expiresAt }))
   try {
     const conn = await helloScanLogin(payload, { label: deps.label(), fetchImpl: deps.fetchImpl })
+    console.info('[scan-login] reached', conn.url)
     update(key, { conn, face: 'comparing' })
   } catch (error) {
+    console.warn('[scan-login] not connected', error instanceof Error ? `${error.name}: ${error.message}` : String(error))
     if (error instanceof ScanLoginUnreachable) update(key, { face: 'unreachable' })
     else update(key, { face: 'refused', error: error instanceof Error ? error.message : String(error) })
   }
@@ -87,8 +90,12 @@ export async function approveScanLogin(loginKey: string): Promise<void> {
   try {
     await deps.confirm(`approve sign-in on ${entry.payload.label}`)
     await sendScanLoginVault(entry.conn, deps.vault(), deps.fetchImpl)
+    console.info('[scan-login] vault sent', entry.conn.url)
     update(loginKey, { face: 'approved' })
     deps.onApproved({ id: loginKey, label: entry.payload.label, via: 'local' })
+  } catch (error) {
+    console.warn('[scan-login] approve failed', error instanceof Error ? `${error.name}: ${error.message}` : String(error))
+    throw error
   } finally {
     approving.delete(loginKey)
   }

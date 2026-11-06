@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.649] - 2026-11-06
+
+### Changed
+
+- Scan sign-in: the approving device logs scanned, reached, vault sent and failures.
+
 ## [1.3.648] - 2026-11-06
 
 ### Changed
