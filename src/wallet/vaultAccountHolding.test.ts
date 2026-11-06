@@ -354,6 +354,35 @@ describe('a device joined by approval', () => {
     expect(holdings()).toEqual({ 0: 'elsewhere', 1: 'elsewhere' })
   })
 
+  it('drops malformed, duplicate and absurd entries from a sent list and re-derives identities', () => {
+    on('B')
+    const sent = {
+      version: 1,
+      masterIdentityKey: MASTER_IK,
+      activeIndex: 99,
+      accounts: [
+        { index: 0, name: 'Primary', identityKey: 'attacker-key' },
+        { index: 1, name: 'x'.repeat(500), identityKey: 'attacker-key', holding: { kind: 'here', seq: 'NaN' } },
+        { index: 1, name: 'dup', identityKey: 'attacker-key' },
+        { index: -1, name: 'neg', identityKey: 'k' },
+        { index: 1.5, name: 'frac', identityKey: 'k' },
+        { index: 1e12, name: 'huge', identityKey: 'k' },
+        null,
+        'junk',
+      ],
+    }
+    const store = installApproverAccounts(MASTER, sent)
+    expect(store.accounts.map((a) => a.index)).toEqual([0, 1])
+    expect(store.accounts[1]!.name).toHaveLength(80)
+    expect(store.accounts.map((a) => a.identityKey)).toEqual([
+      identityKeyForAccount(MASTER, 0),
+      identityKeyForAccount(MASTER, 1),
+    ])
+    expect(store.activeIndex).toBe(0)
+    expect(holdings()).toEqual({ 0: 'elsewhere', 1: 'elsewhere' })
+    expect(readVaultAccounts(MASTER_IK).accounts[1]!.holding).toEqual({ kind: 'elsewhere', seq: 0, deviceId: null })
+  })
+
   it('ignores a list for another vault, or none', () => {
     on('B')
     const other = { version: 1, masterIdentityKey: '02' + 'cd'.repeat(32), activeIndex: 0, accounts: [] }
