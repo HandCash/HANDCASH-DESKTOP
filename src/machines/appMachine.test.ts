@@ -17,6 +17,23 @@ function readyActor(balanceSats = 12_345) {
 }
 
 describe('app session chart', () => {
+  it('paints a selected wallet cache without treating it as a fresh read', () => {
+    const actor = readyActor()
+    const next = { ...profile, identityKey: 'next-wallet' }
+    actor.send({ type: 'ACCOUNT_SWITCH_STARTED', profile: next })
+    expect(actor.getSnapshot().context).toMatchObject({ balanceSats: 0, balancePending: true })
+    actor.send({ type: 'ACCOUNT_SWITCHED', profile: next, balanceSats: 700 })
+    expect(actor.getSnapshot().matches('ready')).toBe(true)
+    expect(actor.getSnapshot().context).toMatchObject({
+      profile: next, balanceSats: 700, balancePending: false, balanceFreshness: 'cached',
+    })
+    actor.send({ type: 'REFRESHED', balanceSats: 650 })
+    expect(actor.getSnapshot().context).toMatchObject({
+      balanceSats: 650, balancePending: false, balanceFreshness: 'read',
+    })
+    actor.stop()
+  })
+
   it('takes the balance a send reports while ready', () => {
     const actor = readyActor()
     actor.send({ type: 'FAIL', error: 'earlier' })

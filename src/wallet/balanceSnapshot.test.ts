@@ -12,6 +12,7 @@ vi.mock('./durableStorage', () => ({
 
 const {
   readTrustedBalance,
+  readTrustedBalanceSnapshot,
   shouldKeepDisplayBalanceOnConfirmedRead,
   shouldKeepTrustedBalance,
   writeTrustedBalance,
@@ -19,6 +20,23 @@ const {
 
 describe('cold-start trusted balance', () => {
   beforeEach(() => durable.clear())
+
+  it('keeps counts identity-scoped and does not refresh their timestamp on read', () => {
+    writeTrustedBalance('identity-a', 'main', 120, { spendableSats: 100, outputCount: 2, rowCount: 5 })
+    const first = readTrustedBalanceSnapshot('identity-a', 'main')
+    expect(first?.summary).toEqual({ spendableSats: 100, outputCount: 2, rowCount: 5 })
+    expect(readTrustedBalanceSnapshot('identity-a', 'main')).toEqual(first)
+    expect(readTrustedBalanceSnapshot('identity-a', 'test')).toBeNull()
+    expect(readTrustedBalanceSnapshot('identity-b', 'main')).toBeNull()
+    // A non-summary fresh read must not leave obsolete counts beside its total.
+    writeTrustedBalance('identity-a', 'main', 90)
+    expect(readTrustedBalanceSnapshot('identity-a', 'main')?.summary).toBeUndefined()
+  })
+
+  it('drops malformed summary metadata without trusting it', () => {
+    writeTrustedBalance('identity-a', 'main', 120, { spendableSats: 100, outputCount: -1, rowCount: 5 })
+    expect(readTrustedBalanceSnapshot('identity-a', 'main')?.summary).toBeUndefined()
+  })
 
   it('restores the last successfully read balance for the same identity', () => {
     writeTrustedBalance('identity-a', 'main', 710_091)

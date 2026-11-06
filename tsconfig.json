@@ -16,6 +16,7 @@
     "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true,
     "paths": {
+      "@handcash/wallet-engine": ["./packages/wallet-engine/src/index.ts"],
       "@aeon-ui/core": ["./node_modules/aeon-ui-engine/packages/core/src/index.ts"],
       "@aeon-ui/primitives": ["./node_modules/aeon-ui-engine/packages/primitives/src/index.ts"],
       "@aeon-ui/react": ["./node_modules/aeon-ui-engine/packages/react/src/index.ts"],

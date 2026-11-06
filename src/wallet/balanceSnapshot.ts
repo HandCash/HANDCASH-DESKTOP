@@ -14,15 +14,25 @@ import { storageRegistry } from '../storage/registry'
 
 const LEGACY_BALANCE_KEY = storageRegistry.balanceLastTrusted.key
 
-type TrustedBalanceSnapshot = {
+export type TrustedBalanceSnapshot = {
   identityKey: string
   chain: Chain
   sats: number
   readAt: number
+  /** Fresh local projection only; absent on legacy or non-IDB reads. */
+  summary?: { spendableSats: number; outputCount: number; rowCount: number }
 }
 
 function balanceKey(identityKey: string, chain: Chain): string {
   return `${storageRegistry.balanceLastTrustedPrefix.key}${chain}:${identityKey}`
+}
+
+function validSummary(value: unknown): value is NonNullable<TrustedBalanceSnapshot['summary']> {
+  if (value == null || typeof value !== 'object') return false
+  const summary = value as NonNullable<TrustedBalanceSnapshot['summary']>
+  return [summary.spendableSats, summary.outputCount, summary.rowCount]
+    .every(n => Number.isSafeInteger(n) && n >= 0) &&
+    summary.outputCount <= summary.rowCount
 }
 
 function parseSnapshot(raw: string | null): TrustedBalanceSnapshot | null {
@@ -43,34 +53,40 @@ function parseSnapshot(raw: string | null): TrustedBalanceSnapshot | null {
       identityKey: parsed.identityKey,
       chain: parsed.chain,
       sats,
-      readAt: Number(parsed.readAt) || 0,
+      readAt: Number.isSafeInteger(parsed.readAt) && parsed.readAt! >= 0 ? parsed.readAt! : 0,
+      ...(validSummary(parsed.summary) ? { summary: parsed.summary } : {}),
     }
   } catch {
     return null
   }
 }
 
-export function readTrustedBalance(
+export function readTrustedBalanceSnapshot(
   identityKey: string,
   chain: Chain,
-): number | null {
+): TrustedBalanceSnapshot | null {
   if (!identityKey) return null
   const scoped = parseSnapshot(durableGetItem(balanceKey(identityKey, chain)))
   if (scoped && scoped.identityKey === identityKey && scoped.chain === chain) {
-    return scoped.sats
+    return scoped
   }
   // Legacy single-slot snapshot (pre multi-account).
   const legacy = parseSnapshot(durableGetItem(LEGACY_BALANCE_KEY))
   if (legacy && legacy.identityKey === identityKey && legacy.chain === chain) {
-    return legacy.sats
+    return legacy
   }
   return null
+}
+
+export function readTrustedBalance(identityKey: string, chain: Chain): number | null {
+  return readTrustedBalanceSnapshot(identityKey, chain)?.sats ?? null
 }
 
 export function writeTrustedBalance(
   identityKey: string,
   chain: Chain,
   sats: number,
+  summary?: TrustedBalanceSnapshot['summary'],
 ): void {
   if (!identityKey || !Number.isSafeInteger(sats) || sats < 0) return
   const snapshot: TrustedBalanceSnapshot = {
@@ -78,6 +94,7 @@ export function writeTrustedBalance(
     chain,
     sats,
     readAt: Date.now(),
+    ...(validSummary(summary) ? { summary } : {}),
   }
   durableSetItem(balanceKey(identityKey, chain), JSON.stringify(snapshot))
   // Keep legacy slot updated for the most recent write so older readers still

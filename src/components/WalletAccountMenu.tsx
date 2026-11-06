@@ -13,7 +13,7 @@ import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { setNavSection } from '../wallet/navStore'
 import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
 import { refreshAfterAccountSwitch } from '../wallet/recompose'
-import { switchVaultAccount } from '../wallet/session'
+import { refreshSelectedWalletBalance, switchVaultAccount } from '../wallet/session'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { getWalletRuntime, runtimeIsCurrent } from '../wallet/walletRuntime'
@@ -213,6 +213,7 @@ export function WalletAccountMenu({
       onAccountSwitched(nextProfile, balanceSats)
       playWalletSound('soft')
       send({ type: 'SWITCHED' })
+      void refreshSelectedWalletBalance(runtime).catch(() => { /* Keep the cached paint on a busy store. */ })
       if (!arrival) void settleAfterSwitch()
       return true
     } catch (error) {

@@ -14,6 +14,8 @@ export type AppContext = {
   balanceSats: number
   /** True while the newly selected wallet's Toolbox balance is being read. */
   balancePending: boolean
+  /** Cached paint is never a fresh local-state observation. */
+  balanceFreshness: 'cached' | 'read'
   error: string | null
   bridgeOnline: boolean
   version: string
@@ -70,6 +72,7 @@ export const appMachine = setup({
     profile: null,
     balanceSats: 0,
     balancePending: false,
+    balanceFreshness: 'cached',
     error: null,
     bridgeOnline: false,
     version: '0.0.0',
@@ -149,12 +152,13 @@ export const appMachine = setup({
       on: {
         LOCK: {
           target: 'locked',
-          actions: assign({ profile: null, balanceSats: 0, balancePending: false }),
+          actions: assign({ profile: null, balanceSats: 0, balancePending: false, balanceFreshness: 'cached' }),
         },
         SENT: {
           actions: assign({
             balanceSats: ({ event }) => event.balanceSats,
             balancePending: false,
+            balanceFreshness: 'read',
             error: null,
           }),
         },
@@ -162,6 +166,7 @@ export const appMachine = setup({
           actions: assign({
             balanceSats: ({ event }) => event.balanceSats,
             balancePending: false,
+            balanceFreshness: 'read',
           }),
         },
         ACCOUNT_SWITCH_STARTED: {
@@ -169,6 +174,7 @@ export const appMachine = setup({
             profile: ({ event }) => event.profile,
             balanceSats: 0,
             balancePending: true,
+            balanceFreshness: 'cached',
             error: null,
           }),
         },
@@ -177,6 +183,7 @@ export const appMachine = setup({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
             balancePending: false,
+            balanceFreshness: 'cached',
             error: null,
           }),
         },

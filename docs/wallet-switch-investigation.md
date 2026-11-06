@@ -23,35 +23,80 @@ No measured UTXO count or per-stage unlock timing proves a large UTXO set is
 the cause. Repeated inventory/history scans and shared reader-lock contention
 are directly observed.
 
-## Changes
+## Review of a579e27d
 
-The existing menu chart's SWITCHED boundary now follows runtime selection and
-the identity-scoped cached balance projection, without waiting for a fresh
-balance read. Dashboard's normal reconciliation remains responsible for fresh
-display state. Cached balances remain display-only and are no longer rewritten
-with a new timestamp just because an account was selected.
+The cached-paint boundary and managed eligibility-before-pagination are sound.
+They were not a complete bounded-read fix: each page still gathered all matching
+transaction IDs, exact protocol totals still counted the whole result, and the
+display aggregate still materialised every eligible coin. The pending-change
+reader still rescanned growing offsets. Tests covered one seven-row page, not
+large physical pages, interrupted reads, or cache freshness.
 
-IDB managed-coin pages previously loaded all eligible candidates then sliced.
-Eligibility now runs inside the cursor before offset/limit, so only the requested
-page is materialised. Counts use the same predicate. Regression coverage uses
-real IndexedDB with incomplete derivations and spent rows preceding valid coins.
+An additional existing correctness race mattered once reads yielded: a late
+old-wallet read could change session-wide balance values and combine its cash
+with the newly selected wallet's pending change. Dropping a coalesced flight
+also did not stop its old result from repopulating caches.
 
-Unconfirmed-change reads now use 100-row lock scopes and explicitly yield after
-releasing each scope. The existing 2,000-row scan ceiling is unchanged.
+## Follow-up changes
 
-Vitest resolves the engine from this checkout: a shared node_modules workspace
-symlink otherwise caused the new regression to execute the other worktree's
-engine instead of these edits.
+- The app chart records cached versus locally read balance. Selection paints
+  the identity/chain-scoped cache without waiting for storage; an explicit
+  background local read publishes only to the still-current runtime. This
+  local reconciliation does not wait for the network settle/recompose.
+- The durable display snapshot also stores managed spendable output count,
+  local output-row count and spendable subtotal. Its read timestamp changes
+  only after a successful read, never on selection. Legacy snapshots remain
+  readable; non-summary writes discard old counts. No cached amount/count
+  authorizes a payment.
+- Display totals on the native IDB provider use primary-key pages of at most
+  100 physical output rows. No whole-wallet count, script hydration or complete
+  transaction-ID set runs in this projection. The manager lock is released
+  before every UI yield. A waiting foreground send defers the projection
+  instead of triggering an unbounded fallback.
+- Provider identity and local write revision fence every summary page, the
+  completed total, and the later pending-change read. A concurrent local write
+  discards the projection. These revisions are per provider instance, not a
+  cross-tab snapshot protocol; cached summaries remain display-only.
+- Native pending-change reads also use 100-physical-row keyset pages, avoiding
+  offset-prefix rescans. They can reach change beyond 2,000 physical rows;
+  legacy providers retain their previous 2,000-matching-row ceiling.
+  Background display reads wait for foreground sends outside the lock.
+- Runtime and invalidation-generation checks reject late reads before changing
+  global totals or durable snapshots. Confirmed-only spend checks still use
+  authoritative Toolbox operations, not the display summary.
+- Transaction eligibility uses status-index key seeks for the encountered
+  parent IDs, not getAllKeys for the whole wallet. Exact BRC-100 totals and
+  returned output ordering are unchanged.
+- Both Vitest and TypeScript resolve the engine from this checkout. The shared
+  node_modules workspace link otherwise tests/types the other checkout.
+
+Regression coverage includes real IndexedDB pages (250 physical rows),
+incomplete/spent rows, transaction-status changes, writes between pages,
+a pending row beyond 2,000 physical rows, yield/lock boundaries, waiting sends,
+runtime changes, pre-credit late reads, and real app/menu chart transitions.
+
+## Verification
+
+The final engine build and TypeScript check passed against this worktree's
+engine source. The full Vitest run passed: 564 test files, 4,516 tests;
+one performance file / three tests remain skipped by the existing configuration.
+These are local regression results, not Mobile latency measurements.
 
 ## Remaining / not verified
 
-This is a partial remediation, not a claim that switching is now instant on a
-phone. No post-change device measurement or UI verification has been performed.
-A balance cache already existed; a durable balance-and-count summary and
-background paged full-coin loading are not implemented here. Wallet.balance's
-aggregate path and exact listOutputs totals still scan all matching rows.
-Activity ledger and reverse inventory pagination remain expensive in this log;
-they need separate bounded/keyset work, not just a smaller result array.
-No blanket claim that all storage locks exclude whole-table reads is made.
-No Refresh/history boundary, network call, custody or spend authorization was
-changed.
+No post-change phone timing, rendering/frame trace, real-device send contention
+benchmark, or visual UI verification has been performed. The recorded 828 ms
+switch is an old build's runtime-selection duration, not the new UI latency.
+A large UTXO set is plausible but not proven by these uploads.
+
+The new background load streams coins into a complete display projection, not
+an in-memory full coin list. Confirmed Wallet.balance aggregates and exact
+BRC-100 listOutputs totals still scan the matching set; removing those requires
+a separately verified transactional aggregate/index contract, not reuse of a
+stale display cache. Generic offset/reverse inventory pages and activity ledger
+also retain remaining scan costs. No claim that every storage operation is now
+bounded is made. The new display/keyset paths never hold the manager lock
+across a whole-wallet scan or a network call.
+
+Refresh remains chain ingest; history/recompose remains a separate layer.
+No network, custody, signing, or release behavior was changed.
