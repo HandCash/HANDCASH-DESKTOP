@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.656] - 2026-11-06
+
+### Changed
+
+- A fresh device with an existing account no longer dead-ends on the unlock screen, and a stuck unlock screen resets.
+- Release Mobile workflow: every Desktop tag pins the same core in HANDCASH-MOBILE, bumps and tags it (needs secret MOBILE_RELEASE_TOKEN).
+
 ## [1.3.655] - 2026-11-06
 
 ### Fixed
