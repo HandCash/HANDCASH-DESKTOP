@@ -1102,6 +1102,24 @@ html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .col
   display: none;
 }
 
+/* The select box sits in the tile's own row under the name, never over the art. */
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions {
+  position: static;
+  inset: auto;
+  justify-content: center;
+  padding: 0 0 var(--hc-space-1);
+}
+
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions > * {
+  opacity: 1;
+}
+
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='collectables'] .collectable-card-actions .collect-select {
+  width: 100%;
+  min-height: 32px;
+  height: 32px;
+}
+
 /* Under 16px, iOS zooms the page when the field takes focus. */
 html.platform-mobile .panel-filter .search-field input {
   font-size: 16px;

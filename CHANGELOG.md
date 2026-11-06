@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.655] - 2026-11-06
+
+### Fixed
+
+- Mobile items grid: the select box sits below the thumbnail in the tile, no longer over the image.
+
 ## [1.3.654] - 2026-11-06
 
 ### Fixed
