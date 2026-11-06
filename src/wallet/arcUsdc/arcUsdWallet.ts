@@ -14,6 +14,7 @@ import { durableGetItem, durableSetItem } from '../durableStorage'
 import { assertOnlineForPayment } from '../paymentPolicy'
 import type { ActiveWallet } from '../session'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
+import { moveIfHeldElsewhere, spendNeedsMove } from '../spendAutoMove'
 import { getWalletRuntime } from '../walletRuntime'
 import { ethAddressFromPrivateKey, assertEthAddress, isEthAddress } from './address'
 import { ARC_NETWORKS, ARC_USDC_DECIMALS, ARC_USDC_ERC20, type ArcNetwork } from './chain'
@@ -152,7 +153,8 @@ function ensureMigrated(): void {
 function preflightSend(args: SendArcUsdArgs): void {
   const active = requireActive()
   const heldElsewhere = activeAccountSpendRefusal(active)
-  if (heldElsewhere) refuse('held-elsewhere', heldElsewhere)
+  // A wallet held elsewhere is moved by the send itself (BRC-249); other refusals stop here.
+  if (heldElsewhere && !spendNeedsMove(heldElsewhere)) refuse('held-elsewhere', heldElsewhere)
   if (args.identityKey != null && String(args.identityKey).trim() !== '') {
     refuse('unsupported-recipient', 'USDC on Arc pays a 0x address, not a HandCash identity.')
   }
@@ -187,7 +189,9 @@ async function refresh(): Promise<{ address: string; balance: { spendable: strin
 async function send(args: SendArcUsdArgs, opts?: { toLabel?: string; origin?: string }): Promise<SendArcUsdResult> {
   assertOnlineForPayment()
   preflightSend(args)
+  await moveIfHeldElsewhere(requireActive())
   const active = requireActive()
+  if (activeAccountSpendRefusal(active)) refuse('held-elsewhere', activeAccountSpendRefusal(active)!)
   const atoms = atomsOf(args)
   const to = assertEthAddress(args.address)
   const { key, address: from } = keyOf(active)

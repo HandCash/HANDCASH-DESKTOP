@@ -106,10 +106,12 @@ function notifySelection(deviceId: string) {
 export function getOrCreateDeviceId(): string {
   const existing = durableGetItem(DEVICE_ID_KEY)?.trim()
   if (existing) return existing
+  // The id names this install in BRC-249 holder records; it must not be guessable, so no Math.random.
+  const webCrypto: Crypto = globalThis.crypto
   const id =
-    typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `dev-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`
+    typeof webCrypto.randomUUID === 'function'
+      ? webCrypto.randomUUID()
+      : `dev-${Array.from(webCrypto.getRandomValues(new Uint8Array(16)), (b: number) => b.toString(16).padStart(2, '0')).join('')}`
   durableSetItem(DEVICE_ID_KEY, id)
   return id
 }
