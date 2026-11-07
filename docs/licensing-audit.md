@@ -76,6 +76,21 @@ Require file-level provenance and contributor rights; exact source/lock/native/W
 
 Retain historical notices and provenance in history and archived releases. Any future removal from an active distribution requires evidence that the covered material is absent or a reviewed replacement grant that expressly permits it; it never rewrites old obligations or cures earlier notice omissions. A scoped license for verified-original code is distinct from blanket relicensing. No root/package license metadata, public claims, notices or release artifacts are changed by this checkpoint.
 
+## Fastest legal path to a multicurrency wallet — recommendation (requires approval)
+
+Evidence: other-chain code (LTC, BTC, ARC USDC) imports `@bsv/sdk` at runtime; SDK, Verifast, Webrtpay and the Toolbox-derived engine carry Open BSV terms whose condition 2 confines covered software and derivatives to BSV use. No written permission from any rights holder is in this repository; the root `package.json` label is metadata, not a grant.
+
+1. **Existing permission — not available.** Nothing found grants multichain use. Older historical grants (v4/v5, pre-2026 SDK notices) may be broader, but they apply only to the exact snapshots they cover and need counsel to confirm. Babbage's setup is a comparison, not permission for us.
+2. **Fastest for the non-BSV paths: replace.** Move LTC/BTC/USDC key, hash and signing code to audited permissive primitives (noble/scure) behind small adapters, with per-chain vectors. This is days, needs no third party, and does not touch the BSV wallet.
+3. **In parallel: ask for written permission** from the actual rights holders (BSV Association and the Toolbox/SDK authors, to be identified by counsel) for the exact snapshots, derivatives, other-chain use and downstream distribution. Timing is outside our control.
+4. **Slowest: first-principles BRC-100 engine** replacing Toolbox-derived engine, Verifast and Webrtpay from public specs with documented provenance. Do this only if permission is refused or the product must be free of Open BSV code.
+
+Until step 2 or 3 lands, do not ship a build that advertises multichain support as license-clean.
+
+## NAR / DAR: is it an issue?
+
+Not for the non-BSV adapters once they carry no covered code. For BSV paths it is a legal question, not a code one: NAR assent can be triggered by Network Activity or use of Node Software, and DAR/directives act at miner and node level. Replacing code cannot remove miner-level enforcement on BSV funds. Whether a wallet is a "Node" under NAR is for counsel.
+
 ## Questions requiring legal/ownership review
 
 Who can grant rights to historical contributions and embedded node/BDK code? Which original files and assets are assigned to HandCash? Does any proven independently implemented subset avoid derivation? How do field-of-use terms apply to the combined app and its existing other-chain paths? What patent/trademark rights remain outside any copyright license? What remediation is appropriate for already distributed archives if required notices were missing? Obtain advice before claiming unrestricted multichain compliance or issuing a blanket open-source license.
