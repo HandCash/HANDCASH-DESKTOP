@@ -7,7 +7,6 @@ import { openFiatCurrency } from '../wallet/navStore'
 /**
  * Balance chrome: total in the preferred government currency.
  * Opens Activity / Currency — not an in-pill ticker or coin list.
- * Compact/mobile shows the currency flag when the label needs to squish.
  */
 export function FiatCurrencyMenu({
   amountLabel,
@@ -31,17 +30,12 @@ export function FiatCurrencyMenu({
         data-aeon-part="trigger"
         aria-haspopup="dialog"
         title="Choose display currency"
+        aria-label={`${pending ? 'Loading' : amountLabel} ${option.iso} · Choose display currency`}
         onClick={() => {
           playWalletSound('soft')
           openFiatCurrency()
         }}
       >
-        <h2 className="wallet-hero-title" aria-label="Balance">
-          <span className="wallet-hero-title-full">Balance</span>
-          <span className="wallet-hero-title-approx" aria-hidden="true">
-            {option.flag}
-          </span>
-        </h2>
         <span className="wallet-hero-metric-amount" aria-busy={pending || undefined}>
           {pending ? '—' : amountLabel}
         </span>
