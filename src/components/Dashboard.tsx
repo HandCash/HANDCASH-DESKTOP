@@ -182,6 +182,11 @@ function walletIdentityChip(
   }
 }
 
+/** Settings and Identity are full-height forms; compact CSS hides the home balance chrome for them. */
+function isFocusSection(section: string | undefined): boolean {
+  return section === 'settings' || section === 'identity'
+}
+
 type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string }
 
 function HiddenUnit({ unit }: { unit: string }) {
@@ -208,6 +213,7 @@ export function Dashboard({
       Boolean(getEmbeddedAppBrowser() && hasPendingPermissionPrompt())
     )
   })
+  const [sectionFocus, setSectionFocus] = useState(() => isFocusSection(getNavState().section))
   const [browserPermissionOpen, setBrowserPermissionOpen] = useState(() => {
     return Boolean(getEmbeddedAppBrowser() && hasPendingPermissionPrompt())
   })
@@ -236,6 +242,7 @@ export function Dashboard({
       const browserWithPrompt = Boolean(session && hasPendingPermissionPrompt())
       setContentFullscreen(isMessagesNavChild(child) || browsing || browserWithPrompt)
       setBrowserPermissionOpen(browserWithPrompt)
+      setSectionFocus(isFocusSection(getNavState().section))
     }
     const unsubNav = subscribeNav(syncLayout)
     const unsubBrowser = subscribeEmbeddedAppBrowser(() => syncLayout())
@@ -739,6 +746,8 @@ export function Dashboard({
   return (
     <section
       className={`dashboard${contentFullscreen ? ' dashboard--chat-fullscreen' : ''}${
+        sectionFocus ? ' dashboard--section-focus' : ''
+      }${
         browserPermissionOpen ? ' dashboard--browser-permission' : ''
       }`}
       data-aeon-scope="dashboard"
