@@ -46,55 +46,19 @@ describe('logShip', () => {
     vi.unstubAllGlobals()
   })
 
-  it('auto-provisions a BRC-CLOUD bucket when none is configured', async () => {
-    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
-    vi.stubGlobal('fetch', fetchSpy)
-    vi.stubGlobal('crypto', {
-      getRandomValues: (a: Uint8Array) => {
-        a.fill(0xab)
-        return a
-      },
-    })
-    const ship = await withRecoveredCrash()
-
-    const result = await ship.shipPreviousSessionLogs()
-
-    expect(result.ok).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [url] = fetchSpy.mock.calls[0] as unknown as [string]
-    expect(url).toMatch(/\/v1\/logs\/hc-[0-9a-f]+$/)
-    expect(store.get(UPLOAD_KEY)).toBe(url)
-  })
-
-  it('uploads a recovered crash log automatically', async () => {
+  it('sends nothing at load, even with a recovered crash log and an upload URL', async () => {
     store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-abcdefgh')
     const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchSpy)
     const ship = await withRecoveredCrash()
 
-    const result = await ship.shipPreviousSessionLogs()
-
-    expect(result.ok).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
-    expect(url).toBe('https://example.test/v1/logs/hc-abcdefgh')
-    expect(String(init.body)).toContain('out of memory')
-    expect((init.headers as Record<string, string>)['X-HandCash-Version']).toBe('9.9.9')
+    expect(Object.keys(ship)).not.toContain('shipAppLogsAuto')
+    expect(Object.keys(ship)).not.toContain('startAutoLogShip')
+    expect(Object.keys(ship)).not.toContain('shipPreviousSessionLogs')
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('uploads only once per launch', async () => {
-    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-abcdefgh')
-    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
-    vi.stubGlobal('fetch', fetchSpy)
-    const ship = await withRecoveredCrash()
-
-    await ship.shipPreviousSessionLogs()
-    await ship.shipPreviousSessionLogs()
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-  })
-
-  it('reports a rejected upload instead of throwing', async () => {
+  it('reports a rejected manual upload instead of throwing', async () => {
     store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-abcdefgh')
     vi.stubGlobal(
       'fetch',
@@ -102,10 +66,26 @@ describe('logShip', () => {
     )
     const ship = await withRecoveredCrash()
 
-    const result = await ship.shipPreviousSessionLogs()
+    const result = await ship.shipAppLogs()
 
     expect(result).toMatchObject({ ok: false })
     if (!result.ok) expect(result.error).toContain('413')
+  })
+
+  it('manual send includes the previous session and the manual reason', async () => {
+    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-abcdefgh')
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const ship = await withRecoveredCrash()
+
+    const result = await ship.shipAppLogs()
+
+    expect(result.ok).toBe(true)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('https://example.test/v1/logs/hc-abcdefgh')
+    expect(String(init.body)).toContain('out of memory')
+    expect((init.headers as Record<string, string>)['X-HandCash-Log']).toBe('manual')
   })
 
   it('rejects a non-http upload URL', async () => {
@@ -126,32 +106,11 @@ describe('logShip', () => {
     vi.stubGlobal('fetch', fetchSpy)
     const ship = await withRecoveredCrash()
 
-    await ship.shipPreviousSessionLogs()
+    await ship.shipAppLogs()
 
     const [url] = fetchSpy.mock.calls[0] as unknown as [string]
     expect(url).toBe('https://example.test/v1/logs/hc-abcdefgh')
     expect(store.get(UPLOAD_KEY)).toBe('https://example.test/v1/logs/hc-abcdefgh')
-  })
-
-  it('auto-ships on send-failure without waiting for the interval', async () => {
-    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-live')
-    store.set(
-      CURRENT_KEY,
-      JSON.stringify([{ at: 1, level: 'error', message: 'send blew up' }]),
-    )
-    stubBrowserGlobals()
-    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
-    vi.stubGlobal('fetch', fetchSpy)
-    await import('./appLog').then((m) => m.installAppLogCapture())
-    const ship = await import('./logShip')
-
-    const first = await ship.shipAppLogsAuto('send-failure')
-    expect(first.ok).toBe(true)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
-    expect((init.headers as Record<string, string>)['X-HandCash-Log']).toBe(
-      'send-failure',
-    )
   })
 
   it('includes renderer wallet lines even when Electron main logs exist', async () => {

@@ -49,32 +49,27 @@ describe('log upload privacy evidence', () => {
   const body = () => String((fetchSpy.mock.calls.at(-1) as [string, RequestInit])[1].body)
   const reason = () => ((fetchSpy.mock.calls.at(-1) as [string, RequestInit])[1].headers as Record<string, string>)['X-HandCash-Log']
 
-  it('posts at boot, five-minute interval and hidden event with a one-minute debounce', async () => {
+  it('has no automatic sender: no boot, interval, hidden, failure or crash-recovery upload', async () => {
+    store.set('handcash.applog.current.v1', JSON.stringify([
+      { at: 1, level: 'error', message: 'previous session crash' },
+    ]))
+    const log = await import('./appLog')
+    log.installAppLogCapture()
     const ship = await import('./logShip')
-    ship.startAutoLogShip()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(reason()).toBe('boot')
-    expect(body()).toContain('# userAgent synthetic user agent')
-    expect(body()).toContain('version synthetic-test · platform synthetic')
+    expect(Object.keys(ship).sort()).toEqual(['shellOnlyLines', 'shipAppLogs'])
     doc.visibilityState = 'hidden'
     visibilityChanged?.()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(300_000)
-    expect(reason()).toBe('interval')
-    await vi.advanceTimersByTimeAsync(60_000)
-    visibilityChanged?.()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(reason()).toBe('hidden')
-    expect(fetchSpy).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(30 * 60_000)
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it('send-failure bypasses the time debounce', async () => {
+  it('manual send is the only upload path and still posts', async () => {
     const ship = await import('./logShip')
-    await ship.shipAppLogsAuto('boot')
-    await ship.shipAppLogsAuto('send-failure')
-    expect(fetchSpy).toHaveBeenCalledTimes(2)
-    expect(reason()).toBe('send-failure')
+    const result = await ship.shipAppLogs()
+    expect(result.ok).toBe(true)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(reason()).toBe('manual')
+    expect(body()).toContain('# userAgent synthetic user agent')
   })
 
   it('redacts recognized new renderer fields, but not unlabelled material or balance metadata', async () => {
@@ -82,7 +77,7 @@ describe('log upload privacy evidence', () => {
     log.appendAppLog('info', JSON.stringify({ mnemonic: 'SYNTHETIC_LABELLED_SEED', privateKey: 'SYNTHETIC_LABELLED_KEY' }))
     log.appendAppLog('info', 'SYNTHETIC_UNLABELLED_MATERIAL spendable=123 txid=SYNTHETIC_TX')
     const ship = await import('./logShip')
-    await ship.shipAppLogsAuto('send-failure')
+    await ship.shipAppLogs()
     expect(body()).toContain('[REDACTED]')
     expect(body()).not.toContain('SYNTHETIC_LABELLED_SEED')
     expect(body()).not.toContain('SYNTHETIC_LABELLED_KEY')
@@ -91,15 +86,15 @@ describe('log upload privacy evidence', () => {
     expect(body()).toContain('SYNTHETIC_TX')
   })
 
-  it('does not re-redact persisted previous-session entries at upload', async () => {
+  it('does not re-redact persisted previous-session entries at manual upload', async () => {
     store.set('handcash.applog.current.v1', JSON.stringify([
       { at: 1, level: 'error', message: 'privateKey=SYNTHETIC_PERSISTED_MATERIAL' },
     ]))
     const log = await import('./appLog')
     log.installAppLogCapture()
     const ship = await import('./logShip')
-    await ship.shipPreviousSessionLogs()
-    expect(reason()).toBe('crash-recovery')
+    await ship.shipAppLogs()
+    expect(reason()).toBe('manual')
     expect(body()).toContain('privateKey=SYNTHETIC_PERSISTED_MATERIAL')
   })
 
@@ -108,16 +103,17 @@ describe('log upload privacy evidence', () => {
       handcash: { readLogs: async () => ({ ok: true, text: 'mnemonic=SYNTHETIC_SHELL_MATERIAL' }) },
     })
     const ship = await import('./logShip')
-    await ship.shipAppLogsAuto('boot')
+    await ship.shipAppLogs()
     expect(body()).toContain('mnemonic=SYNTHETIC_SHELL_MATERIAL')
   })
 
-  it('clearing the URL reprovisions a sink rather than disabling uploads', async () => {
+  it('clearing the URL reprovisions a sink for manual sends only', async () => {
     vi.stubGlobal('crypto', { getRandomValues: (a: Uint8Array) => { a.fill(0x12); return a } })
     const prefs = await import('./logUploadPrefs')
     prefs.setLogUploadUrl('')
+    expect(fetchSpy).not.toHaveBeenCalled()
     const ship = await import('./logShip')
-    await ship.shipAppLogsAuto('boot')
+    await ship.shipAppLogs()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(store.has('handcash.logs.uploadUrl')).toBe(true)
   })

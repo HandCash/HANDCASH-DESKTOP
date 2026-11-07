@@ -90,13 +90,12 @@ export async function logSpendSnapshot(
   logDiag('spend', level, event, { ...snap, ...fields })
 }
 
-/** Balance context + auto-upload for send/burn/market failures. */
+/** Balance context for send/burn/market failures. Never uploads; the user sends logs manually. */
 export async function logSpendFailure(
   reason: string,
   fields: Record<string, unknown> = {},
 ): Promise<void> {
   await logSpendSnapshot(reason, fields, 'error')
-  void import('./logShip').then((m) => m.shipAppLogsAuto('send-failure'))
 }
 
 function originHost(origin: string | undefined): string {

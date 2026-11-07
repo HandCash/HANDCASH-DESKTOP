@@ -9,7 +9,6 @@ import { App } from './App'
 import { installAppLogCapture } from './wallet/appLog'
 import { startHandCashTheme } from './wallet/handcashTheme'
 import { startLayoutViewport } from './wallet/layoutViewport'
-import { shipPreviousSessionLogs, startAutoLogShip } from './wallet/logShip'
 // Brand palette from Settings appearance (system / light / dark). Must run before
 // first paint so --hc-* / Aeon vars match the sheet.
 startHandCashTheme()
@@ -20,10 +19,7 @@ startLayoutViewport()
 
 installAppLogCapture()
 
-// A crash log is only useful if it leaves the device on its own.
-void shipPreviousSessionLogs().finally(() => {
-  startAutoLogShip()
-})
+// Logs leave the device only when the user presses Send logs in Settings.
 
 const platform = window.handcash?.platform
 if (platform === 'darwin') {
