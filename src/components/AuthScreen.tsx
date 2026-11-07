@@ -340,7 +340,10 @@ export function AuthScreen({
       })
       await prepareAddedDevice({
         master: unlocked.master,
-        allowUnrecorded: unlockActor.getSnapshot().context.allowUnrecorded,
+        // A device the holder just approved by scan is their choice of a new wallet here,
+        // so a host that cannot record holders must not block the sign-in.
+        allowUnrecorded:
+          kind === 'joined' || unlockActor.getSnapshot().context.allowUnrecorded,
       })
     } else if (kind === 'restore') {
       markVaultTakeover(unlocked.master)
