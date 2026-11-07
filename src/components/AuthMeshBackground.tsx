@@ -36,8 +36,8 @@ const SPLIT_COUNT_MAX = 6
 
 /** Nodes live this far past each edge so a pan reveals web, not a gap. */
 const PAN_PAD = 200
-/** Phone tilt to pan: pixels per degree. */
-const TILT_PX_PER_DEG = 7
+/** Phone tilt to pan: 20× subtler than the original 7 pixels per degree. */
+const TILT_PX_PER_DEG = 0.35
 
 /** Wraps a coordinate into [-PAN_PAD, size + PAN_PAD). */
 export function wrapPan(v: number, size: number): number {

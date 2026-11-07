@@ -20,6 +20,13 @@ describe('AuthMeshBackground', () => {
 
   const root = path.resolve(process.cwd(), 'src/components')
 
+  it('keeps phone tilt twenty times subtler than the original seven pixels per degree', () => {
+    const mesh = fs.readFileSync(path.join(root, 'AuthMeshBackground.tsx'), 'utf8')
+    const sensitivity = Number(mesh.match(/const TILT_PX_PER_DEG = ([\d.]+)/)?.[1])
+    expect(sensitivity).toBe(7 / 20)
+    expect(mesh).toContain('if (coarse) window.addEventListener(\'deviceorientation\', onTilt)')
+  })
+
   it('is a single-plane decorative canvas mesh, not subtitle copy', () => {
     const mesh = fs.readFileSync(path.join(root, 'AuthMeshBackground.tsx'), 'utf8')
     expect(mesh).toContain('data-aeon-part="mesh"')
