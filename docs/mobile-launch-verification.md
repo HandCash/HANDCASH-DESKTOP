@@ -2,17 +2,17 @@
 
 ## Current local evidence — 2026-11-07
 
-Desktop receipt implementation is committed in this worktree at `2d4f4e3882d4ce0c4f783ddbde010a1dd8ad71b4` (1.3.664). No receipt implementation edits are pending. Do not redo this change.
+Desktop receipt implementation is committed as `3a8125ea` (1.3.664). This worktree has since advanced to `1ae49a57`, including shared core 1.3.666, the vault account mismatch fix and phone spacing changes. The previous isolated-worktree receipt commit `2d4f4e38` is historical evidence, not the current HEAD. A pending pairing-chart regression test is preserved alongside unrelated edits; do not redo the receipt implementation.
 
 The receiver advertises `receiptVersion: 1`. The approver refuses older peers and requires a signature by the QR's one-time login key over `handcash-scan-login\ninstalled\n<loginKey>\n<approverKey>\n<sha256(sealedVault)>`. The receiver emits that receipt only after the installation callback acknowledges; AuthScreen calls it after `finishCreated` resolves. Failed or unacknowledged setup cannot approve pairing. LAN dispatch and the messagebox relay both await this completion. This is an application-level contract; the relay transports the same response body without interpreting the receipt.
 
-Fresh automated verification in this worktree: 10 test files / 143 tests passed (scan-login, pairing chart, peer dispatch, account release/holding/move/handover, vault account holding, holding freshness and spend guard). Renderer and Electron type checks passed. These are synthetic tests, not physical two-device acceptance or a new live relay test.
+Latest focused verification ran in the shared checkout at baseline `1ae49a57`, including its pending pairing-chart regression: 10 test files / 144 tests passed (scan-login, pairing chart, peer dispatch, account release/holding/move/handover, vault account holding, holding freshness and spend guard). Renderer and Electron type checks passed. The requested `vault.test.ts` path matched no file and adds no vault-suite evidence. These are synthetic tests, not physical two-device acceptance or a new live relay test. Alignity subsequently isolated this documentation edit into this chat's worktree; pending shared edits were left untouched.
 
 ## Matching Android source already exists
 
 Read-only inspection of `/home/spider/Work/handcash/HANDCASH-MOBILE` found a clean worktree at `81a031a`, version/tag `0.1.779` / `v0.1.779`, pinning Desktop `8cce7b5d008589c0ddc4221fc75de09d91e664cf` / 1.3.666. This supersedes the old planned 0.1.778 delivery. A local tag is not proof of publication, APK contents or installation.
 
-The pinned core has equivalent receipt code: comparison found no differences in scanLogin, DeviceSignInPanel, peer dispatch or Electron peer dispatch. Its AuthScreen additionally permits the scan-approved join's unrecorded-holder fallback and logs installation failures. It includes `9da1d091` (vault account mismatch fix) and `8cce7b5d` (phone spacing). Those newer changes are not imported into this older isolated branch or overwritten. The 143-test result above does not certify those newer changes.
+The pinned core has equivalent receipt code: comparison found no differences in scanLogin, DeviceSignInPanel, peer dispatch or Electron peer dispatch. Its AuthScreen additionally permits the scan-approved join's unrecorded-holder fallback and logs installation failures. It includes `9da1d091` (vault account mismatch fix) and `8cce7b5d` (phone spacing). Those newer changes are now present in this worktree's baseline and have not been overwritten. The earlier 143-test result predates this integration; use the latest focused verification below for current evidence.
 
 The proper Android route remains Mobile's immutable shared-core pin and `release-apk.yml`; do not fork shared panels into Mobile or run the release script against this older core. No push, publication, deployment, installation or wallet-data changes were performed in this verification pass.
 
