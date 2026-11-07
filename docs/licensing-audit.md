@@ -2,6 +2,10 @@
 
 Status: evidence-backed recommendation, NOT legal clearance. No license terms, notices, dependencies, release files or wallet data changed. Audit baseline: Desktop e9245220 (package 1.3.661); sibling Mobile checkout 0.1.774 pins Desktop 27578493 / 1.3.655. Those checkouts are not interchangeable with shipped artifacts.
 
+## Current launch checkpoint — 6 November 2026
+
+See [exact launch blockers](./licensing-launch-blockers.md) for current evidence, closure criteria and safe inventory remediation. This supersedes the machine-local availability claims below: `/tmp/handcash-license-audit` is now absent, so its archives and logs cannot currently be reverified. Mobile changed during the current audit to 40c9ecf; historical checkout and APK baselines below are not tonight's verified release candidate. No legal clearance is asserted.
+
 ## Recovery checkpoint — 6 November 2026
 
 Chat 261 is not exposed by the available open-chat list; its full conversation has not been recovered. Available evidence is the committed audit/replacement work (0a5bacbb) and Meridian architecture/encoding slice (b4536eb8), retained upstream text and machine-local artifacts. Both archive SHA-256 values below were rechecked and match. The saved inventory and test log remain available; `cargo-metadata.json` is zero bytes, not successful native inventory evidence. Existing UI/machine/vendor worktree edits were left untouched. Earlier findings below describe their stated baselines, not a fresh complete dependency or shipped-artifact audit. Checkpoint verification: app TypeScript typecheck and diff whitespace check passed; full test:ci ended with exit 130 and is not a pass. No runtime implementation was expanded.

@@ -7,20 +7,35 @@ import { execFileSync } from 'node:child_process'
 const roots = process.argv.slice(2)
 if (!roots.length) throw new Error('Pass Desktop and Mobile checkout paths')
 const hash = data => crypto.createHash('sha256').update(data).digest('hex')
+// Keep nested license trees: top-level hashes alone miss historical grants.
+// Never traverse symlinks or unrelated package contents (including .env files).
+const collectNotices = (dir, prefix = '') => {
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name)).flatMap(entry => {
+    if (entry.name.startsWith('.') || entry.isSymbolicLink()) return []
+    const name = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (!prefix && !/^(licen[cs]e|notice|copying|third.party)/i.test(entry.name)) return []
+    const file = path.join(dir, entry.name)
+    if (entry.isDirectory()) return collectNotices(file, name)
+    return entry.isFile() ? [{ name, sha256: hash(fs.readFileSync(file)) }] : []
+  })
+}
 const result = roots.map(root => {
   const lockBytes = fs.readFileSync(path.join(root, 'package-lock.json'))
   const lock = JSON.parse(lockBytes)
   const packages = Object.entries(lock.packages ?? {}).map(([location, value]) => {
     const dir = path.join(root, location)
-    const notices = []
-    if (fs.existsSync(dir)) {
-      for (const name of fs.readdirSync(dir).sort()) {
-        if (!/^(licen[cs]e|notice|copying|third.party)/i.test(name)) continue
-        const file = path.join(dir, name)
-        if (fs.statSync(file).isFile()) notices.push({ name, sha256: hash(fs.readFileSync(file)) })
-      }
-    }
-    return { location, version: value.version ?? null, license: value.license ?? null,
+    const notices = collectNotices(dir)
+    const manifestPath = path.join(dir, 'package.json')
+    const installedVersion = fs.existsSync(manifestPath)
+      ? JSON.parse(fs.readFileSync(manifestPath, 'utf8')).version ?? null : null
+    const evidenceIssues = []
+    if (!fs.existsSync(dir)) evidenceIssues.push('package-directory-missing')
+    if (!installedVersion) evidenceIssues.push('installed-version-unverified')
+    else if (value.version && installedVersion !== value.version) evidenceIssues.push('installed-version-mismatch')
+    if (!notices.length) evidenceIssues.push('no-notice-files-found')
+    // These are evidence gaps, not automatic findings of license violation.
+    return { location, version: value.version ?? null, installedVersion, evidenceIssues, license: value.license ?? null,
       dev: Boolean(value.dev), optional: Boolean(value.optional), link: Boolean(value.link),
       resolved: value.resolved ?? null, integrity: value.integrity ?? null, notices }
   })
