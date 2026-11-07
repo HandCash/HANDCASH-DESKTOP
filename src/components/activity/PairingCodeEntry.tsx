@@ -33,7 +33,7 @@ export function PairingCodeEntry({ label, length, attemptsLeft, confirm, approve
       ) : (
         <>
           <p className="signin-note">
-            {state === 'sending' ? `Code accepted. Sending your wallet to ${label}…` : `Type the numbers shown on ${label} to sign it in.`}
+            {state === 'sending' ? `Code accepted. Waiting for ${label} to install and open its wallet…` : `Type the numbers shown on ${label} to sign it in.`}
           </p>
           <input
             className="signin-code"

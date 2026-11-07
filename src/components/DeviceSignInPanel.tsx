@@ -26,13 +26,10 @@ export type ApprovedVault = {
   accounts: VaultTransfer['accounts']
   /** Always null: email is not a sign-in method. */
   signinEmail: string | null
-  /** Call once the vault is saved here; until then the relay keeps its sealed copy. */
+  /** Call only after durable installation, account holding and wallet runtime startup. */
   acknowledge: () => Promise<void>
+  fail: () => void
 }
-
-const nothingToAcknowledge = async () => undefined
-
-
 
 type Props = {
   onSignedIn: (vault: ApprovedVault) => void
@@ -82,7 +79,8 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           enrollment: event.transfer.enrollment,
           accounts: event.transfer.accounts,
           signinEmail: null,
-          acknowledge: nothingToAcknowledge,
+          acknowledge: event.acknowledge,
+          fail: event.fail,
         })
       }
     })
@@ -160,7 +158,8 @@ export function DeviceSignInPanel({ onSignedIn, onOtherWays, onRecovery, onCance
           </span>
           <p className="auth-lede">
             Type these numbers on {phase.approverLabel} to let it sign this device in. Only {phase.approverLabel} can
-            send the wallet, and only after the right numbers. Don&rsquo;t share them with anyone else.
+            send the wallet, and only after the right numbers. Device names are not verified; check the actual
+            device in front of you. Don&rsquo;t share these numbers with anyone else.
           </p>
         </div>
       ) : null}

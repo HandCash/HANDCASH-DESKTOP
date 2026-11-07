@@ -24,7 +24,7 @@ vi.mock('./deviceWallets', () => ({
 }))
 vi.mock('./scanLogin/receiver', () => ({
   isScanLoginPath: () => false,
-  handleScanLoginRequest: vi.fn(),
+  handleScanLoginRequestAsync: vi.fn(),
 }))
 
 const SNAPSHOT = '/handcash-device/v1/snapshot'
