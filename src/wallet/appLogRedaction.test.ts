@@ -14,6 +14,15 @@ describe('redactAppLogMessage', () => {
     expect(redacted).toContain('"ok":"visible"')
   })
 
+  it('redacts bearer credentials and token fields', () => {
+    const result = redactAppLogMessage(
+      'Authorization: Bearer SYNTHETIC_BEARER\n' +
+      JSON.stringify({ access_token: 'SYNTHETIC_ACCESS', apiKey: 'SYNTHETIC_API' }),
+    )
+    expect(result).not.toContain('SYNTHETIC_')
+    expect(result).toContain('[REDACTED]')
+  })
+
   it('redacts key-value password and secret forms', () => {
     expect(redactAppLogMessage('password=hunter2 failed')).toBe(
       'password=[REDACTED] failed',

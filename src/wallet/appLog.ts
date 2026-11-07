@@ -33,16 +33,18 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 let dirty = false
 
 const SENSITIVE_FIELD =
-  /((?:mnemonic|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization)\s*["']?\s*[:=]\s*["']?)([^"',}\]\s]+|[^"']{2,})/gi
+  /((?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)\s*["']?\s*[:=]\s*["']?)([^"',}\]\s]+|[^"']{2,})/gi
 const JSON_SENSITIVE_FIELD =
-  /("(?:mnemonic|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization)"\s*:\s*")([^"]*)(")/gi
+  /("(?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)"\s*:\s*")([^"]*)(")/gi
 
 /**
- * Logs are durable and may be uploaded automatically. Redact custody material
- * before it reaches either sink, including objects serialized by console capture.
+ * Logs are durable and can be sent manually. Redact recognized custody fields
+ * before storage and again on the final upload, including restored/shell lines.
+ * Pattern matching is not a guarantee against unlabelled secrets.
  */
 export function redactAppLogMessage(message: string): string {
   return message
+    .replace(/\bBearer\s+[^\s"',}\]]+/gi, 'Bearer [REDACTED]')
     .replace(JSON_SENSITIVE_FIELD, '$1[REDACTED]$3')
     .replace(SENSITIVE_FIELD, '$1[REDACTED]')
 }
