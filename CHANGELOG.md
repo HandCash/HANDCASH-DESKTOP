@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.665] - 2026-11-07
+
+### Fixed
+
+- Signing in by scan no longer fails when the backup host cannot record wallet holders; the approved device reserves its new wallet here. A failed install is now logged.
+
 ## [1.3.663] - 2026-11-06
 
 ### Changed
