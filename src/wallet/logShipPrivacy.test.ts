@@ -86,7 +86,7 @@ describe('log upload privacy evidence', () => {
     expect(body()).toContain('SYNTHETIC_TX')
   })
 
-  it('does not re-redact persisted previous-session entries at manual upload', async () => {
+  it('re-redacts persisted previous-session entries at manual upload', async () => {
     store.set('handcash.applog.current.v1', JSON.stringify([
       { at: 1, level: 'error', message: 'privateKey=SYNTHETIC_PERSISTED_MATERIAL' },
     ]))
@@ -95,16 +95,34 @@ describe('log upload privacy evidence', () => {
     const ship = await import('./logShip')
     await ship.shipAppLogs()
     expect(reason()).toBe('manual')
-    expect(body()).toContain('privateKey=SYNTHETIC_PERSISTED_MATERIAL')
+    expect(body()).not.toContain('SYNTHETIC_PERSISTED_MATERIAL')
+    expect(body()).toContain('[REDACTED]')
   })
 
-  it('does not redact shell tail returned through IPC before upload', async () => {
+  it('redacts shell tail returned through IPC before upload', async () => {
     vi.stubGlobal('window', {
       handcash: { readLogs: async () => ({ ok: true, text: 'mnemonic=SYNTHETIC_SHELL_MATERIAL' }) },
     })
     const ship = await import('./logShip')
     await ship.shipAppLogs()
-    expect(body()).toContain('mnemonic=SYNTHETIC_SHELL_MATERIAL')
+    expect(body()).not.toContain('SYNTHETIC_SHELL_MATERIAL')
+    expect(body()).toContain('[REDACTED]')
+  })
+
+  it.each(['http://example.test/logs', 'https://user:password@example.test/logs'])(
+    'rejects insecure or credential-bearing target %s without fetching', async (url) => {
+      const ship = await import('./logShip')
+      expect(await ship.shipAppLogs(url)).toMatchObject({ ok: false })
+      expect(fetchSpy).not.toHaveBeenCalled()
+    },
+  )
+
+  it('does not follow redirects or attach browser credentials to uploads', async () => {
+    const ship = await import('./logShip')
+    await ship.shipAppLogs()
+    expect(fetchSpy.mock.calls[0][1]).toMatchObject({
+      redirect: 'error', credentials: 'omit', referrerPolicy: 'no-referrer',
+    })
   })
 
   it('clearing the URL reprovisions a sink for manual sends only', async () => {

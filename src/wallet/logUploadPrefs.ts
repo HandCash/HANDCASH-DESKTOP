@@ -42,7 +42,8 @@ export function normalizeLogUploadUrl(raw: string): string {
 
 /**
  * Per-device upload URL. Empty durable prefs get a one-time `hc-<hex>` bucket so
- * crash auto-ship and Settings upload always have a sink without manual setup.
+ * a user-requested Settings upload has a sink without manual setup.
+ * Provisioning a URL does not send logs; bucket names are not authorization.
  */
 export function getLogUploadUrl(): string {
   const stored = durableGetItem(KEY)?.trim()

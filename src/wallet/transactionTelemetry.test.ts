@@ -47,35 +47,22 @@ describe('transactionTelemetry sink', () => {
     vi.unstubAllGlobals()
   })
 
-  it('drops the queue and stops dialling a 404 sink', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 404 }))
+  it('keeps transaction diagnostics local across scheduled and explicit flushes', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-
-    beginTransactionTrace('payment')
-    expect(queueDepth()).toBeGreaterThan(0)
-
-    await flushTransactionTelemetry()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(queueDepth()).toBe(0)
-
-    beginTransactionTrace('payment')
-    await flushTransactionTelemetry()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the queue and keeps retrying a 500 sink', async () => {
-    const fetchMock = vi.fn(async () => new Response('', { status: 500 }))
-    vi.stubGlobal('fetch', fetchMock)
-
-    beginTransactionTrace('payment')
-    const depth = queueDepth()
-    expect(depth).toBeGreaterThan(0)
-
-    await expect(flushTransactionTelemetry()).rejects.toThrow(/telemetry HTTP 500/)
-    expect(queueDepth()).toBe(depth)
-
-    await expect(flushTransactionTelemetry()).rejects.toThrow(/telemetry HTTP 500/)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    try {
+      beginTransactionTrace('payment')
+      const depth = queueDepth()
+      expect(depth).toBeGreaterThan(0)
+      await flushTransactionTelemetry()
+      await vi.advanceTimersByTimeAsync(60_000)
+      await flushTransactionTelemetry()
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(queueDepth()).toBe(depth)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

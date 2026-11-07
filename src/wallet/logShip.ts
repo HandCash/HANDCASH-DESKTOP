@@ -9,6 +9,7 @@
  */
 import {
   formatAppLogs,
+  redactAppLogMessage,
   getPreviousSessionLogs,
   type AppLogEntry,
 } from './appLog'
@@ -102,10 +103,11 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
   }
   const bucketPath = target.pathname.match(/^(\/v1\/logs\/[^/]+)/)
   if (bucketPath) target.pathname = bucketPath[1]!
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return { ok: false, error: 'Upload URL must be http(s)' }
+  if (target.protocol !== 'https:' || target.username || target.password) {
+    return { ok: false, error: 'Upload URL must use HTTPS without embedded credentials' }
   }
 
+  const redactedBody = redactAppLogMessage(body)
   try {
     const res = await fetch(target.toString(), {
       method: 'POST',
@@ -115,7 +117,11 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
         'X-HandCash-Version': APP_VERSION,
         'X-HandCash-Platform': platformTag(),
       },
-      body,
+      // Recheck restored and shell logs too, not just newly captured entries.
+      body: redactedBody,
+      redirect: 'error',
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
     })
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
@@ -124,7 +130,7 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
         error: `Upload failed (${res.status})${detail ? `: ${detail.slice(0, 160)}` : ''}`,
       }
     }
-    return { ok: true, bytes: body.length }
+    return { ok: true, bytes: new TextEncoder().encode(redactedBody).byteLength }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }

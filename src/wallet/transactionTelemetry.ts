@@ -2,14 +2,8 @@ import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 import { storageRegistry } from '../storage/registry'
-import { freshMessageboxAuthHeaders } from './messageboxAuth'
-import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import { logDiag } from './diagnosticLog'
-import {
-  assertRuntimeCurrent,
-  getWalletRuntime,
-  type WalletRuntime,
-} from './walletRuntime'
+import type { WalletRuntime } from './walletRuntime'
 
 const QUEUE_KEY_BASE = storageRegistry.transactionTelemetry.key
 const HISTORY_KEY_BASE = storageRegistry.transactionTelemetryDurations.key
@@ -23,7 +17,6 @@ function historyKey(): string {
 
 const MAX_QUEUE = 500
 const MAX_HISTORY_PER_FLOW = 50
-const BATCH_SIZE = 50
 
 export type TransactionFlow =
   | 'p2pkh'
@@ -96,14 +89,6 @@ type ActiveTrace = {
 type DurationHistory = Record<string, number[]>
 
 let activeTrace: ActiveTrace | null = null
-let flushTimer: ReturnType<typeof setTimeout> | null = null
-let flushInFlight: Promise<void> | null = null
-/**
- * A 404/410 sink is not deployed. Retrying it on every boot, `online`, and
- * 60s tick never drains the queue — it just pins MAX_QUEUE events in durable
- * storage and buries real warnings in the session log we debug from.
- */
-let sinkAbsent = false
 
 function id(prefix: string): string {
   const random =
@@ -317,82 +302,22 @@ export function recordPaymentProgressStage(
 export async function flushTransactionTelemetry(args?: {
   runtime: WalletRuntime
 }): Promise<void> {
-  const runtime = args?.runtime ?? getWalletRuntime()
-  const active =
-    runtime?.instance ??
-    (import.meta.env?.MODE === 'test'
-      ? (await import('./session')).getActiveWallet()
-      : null)
-  if (!active) return
-  if (runtime) assertRuntimeCurrent(runtime)
-  if (flushInFlight) return flushInFlight
-  const run = (async () => {
-    const base = DEFAULT_BRC_CLOUD_BASE_URL.trim().replace(/\/+$/, '')
-    const queued = readQueue()
-    if (sinkAbsent || !active.rootKeyHex || !base || queued.length === 0) return
-    if (runtime) assertRuntimeCurrent(runtime)
-    const batch = queued.slice(0, BATCH_SIZE)
-    const response = await fetch(`${base}/v1/telemetry/events`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...freshMessageboxAuthHeaders({
-          rootKeyHex: active.rootKeyHex,
-          method: 'sendMessage',
-          messageBox: 'telemetry',
-        }),
-      },
-      body: JSON.stringify({ version: 1, events: batch }),
-    })
-    if (response.status === 404 || response.status === 410) {
-      sinkAbsent = true
-      writeQueue([])
-      console.info(`[tx-trace] no telemetry sink at ${base} (HTTP ${response.status}) — tracing off`)
-      return
-    }
-    if (!response.ok) {
-      throw new Error(`telemetry HTTP ${response.status}`)
-    }
-    const sent = new Set(batch.map((event) => event.eventId))
-    writeQueue(readQueue().filter((event) => !sent.has(event.eventId)))
-  })()
-  flushInFlight = run.then(
-    () => {
-      flushInFlight = null
-    },
-    (error) => {
-      flushInFlight = null
-      throw error
-    },
-  )
-  return flushInFlight
+  // Diagnostic traces stay local. A wallet signature authenticates an identity;
+  // it is neither consent to telemetry nor encryption of transaction metadata.
+  void args
 }
 
 export function scheduleTransactionTelemetryFlush(delayMs = 750): void {
-  if (flushTimer || sinkAbsent) return
-  flushTimer = setTimeout(() => {
-    flushTimer = null
-    const runtime = getWalletRuntime()
-    if (!runtime) return
-    void flushTransactionTelemetry({ runtime }).catch((error) => {
-      console.warn(
-        '[tx-trace] flush deferred',
-        error instanceof Error ? error.message : String(error),
-      )
-    })
-  }, delayMs)
+  // Retain the API for callers, but never schedule a network upload.
+  void delayMs
 }
 
 export function __resetTransactionTelemetryForTests(): void {
   rebindTransactionTelemetryForAccount()
-  sinkAbsent = false
   durableSetItem(queueKey(), '[]')
   durableSetItem(historyKey(), '{}')
 }
 
 export function rebindTransactionTelemetryForAccount(): void {
   activeTrace = null
-  if (flushTimer) clearTimeout(flushTimer)
-  flushTimer = null
-  flushInFlight = null
 }
