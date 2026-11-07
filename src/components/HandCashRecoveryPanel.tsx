@@ -83,11 +83,10 @@ export function HandCashRecoveryPanel() {
           </Button.Root>
         </div>
         <p className="settings-hint">
-          Use this wallet on your phone or another computer. Each device keeps a full copy, so
-          losing one doesn&rsquo;t lose your wallet.
+          Each signed-in device keeps a full wallet copy.
         </p>
         <p className="settings-hint">
-          On the other device, open HandCash and choose Sign in, then scan its code here.
+          On the other device, choose Sign in, then scan its code here.
         </p>
         <ul className="recovery-methods" aria-label="Signed-in devices">
           {devices.rows.map((row) => (
@@ -117,8 +116,8 @@ export function HandCashRecoveryPanel() {
           </p>
         ) : null}
         <p className="settings-hint">
-          Removing a device stops it approving sign-ins. It keeps the wallet it already has, so if a
-          device is lost, move your funds to a new wallet.
+          Removed devices keep their wallet but cannot approve sign-ins.
+          Lost a device? Move your funds to a new wallet.
         </p>
       </section>
 
@@ -152,9 +151,6 @@ export function HandCashRecoveryPanel() {
         </ul>
       </SettingsSection>
 
-      <p className="settings-hint" data-aeon-part="recovery-enclave">
-        Secure enclave recovery is coming.
-      </p>
     </div>
   )
 }

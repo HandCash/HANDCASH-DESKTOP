@@ -71,9 +71,8 @@ export function SigninEmailPanel() {
     <div className="nav-section-body settings-scroll" data-aeon-scope="signin-email" data-aeon-state={step.step}>
       <h2>Sign-in email</h2>
       <p className="settings-hint">
-        A new device signs in by scanning its code with this one, over your local network. When it can&rsquo;t reach
-        this device, it uses this email&rsquo;s code instead and you approve it in Activity. HandCash keeps a keyed hash
-        of the address and never sees your keys.
+        Can&rsquo;t connect locally? Use an email code and approve the sign-in in Activity.
+        HandCash stores a keyed hash of your email, never your keys.
       </p>
 
       {step.step === 'view' ? (

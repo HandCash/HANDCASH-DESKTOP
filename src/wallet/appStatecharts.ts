@@ -1055,6 +1055,11 @@ const SETTINGS = `stateDiagram-v2
   aboutHandCash --> statecharts : view charts
   statecharts --> aboutHandCash : back
 
+  state settingsPreferences {
+    [*] --> ready
+    ready --> ready : CHOOSE / persist tagged preference, read
+    ready --> ready : SYNC / project external preferences
+  }
   settingsHome : Settings
   changePassword : Password
   backupKeys : Keys

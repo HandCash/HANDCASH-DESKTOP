@@ -274,7 +274,7 @@ export function HistoryBackupPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
-        Refresh reads the chain; only this backup restores payments you sent and received directly.
+        Direct payments need history backup; Refresh only reads the chain.
       </p>
 
       <HistoryBackupUrlField
@@ -397,7 +397,7 @@ export function HistoryBackupPanel() {
           </SettingsSection>
 
           <SettingsSection title="On-device snapshots" part="snapshots">
-            <p className="settings-row-desc">Never overwritten. Newest first; restoring merges into this wallet.</p>
+            <p className="settings-row-desc">Never overwritten; newest first. Restore merges history.</p>
             {localSnaps.length > 0 ? (
               <ul className="settings-list">
                 {localSnaps.slice(0, 8).map((snap) => (
@@ -452,9 +452,8 @@ export function HistoryBackupPanel() {
       <AsyncActionPrompt action={action} />
 
       <SettingsFeatureAbout tags={['BRC-39']}>
-        An encrypted copy of this wallet’s outputs, labels and baskets — on HandCash unless you set
-        another host. Each export also writes a snapshot here that nothing later overwrites, so a
-        bad upload or an emptied database cannot leave you without a copy.
+        Encrypted outputs, labels and baskets, hosted by HandCash or your chosen host.
+        Each export also keeps a local snapshot.
       </SettingsFeatureAbout>
     </div>
   )

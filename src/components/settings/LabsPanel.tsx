@@ -31,7 +31,7 @@ export function LabsPanel() {
       data-aeon-scope="labs"
     >
       <p className="settings-row-desc" data-aeon-part="intro">
-        Features still being finished. They are off until you turn them on, and only on this device.
+        Experimental features; off by default, on this device only.
       </p>
       <ul className="settings-list">
         {LAB_FEATURES.map((feature) => (

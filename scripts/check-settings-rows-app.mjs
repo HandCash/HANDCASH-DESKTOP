@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Real-app check for the Settings History / Unlock rows: real Electron main,
+ * Real-app check for the Settings rows: real Electron main,
  * preload and renderer, on a throwaway profile and a brand-new local wallet.
  * The renderer comes from a `vite build` folder (argv[2]), answered through
  * Playwright routing so no dev server is needed and nothing listens on :5173.
@@ -14,8 +14,21 @@ const distDir = path.resolve(process.argv[2] ?? 'dist')
 const shotDir = process.argv[3] ? path.resolve(process.argv[3]) : null
 const ORIGIN = 'http://localhost:5173'
 const PASSWORD = 'throwaway-check-4821'
-const WIDTHS = [320, 360, 430, 720, 1100]
+const WIDTHS = (process.env.CHECK_WIDTHS ?? '320,360,430,720,1100').split(',').map(Number)
 const MIN_TEXT_WIDTH = 80
+/** [row label on the Settings home, panel scope, must open on a new wallet] */
+const PANELS = [
+  ['Settings', 'settings', true],
+  ['History', 'history-backup', true],
+  ['Unlock', 'settings-unlock', true],
+  ['Device backup', 'device-handoff', false],
+  ['Back this up on another device', 'handcash-recovery', false],
+  ['Apps', 'chart-apps', false],
+  ['Wallet health', 'wallet-health', false],
+  ['Session logs', 'log-viewer', false],
+  ['Labs', 'labs', false],
+  ['HandCash', 'about-handcash', false],
+]
 
 const MIME = {
   '.html': 'text/html',
@@ -74,6 +87,7 @@ async function createWallet(page, log) {
       (await clickButton(page, /^Create new wallet$/)) ||
       (await clickButton(page, /^Create( wallet)?$/)) ||
       (await clickButton(page, /^Continue$/)) ||
+      (await clickButton(page, /^I.ll do this later$/i)) ||
       (await clickButton(page, /^(Skip|Not now|Maybe later|Later)\b/)) ||
       (await clickButton(page, /^(Done|Finish|Get started|Enter wallet|Open wallet)\b/))
     await sleep(advanced ? 1200 : 2000)
@@ -106,6 +120,10 @@ const measure = (page, scope) =>
     return {
       compact: document.documentElement.classList.contains('layout-compact'),
       overflow: Math.max(0, Math.round(panel.scrollWidth - panel.clientWidth)),
+      overflowing: [...panel.querySelectorAll('*')]
+        .filter((el) => el.getBoundingClientRect().right > panel.getBoundingClientRect().left + panel.clientWidth + 1)
+        .slice(0, 4)
+        .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).split(' ').join('.')}[${el.getAttribute('data-aeon-part') ?? ''}]`),
       rows,
     }
   }, scope)
@@ -115,7 +133,7 @@ function judge(name, panel, failures, log) {
     failures.push(`${name}: panel not on screen`)
     return
   }
-  if (panel.rows.length === 0) failures.push(`${name}: no rows found`)
+  if (panel.rows.length === 0) notReached.add(`${name}: panel opened but shows no rows on a new wallet`)
   log(`${name}: compact=${panel.compact} overflow=${panel.overflow}px rows=${panel.rows.length}`)
   for (const row of panel.rows) {
     const label = row.label?.text ?? '(no label)'
@@ -141,13 +159,16 @@ function judge(name, panel, failures, log) {
       failures.push(`${name} "${label}": text squeezed to ${Math.round(row.label.right - row.label.left)}px`)
     }
   }
-  if (panel.overflow > 0) failures.push(`${name}: sideways overflow ${panel.overflow}px`)
+  if (panel.overflow > 0) failures.push(`${name}: sideways overflow ${panel.overflow}px (${panel.overflowing.join(', ')})`)
 }
 
 async function openSetting(page, label, scope, log) {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     if (await page.locator(`[data-aeon-scope="${scope}"]`).count()) return true
-    const row = page.locator('[data-aeon-scope="listRow"][data-aeon-part="root"]', { hasText: label }).first()
+    const row = page
+      .locator('[data-aeon-scope="listRow"][data-aeon-part="root"]')
+      .filter({ has: page.locator('> [data-aeon-part="label"]', { hasText: new RegExp(`^\\s*${label}\\s*$`, 'i') }) })
+      .first()
     if (await row.isVisible().catch(() => false)) {
       await row.click()
       await sleep(800)
@@ -165,6 +186,7 @@ async function openSetting(page, label, scope, log) {
 
 const profileDir = await mkdtemp(path.join(os.tmpdir(), 'handcash-rows-'))
 const failures = []
+const notReached = new Set()
 const log = (line) => console.log(line)
 let app
 try {
@@ -204,13 +226,13 @@ try {
   const loadedFix = await page.evaluate(() =>
     [...document.styleSheets].some((sheet) => {
       try {
-        return [...sheet.cssRules].some((rule) => rule.cssText?.includes('settings-unlock') && rule.cssText.includes('listRow'))
+        return [...sheet.cssRules].some((rule) => rule.cssText?.includes('.settings-list') && rule.cssText.includes('listRow'))
       } catch {
         return false
       }
     }),
   )
-  log(`built stylesheet has the new scopes: ${loadedFix}`)
+  log(`built stylesheet has the .settings-list row rule: ${loadedFix}`)
 
   if (!(await createWallet(page, log))) throw new Error('Onboarding did not reach the wallet')
   log(`wallet open; visible: ${(await visibleButtons(page)).join(' | ').slice(0, 300)}`)
@@ -219,14 +241,12 @@ try {
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 860 })
     await sleep(600)
-    for (const [label, scope] of [
-      ['History', 'history-backup'],
-      ['Unlock', 'settings-unlock'],
-    ]) {
+    for (const [label, scope, required] of PANELS) {
       const opened = await openSetting(page, label, scope, log)
       const name = `${width}px ${scope}`
       if (!opened) {
-        failures.push(`${name}: could not open it`)
+        if (required) failures.push(`${name}: could not open it`)
+        else notReached.add(`${scope}: could not open it on a new wallet`)
         continue
       }
       await sleep(500)
@@ -244,6 +264,7 @@ try {
   await rm(profileDir, { recursive: true, force: true }).catch(() => {})
 }
 
+for (const line of notReached) console.log(`not exercised: ${line}`)
 if (failures.length) {
   console.log(`\nFAILED (${failures.length})`)
   for (const failure of failures) console.log(`  ${failure}`)

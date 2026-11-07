@@ -13,7 +13,7 @@ type Props = {
 export function SettingsControlRow({ label, description, icon, children }: Props) {
   return (
     <li>
-      <ListRow.Root as="div">
+      <ListRow.Root as="div" data-aeon-layout="control">
         {icon ? (
           <ListRow.Leading aria-hidden>
             <SettingsRowIcon>{icon}</SettingsRowIcon>

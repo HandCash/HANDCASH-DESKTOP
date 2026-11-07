@@ -1,3 +1,4 @@
+import { settingsPreferencesMachine } from './settingsPreferencesMachine'
 import { publicIdentitiesMachine } from './publicIdentitiesMachine'
 import { actionLifecycleMachine } from './actionLifecycleMachine'
 import { asyncActionMachine } from './asyncActionMachine'
@@ -60,6 +61,7 @@ import { fiatCurrencyMenuMachine } from './fiatCurrencyMenuMachine'
  * instead of maintaining a second list of which machines define wallet flows.
  */
 export const machineManifest = Object.freeze({
+  settingsPreferences: settingsPreferencesMachine,
   actionLifecycle: actionLifecycleMachine,
   asyncAction: asyncActionMachine,
   publicIdentities: publicIdentitiesMachine,

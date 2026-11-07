@@ -164,7 +164,7 @@ export function UnlockSettingsPanel() {
         <ConfirmPasswordGate
           id="unlock-change-password"
           title="Change password"
-          lede="Confirm your current HandCash password, then choose a new one."
+          lede="Confirm your current password to change it."
           requirePassword
           onVerified={(password) => setGatePassword(password ?? '')}
           onCancel={resetForm}
@@ -239,7 +239,7 @@ export function UnlockSettingsPanel() {
         <div className="confirm-password-copy">
           <h3 className="confirm-password-title">Add a HandCash password</h3>
           <p className="confirm-password-lede">
-            Optional backup unlock when biometrics aren’t available. Confirm with this device first.
+            Backup unlock without biometrics; confirm with this device first.
           </p>
         </div>
         <form
@@ -425,7 +425,7 @@ export function UnlockSettingsPanel() {
         <p className="confirm-password-lede">
           {isNoDeviceLock()
             ? `This device opens the wallet without a prompt. Add a password${deviceAvailable ? ` or ${deviceLabel}` : ''} any time.`
-            : 'Use this device’s fingerprint or lock screen, a HandCash password, or both. Keep at least one.'}
+            : 'Use device unlock, a HandCash password, or both. Keep at least one.'}
         </p>
       </div>
 

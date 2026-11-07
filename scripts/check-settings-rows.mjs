@@ -34,6 +34,8 @@ const rows = () => [
   h(SettingsControlRow, { key: 'a', label: 'Last upload', icon, description: '10/6/2026, 9:49:06 PM' }, button('CHECK')),
   h(SettingsControlRow, { key: 'b', label: 'Replace from cloud', icon, description: "Swap this device's history for the cloud copy" }, button('REPLACE')),
   h(SettingsControlRow, { key: 'c', label: 'No icon row', description: 'Description beside no icon' }, button('RESTORE')),
+  h(SettingsControlRow, { key: 'e', label: 'HandCash password', icon, description: 'Unlock this wallet with a password' }, h('div', { className: 'actions' }, button('CHANGE'), button('REMOVE'))),
+  h(SettingsControlRow, { key: 'f', label: 'Heal wallet UTXOs', icon, description: 'Recover spendable outputs from wallet history' }, h('span', { className: 'status-pill' }, 'Ready'), button('HEAL')),
   h(SettingsNavRow, { key: 'd', label: 'Fingerprint / device lock', icon, description: 'On - hardware sealed', onClick() {} }),
 ]
 const panel = (scope) =>
@@ -41,7 +43,8 @@ const panel = (scope) =>
     h('p', { className: 'settings-hint' }, 'Hint above the first group.'),
     h(SettingsSection, { title: 'Cloud copy', part: 'cloud' }, list(...rows())),
     h(SettingsSection, { title: 'Backup file', part: 'file' }, list(...rows())))
-window.fixtureHtml = ['history-backup', 'settings-unlock']
+// 'panel-nobody-listed' proves a new sub-panel gets the row layout without being named in CSS.
+window.fixtureHtml = ['settings', 'history-backup', 'settings-unlock', 'device-handoff', 'handcash-recovery', 'legacy-import', 'chart-apps', 'dev-keys', 'log-viewer', 'panel-nobody-listed']
   .map((scope) => renderToStaticMarkup(panel(scope))).join('')
 `
 const { outputFiles } = await build({
@@ -107,8 +110,9 @@ try {
         if (row.display !== 'grid') failures.push(`${name}: row is ${row.display}, not grid`)
         if (row.description && row.description.left !== row.label.left) failures.push(`${name}: description not under label`)
         if (row.description && row.description.top < row.label.bottom - 1) failures.push(`${name}: description beside label`)
-        if (row.trailing && row.trailing.left < row.label.right - 1) failures.push(`${name}: control overlaps label`)
-        if (row.trailing && row.trailing.top >= row.root.top + (row.root.bottom - row.root.top) / 2) failures.push(`${name}: control on its own line`)
+        if (row.trailing && row.trailing.top < (row.description ?? row.label).bottom - 1) failures.push(`${name}: compact control not below text`)
+        if (row.trailing && row.trailing.right > row.root.right + 1) failures.push(`${name}: control leaves row`)
+        if (row.label.right - row.label.left < 80) failures.push(`${name}: text squeezed`)
       }
       if (panel.overflow > 0) failures.push(`${name}: sideways overflow ${panel.overflow}px`)
     }

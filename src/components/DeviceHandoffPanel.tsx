@@ -11,8 +11,7 @@ export function DeviceHandoffPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="device-handoff">
       <p className="settings-hint">
-        Link another device, then keep an encrypted copy of one wallet on the other. It
-        travels one way only.
+        Link two devices to back up one wallet on the other, one way only.
       </p>
 
       <PairDevicePanel />
@@ -35,8 +34,7 @@ export function DeviceHandoffPanel() {
       </SettingsSection>
 
       <SettingsFeatureAbout tags={['BRC-157', 'BRC-75', 'BRC-140', 'BRC-78']}>
-        Each encrypted copy goes one way. It does not share identity, balance, history, or
-        day-to-day spending access.
+        The encrypted copy shares no identity, balance, history or spending access.
       </SettingsFeatureAbout>
     </div>
   )

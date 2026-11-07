@@ -45,22 +45,25 @@ beforeEach(() => {
 })
 
 describe('HandCash Recovery section', () => {
-  it('shows another device first, then a different wallet, then self-kept backups, then the enclave line', () => {
+  it('shows another device first, then a different wallet, then self-kept backups', () => {
     const html = render()
-    const order = ['recovery-devices', 'recovery-other-wallet', 'recovery-self', 'recovery-enclave'].map((part) =>
+    const order = ['recovery-devices', 'recovery-other-wallet', 'recovery-self'].map((part) =>
       html.indexOf(`data-aeon-part="${part}"`),
     )
     expect(order.every((at) => at >= 0)).toBe(true)
     expect([...order].sort((a, b) => a - b)).toEqual(order)
   })
 
-  it('leads with backing this wallet up on another device, in the agreed words', () => {
+  it('leads with device backup and keeps the sign-in instructions and removal warning', () => {
     const page = text(render())
     const button = page.indexOf('Back this up on another device')
     expect(button).toBeGreaterThanOrEqual(0)
     expect(page).toContain(
-      'Use this wallet on your phone or another computer. Each device keeps a full copy, so losing one doesn’t lose your wallet.',
+      'Each signed-in device keeps a full wallet copy.',
     )
+    expect(page).toContain('On the other device, choose Sign in, then scan its code here.')
+    expect(page).toContain('Removed devices keep their wallet but cannot approve sign-ins.')
+    expect(page).toContain('Lost a device? Move your funds to a new wallet.')
     expect(button).toBeLessThan(page.indexOf('Back up a different wallet'))
   })
 
@@ -90,9 +93,10 @@ describe('HandCash Recovery section', () => {
     expect(text(render())).toMatch(/24-word recovery phrase This wallet has no phrase/)
   })
 
-  it('hides Google and email recovery behind one line, and keeps their code', () => {
+  it('omits unavailable recovery methods and promotional copy, but keeps their code', () => {
     const html = render()
-    expect(text(html)).toContain('Secure enclave recovery is coming.')
+    expect(html).not.toContain('recovery-enclave')
+    expect(text(html)).not.toContain('coming.')
     expect(html).not.toMatch(/recovery-google|recovery-email|Continue with Google|Google/)
     const source = fs.readFileSync(path.join(__dirname, 'HandCashRecoveryPanel.tsx'), 'utf8')
     expect(source).not.toContain('GoogleEmailRecoveryMethods')

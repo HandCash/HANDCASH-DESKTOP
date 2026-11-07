@@ -5,17 +5,10 @@ import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
 import { useUpdate } from '../wallet/updateProvider'
 import type { UpdateMode } from '../machines/updateMachine'
-import {
-  isWalletSfxEnabled,
-  setWalletSfxEnabled,
-  subscribeWalletSfx,
-} from '../wallet/soundPrefs'
-import {
-  getAppearancePreference,
-  setAppearancePreference,
-  subscribeAppearance,
-  type AppearancePreference,
-} from '../wallet/themePrefs'
+import { useMachine } from '@xstate/react'
+import { stateToAttr } from '@aeon-ui/core'
+import { settingsPreferencesMachine } from '../machines/settingsPreferencesMachine'
+import { settingsPreferencesPort } from '../wallet/settingsPreferences'
 import { playWalletSound } from '../wallet/soundService'
 import {
   BlockIcon,
@@ -68,7 +61,7 @@ const SECURITY_ITEMS: SettingItem[] = [
   {
     id: 'backup',
     label: 'Recovery backup',
-    description: 'Phrase or key slices — Settings nags until done',
+    description: 'Save your phrase or key slices',
   },
   {
     id: 'history-backup',
@@ -190,8 +183,10 @@ export function SettingsPanel() {
   const update = useUpdate()
   const { context, check, setMode } = update
   const checking = context.phase === 'checking'
-  const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
-  const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
+  const [preferences, sendPreference] = useMachine(settingsPreferencesMachine, {
+    input: { port: settingsPreferencesPort },
+  })
+  const { appearance, sound: sfxEnabled } = preferences.context
   const accepted = useAcceptedCoins()
   const [, setStatusTick] = useState(0)
   const [healthSnap, setHealthSnap] = useState<DependencyHealthSnapshot>(() =>
@@ -214,16 +209,6 @@ export function SettingsPanel() {
   ]
     .filter(Boolean)
     .join(' · ')
-  useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
-
-  useEffect(
-    () =>
-      subscribeAppearance((pref) => {
-        setAppearance(pref)
-      }),
-    [],
-  )
-
   useEffect(() => {
     const bump = () => setStatusTick((n) => n + 1)
     const unsubBackup = subscribeBackupConfirmed(bump)
@@ -252,6 +237,7 @@ export function SettingsPanel() {
     <div
       className="nav-section-body settings-nav settings-with-scroll"
       data-aeon-scope="settings"
+      data-aeon-state={stateToAttr(preferences.value)}
     >
       {/* Same head chrome as Activity / Friends — desktop titlebar hides it. */}
       <div className="connected-panel-head settings-panel-head">
@@ -273,7 +259,7 @@ export function SettingsPanel() {
               label="Appearance"
               description={
                 appearance === 'system'
-                  ? 'Follows Omarchy when detected, otherwise OS light/dark.'
+                  ? 'Follows Omarchy or your system theme.'
                   : undefined
               }
             >
@@ -282,8 +268,7 @@ export function SettingsPanel() {
                 value={appearance}
                 onChange={(pref) => {
                   playWalletSound('soft')
-                  setAppearancePreference(pref)
-                  setAppearance(pref)
+                  sendPreference({ type: 'CHOOSE', path: { kind: 'appearance', value: pref } })
                 }}
                 options={[
                   { value: 'system', label: 'System', icon: <MonitorIcon size={16} /> },
@@ -316,7 +301,7 @@ export function SettingsPanel() {
             <SettingsControlRow
               icon={<CoinGlyphIcon coin="arc-usd" size={20} />}
               label="Currency"
-              description="Fiat used for balances and totals."
+              description="Currency for balances and totals."
             >
               <SettingsFiatDropdown />
             </SettingsControlRow>
@@ -328,8 +313,7 @@ export function SettingsPanel() {
               <Switch.Root
                 checked={sfxEnabled}
                 onCheckedChange={(next) => {
-                  setWalletSfxEnabled(next)
-                  setSfxEnabled(next)
+                  sendPreference({ type: 'CHOOSE', path: { kind: 'sound', value: next } })
                   if (next) playWalletSound('receive', { force: true })
                 }}
               />

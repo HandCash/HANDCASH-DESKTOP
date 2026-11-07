@@ -220,8 +220,7 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Share any two of three slices to separate accounts or apps you control. HandCash does not
-        receive them.
+        Save two of three slices in separate accounts or apps you control; HandCash receives none.
       </p>
 
       <Tabs.Root
@@ -243,7 +242,7 @@ export function WalletBackupPanel() {
           <div className="confirm-password-copy">
             <h3 className="confirm-password-title">Show recovery material</h3>
             <p className="confirm-password-lede">
-              Your wallet is unlocked — phrase and slices are not locked behind a HandCash password.
+              The wallet is unlocked; no password is needed to show backups.
             </p>
           </div>
           <div className="actions" data-aeon-part="reveal-actions" data-aeon-state={backup.stateAttr}>
@@ -382,9 +381,7 @@ export function WalletBackupPanel() {
       <AsyncActionPrompt action={backup} />
 
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-157', 'BRC-75']}>
-        Any two slices from the same set restore the wallet. Showing slices again shows the same
-        set; only Replace slice set makes a new one. Use Share to put them in separate accounts or
-        apps; no HandCash server is involved.
+        Any two slices from one set restore the wallet. Only Replace slice set creates a new set.
       </SettingsFeatureAbout>
     </div>
   )
