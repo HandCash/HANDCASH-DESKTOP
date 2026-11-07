@@ -1,73 +1,34 @@
-# Desktop / Android launch verification
+# Pairing receipts and Android delivery verification
 
-## Release and installation are different evidence
+## Current local evidence — 2026-11-07
 
-GitHub Latest was verified as public Android v0.1.777, published 2026-11-07.
-Neither this chat nor Mobile chat `cmw4kv8ia4` (242) has established the installed
-phone build, its embedded UI-core pin, or a real-phone screenshot/WebView session.
-Do not call browser geometry fixtures a phone test. Preserve wallet data: no data
-clear, reinstall, key movement or downgrade to obtain this evidence.
+Desktop receipt implementation is committed in this worktree at `2d4f4e3882d4ce0c4f783ddbde010a1dd8ad71b4` (1.3.664). No receipt implementation edits are pending. Do not redo this change.
 
-## Integration blockers
+The receiver advertises `receiptVersion: 1`. The approver refuses older peers and requires a signature by the QR's one-time login key over `handcash-scan-login\ninstalled\n<loginKey>\n<approverKey>\n<sha256(sealedVault)>`. The receiver emits that receipt only after the installation callback acknowledges; AuthScreen calls it after `finishCreated` resolves. Failed or unacknowledged setup cannot approve pairing. LAN dispatch and the messagebox relay both await this completion. This is an application-level contract; the relay transports the same response body without interpreting the receipt.
 
-The isolated Desktop worktree starts at `9932b46f`. The earlier shared worktree
-had uncommitted header/settings and signed-receipt changes; they are not included
-here. Do not replace those changes with the older isolated sources.
+Fresh automated verification in this worktree: 10 test files / 143 tests passed (scan-login, pairing chart, peer dispatch, account release/holding/move/handover, vault account holding, holding freshness and spend guard). Renderer and Electron type checks passed. These are synthetic tests, not physical two-device acceptance or a new live relay test.
 
-Confirmed header defects in this baseline: compact identity spans all receive
-flex growth (including the avatar), the metric grows into unused space, and later
-compact panel rules add automatic left margins to hero pills. Pending fixes scope
-ellipsis to the identity label, keep the avatar square, size the metric to content,
-exclude hero pills from panel-action margins, and add symmetric balance padding.
-Settings' currency dropdown and row-column alignment also await integration.
-No claim is made that these pending changes are installed or visually accepted.
+## Matching Android source already exists
 
-The baseline scan-login receiver returns transport success after emitting the
-vault event. Transport success does not prove persistence or wallet runtime startup.
-Mobile 0.1.777 does not include the pending signed-receipt fix, per chat 242.
-Both devices must consume the same committed receipt-capable implementation.
-Never silently downgrade this requirement to support an older peer.
+Read-only inspection of `/home/spider/Work/handcash/HANDCASH-MOBILE` found a clean worktree at `81a031a`, version/tag `0.1.779` / `v0.1.779`, pinning Desktop `8cce7b5d008589c0ddc4221fc75de09d91e664cf` / 1.3.666. This supersedes the old planned 0.1.778 delivery. A local tag is not proof of publication, APK contents or installation.
 
-## Preserve Git history
+The pinned core has equivalent receipt code: comparison found no differences in scanLogin, DeviceSignInPanel, peer dispatch or Electron peer dispatch. Its AuthScreen additionally permits the scan-approved join's unrecorded-holder fallback and logs installation failures. It includes `9da1d091` (vault account mismatch fix) and `8cce7b5d` (phone spacing). Those newer changes are not imported into this older isolated branch or overwritten. The 143-test result above does not certify those newer changes.
 
-At the completed remote audit, Desktop was 29 commits ahead / 6 behind; all six
-remote patches were equivalent to local patches (`git cherry`), not six missing
-features. Mobile had distinct remote pin commits `efd79ab` and `f199863`, so its
-history needs separate reconciliation. These are historical audit results, not
-permission to reset, force-push or drop local commits. Preserve baseline `154682d`
-and unrelated work. Recheck heads before integration.
+The proper Android route remains Mobile's immutable shared-core pin and `release-apk.yml`; do not fork shared panels into Mobile or run the release script against this older core. No push, publication, deployment, installation or wallet-data changes were performed in this verification pass.
 
-## Owners and release gates
+## Coordination and evidence limits
 
-Mobile chat 242 owns Mobile integration, the actual APK UI-core pin, installed
-build evidence and real-phone layout review. Desktop chat 183 owns Desktop receipt
-capability; both owners coordinate the shared protocol. This ownership is from the
-read-only cross-chat handoff, not evidence that integration has completed.
+The currently open Mobile and BRC-CLOUD chats are new chats (`cmw6jt5w74`, `cmw6jt5wc6`), not the historical chats 242 and 314; both reported no inherited delivery evidence. Read-only coordination with the sign-in fix chat `cmw6finp15` confirmed prior type checks and 75 vault tests, but no demonstrated physical sign-in/unlock. Its earlier missing `MOBILE_RELEASE_TOKEN` report is historical, not a current credential check. No secrets were inspected.
 
-Before approval to push/publish a new update:
+## Exact remaining release gate
 
-- Review and commit the shared UI/sign-in changes without unrelated dirty files;
-  reconcile both histories without duplicating equivalent patches.
-- Build both apps from the agreed immutable shared source pin.
-- On real devices, scan in both directions; test wrong/expired codes, cancelled
-  approval, failed receiver setup and missing/invalid receipts. Success requires
-  persisted vault, usable session and a verified receipt bound to both peers and
-  the exact ciphertext, not a successful HTTP response.
-- Exercise account handoff with an active and idle holder, direct and fallback
-  transports, and offline-holder recovery. Distinct devices hold distinct accounts;
-  an account held elsewhere cannot sign or receive spendable state. Never enable
-  same-key spendable parity to make this test pass.
-- Inspect actual Android balance/header/settings layouts in both themes, with long
-  identity labels and large balances. Record installed version, UI-core pin and
-  screenshots; no overflow, stretched avatar, detached profile or clipped controls.
+No attached phone evidence, installed UI-core pin, successful native two-device pairing, updater install-over, physical account handoff or accepted real-phone layout has been established here. `adb` was not found on PATH. Current CI/publication status is not verified. Do not declare launch-ready from the local tag or synthetic tests.
 
-## Verification completed in the isolated worktree
+Ask the phone operator to provide:
 
-Focused Vitest run: 9 files / 124 tests passed, covering scan-login, the pairing
-chart, account release/holding/move/handover, vault account holding, holding
-freshness and the spend guard. Renderer and Electron type checks passed.
-These are synthetic protocol/chart/storage tests, not native two-device tests;
-the baseline scan-login tests do not implement or verify signed receipts.
+1. Installed Android version and embedded shared-core pin, plus Desktop version. Use an approved install-over update only; never clear data, downgrade or move keys for testing.
+2. Pair in both directions on LAN, then on separate networks. Record that the approver waits for receiver setup and both devices reach usable sessions. Wrong/expired codes and cancelled/failed setup must never show success. Capture any failure message and timestamp, without QR secrets, recovery material or keys.
+3. Verify the new device holds a different account. Select an account held on the other device and check automatic active-holder and idle-holder release, then offline-holder recovery. The displaced device must not sign or receive spendable state; pending history must transfer without rebroadcasting displaced unbroadcast transactions. Use a test vault; do not spend production funds to prove this.
+4. Provide Android balance/header/settings screenshots in both themes, with long identity labels and large balances: square avatar, balanced spacing, no clipped controls or overflow. Do not treat browser fixtures as phone evidence.
 
-No new push/publication approval exists. No physical two-device, native persistence,
-real-phone alignment or account-handoff end-to-end pass is established here.
+Any further publishing or deploying requires explicit approval naming the exact source pin, version and destination first. Separate-account custody is unchanged; same-key spendable parity is not an acceptable workaround.
