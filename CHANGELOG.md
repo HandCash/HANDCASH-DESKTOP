@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.666] - 2026-11-07
+
+### Fixed
+
+- Phone header keeps a square avatar and a balance chip sized to its content, with even space around the balance.
+- Settings rows share one icon column, and Settings has a Currency row.
+- The Synced pill is sized to its label.
+
 ## [1.3.665] - 2026-11-07
 
 ### Fixed

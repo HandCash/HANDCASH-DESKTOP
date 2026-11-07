@@ -59,6 +59,8 @@ export const listRowRecipe = defineSlotRecipe({
       },
     },
     leading: {
+      gridColumn: '1',
+      gridRow: '1 / -1',
       flexShrink: 0,
       display: 'inline-flex',
       alignItems: 'center',
@@ -72,6 +74,8 @@ export const listRowRecipe = defineSlotRecipe({
       },
     },
     label: {
+      gridColumn: '2',
+      gridRow: '1',
       minW: 0,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
@@ -82,6 +86,8 @@ export const listRowRecipe = defineSlotRecipe({
       lineHeight: '1.25',
     },
     description: {
+      gridColumn: '2',
+      gridRow: '2',
       display: 'none',
       minW: 0,
       overflow: 'hidden',
@@ -95,6 +101,8 @@ export const listRowRecipe = defineSlotRecipe({
       },
     },
     trailing: {
+      gridColumn: '3',
+      gridRow: '1 / -1',
       flexShrink: 0,
       display: 'inline-flex',
       alignItems: 'center',

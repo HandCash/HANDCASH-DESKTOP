@@ -487,12 +487,12 @@ html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .s
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
-  max-width: min(7.25rem, calc(100vw - 12.5rem));
+  max-width: min(5.5rem, calc(100vw - 12.5rem));
   height: 34px;
   min-height: 34px;
   max-height: 34px;
-  padding: 0 10px;
-  gap: 5px;
+  padding: 0 8px;
+  gap: 4px;
   font-size: var(--hc-text-xs);
   align-items: center;
   box-sizing: border-box;
@@ -1688,8 +1688,9 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   container-name: wallet-hero;
 }
 
-/* Full-width label + identity across the wallet section. */
+/* Content-sized label + identity stay together across the wallet section. */
 .wallet-hero > .wallet-hero-head.connected-panel-head {
+  justify-content: flex-start;
   position: relative;
   top: auto;
   bottom: auto;
@@ -1725,6 +1726,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  justify-content: center;
   gap: 6px;
 }
 
@@ -1774,6 +1776,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 }
 
 .wallet-balance-slot {
+  /* Symmetric so the figure sits mid-way between the head and the actions. */
+  padding-block: var(--hc-space-3);
   flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
@@ -4649,12 +4653,22 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   overflow: hidden;
 }
 
+/* Same rows as the profile menu: 48px, square-ish radius, accent bar on pick. */
+.fiat-currency-panel .fiat-currency-option {
+  min-height: 48px;
+  border-radius: var(--hc-radius);
+}
+
+.fiat-currency-panel .fiat-currency-option[data-aeon-state='selected'] {
+  box-shadow: inset 2px 0 var(--hc-accent);
+}
+
 .fiat-currency-panel-list {
   list-style: none;
   margin: 0;
   padding: 8px;
   display: grid;
-  gap: 2px;
+  gap: 4px;
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -4675,6 +4689,7 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
 
 .wallet-hero-title-approx {
   display: none;
+  line-height: 1;
 }
 
 /* Compact/mobile: squish "Balance" to "~". */
@@ -4703,7 +4718,7 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 }
 
 .wallet-hero-identity-chrome {
-  margin-left: auto;
+  margin-left: 0;
   flex: 0 0 auto;
   align-items: stretch;
 }
@@ -4720,13 +4735,14 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 /* Compact: never stack the metric + identity pills — join them into one chrome
    bar and let the identity label ellipsize when the row runs out of room. */
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] > .wallet-hero-head {
+  justify-content: flex-start;
   flex-wrap: nowrap;
   gap: 0;
   align-items: stretch;
 }
 
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-nav-actions-pill.wallet-hero-metric {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: none;
   gap: 6px;
@@ -4758,9 +4774,9 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
 
 [data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity-chrome {
   margin-left: 0;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 58%;
+  max-width: none;
   border-start-start-radius: 0;
   border-end-start-radius: 0;
 }
@@ -4786,7 +4802,7 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   gap: 4px;
 }
 
-[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity span {
+[data-aeon-scope='wallet-hero'][data-aeon-shell='compact'] .wallet-hero-identity > span:not([data-aeon-part='avatar']) {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -5768,8 +5784,8 @@ html:not(.platform-mobile):not(.layout-compact)
   display: none !important;
 }
 
-/* Push action pills to the trailing edge — not the hero metric (that sat in the gap). */
-html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-hero-metric) {
+/* Push panel actions to the trailing edge, not the joined balance/profile chrome. */
+html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome) {
   margin-left: auto;
 }
 
@@ -6648,7 +6664,7 @@ html:is(.platform-mobile, .layout-compact)
 }
 
 html:is(.platform-mobile, .layout-compact)
-  .connected-panel-head
+  .connected-panel-head:not(.wallet-hero-head)
   > .wallet-nav-actions-pill {
   flex: 0 0 auto;
   margin-left: auto;
@@ -9273,7 +9289,7 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 )
   [data-aeon-scope='listRow'][data-aeon-part='root'] {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
   grid-template-rows: auto;
   align-items: center;
   column-gap: 12px;
@@ -9364,6 +9380,8 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='leading'] {
+  grid-column: 1;
+  grid-row: 1 / -1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -9378,6 +9396,8 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='trailing'] {
+  grid-column: 3;
+  grid-row: 1 / -1;
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
@@ -18063,6 +18083,11 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   min-width: 0;
 }
 
+.profile-avatar {
+  aspect-ratio: 1;
+  flex-shrink: 0;
+}
+
 [data-aeon-scope='wallet-account-menu'] [data-aeon-part='avatar'] {
   flex: 0 0 auto;
   display: grid;
@@ -20031,18 +20056,20 @@ html[data-aeon-mode='light']
   }
 }
 
-/* Sync status pill: one fixed size in every state and layout. Label length or
-   tone never resizes it (long labels scroll via Aeon TextOverflow carousel).
-   Radius and padding come from the design tokens. */
+/* Reserve exactly the Synced label, including the current font and tracking.
+   Longer states stay inside that slot without moving adjacent controls. */
 .status-pill,
 .titlebar-end > .status-pill,
 html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill,
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
   box-sizing: border-box;
   flex: 0 0 auto;
-  width: 7.5rem;
-  min-width: 7.5rem;
-  max-width: 7.5rem;
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr);
+  position: relative;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
   height: 2rem;
   min-height: 2rem;
   max-height: 2rem;
@@ -20055,7 +20082,16 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
   overflow: hidden;
 }
 
+.status-pill::before {
+  content: 'Synced';
+  visibility: hidden;
+  grid-column: 2;
+  grid-row: 1;
+}
+
 .status-pill .status-dot {
+  grid-column: 1;
+  grid-row: 1;
   flex: 0 0 auto;
 }
 
@@ -20063,6 +20099,10 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
 html:not(:is(.platform-mobile, .layout-compact)) .titlebar-end > .status-pill .status-pill-label,
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-pill-label {
   display: inline-flex;
+  grid-column: 2;
+  grid-row: 1;
+  width: 0;
+  min-width: 100%;
   white-space: nowrap;
   overflow: hidden;
 }

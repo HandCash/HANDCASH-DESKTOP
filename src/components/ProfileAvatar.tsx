@@ -19,6 +19,7 @@ export function ProfileAvatar({ profile, label }: { profile: AccountProfile | nu
   const identicon = profile ? <ProfileIdenticon id={profile.id} size={32} /> : null
   return (
     <span
+      className="profile-avatar"
       data-aeon-part="avatar"
       data-aeon-state={src ? 'image' : profile ? 'identicon' : 'initial'}
       aria-hidden

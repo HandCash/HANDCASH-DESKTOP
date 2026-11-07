@@ -19,4 +19,5 @@ export {
   deviceHandoffStatus,
 } from './settingsStatus'
 export { SettingsIconToggle } from './SettingsIconToggle'
+export { SettingsFiatDropdown } from './SettingsFiatDropdown'
 export { LabsPanel } from './LabsPanel'

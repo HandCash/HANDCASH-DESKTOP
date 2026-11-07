@@ -40,6 +40,7 @@ import {
   SettingsNavRow,
   SettingsControlRow,
   SettingsIconToggle,
+  SettingsFiatDropdown,
   SettingsSection,
   statusForSetting,
   settingIconFor,
@@ -310,6 +311,14 @@ export function SettingsPanel() {
                   icon: ACCEPTED_COINS_ICONS[choice.id],
                 }))}
               />
+            </SettingsControlRow>
+
+            <SettingsControlRow
+              icon={<CoinGlyphIcon coin="arc-usd" size={20} />}
+              label="Currency"
+              description="Fiat used for balances and totals."
+            >
+              <SettingsFiatDropdown />
             </SettingsControlRow>
 
             <SettingsControlRow

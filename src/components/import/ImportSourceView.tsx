@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { Button, MetricStrip, Progress, StatusBanner } from '@aeon-ui/react'
-import { Badge, ListRow, Separator } from '@aeon-ui/ui'
+import { Button, Progress, StatusBanner } from '@aeon-ui/react'
+import { Badge, ListRow, MetricStrip, Separator } from '@aeon-ui/ui'
 import { formatBsv } from '../../wallet/session'
 import { estimateItemMigrateCost } from '../../wallet/phraseSweep'
 import { MIGRATE_HINTS_URL } from '../../wallet/walletConfig'
