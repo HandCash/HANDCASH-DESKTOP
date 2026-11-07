@@ -53,6 +53,7 @@ import { callMachine } from './callMachine'
 import { callViewMachine } from './callViewMachine'
 import { entryMeshMachine } from './entryMeshMachine'
 import { recordingPlayerMachine } from './recordingPlayerMachine'
+import { fiatCurrencyMenuMachine } from './fiatCurrencyMenuMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -114,6 +115,7 @@ export const machineManifest = Object.freeze({
   callView: callViewMachine,
   entryMesh: entryMeshMachine,
   recordingPlayer: recordingPlayerMachine,
+  fiatCurrencyMenu: fiatCurrencyMenuMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // A cold open must paint last session's items. Recompose used to empty the
 // durable list cache, so the next boot started at zero and Collect showed
@@ -126,6 +126,12 @@ function seedDurableList(identityKey: string | null, items = [itemRow(TIP, 'Test
 }
 
 describe('collectables across a cold open', () => {
+  // Warm lazy transforms outside the test deadline. beforeEach still resets
+  // modules so each test imports against its own durable cache seed.
+  beforeAll(async () => {
+    await import('./collectables')
+  })
+
   beforeEach(() => {
     testRun += 1
     vi.resetModules()
