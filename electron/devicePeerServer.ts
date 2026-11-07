@@ -141,7 +141,7 @@ export async function startDevicePeerServer(
         const timer = setTimeout(() => {
           pendingRequests.delete(request_id)
           reject(new Error('DEVICE_PEER_TIMEOUT'))
-        }, REQUEST_TIMEOUT_MS)
+        }, req.path.endsWith('/scan-login/vault') ? 100_000 : REQUEST_TIMEOUT_MS)
         pendingRequests.set(request_id, { resolve, reject, timer })
         target.webContents.send('device-peer-http-request', requestEvent)
       })

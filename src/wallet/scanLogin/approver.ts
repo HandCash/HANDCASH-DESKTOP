@@ -6,7 +6,8 @@
 import { PrivateKey } from '@bsv/sdk'
 import { randomHex, sealVaultTransfer, type VaultTransfer } from '../deviceTransfer'
 import { relayRequest } from './relay'
-import { pairingConfirmProof, scanLoginProof, sha256Hex, type ScanLoginPayload } from './payload'
+import { verifyIdentityText } from '../messageboxAuth'
+import { pairingConfirmProof, pairingReceiptText, scanLoginProof, sha256Hex, type ScanLoginPayload } from './payload'
 
 export const SCAN_LOGIN_REACH_MS = 3_000
 export const SCAN_LOGIN_RELAY_MS = 20_000
@@ -107,6 +108,8 @@ export async function helloScanLogin(
             failures.push(`${route.url}: http-${res.status}`)
           } else if (String(res.body.loginKey ?? '').toLowerCase() !== payload.loginKey) {
             refusal ??= 'The device that answered is not the one in the code.'
+          } else if (res.body.codeLength !== 6 || res.body.receiptVersion !== 1) {
+            refusal ??= 'Update HandCash on the new device before pairing. It cannot verify sign-in completion.'
           } else {
             resolve(conn)
             return
@@ -181,10 +184,15 @@ export async function sendScanLoginVault(
     conn,
     'vault',
     { approverKey: pub, sealedVault, proof: scanLoginProof(conn.payload.secret, 'vault', sha256Hex(sealedVault)) },
-    conn.url === 'relay' ? SCAN_LOGIN_RELAY_MS : 30_000,
+    100_000,
     fetchImpl,
   )
-  if (res.status !== 200) throw new Error(refusalText(res.body.error))
+  if (res.status !== 200) throw new Error('The new device has not verified wallet setup. Check it before trying again.')
+  if (typeof res.body.signature !== 'string' || !verifyIdentityText(
+    conn.payload.loginKey,
+    pairingReceiptText(conn.payload.loginKey, pub, sha256Hex(sealedVault)),
+    res.body.signature,
+  )) throw new Error('The new device did not prove that its wallet session is ready. Update both devices and try again.')
 }
 
 export async function refuseScanLogin(conn: ScanLoginConnection, fetchImpl: Fetch = fetch): Promise<void> {

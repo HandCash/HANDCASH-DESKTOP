@@ -143,8 +143,11 @@ export async function approveScanLogin(loginKey: string): Promise<void> {
   approving.add(loginKey)
   try {
     await deps.confirm(`approve sign-in on ${entry.payload.label}`)
+    if (entries.get(loginKey) !== entry || entry.face !== 'comparing' || entry.payload.expiresAt <= Date.now()) {
+      throw new Error('This sign-in ended. Scan a fresh code.')
+    }
     await sendScanLoginVault(entry.conn, deps.vault(), deps.fetchImpl)
-    console.info('[scan-login] vault sent', entry.conn.url)
+    console.info('[scan-login] setup verified')
     update(loginKey, { face: 'approved' })
     deps.onApproved({ id: loginKey, label: entry.payload.label, via: 'local' })
   } catch (error) {
@@ -190,7 +193,7 @@ export function scanLoginRowView(entry: Entry, now = Date.now()): SigninRowView 
         live: true,
       }
     case 'approved':
-      return { ...base, title: `Signed in on ${label}`, detail: 'Approved here', live: false }
+      return { ...base, title: `Signed in on ${label}`, detail: 'Wallet installed and opened there. This does not mean the devices stay connected.', live: false }
     case 'unreachable':
       return {
         ...base,

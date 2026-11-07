@@ -793,14 +793,15 @@ export function AuthScreen({
       ) {
         writeVaultAccounts(accounts)
       }
-      if ('acknowledge' in recovered) await recovered.acknowledge()
       await finishCreated(
         unlocked,
         wrapPassword,
         joined ? 'joined' : 'restore',
         joined ? 'keep' : 'replace',
       )
+      if ('acknowledge' in recovered) await recovered.acknowledge()
     } catch (restoreError) {
+      if ('fail' in recovered) recovered.fail()
       const message =
         restoreError instanceof Error ? restoreError.message : String(restoreError)
       send({ type: 'FAIL', error: message })

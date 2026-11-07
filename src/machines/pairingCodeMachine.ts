@@ -10,7 +10,7 @@ export type PairingCodeInput = {
   attemptsLeft: number
   /** The new device checks the digits; nothing here knows the code. */
   confirm: (digits: string) => Promise<PairingOutcome>
-  /** Presence check, then the sealed wallet goes to the new device. */
+  /** Presence check, transfer, then verify the new device's signed runtime-ready receipt. */
   approve: () => Promise<void>
 }
 
@@ -26,7 +26,7 @@ export type PairingCodeContext = PairingCodeInput & {
  * Typing is one digit at a time. A change of more than one character (autofill,
  * paste, drop) is ignored, so the code can only come from a person reading the
  * other screen. The sixth digit starts the check by itself; success is shown
- * only once the new device has accepted the code and the wallet was sent.
+ * only once the new device has accepted the code and signed a runtime-ready receipt.
  */
 export const pairingCodeMachine = setup({
   types: {

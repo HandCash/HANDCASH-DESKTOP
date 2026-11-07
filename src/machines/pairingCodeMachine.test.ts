@@ -25,6 +25,16 @@ describe('pairingCode chart', () => {
     expect(done.status).toBe('done')
   })
 
+  it('waits for the receiver receipt before showing approved', async () => {
+    let complete!: () => void
+    const { actor, typeAll } = start(async () => ({ ok: true }), () => new Promise<void>((resolve) => { complete = resolve }))
+    typeAll('123456')
+    await waitFor(actor, (s) => s.matches('sending'))
+    expect(actor.getSnapshot().status).not.toBe('done')
+    complete()
+    await waitFor(actor, (s) => s.matches('approved'))
+  })
+
   it('ignores autofill, paste and any multi-character change', () => {
     const confirm = vi.fn(async () => ({ ok: true }) as PairingOutcome)
     const { actor, type } = start(confirm)

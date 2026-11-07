@@ -9,9 +9,11 @@
  * unchanged.
  */
 import type { PrivateKey } from '@bsv/sdk'
+import { signedIdentityHeaders } from '../identityRequestAuth'
+import { randomHex } from '../deviceTransfer'
 import { freshMessageboxAuthHeaders, type MessageboxMethod } from '../messageboxAuth'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from '../walletConfig'
-import { getScanLoginSession, handleScanLoginRequest } from './receiver'
+import { getScanLoginSession, handleScanLoginRequestAsync } from './receiver'
 
 export const SCAN_LOGIN_BOX = 'scan-login'
 export const RELAY_POLL_MS = 1_500
@@ -31,14 +33,16 @@ async function call(
   opts: RelayOptions,
 ): Promise<Record<string, unknown>> {
   const fetchImpl = opts.fetchImpl ?? fetch
-  const res = await fetchImpl(`${baseOf(opts)}/v1/messagebox/${route}`, {
+  const url = `${baseOf(opts)}/v1/messagebox/${route}`
+  const init: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...freshMessageboxAuthHeaders({ rootKeyHex: key.toHex(), method, messageBox: SCAN_LOGIN_BOX, includeAuthrite: true }),
     },
     body: JSON.stringify({ messageBox: SCAN_LOGIN_BOX, ...payload }),
-  })
+  }
+  const res = await fetchImpl(url, { ...init, headers: await signedIdentityHeaders(key.toHex(), 'messagebox', url, init) })
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) throw new Error(`relay-${route}-${res.status}${json.error ? `-${String(json.error)}` : ''}`)
   return json
@@ -59,8 +63,6 @@ export async function relayAck(key: PrivateKey, ids: string[], opts: RelayOption
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
-const pubOf = (key: PrivateKey) => key.toPublicKey().toString().toLowerCase()
-
 /**
  * Approver side: one request to the new device's mailbox, then wait for its
  * answer in ours. Resolves with the same `{status, body}` a local request gives.
@@ -72,7 +74,7 @@ export async function relayRequest(
   fields: Record<string, unknown>,
   args: RelayOptions & { timeoutMs: number; pollMs?: number },
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const id = pubOf(approverKey).slice(2, 18) + Date.now().toString(36)
+  const id = randomHex(16)
   await relaySend(approverKey, loginKey, { t: 'req', id, step, ...fields }, args)
   const deadline = Date.now() + args.timeoutMs
   while (Date.now() < deadline) {
@@ -122,7 +124,7 @@ export function runScanLoginRelay(args: RelayOptions & { pollMs?: number } = {})
           }
           if (req.t !== 'req' || typeof req.id !== 'string' || typeof req.step !== 'string') continue
           const { t: _t, id, step, ...fields } = req
-          const out = handleScanLoginRequest({
+          const out = await handleScanLoginRequestAsync({
             method: 'POST',
             path: `/handcash-device/v1/scan-login/${step}`,
             body: JSON.stringify({ ...fields, approverKey: m.sender }),
