@@ -804,6 +804,7 @@ export function AuthScreen({
       if ('fail' in recovered) recovered.fail()
       const message =
         restoreError instanceof Error ? restoreError.message : String(restoreError)
+      console.warn(`[sign-in] install failed (${joined ? 'joined' : 'restore'}): ${message}`)
       send({ type: 'FAIL', error: message })
       onFail(message)
     }
