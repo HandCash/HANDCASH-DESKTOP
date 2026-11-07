@@ -34,7 +34,7 @@ Pushing `vX.Y.Z` also runs `.github/workflows/release-mobile.yml`, which runs `s
 1. Sets Mobile's pin to Desktop `X.Y.Z` and the tag's commit.
 2. Bumps Mobile's patch version, commits, tags `v0.1.N` and pushes both.
 3. Mobile's own `Release Android APK` workflow builds that tag.
-4. Runs `--check`: fails unless the pin matches Desktop.
+4. Runs `--check`: fails unless the pin matches Desktop's version and source commit. A same-version/different-commit pin fails rather than silently skipping delivery; bump Desktop for new source.
 
 No prompts. It fails loudly if secret `MOBILE_RELEASE_TOKEN` (contents write on `HandCash/HANDCASH-MOBILE`) is missing, the tag differs from `package.json`, or Mobile's worktree is dirty. Re-running for an already pinned version does nothing. `src/contracts/mobileReleaseSync.test.ts` guards the script and that `package.json`, `src/version.ts` and `@handcash/wallet-ui` agree.
 

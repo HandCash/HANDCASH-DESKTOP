@@ -10,7 +10,7 @@
  * version, commits and tags v<mobile>. With --push, pushes branch + tag, which
  * starts Mobile's own Release Android APK workflow. Fails (exit 1) on anything
  * it cannot do; there are no prompts.
- * --check: exits 1 unless Mobile's pin matches Desktop's version.
+ * --check: exits 1 unless Mobile's pin matches Desktop's version and HEAD commit.
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -27,7 +27,7 @@ export function nextMobileVersion(v) {
 }
 
 /** Problems that keep Mobile out of sync with Desktop; empty when in sync. */
-export function syncProblems({ desktopVersion, walletUiVersion, pin }) {
+export function syncProblems({ desktopVersion, walletUiVersion, desktopSha, pin }) {
   const problems = []
   if (!SEMVER.test(desktopVersion)) problems.push(`Desktop version "${desktopVersion}" is not semver`)
   if (walletUiVersion !== desktopVersion) {
@@ -38,6 +38,9 @@ export function syncProblems({ desktopVersion, walletUiVersion, pin }) {
   }
   if (!pin || !/^[0-9a-f]{40}$/.test(pin.gitSha ?? '')) {
     problems.push(`Mobile pin gitSha "${pin?.gitSha ?? ''}" is not a full commit sha`)
+  }
+  if (desktopSha && pin?.gitSha !== desktopSha) {
+    problems.push(`Mobile pin commit ${pin?.gitSha ?? '(missing)'} != Desktop ${desktopSha}`)
   }
   return problems
 }
@@ -52,10 +55,10 @@ function readDesktop() {
   }
 }
 
-export function checkMobile(mobileDir) {
+export function checkMobile(mobileDir, desktopSha = git(desktopRoot, 'rev-parse', 'HEAD')) {
   const pinPath = path.join(mobileDir, 'ui-core-source.json')
   const pin = fs.existsSync(pinPath) ? readJson(pinPath) : null
-  return syncProblems({ ...readDesktop(), pin })
+  return syncProblems({ ...readDesktop(), desktopSha, pin })
 }
 
 /** Writes the pin + bumped Mobile version. Returns the new Mobile version. */
@@ -103,12 +106,14 @@ function main() {
   if (git(mobileDir, 'status', '--porcelain')) die('Mobile worktree is dirty')
   const pinPath = path.join(mobileDir, 'ui-core-source.json')
   if (fs.existsSync(pinPath) && readJson(pinPath).version === desktopVersion) {
-    console.log(`Mobile already pins Desktop ${desktopVersion} — nothing to release`)
+    const problems = checkMobile(mobileDir, sha)
+    if (problems.length) die(`same version has different source; bump Desktop before releasing:\n  - ${problems.join('\n  - ')}`)
+    console.log(`Mobile already pins Desktop ${desktopVersion} @ ${sha.slice(0, 8)} — nothing to release`)
     return
   }
 
   const mobileVersion = pinMobile(mobileDir, { desktopVersion, sha })
-  const problems = checkMobile(mobileDir)
+  const problems = checkMobile(mobileDir, sha)
   if (problems.length) die(`out of sync after pin:\n  - ${problems.join('\n  - ')}`)
 
   const mobileTag = `v${mobileVersion}`

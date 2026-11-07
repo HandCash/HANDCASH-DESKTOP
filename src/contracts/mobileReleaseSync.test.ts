@@ -13,9 +13,9 @@ async function load() {
   // A file URL: Windows absolute paths ("D:\...") are not valid import specifiers.
   return (await import(/* @vite-ignore */ pathToFileURL(script).href)) as {
     nextMobileVersion(v: string): string
-    syncProblems(i: { desktopVersion: string; walletUiVersion: string; pin: unknown }): string[]
+    syncProblems(i: { desktopVersion: string; walletUiVersion: string; desktopSha?: string; pin: unknown }): string[]
     pinMobile(dir: string, i: { desktopVersion: string; sha: string }): string
-    checkMobile(dir: string): string[]
+    checkMobile(dir: string, desktopSha?: string): string[]
   }
 }
 
@@ -50,6 +50,14 @@ describe('Desktop ↔ Mobile release sync', () => {
     const desktopVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version
     expect(m.checkMobile(dir).length).toBeGreaterThan(0)
     expect(m.pinMobile(dir, { desktopVersion, sha })).toBe('0.1.2')
+    expect(m.checkMobile(dir, sha)).toEqual([])
+    expect(m.checkMobile(dir, 'b'.repeat(40))).toEqual([
+      `Mobile pin commit ${sha} != Desktop ${'b'.repeat(40)}`,
+    ])
+    // Default CLI checks compare the source, not just its version label.
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+    expect(m.checkMobile(dir).length).toBeGreaterThan(0)
+    m.pinMobile(dir, { desktopVersion, sha: head })
     expect(m.checkMobile(dir)).toEqual([])
   })
 
