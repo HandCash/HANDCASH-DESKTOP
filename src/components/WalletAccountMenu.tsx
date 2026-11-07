@@ -1,11 +1,11 @@
 import { stateToAttr } from '@aeon-ui/core'
+import { Button } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
-import { moveAccountHere } from '../wallet/accountMove'
 import type { AccountMovePhase } from '../wallet/accountMoveMachine'
-import { readTrustedBalance } from '../wallet/balanceSnapshot'
+import { readTrustedBalance, readTrustedBalanceSnapshot } from '../wallet/balanceSnapshot'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
@@ -99,7 +99,7 @@ export function WalletAccountMenu({
   /** Identity whose displacement was already acted on. */
   const displacedRef = useRef<string | null>(null)
   const open = !snapshot.matches('closed')
-  const busy = !snapshot.matches('closed') && !snapshot.matches('open')
+  const busy = !snapshot.matches('closed') && !snapshot.matches('open') && !snapshot.matches('viewing')
   const stateAttr = stateToAttr(snapshot.value)
 
   const refreshList = () => {
@@ -263,29 +263,6 @@ export function WalletAccountMenu({
     return store.accounts.find((a) => a.index !== exclude && isHeldHere(a))?.index ?? null
   }
 
-  /** Move an account another device holds onto this one, then open it. */
-  const runMove = async (index: number) => {
-    const active = activeAccount()
-    if (!active) {
-      toastError('Accounts', 'Unlock the vault before moving a wallet.')
-      return
-    }
-    send({ type: 'MOVE', accountIndex: index })
-    try {
-      const result = await moveAccountHere({
-        master: active.vaultMaster,
-        index,
-        onPhase: (phase) => send({ type: 'MOVE_PHASE', phase }),
-      })
-      if (result.kind === 'failed') throw new Error(result.message)
-      send({ type: 'MOVED' })
-      await performSwitch(index, true)
-    } catch (error) {
-      toastError('Move wallet', messageOf(error))
-      send({ type: 'FAIL', error: messageOf(error) })
-    }
-  }
-
   const leaveRef = useRef({ performSwitch, performCreate, nextHeldAccount })
   leaveRef.current = { performSwitch, performCreate, nextHeldAccount }
 
@@ -330,6 +307,11 @@ export function WalletAccountMenu({
   }, [busy, open])
 
   const current = accounts.find((account) => account.index === activeIndex)
+  const viewed = snapshot.matches('viewing')
+    ? accounts.find((account) => account.index === snapshot.context.targetAccountIndex)
+    : null
+  // Display cache only: never open another holder's Toolbox or use this as spend authority.
+  const viewedBalance = viewed ? readTrustedBalanceSnapshot(viewed.identityKey, profile.chain) : null
 
   return (
     <div
@@ -385,6 +367,19 @@ export function WalletAccountMenu({
             <span className="wallet-account-count">{accounts.length}</span>
           </header>
 
+          {snapshot.matches('viewing') ? (
+            <div data-aeon-part="read-only-account" role="region" aria-label="Read-only wallet">
+              <strong>{viewed?.profile?.name ?? viewed?.label ?? 'Wallet unavailable'}</strong>
+              <p>Read only · no account move requested.</p>
+              <p>{viewedBalance
+                ? `${viewedBalance.sats.toLocaleString()} sats · last seen ${new Date(viewedBalance.readAt).toLocaleString()}`
+                : 'Balance not available on this device.'}</p>
+              <p>{viewed?.identityKey}</p>
+              <Button.Root type="button" onClick={() => send({ type: 'CLOSE' })}>
+                <Button.Label>Close</Button.Label>
+              </Button.Root>
+            </div>
+          ) : <>
           <ul className="wallet-account-list" role="listbox" aria-label="Wallets">
             {accounts.map((account) => {
               const selected = account.index === activeIndex
@@ -405,7 +400,7 @@ export function WalletAccountMenu({
                       }
                       disabled={busy}
                       onClick={() =>
-                        void (account.heldHere ? runSwitch(account.index) : runMove(account.index))
+                        void (account.heldHere ? runSwitch(account.index) : send({ type: 'VIEW', accountIndex: account.index }))
                       }
                     >
                       <span className="wallet-account-option-lead">
@@ -454,6 +449,7 @@ export function WalletAccountMenu({
             <AddIcon size={16} />
             <span>Add wallet</span>
           </button>
+          </>}
 
           {snapshot.context.error ? (
             <p className="wallet-account-error" role="alert">

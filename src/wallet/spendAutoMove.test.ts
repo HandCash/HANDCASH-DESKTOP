@@ -2,7 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 const refusal = vi.hoisted(() => ({ value: null as string | null }))
+const runtime = vi.hoisted(() => ({ value: null as { runtimeId: string; instance: { identityKey: string; accountIndex: number } } | null }))
+vi.mock('./walletRuntime', () => ({
+  getWalletRuntime: () => runtime.value,
+  assertRuntimeCurrent: (captured: unknown) => { if (captured !== runtime.value) throw new Error('account changed') },
+}))
 vi.mock('./vaultAccountHolding', () => ({ activeAccountSpendRefusal: () => refusal.value }))
+const custody = vi.hoisted(() => ({
+  move: vi.fn(async () => ({ kind: 'moved' as const, forced: false })),
+  arrive: vi.fn(async () => {}),
+}))
+vi.mock('./accountMove', () => ({ moveAccountHere: custody.move }))
+vi.mock('./spendArrival', () => ({ mergeArrivedForSpend: custody.arrive }))
 
 import { moveActiveAccountForSpend, spendNeedsMove, type SpendAccount } from './spendAutoMove'
 import { ACCOUNT_HELD_ELSEWHERE } from './vaultAccounts'
@@ -10,7 +21,9 @@ import { ACCOUNT_HELD_ELSEWHERE } from './vaultAccounts'
 const account = { identityKey: 'ik-1', accountIndex: 0, vaultMaster: {} } as unknown as SpendAccount
 
 beforeEach(() => {
+  vi.clearAllMocks()
   refusal.value = null
+  runtime.value = null
 })
 
 describe('spendNeedsMove', () => {
@@ -22,6 +35,57 @@ describe('spendNeedsMove', () => {
 })
 
 describe('moveActiveAccountForSpend', () => {
+  it('refuses a locked device before starting any move', async () => {
+    await expect(moveActiveAccountForSpend(account)).rejects.toThrow('WALLET_LOCKED')
+  })
+
+  it.each([
+    { identityKey: 'other-account', accountIndex: 0 },
+    { identityKey: account.identityKey, accountIndex: 1 },
+  ])('refuses an account captured before the current selection: %j', async (instance) => {
+    runtime.value = { runtimeId: 'new-selection', instance }
+    await expect(moveActiveAccountForSpend(account)).rejects.toThrow('Wallet account changed')
+  })
+
+  it('does not reuse a disposed runtime move when the same account is reopened', async () => {
+    let finish!: (value: { kind: 'moved'; forced: boolean }) => void
+    custody.move.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    runtime.value = { runtimeId: 'first-open', instance: account }
+    const first = moveActiveAccountForSpend(account)
+    const rejected = expect(first).rejects.toThrow('account changed')
+    await vi.waitFor(() => expect(custody.move).toHaveBeenCalledTimes(1))
+    runtime.value = { runtimeId: 'second-open', instance: account }
+    await moveActiveAccountForSpend(account)
+    expect(custody.move).toHaveBeenCalledTimes(2)
+    expect(custody.arrive).toHaveBeenCalledOnce()
+    finish({ kind: 'moved', forced: false })
+    await rejected
+    expect(custody.arrive).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a different index inherit a valid in-flight account move', async () => {
+    let finish!: (value: { kind: 'moved'; forced: boolean }) => void
+    custody.move.mockReturnValueOnce(new Promise((resolve) => { finish = resolve }))
+    runtime.value = { runtimeId: 'same-runtime', instance: account }
+    const moving = moveActiveAccountForSpend(account)
+    await vi.waitFor(() => expect(custody.move).toHaveBeenCalledOnce())
+    await expect(moveActiveAccountForSpend({ ...account, accountIndex: 1 })).rejects.toThrow('Wallet account changed')
+    expect(custody.move).toHaveBeenCalledOnce()
+    finish({ kind: 'moved', forced: false })
+    await moving
+  })
+
+  it('does not merge arrival history after the signing intent account changed', async () => {
+    let current = true
+    const arrive = vi.fn(async () => {})
+    await expect(moveActiveAccountForSpend(account, {
+      assertCurrent: () => { if (!current) throw new Error('account changed') },
+      move: async () => { current = false; return { ok: true } },
+      arrive,
+    })).rejects.toThrow('account changed')
+    expect(arrive).not.toHaveBeenCalled()
+  })
+
   it('moves, merges the arrived history, then resolves', async () => {
     const order: string[] = []
     await moveActiveAccountForSpend(account, {

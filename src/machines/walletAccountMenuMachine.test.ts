@@ -13,6 +13,27 @@ function start() {
 }
 
 describe('wallet account menu', () => {
+  it('views a remote account without moving, switching, creating or publishing', () => {
+    const { actor, openProfile, recheckDisplacement } = start()
+    actor.send({ type: 'VIEW', accountIndex: 4 })
+    expect(actor.getSnapshot().matches('viewing')).toBe(true)
+    expect(actor.getSnapshot().context.targetAccountIndex).toBe(4)
+    for (const event of [
+      { type: 'MOVE', accountIndex: 4 },
+      { type: 'CREATE' },
+      { type: 'EDIT_PROFILE', accountIndex: 4, active: false },
+      { type: 'DISPLACED', nextAccountIndex: null },
+    ] as const) actor.send(event)
+    expect(actor.getSnapshot().matches('viewing')).toBe(true)
+    expect(openProfile).not.toHaveBeenCalled()
+    expect(recheckDisplacement).not.toHaveBeenCalled()
+    actor.send({ type: 'CLOSE' })
+    expect(actor.getSnapshot().matches('closed')).toBe(true)
+    expect(actor.getSnapshot().context.targetAccountIndex).toBeNull()
+    expect(recheckDisplacement).toHaveBeenCalledOnce()
+    expect(actor.getSnapshot().context.displacedWhileBusy).toBe(false)
+  })
+
   it("editing the active account's profile opens Publish identity at once", () => {
     const { actor, openProfile } = start()
     actor.send({ type: 'EDIT_PROFILE', accountIndex: 0, active: true })

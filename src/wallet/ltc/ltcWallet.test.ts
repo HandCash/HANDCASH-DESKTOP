@@ -1,5 +1,5 @@
 import { PrivateKey } from '@bsv/sdk'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActivityEntry } from '../appActivity'
 import type { LtcChain } from './chain'
 import { fromHex, ltcTxid, p2wpkhAddress, parseLtcTx } from './litecoin'
@@ -20,11 +20,16 @@ let lost = false
 let online = true
 let heldElsewhere: string | null = null
 let holdingChecks = 0
+let runtimeGeneration = 0
+let beforeFee: (() => void) | null = null
 
 const PROOF = { tx: '00', path: [], pos: 0, height: 7, header: '00'.repeat(80) }
 
 vi.mock('../walletRuntime', () => ({
-  getWalletRuntime: () => ({ instance: { rootKeyHex: root.toHex(), identityKey: root.toPublicKey().toString() } }),
+  getWalletRuntime: () => ({ generation: runtimeGeneration, instance: { rootKeyHex: root.toHex(), identityKey: root.toPublicKey().toString() } }),
+  assertRuntimeCurrent: (runtime: { generation: number }) => {
+    if (runtime.generation !== runtimeGeneration) throw new Error('Wallet runtime disposed')
+  },
 }))
 vi.mock('../paymentPolicy', () => ({
   assertOnlineForPayment: () => {
@@ -79,7 +84,7 @@ const chain: LtcChain = {
     broadcasts.push(hex)
     return txidOfHex(hex)
   },
-  feeRate: async () => 2,
+  feeRate: async () => { beforeFee?.(); return 2 },
 }
 
 const ltc = await import('./ltcWallet')
@@ -110,9 +115,13 @@ beforeEach(() => {
   online = true
   heldElsewhere = null
   holdingChecks = 0
+  runtimeGeneration = 0
+  beforeFee = null
   ltc.setLtcDepsForTest({ chain })
   ltc.resetLtcWatchForTest()
 })
+
+afterEach(() => vi.restoreAllMocks())
 
 describe('native Litecoin', () => {
   it('records received litecoin as a Litecoin row, spendable only once buried on its own chain', async () => {
@@ -145,6 +154,45 @@ describe('native Litecoin', () => {
     const fee = BigInt(paid.fee)
     expect(ltc.readLtcBalance().spendable).toBe((1_000_000n - 300_000n - fee).toString())
     expect(recorded.at(-1)).toMatchObject({ method: 'ltc-send', kind: 'spent', txid: paid.ltcTxid, item: { amt: '300000' } })
+  })
+
+  it('rejects an account reopened during fee lookup without recording or broadcasting a payment', async () => {
+    receive(1, 1_000_000n)
+    await ltc.refreshLtc()
+    const before = [...durable.entries()]
+    const activityCount = recorded.length
+    const sign = vi.spyOn(ltc.ltcWallet.binding, 'sign')
+    beforeFee = () => { runtimeGeneration += 1 }
+    await expect(ltc.sendLtc({ address: DEST, litoshi: '300000' })).rejects.toThrow('Wallet runtime disposed')
+    expect([...durable.entries()]).toEqual(before)
+    expect(recorded).toHaveLength(activityCount)
+    expect(sign).not.toHaveBeenCalled()
+    expect(broadcasts).toHaveLength(0)
+  })
+
+  it('rejects a holder release during fee lookup before recording or broadcasting', async () => {
+    receive(1, 1_000_000n)
+    await ltc.refreshLtc()
+    const before = [...durable.entries()]
+    const sign = vi.spyOn(ltc.ltcWallet.binding, 'sign')
+    beforeFee = () => { heldElsewhere = 'This wallet is moving to another device.' }
+    await expect(ltc.sendLtc({ address: DEST, litoshi: '300000' })).rejects.toThrow('This wallet is moving')
+    expect([...durable.entries()]).toEqual(before)
+    expect(sign).not.toHaveBeenCalled()
+    expect(broadcasts).toHaveLength(0)
+  })
+
+  it('also fences swap funding after the account runtime is replaced', async () => {
+    receive(1, 1_000_000n)
+    await ltc.refreshLtc()
+    const sign = vi.spyOn(ltc.ltcWallet.binding, 'sign')
+    beforeFee = () => { runtimeGeneration += 1 }
+    await expect(ltc.ltcWallet.fundLocks(
+      [{ script: new Uint8Array([0x51]), litoshi: 300_000n, address: 'fake-lock' }],
+      { swapId: 'fake-swap', note: 'Test lock' },
+    )).rejects.toThrow('Wallet runtime disposed')
+    expect(sign).not.toHaveBeenCalled()
+    expect(broadcasts).toHaveLength(0)
   })
 
   it('refuses its own address, a bad address, dust and more than it can spend, before signing', async () => {

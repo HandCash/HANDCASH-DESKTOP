@@ -27,6 +27,9 @@ let support: CoinRecipientSupport = { kind: 'supported' }
 const PROOF = { tx: '00', path: [], pos: 0, height: 7, header: '00'.repeat(80) }
 
 vi.mock('../walletRuntime', () => ({
+  assertRuntimeCurrent: (runtime: { instance: { identityKey: string } }) => {
+    if (runtime.instance.identityKey !== identityOf(current)) throw new Error('Wallet runtime disposed')
+  },
   getWalletRuntime: () => ({ instance: { rootKeyHex: current.toHex(), identityKey: identityOf(current) } }),
 }))
 vi.mock('../paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))

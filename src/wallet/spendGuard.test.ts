@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type BalanceRead =
   | { kind: 'ok'; sats: number }
@@ -93,6 +93,9 @@ vi.mock('./walletCoordinator', () => ({
 }))
 
 describe('refreshSpendableBalance', () => {
+  // Cold account/holding imports are setup, not part of the balance-read budget.
+  beforeAll(async () => { await import('./spendGuard') })
+
   beforeEach(() => {
     peekProvenConfirmedSpendable.mockReset()
     peekProvenConfirmedSpendable.mockReturnValue(null)

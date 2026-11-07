@@ -19,6 +19,7 @@ const rulesSeen: string[] = []
 const PROOF = { tx: '00', path: [], pos: 0, height: 7, header: '00'.repeat(80) }
 
 vi.mock('../walletRuntime', () => ({
+  assertRuntimeCurrent: () => {}, // This fixture keeps one runtime throughout each payment.
   getWalletRuntime: () => ({ instance: { rootKeyHex: root.toHex(), identityKey: root.toPublicKey().toString() } }),
 }))
 vi.mock('../paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
