@@ -9272,16 +9272,18 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='wallet-health']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root'] {
+  /* Spatial contract: columns follow the parts the chart rendered, so a row
+     without a leading icon has no empty gutter and no phantom column gap. */
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto;
   align-items: center;
-  column-gap: 12px;
-  row-gap: 2px;
+  column-gap: var(--hc-space-3);
+  row-gap: var(--hc-space-1);
   width: 100%;
   min-height: 3rem;
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--hc-space-2) var(--hc-space-3);
   border: 0;
   border-radius: var(--hc-radius);
   background: transparent;
@@ -9290,6 +9292,49 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   text-align: start;
   cursor: pointer;
   transition: background 0.15s ease;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='leading']) {
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > :is([data-aeon-part='label'], [data-aeon-part='description']) {
+  grid-column: 1;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='leading'])
+  > :is([data-aeon-part='label'], [data-aeon-part='description']) {
+  grid-column: 2;
+}
+
+:is(
+  [data-aeon-scope='settings'],
+  [data-aeon-scope='about-handcash'],
+  [data-aeon-scope='labs'],
+  [data-aeon-scope='wallet-health']
+)
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='trailing'] {
+  grid-column: -2;
 }
 
 :is(
@@ -9333,7 +9378,6 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='label'] {
-  grid-column: 2;
   min-width: 0;
   font-size: var(--hc-text-md);
   font-weight: 600;
@@ -9349,7 +9393,6 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='description'] {
-  grid-column: 2;
   min-width: 0;
   color: var(--hc-muted);
   font-size: var(--hc-text-sm);
