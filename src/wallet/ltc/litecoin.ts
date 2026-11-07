@@ -1,4 +1,5 @@
-import { BigNumber, ECDSA, PrivateKey, Utils } from '@bsv/sdk'
+import { coinPublicKey, signCoinDigest, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
+import * as Utils from '../primitives/base58check'
 import { scrypt } from '@noble/hashes/scrypt.js'
 import { hash160, sha256d } from '../primitives/hashes'
 import { decodeHex, encodeHex } from '../../meridian/encoding'
@@ -364,10 +365,10 @@ export function signP2wpkhInputs(tx: LtcTx, keys: readonly PrivateKey[], amounts
   const signed: LtcTx = { ...tx, inputs: tx.inputs.map((i) => ({ ...i, script: new Uint8Array(), witness: [] })) }
   signed.inputs.forEach((input, vin) => {
     const key = keys[vin]!
-    const pubkey = Uint8Array.from(key.toPublicKey().encode(true) as number[])
+    const pubkey = coinPublicKey(key)
     const digest = p2wpkhSighash(signed, vin, pubkey, amounts[vin]!)
-    const sig = ECDSA.sign(new BigNumber(toHex(digest), 16), key, true)
-    input.witness = [concat(Uint8Array.from(sig.toDER() as number[]), Uint8Array.of(SIGHASH_ALL)), pubkey]
+    const sig = signCoinDigest(digest, key)
+    input.witness = [concat(sig, Uint8Array.of(SIGHASH_ALL)), pubkey]
   })
   return signed
 }

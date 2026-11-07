@@ -1,5 +1,8 @@
 import { keccak_256 } from '@noble/hashes/sha3.js'
-import { BigNumber, ECDSA, Hash, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
+import { Point } from '@noble/secp256k1'
+import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js'
+import { signCoinDigest, verifyCoinDigest, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
+import * as Utils from '../primitives/base58check'
 import { encodeCashAddr } from '../bch/bitcoincash'
 import { BTC_HRP } from '../btc/bitcoin'
 import {
@@ -107,7 +110,7 @@ export function htlcKind(chain: SwapAsset): HtlcKind {
 
 /** EIP-55-ready 20-byte address from a compressed secp256k1 pubkey (same curve as Arc). */
 function ethAddressOfPub(pub: Bytes): Bytes {
-  const uncompressed = Uint8Array.from(PublicKey.fromString(toHex(pub)).encode(false) as number[])
+  const uncompressed = Point.fromHex(pub).toRawBytes(false)
   if (uncompressed.length !== 65 || uncompressed[0] !== 0x04) fail('claim/refund keys must decompress')
   return keccak_256(uncompressed.subarray(1)).subarray(12)
 }
@@ -125,7 +128,7 @@ function arcUsdcHtlcScript(t: HtlcTerms): Bytes {
   return concat(Uint8Array.of(0x01), t.hash, ethAddressOfPub(t.claimPub), ethAddressOfPub(t.refundPub), lock)
 }
 
-export const sha256 = (b: Bytes): Bytes => Uint8Array.from(Hash.sha256(Array.from(b)))
+export const sha256 = (b: Bytes): Bytes => nobleSha256(b)
 
 function push(data: Bytes): Bytes {
   if (data.length <= 75) return concat(Uint8Array.of(data.length), data)
@@ -265,8 +268,8 @@ export function htlcSighash(chain: SwapAsset, tx: LtcTx, vin: number, script: By
 /** A DER signature plus its hash type byte. */
 export function htlcSignature(chain: SwapAsset, tx: LtcTx, vin: number, script: Bytes, amount: bigint, key: PrivateKey): Bytes {
   const digest = htlcSighash(chain, tx, vin, script, amount)
-  const sig = ECDSA.sign(new BigNumber(toHex(digest), 16), key, true)
-  return concat(Uint8Array.from(sig.toDER() as number[]), Uint8Array.of(hashTypeOf(chain)))
+  const sig = signCoinDigest(digest, key)
+  return concat(sig, Uint8Array.of(hashTypeOf(chain)))
 }
 
 /** Does `sig` (DER + hash type) sign input `vin` of `tx` with `pub`? */
@@ -274,7 +277,7 @@ export function htlcSignatureValid(chain: SwapAsset, tx: LtcTx, vin: number, scr
   if (sig.length < 9 || sig[sig.length - 1] !== hashTypeOf(chain)) return false
   try {
     const digest = htlcSighash(chain, tx, vin, script, amount)
-    return ECDSA.verify(new BigNumber(toHex(digest), 16), Signature.fromDER(Array.from(sig.slice(0, -1))), PublicKey.fromString(toHex(pub)))
+    return verifyCoinDigest(digest, pub, sig.slice(0, -1))
   } catch {
     return false
   }

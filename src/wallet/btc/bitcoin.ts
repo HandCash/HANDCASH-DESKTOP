@@ -1,4 +1,4 @@
-import { Utils } from '@bsv/sdk'
+import * as Utils from '../primitives/base58check'
 import { compactFromTarget } from '../ltc/headers'
 import { concat, decodeSegwitAddress, encodeSegwitAddress, hash160, LtcFormatError, p2wpkhScript, targetFromBits, type Bytes } from '../ltc/litecoin'
 

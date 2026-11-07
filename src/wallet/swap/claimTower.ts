@@ -1,4 +1,4 @@
-import type { PrivateKey } from '@bsv/sdk'
+import type { KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import { parseDogeTx } from '../doge/dogecoin'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
 import type { SwapAsset } from './assets'

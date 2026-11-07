@@ -1,4 +1,4 @@
-import { BigNumber, ECDSA, type PrivateKey } from '@bsv/sdk'
+import { coinPublicKey, signCoinDigest, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import {
   bip143Sighash,
   concat,
@@ -157,10 +157,10 @@ export function signP2pkhForkIdInputs(tx: LtcTx, keys: readonly PrivateKey[], am
     ...unsigned,
     inputs: unsigned.inputs.map((input, vin) => {
       const key = keys[vin]!
-      const pubkey = Uint8Array.from(key.toPublicKey().encode(true) as number[])
+      const pubkey = coinPublicKey(key)
       const digest = bip143Sighash(unsigned, vin, pubkey, amounts[vin]!, SIGHASH_ALL_FORKID)
-      const sig = ECDSA.sign(new BigNumber(toHex(digest), 16), key, true)
-      const der = concat(Uint8Array.from(sig.toDER() as number[]), Uint8Array.of(SIGHASH_ALL_FORKID))
+      const sig = signCoinDigest(digest, key)
+      const der = concat(sig, Uint8Array.of(SIGHASH_ALL_FORKID))
       return { ...input, script: concat(varBytes(der), varBytes(pubkey)) }
     }),
   }

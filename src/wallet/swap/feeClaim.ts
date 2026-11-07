@@ -1,4 +1,5 @@
-import { PrivateKey, Utils } from '@bsv/sdk'
+import { CoinPrivateKey as PrivateKey } from '../primitives/coinCrypto'
+import * as Utils from '../primitives/base58check'
 import { BCH_FULCRUM_SERVERS, electrumBchChain, failoverBchChain } from '../bch/chain'
 import { bchOutputScript } from '../bch/bitcoincash'
 import { btcOutputScript } from '../btc/bitcoin'

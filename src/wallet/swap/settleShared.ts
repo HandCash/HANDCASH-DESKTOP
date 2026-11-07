@@ -1,4 +1,4 @@
-import { PrivateKey } from '@bsv/sdk'
+import { CoinPrivateKey as PrivateKey } from '../primitives/coinCrypto'
 import { agreedTerms, settleKeyOf, swapLegs, type AgreedTerms, type SwapLegId, type SwapRole, type SwapTerms } from './settle'
 import { activeSwaps, type SettleRecord } from './settleStore'
 import type { ActiveWallet } from '../session'

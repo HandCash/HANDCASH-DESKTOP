@@ -1,4 +1,5 @@
-import { BigNumber, ECDSA, Utils, type PrivateKey } from '@bsv/sdk'
+import { coinPublicKey, signCoinDigest, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
+import * as Utils from '../primitives/base58check'
 import { compactFromTarget } from '../ltc/headers'
 import {
   concat,
@@ -96,11 +97,11 @@ export function signP2pkhLegacyInputs(tx: LtcTx, keys: readonly PrivateKey[], am
     ...unsigned,
     inputs: unsigned.inputs.map((input, vin) => {
       const key = keys[vin]!
-      const pubkey = Uint8Array.from(key.toPublicKey().encode(true) as number[])
+      const pubkey = coinPublicKey(key)
       const scriptCode = dogeCoinScript(pubkey)
       const digest = legacySighash(unsigned, vin, scriptCode)
-      const sig = ECDSA.sign(new BigNumber(toHex(digest), 16), key, true)
-      const der = concat(Uint8Array.from(sig.toDER() as number[]), Uint8Array.of(SIGHASH_ALL))
+      const sig = signCoinDigest(digest, key)
+      const der = concat(sig, Uint8Array.of(SIGHASH_ALL))
       return { ...input, script: concat(varBytes(der), varBytes(pubkey)) }
     }),
   }

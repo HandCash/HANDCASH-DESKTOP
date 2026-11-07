@@ -1,4 +1,4 @@
-import type { PrivateKey } from '@bsv/sdk'
+import type { KeyMaterial, CoinPrivateKey } from '../primitives/coinCrypto'
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
 import { upgradeActivityRows, type ActivityEntry } from '../appActivity'
@@ -178,7 +178,7 @@ export function nativeLtcRow(entry: ActivityEntry, legacy: LegacyRecord): Omit<A
   return null
 }
 
-export const ltcKey = (root: PrivateKey): PrivateKey => ltcWallet.coinKey(root)
+export const ltcKey = (root: KeyMaterial): CoinPrivateKey => ltcWallet.coinKey(root)
 
 export function planLtcPayment(
   coins: ReadonlyArray<{ txid: string; vout: number; litoshi: bigint }>,

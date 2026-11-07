@@ -1,4 +1,4 @@
-import { KeyDeriver, PrivateKey } from '@bsv/sdk'
+import { CoinPrivateKey as PrivateKey, coinPublicKey, deriveCoinPrivateKey, deriveCoinPublicKey, type KeyMaterial } from '../primitives/coinCrypto'
 import { createActor } from 'xstate'
 import { coinMachine } from '../../machines/coinMachine'
 import { accountLocalKey } from '../accountLocalKeys'
@@ -63,7 +63,7 @@ export type CoinBinding = {
   /** The script a payment to `address` locks; throws unless it is an address this coin pays. */
   outputScript(address: string): Uint8Array
   /** `keys`: the key each input's coin pays, one per input. */
-  sign(tx: LtcTx, keys: readonly PrivateKey[], amounts: readonly bigint[]): LtcTx
+  sign(tx: LtcTx, keys: readonly KeyMaterial[], amounts: readonly bigint[]): LtcTx
   /** The bytes broadcast. */
   serialize(tx: LtcTx): Uint8Array
   txid(tx: LtcTx): string
@@ -303,7 +303,7 @@ export function createCoinWallet(binding: CoinBinding) {
     throw new CoinRefusalError(chain, reason, message)
   }
 
-  const coinKey = (root: PrivateKey): PrivateKey => new KeyDeriver(root).derivePrivateKey(binding.keyProtocol, binding.keyId, 'self')
+  const coinKey = (root: KeyMaterial): PrivateKey => deriveCoinPrivateKey(root, binding.keyProtocol, binding.keyId)
 
   // ── State ────────────────────────────────────────────────────────────────
 
@@ -353,7 +353,7 @@ export function createCoinWallet(binding: CoinBinding) {
   type CoinKey = { key: PrivateKey; address: string; script: Uint8Array }
 
   function keyed(key: PrivateKey): CoinKey {
-    const pub = Uint8Array.from(key.toPublicKey().encode(true) as number[])
+    const pub = coinPublicKey(key)
     return { key, address: binding.address(pub), script: binding.script(pub) }
   }
 
@@ -363,7 +363,7 @@ export function createCoinWallet(binding: CoinBinding) {
 
   /** The key a payment from `paidBy.sender` was locked to: the BRC-42 child the sender derived for this identity. */
   function paidKeyOf(active: ActiveWallet, paidBy: CoinSender): CoinKey {
-    return keyed(new KeyDeriver(PrivateKey.fromHex(active.rootKeyHex)).derivePrivateKey(binding.paymentProtocol, paidBy.keyId, paidBy.sender))
+    return keyed(deriveCoinPrivateKey(PrivateKey.fromHex(active.rootKeyHex), binding.paymentProtocol, paidBy.keyId, paidBy.sender))
   }
 
   const coinKeyOf = (active: ActiveWallet, coin: Coin): CoinKey => (coin.paidBy ? paidKeyOf(active, coin.paidBy) : keyOf(active))
@@ -679,8 +679,7 @@ export function createCoinWallet(binding: CoinBinding) {
   /** A fresh BRC-42 child of the recipient's identity for this payment alone, so no two payments share an address. */
   function identityDestination(active: ActiveWallet, identityKey: string): Destination {
     const keyId = toHex(crypto.getRandomValues(new Uint8Array(16)))
-    const pub = new KeyDeriver(PrivateKey.fromHex(active.rootKeyHex)).derivePublicKey(binding.paymentProtocol, keyId, identityKey, false)
-    const bytes = Uint8Array.from(pub.encode(true) as number[])
+    const bytes = deriveCoinPublicKey(PrivateKey.fromHex(active.rootKeyHex), binding.paymentProtocol, keyId, identityKey)
     return { address: binding.address(bytes), script: binding.script(bytes), to: { identityKey, keyId } }
   }
 

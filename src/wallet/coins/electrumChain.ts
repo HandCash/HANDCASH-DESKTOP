@@ -1,4 +1,4 @@
-import { Hash } from '@bsv/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
 import { failoverLtcChain, type LtcChain } from '../ltc/chain'
 import type { HeaderSource } from '../ltc/headers'
 import { fromHex, parseLtcHeader, reversed, toHex } from '../ltc/litecoin'
@@ -131,7 +131,7 @@ export function electrumSocket(url: string, open: (url: string) => WebSocket = (
 }
 
 /** Electrum's script hash: SHA-256 of the output script, byte-reversed. */
-export const electrumScriptHash = (script: Uint8Array): string => toHex(reversed(Uint8Array.from(Hash.sha256(Array.from(script)))))
+export const electrumScriptHash = (script: Uint8Array): string => toHex(reversed(sha256(script)))
 
 const split80 = (raw: Uint8Array, count: number): Uint8Array[] => {
   if (raw.length !== count * 80) throw new Error(`${count} headers are ${count * 80} bytes, not ${raw.length}`)

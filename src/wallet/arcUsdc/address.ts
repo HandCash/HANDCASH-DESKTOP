@@ -2,13 +2,13 @@
  * Arc / EVM address from a secp256k1 key (same curve as BSV).
  * Address = last 20 bytes of keccak256(uncompressed pubkey without 0x04).
  */
-import { PrivateKey } from '@bsv/sdk'
+import { coinPublicKey, type KeyMaterial } from '../primitives/coinCrypto'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 
 const HEX = /^0x[0-9a-fA-F]{40}$/
 
-export function ethAddressFromPrivateKey(key: PrivateKey): string {
-  const pub = Uint8Array.from(key.toPublicKey().encode(false) as number[])
+export function ethAddressFromPrivateKey(key: KeyMaterial): string {
+  const pub = coinPublicKey(key, false)
   if (pub.length !== 65 || pub[0] !== 0x04) {
     throw new Error('ARC_USD_KEY: expected uncompressed secp256k1 public key')
   }
