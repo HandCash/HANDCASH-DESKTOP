@@ -1,4 +1,4 @@
-import { Utils } from '@bsv/sdk'
+import * as Utils from '../primitives/base58check'
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
 import { durableGetItem, durableSetItem } from '../durableStorage'

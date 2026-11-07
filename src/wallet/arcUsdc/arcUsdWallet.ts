@@ -6,7 +6,7 @@
  * Arc USDC ERC-20 view (6 decimals) over JSON-RPC. Not the UTXO `createCoinWallet`
  * engine — Arc is EVM, not Electrum/burial.
  */
-import { KeyDeriver, PrivateKey } from '@bsv/sdk'
+import { CoinPrivateKey as PrivateKey, deriveCoinPrivateKey, type KeyMaterial } from '../primitives/coinCrypto'
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
@@ -111,8 +111,8 @@ function rpc(): ArcRpc {
   return rpcOverride ?? createArcRpc(network)
 }
 
-export function arcUsdCoinKey(root: PrivateKey): PrivateKey {
-  return new KeyDeriver(root).derivePrivateKey(ARC_USD_KEY_PROTOCOL, ARC_USD_KEY_ID, 'self')
+export function arcUsdCoinKey(root: KeyMaterial): PrivateKey {
+  return deriveCoinPrivateKey(root, ARC_USD_KEY_PROTOCOL, ARC_USD_KEY_ID)
 }
 
 function keyOf(active: ActiveWallet): { key: PrivateKey; address: string } {

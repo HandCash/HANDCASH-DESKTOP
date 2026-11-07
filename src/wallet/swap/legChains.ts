@@ -1,4 +1,5 @@
-import { Beef, P2PKH, PrivateKey, Transaction, Utils } from '@bsv/sdk'
+import { Beef, P2PKH, Transaction, Utils } from '@bsv/sdk'
+import type { KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
 import { ancestryConflicts } from '../beefSubset'
 import type { LockSighting } from '../coins/coinWallet'

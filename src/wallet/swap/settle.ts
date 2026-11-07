@@ -1,4 +1,5 @@
-import { Hash, KeyDeriver, PrivateKey, Utils } from '@bsv/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { CoinPrivateKey, deriveCoinPrivateKey, deriveCoinPublicKey, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import { fromHex, toHex, type Bytes } from '../ltc/litecoin'
 import type { SwapAsset } from './assets'
 import { htlcOutput, htlcScript, type HtlcTerms } from './htlc'
@@ -200,18 +201,18 @@ export function legOutputs(terms: AgreedTerms, legId: SwapLegId, feePub = HANDCA
 
 // ── Keys and the secret ───────────────────────────────────────────────────
 
-export const swapSettleKey = (root: PrivateKey, swapId: string): PrivateKey => new KeyDeriver(root).derivePrivateKey(SWAP_SETTLE_PROTOCOL, swapId, 'self')
+export const swapSettleKey = (root: PrivateKey, swapId: string): CoinPrivateKey => deriveCoinPrivateKey(root, SWAP_SETTLE_PROTOCOL, swapId)
 export const swapSettlePub = (root: PrivateKey, swapId: string): string => swapSettleKey(root, swapId).toPublicKey().toString()
 
 /** This wallet's claim / refund key in a swap: the taker's is counterparty self; a v2 maker's is counterparty = the taker. */
-export function settleKeyOf(root: PrivateKey, terms: SwapTerms, role: SwapRole): PrivateKey {
-  if (role === 'maker' && terms.v === 2) return new KeyDeriver(root).derivePrivateKey(SWAP_SETTLE_PROTOCOL, terms.swapId, terms.taker)
+export function settleKeyOf(root: PrivateKey, terms: SwapTerms, role: SwapRole): CoinPrivateKey {
+  if (role === 'maker' && terms.v === 2) return deriveCoinPrivateKey(root, SWAP_SETTLE_PROTOCOL, terms.swapId, terms.taker)
   return swapSettleKey(root, terms.swapId)
 }
 
 /** The v2 maker's per-swap public key, as the taker derives it without asking. */
 export const makerSettlePubFor = (takerRoot: PrivateKey, swapId: string, maker: string): string =>
-  new KeyDeriver(takerRoot).derivePublicKey(SWAP_SETTLE_PROTOCOL, swapId, maker).toString()
+  toHex(deriveCoinPublicKey(takerRoot, SWAP_SETTLE_PROTOCOL, swapId, maker))
 
 /** The terms with the maker's key, once known: always for v2, after the accept for v1. */
 export const agreedTerms = (terms: SwapTerms, acceptedMakerPub?: string): AgreedTerms | null => {
@@ -220,11 +221,11 @@ export const agreedTerms = (terms: SwapTerms, acceptedMakerPub?: string): Agreed
 }
 
 export function swapSecret(root: PrivateKey, swapId: string): Bytes {
-  const child = new KeyDeriver(root).derivePrivateKey(SWAP_SECRET_PROTOCOL, swapId, 'self')
-  return Uint8Array.from(Hash.sha256(child.toArray('be', 32)))
+  const child = deriveCoinPrivateKey(root, SWAP_SECRET_PROTOCOL, swapId)
+  return sha256(fromHex(child.toHex()))
 }
 
-export const secretHash = (secret: Bytes): string => Utils.toHex(Hash.sha256(Array.from(secret)))
+export const secretHash = (secret: Bytes): string => toHex(sha256(secret))
 
 // ── The take ──────────────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
 # Restricted component replacement — implementation record
 
-Status: incomplete, not release-ready and not legal clearance. Work is isolated on `alignity/chat/cmw51x64r23x`, based on e9245220. No licenses, notices, lockfiles, releases or wallet data have been changed. Permission requests remain unsent; replacement is now the primary path.
+Status: incomplete, not release-ready and not legal clearance. The earlier broad replacement plan below is historical scope, not authorization to remove the BSV stack. The approved current slice retains SDK functionality for BSV and replaces its other-coin cryptographic operations only. Current edits are isolated in chat cmw5ugu9s1b on 986797d8. No licenses, notices, manifests, lockfiles, releases or wallet data were changed; no commit, push or publication was performed.
 
 ## Exact identified scope at this baseline
 
@@ -31,9 +31,40 @@ Algorithm references: [NIST SHA-256 / FIPS 180-4](https://csrc.nist.gov/pubs/fip
 
 Verification: `npx tsc -p tsconfig.json --noEmit`, four targeted test files (57 tests, including 17 new adapter tests), and `git diff --check` passed. An earlier pre-adapter full `test:ci` run was killed by the runner at 120 seconds (exit 130); its partial passing output is not a full-suite pass. Full-suite, browser/build-artifact and Mobile verification remain outstanding.
 
-This removes two SDK hash calls from the shared LTC/BTC-family path. The Litecoin module still imports SDK signing/key/encoding classes and remains uncleared. The rest of the SDK, engine and verifiers are unchanged.
+At that earlier slice, Litecoin still imported SDK signing/key/encoding classes. The following approved slice supersedes that technical observation, not the unresolved legal findings. The SDK, engine and verifiers remain installed.
 
-## Ordered next slices and acceptance gates
+## Approved slice: other-coin crypto, with BSV retained
+
+Implementation: `primitives/coinCrypto.ts` delegates curve arithmetic, compressed ECDH, RFC6979 ECDSA and verification to existing noble secp256k1; HMAC/SHA256 delegate to noble hashes. Application glue preserves BRC-42 scalar addition and BRC-43 invoice bytes, self/anyone/peer behavior and a narrow serialized-key boundary. `base58check.ts` implements positional base conversion, leading zeroes and checksum framing around the existing hash adapter, with a 128-character address input bound. It is address-only, not a replacement for arbitrary SDK encoding APIs. ASN.1 DER framing is small application glue; no curve/hash/signature algorithm was reimplemented.
+
+Affected consumers: LTC/BTC/BCH/DOGE own keys, identity-payment child keys and signatures; Electrum script hashes; Arc USDC derived keys and public-key-to-address conversion; shared swap offers/cancel/fill signatures, settlement keys/secrets, HTLC signing/verification and fee/address helpers. Arc transaction signing already used noble and stays in place. Derivation domains, serialized root keys, storage, transaction sighashes and network/broadcast policy are unchanged. BSV transaction/BEEF/P2PKH functionality remains on SDK in `swap/legChains.ts` and the rest of the BSV stack is retained. Shared HTLC helpers also serve BSV; regression tests exercise that behavior.
+
+There are no SDK runtime imports in `coins`, `ltc`, `btc`, `bch`, `doge`, `arcUsdc`, `primitives` or `swap` except the explicit BSV helpers in `swap/legChains.ts`. A regression checks this direct-import boundary. This is NOT a claim of transitive bundle separation: shared custody, identity, message transport and engine code still use restricted components. No SDK runtime fallback or real custody dual-run is introduced.
+
+### Dependency evidence
+
+Existing installed manifests and full LICENSE files were checked against the unchanged root lock:
+
+| Dependency | Installed / locked | License text | SHA-256 of installed LICENSE |
+| --- | --- | --- | --- |
+| @noble/secp256k1 | 2.3.0 | MIT, Paul Miller, copyright 2019 | 394c2e6e5552e5dba202bee6390b9d6aa2754d657f5b9869e83b3d265a315501 |
+| @noble/hashes | 2.4.0 | MIT, Paul Miller, copyright 2022 | 4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec |
+
+These texts require retention of their copyright and permission notices. Packaging inclusion is still L3/L4, not established by an installed file. No new dependency installation or version/lockfile change was needed.
+
+### Inputs, provenance and limits
+
+Author exposure: prior upstream exposure is recorded; this is not clean-room. Inputs for this slice were existing application call sites/interfaces, mathematical protocol requirements and observable outputs for public synthetic keys. SDK implementation source was not read or translated for this slice. SDK calls remain in tests as compatibility oracles only. No upstream implementation or specification prose/code was copied into these adapters.
+
+The mathematical compatibility references are BRC-42 “Key Derivation” and BRC-43 “Specification”. Their latest per-file revisions and document hashes were retrieved after implementation; this is a reproducibility record, NOT proof the earlier mutable-page fetch used identical bytes:
+- [BRC-42 d403af3417815919218468556503b627cd272abc](https://raw.githubusercontent.com/bitcoin-sv/BRCs/d403af3417815919218468556503b627cd272abc/key-derivation/0042.md), SHA-256 5918476483e815914aac5ad780dca9d3fee15cd19dd9bc1e54aa5ab745dff6af.
+- [BRC-43 99ee33ea5980313a5c2b01a02a1e42569d981fd6](https://raw.githubusercontent.com/bitcoin-sv/BRCs/99ee33ea5980313a5c2b01a02a1e42569d981fd6/key-derivation/0043.md), SHA-256 b84211fa1ab546643a388e99b6c7433f38eb070849adfb3c75e27812a959261d.
+
+Specification/vector grants have NOT been verified: the root LICENSE retrieval failed. That leaves the plan's permission-before-use gate unsatisfied; user/rights/legal review is required before treating this slice as provenance-cleared. Golden compatibility and mathematical vectors do not establish rights to the existing app or its historical derivation.
+
+Tests include recorded legacy own-key outputs for all five coins, self/anyone/peer derivation, sender/recipient reciprocity and serialized-root recovery, a published BRC-42 vector, independent Node/OpenSSL public-key/signature checks, exact deterministic DER bytes including scalar/digest boundaries, high-S verification, malformed keys/DER/paths and Base58 address versions/checksums. Only public synthetic keys and offline fixtures are used. Verification: 35 affected Vitest files / 367 tests passed; the 39 new crypto/encoding regression cases passed, TypeScript no-emit passed, the inventory Node test passed (1/1), and git diff --check passed. Independent crypto/security review, full-suite/build and exact Desktop/Mobile artifact verification remain open.
+
+## Historical broader slices and acceptance gates (not current authorization)
 
 1. **Encoding and keys:** inventory every used API; independently sourced permissive encoding/secp adapters, external address/signature/derivation vectors, malformed-input/low-S behavior and synthetic backup-restore equivalence. Crypto review before custody changes.
 2. **Transaction/proof formats:** preserve BRC-100, BEEF and BRC-150 semantics; revision/license ledger first, then independent serialization/proof vectors and adversarial tests. No downgrade from complete proofs to indexer trust.

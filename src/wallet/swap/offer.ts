@@ -1,4 +1,6 @@
-import { BigNumber, ECDSA, Hash, KeyDeriver, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { decodeHex, encodeHex } from '../../meridian/encoding'
+import { CoinPrivateKey, coinPublicKey, deriveCoinPrivateKey, deriveCoinPublicKey, signCoinDigest, verifyCoinDigest, type KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import { isSwapAsset, type SwapAsset } from './assets'
 
 /**
@@ -64,7 +66,7 @@ export function swapOfferDigest(offer: SwapOffer): number[] {
     offer.nonce,
     offer.messagebox ?? '',
   ]
-  return Hash.sha256(Utils.toArray(DOMAIN + JSON.stringify(fields), 'utf8'))
+  return Array.from(sha256(new TextEncoder().encode(DOMAIN + JSON.stringify(fields))))
 }
 
 function wellFormed(o: Partial<SignedSwapOffer>): o is SignedSwapOffer {
@@ -94,10 +96,9 @@ function wellFormed(o: Partial<SignedSwapOffer>): o is SignedSwapOffer {
 
 /** Sign `offer` with the identity root key `root`; `offer.maker` must be its public key. */
 export function signSwapOffer(offer: SwapOffer, root: PrivateKey): SignedSwapOffer {
-  if (root.toPublicKey().toString() !== offer.maker) throw new Error('the offer names another maker')
-  const key = new KeyDeriver(root).derivePrivateKey(SWAP_OFFER_PROTOCOL, offer.nonce, 'anyone')
-  const sig = ECDSA.sign(new BigNumber(swapOfferDigest(offer)), key, true)
-  return { ...offer, sig: Utils.toHex(sig.toDER() as number[]) }
+  if (encodeHex(coinPublicKey(root)) !== offer.maker) throw new Error('the offer names another maker')
+  const key = deriveCoinPrivateKey(root, SWAP_OFFER_PROTOCOL, offer.nonce, 'anyone')
+  return { ...offer, sig: encodeHex(signCoinDigest(Uint8Array.from(swapOfferDigest(offer)), key)) }
 }
 
 const CANCEL_DOMAIN = 'handcash swap offer cancel v1\n'
@@ -105,24 +106,24 @@ const FILLED_DOMAIN = 'handcash swap offer filled v1\n'
 
 /** The bytes a maker signs to withdraw its offer `nonce`. */
 export function swapOfferCancelDigest(nonce: string): number[] {
-  return Hash.sha256(Utils.toArray(CANCEL_DOMAIN + nonce, 'utf8'))
+  return Array.from(sha256(new TextEncoder().encode(CANCEL_DOMAIN + nonce)))
 }
 
 /** Withdraw an offer: the same key that signed it signs its nonce under the cancel domain. */
 export function signSwapOfferCancel(nonce: string, root: PrivateKey): string {
-  const key = new KeyDeriver(root).derivePrivateKey(SWAP_OFFER_PROTOCOL, nonce, 'anyone')
-  return Utils.toHex(ECDSA.sign(new BigNumber(swapOfferCancelDigest(nonce)), key, true).toDER() as number[])
+  const key = deriveCoinPrivateKey(root, SWAP_OFFER_PROTOCOL, nonce, 'anyone')
+  return encodeHex(signCoinDigest(Uint8Array.from(swapOfferCancelDigest(nonce)), key))
 }
 
 /** The bytes a maker signs to report `filled` units of its offer `nonce` taken on. */
 export function swapOfferFilledDigest(nonce: string, filled: bigint): number[] {
-  return Hash.sha256(Utils.toArray(FILLED_DOMAIN + nonce + '\n' + filled.toString(), 'utf8'))
+  return Array.from(sha256(new TextEncoder().encode(FILLED_DOMAIN + nonce + '\n' + filled.toString())))
 }
 
 /** Report how much of offer `nonce` is taken on, so the book stops showing it: signed by the key that signed the offer. */
 export function signSwapOfferFilled(nonce: string, filled: bigint, root: PrivateKey): string {
-  const key = new KeyDeriver(root).derivePrivateKey(SWAP_OFFER_PROTOCOL, nonce, 'anyone')
-  return Utils.toHex(ECDSA.sign(new BigNumber(swapOfferFilledDigest(nonce, filled)), key, true).toDER() as number[])
+  const key = deriveCoinPrivateKey(root, SWAP_OFFER_PROTOCOL, nonce, 'anyone')
+  return encodeHex(signCoinDigest(Uint8Array.from(swapOfferFilledDigest(nonce, filled)), key))
 }
 
 /** Check an offer as a taker's wallet must before showing it: shape, maker signature, and that it stands now. */
@@ -134,8 +135,8 @@ export function verifySwapOffer(value: unknown, now: number): { ok: true; offer:
   if (o.expiresAt - o.createdAt > MAX_OFFER_TTL_MS) return { ok: false, reason: 'too-long' }
   try {
     const { sig, ...offer } = o
-    const pub = new KeyDeriver(new PrivateKey(1)).derivePublicKey(SWAP_OFFER_PROTOCOL, o.nonce, PublicKey.fromString(o.maker).toString())
-    const valid = ECDSA.verify(new BigNumber(swapOfferDigest(offer)), Signature.fromDER(Utils.toArray(sig, 'hex')), pub)
+    const pub = deriveCoinPublicKey(new CoinPrivateKey('1'), SWAP_OFFER_PROTOCOL, o.nonce, o.maker)
+    const valid = verifyCoinDigest(Uint8Array.from(swapOfferDigest(offer)), pub, decodeHex(sig))
     return valid ? { ok: true, offer: o } : { ok: false, reason: 'signature' }
   } catch {
     return { ok: false, reason: 'signature' }

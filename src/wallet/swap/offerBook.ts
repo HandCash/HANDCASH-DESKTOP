@@ -1,4 +1,5 @@
-import { PrivateKey, Utils } from '@bsv/sdk'
+import { CoinPrivateKey as PrivateKey } from '../primitives/coinCrypto'
+import { encodeHex } from '../../meridian/encoding'
 import { DEFAULT_BRC_CLOUD_BASE_URL, PUBLIC_BRC_CLOUD_ORIGIN } from '../walletConfig'
 import { SWAP_ASSET_INFO, type SwapAsset } from './assets'
 import { DIRECT_CLAIM_COST } from './fee'
@@ -83,7 +84,7 @@ async function failure(res: Response): Promise<string> {
   return typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`
 }
 
-const randomNonce = () => Utils.toHex(Array.from(crypto.getRandomValues(new Uint8Array(32))))
+const randomNonce = () => encodeHex(crypto.getRandomValues(new Uint8Array(32)))
 
 /** Sign `draft` as the identity `rootKeyHex` and post it to the offer book; resolves to the signed offer. */
 export async function publishSwapOffer(
