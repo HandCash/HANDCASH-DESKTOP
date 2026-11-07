@@ -9285,7 +9285,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root'] {
   display: grid;
@@ -9312,7 +9314,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']:hover {
   background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
@@ -9322,7 +9326,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='description']:not(:empty)) {
   grid-template-rows: auto auto;
@@ -9333,7 +9339,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='description']:not(:empty))
   > :is([data-aeon-part='leading'], [data-aeon-part='trailing']) {
@@ -9345,7 +9353,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='label'] {
@@ -9361,7 +9371,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='description'] {
@@ -9376,7 +9388,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='leading'] {
@@ -9392,7 +9406,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   [data-aeon-scope='settings'],
   [data-aeon-scope='about-handcash'],
   [data-aeon-scope='labs'],
-  [data-aeon-scope='wallet-health']
+  [data-aeon-scope='wallet-health'],
+  [data-aeon-scope='history-backup'],
+  [data-aeon-scope='settings-unlock']
 )
   [data-aeon-scope='listRow'][data-aeon-part='root']
   > [data-aeon-part='trailing'] {
@@ -9403,6 +9419,22 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
   justify-content: flex-end;
   flex-shrink: 0;
   min-width: 0;
+}
+
+/* Two-button rows on narrow screens: the buttons sit under the text so it keeps its width. */
+html:is(.platform-mobile, .layout-compact)
+  :is([data-aeon-scope='history-backup'], [data-aeon-scope='settings-unlock'])
+  [data-aeon-scope='listRow'][data-aeon-part='root']:has(> [data-aeon-part='trailing'] > .actions) {
+  grid-template-rows: auto auto auto;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  :is([data-aeon-scope='history-backup'], [data-aeon-scope='settings-unlock'])
+  [data-aeon-scope='listRow'][data-aeon-part='root']
+  > [data-aeon-part='trailing']:has(> .actions) {
+  grid-column: 2 / -1;
+  grid-row: 3;
+  justify-content: flex-start;
 }
 
 /* Match Activity / Friends head — no extra top offset under the stage pad. */
