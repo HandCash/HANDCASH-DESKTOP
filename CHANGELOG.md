@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.663] - 2026-11-06
+
+### Changed
+
+- Permission prompts say Approve and Deny, never Authorize, Accept or Cancel.
+
 ## [1.3.662] - 2026-11-06
 
 ### Changed
