@@ -135,7 +135,7 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   className="connect-actions"
                   secondary={{ label: 'Deny', onClick: onDeny }}
                   primary={{
-                    label: 'Authorize',
+                    label: 'Approve',
                     onClick: allow,
                     autoFocus: true,
                     disabled: allowDisabled,

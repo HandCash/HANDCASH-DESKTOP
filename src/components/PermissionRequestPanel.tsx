@@ -54,7 +54,6 @@ export function PermissionRequestPanel({
   const [iconReady, setIconReady] = useState(false)
   const [acceptIncoming, setAcceptIncoming] = useState(false)
   const autoPay = useAutoPayForm()
-  const inlineActions = actions === 'inline'
 
   useEffect(() => {
     decisionCommittedRef.current = false
@@ -111,20 +110,14 @@ export function PermissionRequestPanel({
   const requestActions: WalletDockActions = {
     ariaLabel: 'Permission decision',
     secondary: {
-      label: 'Cancel',
+      label: 'Deny',
       onClick: runDeny,
       disabled: committing,
       icon: <CloseIcon size={18} />,
       tone: 'danger',
     },
     primary: {
-      label: committing
-        ? 'Approving…'
-        : inlineActions
-          ? pending.kind === 'connect'
-            ? 'Authorize'
-            : 'Approve'
-          : 'Accept',
+      label: committing ? 'Approving…' : 'Approve',
       onClick: runAllow,
       disabled: allowDisabled,
       autoFocus: true,
