@@ -13,7 +13,7 @@ import {
   getOrCreateDeviceId,
 } from './deviceWallets'
 import { listCollectables } from './collectables'
-import { handleScanLoginRequest, isScanLoginPath } from './scanLogin/receiver'
+import { handleScanLoginRequestAsync, isScanLoginPath } from './scanLogin/receiver'
 import {
   DEVICE_PEER_AUTH_HEADER,
   DeviceAuthReplayCache,
@@ -64,7 +64,7 @@ export async function handleDevicePeerRequest(
 
   const path = event.path.replace(/\/+$/, '') || '/'
   // Scan-to-login runs before any wallet exists on this device.
-  if (isScanLoginPath(path)) return handleScanLoginRequest({ ...event, path })
+  if (isScanLoginPath(path)) return handleScanLoginRequestAsync({ ...event, path })
 
   const route = routeOf(path)
   const method = event.method.toUpperCase()

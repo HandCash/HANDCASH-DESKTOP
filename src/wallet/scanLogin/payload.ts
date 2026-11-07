@@ -89,6 +89,11 @@ export function proofMatches(expected: string, given: unknown): boolean {
   return diff === 0
 }
 
+/** Receipt binds setup completion to this session, sender and exact encrypted transfer. */
+export function pairingReceiptText(loginKey: string, approverKey: string, sealedHash: string): string {
+  return `handcash-scan-login\ninstalled\n${loginKey}\n${approverKey}\n${sealedHash}`
+}
+
 export function sha256Hex(text: string): string {
   return Utils.toHex(Hash.sha256(Utils.toArray(text, 'utf8')))
 }
