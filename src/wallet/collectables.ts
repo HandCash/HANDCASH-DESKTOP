@@ -4704,9 +4704,6 @@ export async function sendCollectable(args: {
             console.error('[collectables] send failed', formatted.message, err)
             chart.send({ type: 'FAIL', error: formatted.message })
             chart.stop()
-            void import('./logShip')
-              .then((m) => m.shipAppLogsAuto('send-failure'))
-              .catch(() => {})
             throw formatted
           }
 
