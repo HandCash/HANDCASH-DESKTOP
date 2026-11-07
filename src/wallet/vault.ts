@@ -24,7 +24,7 @@ import {
   deviceAuthUnlock,
 } from './deviceAuth.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
-import { initCreatedVaultAccounts } from './vaultAccounts'
+import { initCreatedVaultAccounts, readVaultAccounts } from './vaultAccounts'
 import {
   accountRootKeyHex,
   brc157VaultMaster,
@@ -770,6 +770,10 @@ export async function getVaultToolboxMismatch(
   const toolboxIdentityKeys = await listToolboxIdentityKeys()
   if (toolboxIdentityKeys.length === 0) return null
   if (toolboxIdentityKeys.includes(vaultIdentityKey)) return null
+  // Funds may sit under another account of this same vault (BRC-208), e.g. one
+  // added by scan sign-in; those identities derive from this master, so they match.
+  const accountKeys = readVaultAccounts(vaultIdentityKey).accounts.map((a) => a.identityKey)
+  if (accountKeys.some((key) => toolboxIdentityKeys.includes(key))) return null
   return {
     vaultIdentityKey,
     toolboxIdentityKeys,
