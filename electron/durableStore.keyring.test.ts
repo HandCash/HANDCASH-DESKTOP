@@ -80,11 +80,10 @@ describe('durable store on Linux', () => {
     const { durableSet, durableSafeStorageAvailable, durableGet } = await loadStore()
     expect(durableSafeStorageAvailable()).toBe(false)
     expect(durableSet(VAULT_KEY, '{"identityKey":"a"}')).toBe(true)
-    // With fallback encryption, vault is sealed with fallback prefix
-    expect(onDisk(VAULT_KEY)?.startsWith('sealed:fallback:v1:')).toBe(true)
+    // No beside-vault key: basic_text stores the vault without an outer seal and says so.
+    expect(onDisk(VAULT_KEY)).toBe('{"identityKey":"a"}')
     expect(durableGet(VAULT_KEY)).toBe('{"identityKey":"a"}')
-    // Vault seal status should be sealed (with fallback)
-    expect(onDisk('handcash.brc100.vaultSealStatus')).toBe('sealed')
+    expect(onDisk('handcash.brc100.vaultSealStatus')).toBe('unsealed')
   })
 
   it('still opens a vault an older version sealed with basic_text', async () => {

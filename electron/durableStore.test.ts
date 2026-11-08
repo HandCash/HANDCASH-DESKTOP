@@ -95,9 +95,8 @@ describe('durable store', () => {
 
     // No timers run: a crash inside the debounce window must not lose the vault.
     const onDisk = JSON.parse(fs.readFileSync(storeFile(), 'utf8')) as Record<string, string>
-    // Vault should be sealed with fallback encryption when safeStorage unavailable
-    expect(onDisk['handcash.brc100.vault.v1']).toContain('sealed:fallback:v1:')
-    // And should decrypt correctly
+    // No OS seal here: stored without an outer seal (no beside-vault key file)
+    expect(onDisk['handcash.brc100.vault.v1']).not.toContain('sealed:')
     expect(durableGet('handcash.brc100.vault.v1')).toContain('abc')
   })
 
@@ -110,8 +109,7 @@ describe('durable store', () => {
     vi.spyOn(fs, 'readFileSync').mockImplementationOnce(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) =>
       file === storeFile() ? stale : (realRead as (...a: unknown[]) => unknown)(file, ...rest)) as typeof fs.readFileSync)
 
-    // With fallback encryption, the write succeeds (seal works)
-    expect(durableSet('handcash.brc100.vault.v1', '{"identityKey":"abc","v":2}')).toBe(true)
+    expect(durableSet('handcash.brc100.vault.v1', '{"identityKey":"abc","v":2}')).toBe(false)
     vi.restoreAllMocks()
   })
 

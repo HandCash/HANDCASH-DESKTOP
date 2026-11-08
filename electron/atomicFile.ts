@@ -25,11 +25,18 @@ function removeQuietly(file: string): void {
 
 /** A rename is only durable on POSIX once its directory is committed too. */
 export function syncDirectory(dir: string): void {
-  const fd = fs.openSync(dir, 'r')
   try {
-    fs.fsyncSync(fd)
-  } finally {
-    fs.closeSync(fd)
+    const fd = fs.openSync(dir, 'r')
+    try {
+      fs.fsyncSync(fd)
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch (error) {
+    // Windows cannot open/fsync a directory handle; the rename is already durable there.
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (process.platform === 'win32' && (code === 'EPERM' || code === 'EISDIR' || code === 'EACCES')) return
+    throw error
   }
 }
 

@@ -38,7 +38,7 @@ const JSON_SENSITIVE_FIELD =
   /("(?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)"\s*:\s*")([^"]*)(")/gi
 // Balance metadata, transaction IDs, UTXO details - unlabelled secrets that should not ship
 const UNLABELLED_SECRETS =
-  /\b(?:spendable|balance|available|confirmed|unconfirmed|txid|txn?hash|utxo|outpoint|vout|amount|satoshis?|value)\s*[:=]\s*([^\s"',}\]\]]+)/gi
+  /\b(?:spendable|balance|txid|txn?hash|outpoint)\s*[:=]\s*([^\s"',}\]]+)/gi
 
 /**
  * Logs are durable and can be sent manually. Redact recognized custody fields

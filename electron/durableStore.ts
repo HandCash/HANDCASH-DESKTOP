@@ -347,19 +347,16 @@ function sealIfNeeded(key: string, value: string): string {
       if (key === VAULT_KEY) setVaultSealStatus('sealed')
       return SEALED_PREFIX + buf.toString('base64')
     } catch (err) {
-      log.warn('safeStorage seal failed — falling back to software encryption', err)
-      // Fall through to fallback encryption
+      log.warn('safeStorage seal failed — storing vault without OS seal', err)
     }
   }
-  // Fallback encryption when OS seal unavailable or failed
-  try {
-    if (key === VAULT_KEY) setVaultSealStatus('sealed')
-    return fallbackEncrypt(value)
-  } catch (err) {
-    log.error('fallback seal failed — storing unsealed vault', err)
-    if (key === VAULT_KEY) setVaultSealStatus('unsealed')
-    return value
-  }
+  // No OS seal (Linux basic_text, or seal failed): store without an OS seal and
+  // report it as `unsealed`. Threat model: the root key inside the vault stays
+  // wrapped by the vault DEK (password / device factor), so a disk reader gets
+  // ciphertext guarded only by the password's strength; a key file beside the
+  // vault would add nothing, since the same reader could read it too.
+  if (key === VAULT_KEY) setVaultSealStatus('unsealed')
+  return value
 }
 
 function unsealIfNeeded(key: string, value: string): string {
