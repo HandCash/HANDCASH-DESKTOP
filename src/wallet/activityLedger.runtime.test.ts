@@ -21,6 +21,7 @@ vi.mock('./activityLedgerStore', () => ({
     saved.set(namespace, { rows: [...rows], txs: txs === undefined ? saved.get(namespace)?.txs ?? null : txs })
   },
 }))
+import * as ledgerStore from './activityLedgerStore'
 import {
   ledgerActivitySnapshot,
   paintSavedActivityLedger,
@@ -240,6 +241,30 @@ describe('Activity ledger runtime ownership', () => {
     await refreshActivityLedger(owner.runtime)
     expect(gets.sort()).toEqual([1, 2, 3])
     expect(ledgerActivitySnapshot().map(row => row.txid)).toContain(txid(8))
+  })
+  it('does not wait for saved Activity on switch or paint it after another switch', async () => {
+    const owner = wallet('owner')
+    const next = wallet('next')
+    let finish!: (value: Awaited<ReturnType<typeof ledgerStore.loadLedgerSnapshot>>) => void
+    const pending = new Promise<Awaited<ReturnType<typeof ledgerStore.loadLedgerSnapshot>>>(resolve => { finish = resolve })
+    const load = vi.spyOn(ledgerStore, 'loadLedgerSnapshot').mockReturnValueOnce(pending)
+    try {
+      control.current = owner.runtime
+      // The switch path installs the runtime without preloading Activity.
+      expect(paintSavedActivityLedger(owner.runtime)).toBeUndefined()
+      expect(ledgerActivitySnapshot()).toEqual([])
+      resetActivityLedgerForRuntime()
+      control.current = next.runtime
+      const rows = [{ id: 'ledger:' + txid(1), txid: txid(1), origin: 'handcash', kind: 'earned' as const, method: 'receive', sats: 5, at: 1 }]
+      publishActivityLedger('next', rows)
+      finish({ rows: [{ ...rows[0]!, id: 'ledger:' + txid(2), txid: txid(2) }], txs: null })
+      await pending
+      await Promise.resolve()
+      await Promise.resolve()
+      expect(ledgerActivitySnapshot()).toEqual(rows)
+    } finally {
+      load.mockRestore()
+    }
   })
   it('refuses an ambiguous or missing wallet owner', async () => {
     const owner = wallet('owner'); control.current = owner.runtime

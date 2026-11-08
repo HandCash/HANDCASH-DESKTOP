@@ -55,6 +55,8 @@ type PendingHandover = {
   identityKey: string
   /** When the account was found held elsewhere: the end of the handover window. */
   until: number
+  /** The install that asked for the release: the direct link to try before the holder record names it. */
+  to?: string
 }
 
 /** Where a displaced account's state lives and how to post for it. */
@@ -66,6 +68,8 @@ export type HandoverIo = {
     fn: (storage: StorageProvider) => Promise<T>,
   ) => Promise<T>
   send: (rootKeyHex: string, body: string) => Promise<void>
+  /** True only after the authenticated holder merged every part. */
+  sendDirect?: (master: VaultMaster, index: number, rootKeyHex: string, parts: HandoverPart[], to?: string) => Promise<boolean>
   dropMinerRetry: (txid: string, owner: { identityKey: string; accountIndex: number; chain: 'main' | 'test' }) => void
   stopMonitor: (identityKey: string) => void
   /**
@@ -128,6 +132,19 @@ async function defaultIo(): Promise<HandoverIo> {
       }
     },
     send: (rootKeyHex, body) => transport.sendToOwnBox(rootKeyHex, HOLDING_BOX, transport.sealToSelf(rootKeyHex, body)),
+    sendDirect: async (master, index, rootKeyHex, parts, to) => {
+      const { readVaultAccounts, holdingOf } = await import('./vaultAccounts')
+      const account = readVaultAccounts(vaultIdentityKey(master)).accounts.find(a => a.index === index)
+      const holding = account ? holdingOf(account) : null
+      // The recorded holder wins; before its take lands, the requester of the release.
+      const device = holding?.kind === 'elsewhere' && holding.deviceId ? holding.deviceId : to
+      if (!device) return false
+      const { vaultLinkOpen } = await import('./vaultLink')
+      if (!vaultLinkOpen(device)) return false
+      const { sendDirectHandover } = await import('./accountMove')
+      return sendDirectHandover(device, parts[0]!.identityKey, parts[0]!.handoverId,
+        parts.map(part => transport.sealToSelf(rootKeyHex, JSON.stringify(part))))
+    },
     dropMinerRetry: (txid, owner) => outbox.removePendingMinerSubmit(txid, owner),
     stopMonitor: pool.dropWarmAccount,
     settleVoidedNotices: async ({ rootKeyHex, owner, txids }) => {
@@ -142,7 +159,12 @@ async function defaultIo(): Promise<HandoverIo> {
 }
 
 /** Record the handovers `indices` owe, then try to send every pending one for this vault. */
-export async function handOverAccounts(master: VaultMaster, indices: number[], io?: HandoverIo): Promise<void> {
+export async function handOverAccounts(
+  master: VaultMaster,
+  indices: number[],
+  io?: HandoverIo,
+  opts: { to?: string } = {},
+): Promise<void> {
   const resolved = io ?? (await defaultIo())
   const masterIdentityKey = vaultIdentityKey(master)
   const pending = readPending()
@@ -151,7 +173,7 @@ export async function handOverAccounts(master: VaultMaster, indices: number[], i
     const identityKey = identityKeyForAccount(master, index)
     resolved.stopMonitor(identityKey)
     if (pending.some((p) => p.identityKey === identityKey)) continue
-    pending.push({ masterIdentityKey, index, identityKey, until })
+    pending.push({ masterIdentityKey, index, identityKey, until, ...(opts.to ? { to: opts.to } : {}) })
   }
   writePending(pending)
   await flushPendingHandovers(master, resolved)
@@ -214,6 +236,7 @@ async function handOver(master: VaultMaster, entry: PendingHandover, io: Handove
   }
   const handoverId = `${entry.identityKey.slice(0, 16)}-${entry.until}`
   const deviceId = io.deviceId()
+  const bodies: HandoverPart[] = []
   for (let part = 0; part < parts; part++) {
     const body: HandoverPart = {
       v: 1,
@@ -225,8 +248,12 @@ async function handOver(master: VaultMaster, entry: PendingHandover, io: Handove
       parts,
       data: delta.json.slice(part * HANDOVER_PART_CHARS, (part + 1) * HANDOVER_PART_CHARS),
     }
-    await io.send(rootKeyHex, JSON.stringify(body))
+    bodies.push(body)
   }
+  // Draft BRC-249: a live holder merges over the vault link before acknowledging.
+  // A missing application receipt leaves the durable box path authoritative.
+  const direct = await io.sendDirect?.(master, entry.index, rootKeyHex, bodies, entry.to).catch(() => false)
+  if (!direct) for (const body of bodies) await io.send(rootKeyHex, JSON.stringify(body))
   appendAppLog(
     'info',
     `[account-holding] handover a${entry.index} done ${Date.now() - started}ms: ${delta.transactions} tx · ${delta.outputs} outputs · ${parts} part(s) · voided ${voided.length}`,

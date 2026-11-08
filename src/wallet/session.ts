@@ -519,14 +519,19 @@ function startMonitorOnce(wallet: ActiveWallet): void {
 }
 
 /** Make a built unit the foreground wallet: bind its stores, then publish its runtime. */
-async function selectWallet(wallet: ActiveWallet): Promise<ActiveWallet> {
+async function selectWallet(wallet: ActiveWallet, preloadActivity = true): Promise<ActiveWallet> {
   const { prepareAccountLocalStores } = await import('./accountLocalStores')
   active = wallet
   // Bind the namespace and compose feature lifecycle before publishing. The
   // runtime start hook then rebinds every feature as one atomic account switch.
   prepareAccountLocalStores(wallet)
-  const { preloadActivityLedger } = await import('./activityLedger')
-  await preloadActivityLedger(walletStorageNamespace(wallet))
+  // Unlock preloads for the first paint. Switching must not wait for a
+  // display-only IndexedDB snapshot; the runtime paints it asynchronously,
+  // guarded against a later switch, through paintSavedActivityLedger.
+  if (preloadActivity) {
+    const { preloadActivityLedger } = await import('./activityLedger')
+    await preloadActivityLedger(walletStorageNamespace(wallet))
+  }
   const runtime = installWalletRuntime(wallet)
   // Cold start begins with the last balance actually read for this identity,
   // never another wallet's figure and never a fabricated address balance.
@@ -1280,10 +1285,11 @@ export async function switchVaultAccount(args: {
   }
   const drainMs = Date.now() - fenceStarted
   const wallet = await target
+  const readyAt = Date.now()
   markWarmWalletSelected(unit)
-  const selected = await selectWallet(wallet)
+  const selected = await selectWallet(wallet, false)
   console.info(
-    `[vault-account] switch done ${Date.now() - started}ms — ${warm ? 'warm' : 'cold'} a${args.accountIndex}, ingest drain ${drainMs}ms`,
+    `[vault-account] switch done ${Date.now() - started}ms — ${warm ? 'warm' : 'cold'} a${args.accountIndex}, ingest drain ${drainMs}ms, target ready ${readyAt - started}ms, select ${Date.now() - readyAt}ms`,
   )
   prewarmVaultAccounts(selected, bootArgs)
   return selected
