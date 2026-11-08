@@ -4729,6 +4729,25 @@ html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
   align-items: stretch;
 }
 
+/* Desktop hierarchy: the account anchors the far edge, outer shells define
+   sections, and internal chrome stays quieter. Compact keeps its joined bar. */
+html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome {
+  margin-inline-start: auto;
+}
+
+html:not(.platform-mobile):not(.layout-compact) .dashboard :is(.dashboard-main, .dashboard-side) > .panel {
+  border-color: color-mix(in srgb, hsl(var(--border)) 75%, hsl(var(--card)));
+}
+
+html:not(.platform-mobile):not(.layout-compact) .dashboard .connected-panel-head {
+  border-bottom-color: color-mix(in srgb, hsl(var(--border)) 40%, hsl(var(--card)));
+}
+
+html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-pill {
+  border-color: color-mix(in srgb, hsl(var(--border)) 45%, hsl(var(--card)));
+  background: color-mix(in srgb, hsl(var(--secondary)) 35%, hsl(var(--card)));
+}
+
 .wallet-hero-identity-chrome .wallet-hero-identity-row,
 .wallet-hero-identity-chrome .wallet-account-menu {
   display: inline-flex;
