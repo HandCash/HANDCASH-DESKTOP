@@ -38,6 +38,7 @@
     "package:electron:win": "npm run build:renderer && npm run build:electron && electron-builder --win",
     "preview": "vite preview",
     "test": "vitest run",
+    "ui:render": "node scripts/render-states.mjs",
     "test:ci": "node scripts/test-ci.mjs",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",

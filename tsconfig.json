@@ -32,6 +32,6 @@
     },
     "experimentalDecorators": true
   },
-  "include": ["src"],
+  "include": ["src", "tests/render"],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -1,0 +1,50 @@
+{
+  "$comment": "Render states for the Identity tab. Each entry is plain data: mock wallet data plus the statechart snapshot (value + context overlay) each machine id starts in. Read by tests/render (browser) and scripts/render-states.mjs (Node).",
+  "keys": {
+    "wallet": "02a1633cafcc01ebfb6d78e39f687a1f0995c62fc95f51ead10a02ee0be551b5dc",
+    "imported": "03b0bd634234abbb1ba1e986e884185c61cf43e001f9137f23c2c409273eb16e65"
+  },
+  "fixtures": {
+    "identity/empty": {
+      "about": "New wallet: no handle, wallet key row only, no profile.",
+      "data": { "claimed": null, "identities": ["walletRowBare"], "presentedIdentityKey": null },
+      "machines": { "publicIdentities": { "value": "browsing" } },
+      "waitFor": [".identity-qr-frame img"]
+    },
+    "identity/claimed": {
+      "about": "Claimed handle, BAP profile ID, an imported issuer shared with contacts.",
+      "data": {
+        "claimed": {
+          "handle": "satoshiworkshop",
+          "display": "$satoshiworkshop",
+          "identityKey": "02a1633cafcc01ebfb6d78e39f687a1f0995c62fc95f51ead10a02ee0be551b5dc",
+          "claimedAt": 1790812800000
+        },
+        "identities": ["walletRowBap", "importedRow"],
+        "presentedIdentityKey": "03b0bd634234abbb1ba1e986e884185c61cf43e001f9137f23c2c409273eb16e65"
+      },
+      "machines": { "publicIdentities": { "value": "browsing" } },
+      "waitFor": [".identity-qr-frame img", ".identity-bap-id"]
+    },
+    "identity/composing": {
+      "about": "Profile editor open on the wallet key.",
+      "data": { "claimed": null, "identities": ["walletRowBare"], "presentedIdentityKey": null },
+      "machines": {
+        "publicIdentities": {
+          "value": "composing",
+          "context": {
+            "identityKey": "02a1633cafcc01ebfb6d78e39f687a1f0995c62fc95f51ead10a02ee0be551b5dc",
+            "fields": { "name": "Satoshi Workshop", "description": "Hand-made goods, minted and signed on BSV." }
+          }
+        }
+      },
+      "waitFor": [".identity-qr-frame img", "[data-aeon-scope=\"public-identities\"][data-aeon-state=\"composing\"]"]
+    },
+    "identity/importing": {
+      "about": "Signing-key import form.",
+      "data": { "claimed": null, "identities": ["walletRowBare"], "presentedIdentityKey": null },
+      "machines": { "publicIdentities": { "value": "importing" } },
+      "waitFor": [".identity-qr-frame img", "[data-aeon-scope=\"public-identities\"][data-aeon-state=\"importing\"]"]
+    }
+  }
+}
