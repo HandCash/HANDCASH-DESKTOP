@@ -25,7 +25,6 @@ function removeQuietly(file: string): void {
 
 /** A rename is only durable on POSIX once its directory is committed too. */
 export function syncDirectory(dir: string): void {
-  if (process.platform === 'win32') return
   const fd = fs.openSync(dir, 'r')
   try {
     fs.fsyncSync(fd)

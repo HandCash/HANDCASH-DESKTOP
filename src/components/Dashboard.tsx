@@ -182,14 +182,6 @@ function walletIdentityChip(
   }
 }
 
-<<<<<<< HEAD
-/** Settings and Identity no longer go full-height on compact; show the balance chrome. */
-function isFocusSection(_section: string | undefined): boolean {
-  return false
-}
-
-=======
->>>>>>> origin/master
 type BalancePart = { coin: MarketCoin; text: string; unit: string; title: string }
 
 function HiddenUnit({ unit }: { unit: string }) {

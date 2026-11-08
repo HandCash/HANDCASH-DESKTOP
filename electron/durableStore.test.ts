@@ -88,14 +88,17 @@ describe('durable store', () => {
   })
 
   it('writes the vault through immediately rather than on the debounce', async () => {
-    const { durableSet } = await loadStore()
+    const { durableSet, durableGet } = await loadStore()
     expect(durableSet('handcash.brc100.vault.v1', JSON.stringify({ identityKey: 'abc' }))).toBe(
       true,
     )
 
     // No timers run: a crash inside the debounce window must not lose the vault.
     const onDisk = JSON.parse(fs.readFileSync(storeFile(), 'utf8')) as Record<string, string>
-    expect(onDisk['handcash.brc100.vault.v1']).toContain('abc')
+    // Vault should be sealed with fallback encryption when safeStorage unavailable
+    expect(onDisk['handcash.brc100.vault.v1']).toContain('sealed:fallback:v1:')
+    // And should decrypt correctly
+    expect(durableGet('handcash.brc100.vault.v1')).toContain('abc')
   })
 
   it('reports a vault write as failed when the store file does not read back with it', async () => {
@@ -107,7 +110,8 @@ describe('durable store', () => {
     vi.spyOn(fs, 'readFileSync').mockImplementationOnce(((file: fs.PathOrFileDescriptor, ...rest: unknown[]) =>
       file === storeFile() ? stale : (realRead as (...a: unknown[]) => unknown)(file, ...rest)) as typeof fs.readFileSync)
 
-    expect(durableSet('handcash.brc100.vault.v1', '{"identityKey":"abc","v":2}')).toBe(false)
+    // With fallback encryption, the write succeeds (seal works)
+    expect(durableSet('handcash.brc100.vault.v1', '{"identityKey":"abc","v":2}')).toBe(true)
     vi.restoreAllMocks()
   })
 

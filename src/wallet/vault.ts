@@ -36,6 +36,7 @@ import {
 } from './vaultMaster'
 import { validatePassword } from './passwordPolicy.js'
 import { recoveryPhraseProblem, recoveryPhraseWords } from './recoveryPhraseCheck'
+import { syncDeviceLockModeFromVault } from './deviceLockPrefs.js'
 
 /** BRC-157 entropy (new vaults), BRC-75, or the pre-BRC-75 HD master of a BIP39 seed. */
 export type MnemonicScheme = 'brc-157' | 'brc-75' | 'legacy-hd'
@@ -1122,6 +1123,7 @@ export async function changeVaultPassword(
     wraps,
   }
   persistVault(updated, 'password')
+  syncDeviceLockModeFromVault()
 }
 
 /**
@@ -1154,6 +1156,7 @@ export async function setVaultPasswordFromDevice(
     device: { enrolled: true },
   }
   persistVault({ ...record, version: 3, salt: undefined, wraps }, 'password')
+  syncDeviceLockModeFromVault()
 }
 
 /** Enable device unlock using the current password to recover the DEK. */
@@ -1182,6 +1185,7 @@ export async function enableDeviceUnlock(password: string): Promise<void> {
   }
   assertAtLeastOneFactor(wraps)
   persistVault({ ...record, version: 3, salt: undefined, wraps }, 'password')
+  syncDeviceLockModeFromVault()
 }
 
 /** Turn off device unlock. Requires a password wrap to remain. */
@@ -1204,6 +1208,7 @@ export async function disableDeviceUnlock(password?: string): Promise<void> {
   // that still lists device unlock with its seal already gone.
   persistVault({ ...record, version: 3, wraps }, 'password')
   await deviceAuthClear()
+  syncDeviceLockModeFromVault()
 }
 
 /** Remove the HandCash password wrap. Requires device unlock enrolled + keys backup. */
@@ -1239,4 +1244,5 @@ export async function disableVaultPassword(password: string): Promise<void> {
     },
     'password',
   )
+  syncDeviceLockModeFromVault()
 }

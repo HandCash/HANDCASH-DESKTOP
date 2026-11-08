@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { app, safeStorage } from 'electron'
 import log from 'electron-log'
 import { isDiskFull, listTempFiles, removeTempFiles, writeFileAtomic } from './atomicFile.js'
@@ -11,6 +12,57 @@ const VAULT_BACKUP_KEY = 'handcash.brc100.vault.backup.v1'
 const VAULT_HISTORY_PREFIX = 'handcash.brc100.vault.history.'
 const MAX_VAULT_HISTORY = 10
 const SEALED_PREFIX = 'sealed:v1:'
+const SEALED_FALLBACK_PREFIX = 'sealed:fallback:v1:'
+
+function fallbackKeyPath(): string {
+  return path.join(app.getPath('userData'), 'vault-fallback-key.bin')
+}
+
+/** Get or create the fallback encryption key (AES-256-GCM). */
+function getFallbackKey(): Buffer {
+  const keyPath = fallbackKeyPath()
+  try {
+    const existing = fs.readFileSync(keyPath)
+    if (existing.length === 32) return existing
+  } catch {
+    // Key doesn't exist or wrong size, generate new one
+  }
+  const key = crypto.randomBytes(32)
+  // Write with restricted permissions (owner read/write only)
+  fs.writeFileSync(keyPath, key, { mode: 0o600 })
+  return key
+}
+
+/** Encrypt with fallback key using AES-256-GCM. */
+function fallbackEncrypt(plaintext: string): string {
+  const key = getFallbackKey()
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
+  const authTag = cipher.getAuthTag()
+  // Pack: iv (12) + ciphertext + authTag (16)
+  const packed = Buffer.concat([iv, ciphertext, authTag])
+  return SEALED_FALLBACK_PREFIX + packed.toString('base64')
+}
+
+/** Decrypt with fallback key using AES-256-GCM. */
+function fallbackDecrypt(value: string): string {
+  if (!value.startsWith(SEALED_FALLBACK_PREFIX)) {
+    throw new Error('Not a fallback-sealed value')
+  }
+  const key = getFallbackKey()
+  const packed = Buffer.from(value.slice(SEALED_FALLBACK_PREFIX.length), 'base64')
+  if (packed.length < 12 + 16) {
+    throw new Error('Fallback-sealed value too short')
+  }
+  const iv = packed.subarray(0, 12)
+  const authTag = packed.subarray(packed.length - 16)
+  const ciphertext = packed.subarray(12, packed.length - 16)
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
+  decipher.setAuthTag(authTag)
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+  return plaintext.toString('utf8')
+}
 
 function storePath(): string {
   return path.join(app.getPath('userData'), 'durable-prefs.json')
@@ -284,21 +336,27 @@ function setVaultSealStatus(status: 'sealed' | 'unsealed'): void {
   }
 }
 
-/** Seal vault payloads with OS keychain/DPAPI when available. */
+/** Seal vault payloads with OS keychain/DPAPI when available, fallback to software encryption. */
 function sealIfNeeded(key: string, value: string): string {
   if (!key.startsWith('handcash.brc100.vault')) return value
-  if (value.startsWith(SEALED_PREFIX)) return value
-  if (!canSeal()) {
-    if (key === VAULT_KEY) setVaultSealStatus('unsealed')
-    return value
+  if (value.startsWith(SEALED_PREFIX) || value.startsWith(SEALED_FALLBACK_PREFIX)) return value
+  if (canSeal()) {
+    try {
+      const buf = safeStorage.encryptString(value)
+      if (safeStorage.decryptString(buf) !== value) throw new Error('sealed vault does not open to what was sealed')
+      if (key === VAULT_KEY) setVaultSealStatus('sealed')
+      return SEALED_PREFIX + buf.toString('base64')
+    } catch (err) {
+      log.warn('safeStorage seal failed — falling back to software encryption', err)
+      // Fall through to fallback encryption
+    }
   }
+  // Fallback encryption when OS seal unavailable or failed
   try {
-    const buf = safeStorage.encryptString(value)
-    if (safeStorage.decryptString(buf) !== value) throw new Error('sealed vault does not open to what was sealed')
     if (key === VAULT_KEY) setVaultSealStatus('sealed')
-    return SEALED_PREFIX + buf.toString('base64')
+    return fallbackEncrypt(value)
   } catch (err) {
-    log.warn('safeStorage seal failed — storing unsealed vault', err)
+    log.error('fallback seal failed — storing unsealed vault', err)
     if (key === VAULT_KEY) setVaultSealStatus('unsealed')
     return value
   }
@@ -306,18 +364,28 @@ function sealIfNeeded(key: string, value: string): string {
 
 function unsealIfNeeded(key: string, value: string): string {
   if (!key.startsWith('handcash.brc100.vault')) return value
-  if (!value.startsWith(SEALED_PREFIX)) return value
-  if (!canUnseal()) {
-    log.error('Vault is OS-sealed but safeStorage is unavailable')
-    throw new Error(keystoreUnavailableMessage())
+  if (value.startsWith(SEALED_PREFIX)) {
+    if (!canUnseal()) {
+      log.error('Vault is OS-sealed but safeStorage is unavailable')
+      throw new Error(keystoreUnavailableMessage())
+    }
+    try {
+      const b64 = value.slice(SEALED_PREFIX.length)
+      return safeStorage.decryptString(Buffer.from(b64, 'base64'))
+    } catch (err) {
+      log.error('safeStorage unseal failed', err)
+      throw new Error(onBasicText() ? keystoreUnavailableMessage() : 'Could not decrypt wallet vault from OS keychain.')
+    }
   }
-  try {
-    const b64 = value.slice(SEALED_PREFIX.length)
-    return safeStorage.decryptString(Buffer.from(b64, 'base64'))
-  } catch (err) {
-    log.error('safeStorage unseal failed', err)
-    throw new Error(onBasicText() ? keystoreUnavailableMessage() : 'Could not decrypt wallet vault from OS keychain.')
+  if (value.startsWith(SEALED_FALLBACK_PREFIX)) {
+    try {
+      return fallbackDecrypt(value)
+    } catch (err) {
+      log.error('fallback unseal failed', err)
+      throw new Error('Could not decrypt wallet vault from fallback encryption.')
+    }
   }
+  return value
 }
 
 function pruneVaultHistory(store: Store): void {

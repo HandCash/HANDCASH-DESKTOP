@@ -174,3 +174,11 @@ if (process.platform === 'win32') {
 
 console.log(`==> packaged ${zipPath}`)
 console.log('    (installer formats stubbed — zip only; see STUBS.txt in the folder)')
+
+// Generate SHA256 checksum for verification
+const crypto = await import('node:crypto')
+const zipContent = fs.readFileSync(zipPath)
+const hash = crypto.createHash('sha256').update(zipContent).digest('hex')
+const checksumPath = zipPath + '.sha256'
+fs.writeFileSync(checksumPath, `${hash}  ${path.basename(zipPath)}\n`)
+console.log(`==> checksum ${checksumPath}`)

@@ -72,7 +72,7 @@ describe('log upload privacy evidence', () => {
     expect(body()).toContain('# userAgent synthetic user agent')
   })
 
-  it('redacts recognized new renderer fields, but not unlabelled material or balance metadata', async () => {
+  it('redacts recognized new renderer fields, balance metadata, and transaction IDs', async () => {
     const log = await import('./appLog')
     log.appendAppLog('info', JSON.stringify({ mnemonic: 'SYNTHETIC_LABELLED_SEED', privateKey: 'SYNTHETIC_LABELLED_KEY' }))
     log.appendAppLog('info', 'SYNTHETIC_UNLABELLED_MATERIAL spendable=123 txid=SYNTHETIC_TX')
@@ -82,8 +82,11 @@ describe('log upload privacy evidence', () => {
     expect(body()).not.toContain('SYNTHETIC_LABELLED_SEED')
     expect(body()).not.toContain('SYNTHETIC_LABELLED_KEY')
     expect(body()).toContain('SYNTHETIC_UNLABELLED_MATERIAL')
-    expect(body()).toContain('spendable=123')
-    expect(body()).toContain('SYNTHETIC_TX')
+    // Balance metadata and transaction IDs should now be redacted
+    expect(body()).not.toContain('spendable=123')
+    expect(body()).not.toContain('txid=SYNTHETIC_TX')
+    expect(body()).toContain('spendable=[REDACTED]')
+    expect(body()).toContain('txid=[REDACTED]')
   })
 
   it('re-redacts persisted previous-session entries at manual upload', async () => {

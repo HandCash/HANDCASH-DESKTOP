@@ -36,6 +36,9 @@ const SENSITIVE_FIELD =
   /((?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)\s*["']?\s*[:=]\s*["']?)([^"',}\]\s]+|[^"']{2,})/gi
 const JSON_SENSITIVE_FIELD =
   /("(?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)"\s*:\s*")([^"]*)(")/gi
+// Balance metadata, transaction IDs, UTXO details - unlabelled secrets that should not ship
+const UNLABELLED_SECRETS =
+  /\b(?:spendable|balance|available|confirmed|unconfirmed|txid|txn?hash|utxo|outpoint|vout|amount|satoshis?|value)\s*[:=]\s*([^\s"',}\]\]]+)/gi
 
 /**
  * Logs are durable and can be sent manually. Redact recognized custody fields
@@ -47,6 +50,7 @@ export function redactAppLogMessage(message: string): string {
     .replace(/\bBearer\s+[^\s"',}\]]+/gi, 'Bearer [REDACTED]')
     .replace(JSON_SENSITIVE_FIELD, '$1[REDACTED]$3')
     .replace(SENSITIVE_FIELD, '$1[REDACTED]')
+    .replace(UNLABELLED_SECRETS, (match) => match.replace(/([:=]\s*)[^\s"',}\]\]]+/, '$1[REDACTED]'))
 }
 
 function emit() {

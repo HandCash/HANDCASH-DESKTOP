@@ -109,3 +109,18 @@ export function inferDeviceLockMode(): DeviceLockMode {
   if (factors.password) return 'password'
   return 'none'
 }
+
+/** Update the device lock pref to match current vault factors. */
+export function syncDeviceLockModeFromVault(): void {
+  const factors = readVaultUnlockFactors()
+  let mode: DeviceLockMode
+  if (factors.password && factors.device) mode = 'both'
+  else if (factors.device) mode = 'device'
+  else if (factors.password) mode = 'password'
+  else mode = 'none'
+  
+  const current = getDeviceLockMode()
+  if (current !== mode) {
+    setDeviceLockMode(mode)
+  }
+}
