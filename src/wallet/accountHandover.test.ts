@@ -257,6 +257,66 @@ describe('handing over and receiving', () => {
     expect(JSON.parse(durableGetItem(storageRegistry.accountHandoverPending.key) || '[]')).toEqual([])
   }, 60_000)
 
+  it('sends the custody journal after the history, and the holder receives it as custody', async () => {
+    const w = await displacedWallet()
+    const { io, sent } = fakeIo(w.storage)
+    const recipes = [{ r: 'recipe-1' }, { r: 'recipe-2' }]
+    await handOverAccounts(MASTER, [INDEX], { ...io, custody: () => recipes })
+    const parts = sent.map((b) => JSON.parse(b) as HandoverPart)
+    expect(parts.map((p) => p.kind ?? 'history')).toEqual(['history', 'custody'])
+
+    const merged: Array<[string, string | undefined]> = []
+    const acked: string[] = []
+    await receiveHandovers({
+      identityKey: IDENTITY,
+      deviceId: 'device-B',
+      messages: listed(sent),
+      inbox: { open: (b) => b, merge: async (json, kind) => void merged.push([json, kind]), acknowledge: async (ids) => void acked.push(...ids) },
+    })
+    expect(merged.find(([, kind]) => kind === 'custody')?.[0]).toBe(JSON.stringify(recipes))
+    expect(merged.filter(([, kind]) => kind === undefined)).toHaveLength(1)
+    expect(acked.sort()).toEqual(['h0', 'h1'])
+  }, 60_000)
+
+  it('without a cloud copy, waits for the link and boxes only what the link did not take', async () => {
+    const w = await displacedWallet()
+    const { io, sent } = fakeIo(w.storage)
+    const direct: Array<string | undefined> = []
+    let custodyLinkUp = false
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      const linked: HandoverIo = {
+        ...io,
+        custody: () => [{ r: 'recipe-1' }],
+        sendDirect: async (_m, _i, _root, parts, to) => {
+          direct.push(to)
+          return parts[0]!.kind !== 'custody' || custodyLinkUp
+        },
+      }
+      await handOverAccounts(MASTER, [INDEX], linked, { to: 'device-B', custodyDirect: true })
+      expect(direct).toEqual(['device-B', 'device-B'])
+      expect(sent).toEqual([])
+      expect(JSON.parse(durableGetItem(storageRegistry.accountHandoverPending.key) || '[]')).toHaveLength(1)
+
+      // Throttled between tries; the delta already merged is not sent again.
+      await handOverAccounts(MASTER, [], linked)
+      expect(direct).toHaveLength(2)
+      now += 20_000
+      await handOverAccounts(MASTER, [], linked)
+      expect(direct).toHaveLength(3)
+      expect(sent).toEqual([])
+
+      // Past the wait the box carries the custody part only.
+      now += 11 * 60_000
+      await handOverAccounts(MASTER, [], linked)
+      expect(sent.map((b) => (JSON.parse(b) as HandoverPart).kind)).toEqual(['custody'])
+      expect(JSON.parse(durableGetItem(storageRegistry.accountHandoverPending.key) || '[]')).toEqual([])
+    } finally {
+      clock.mockRestore()
+    }
+  }, 60_000)
+
   const part = (data: string, n: number, parts: number, over: Partial<HandoverPart> = {}): string =>
     JSON.stringify({ v: 1, type: 'handover', identityKey: IDENTITY, deviceId: 'device-A', handoverId: 'h-1', part: n, parts, data, ...over })
 

@@ -287,8 +287,8 @@ export type ServeTarget = {
   deviceId: string
   /** Release the account (flush history, write `released`). */
   release: (to: string) => Promise<void>
-  /** Merge a complete handover document; null while the account is not open here. */
-  merge: ((json: string) => Promise<void>) | null
+  /** Merge a complete handover document (history, or custody entries); null while the account is not open here. */
+  merge: ((json: string, kind?: 'custody') => Promise<void>) | null
   /** Read the record again: a request named a newer seq than we know. */
   recheck: () => void
   open: (body: string) => string | null
@@ -455,9 +455,20 @@ async function serveContext() {
       identityKey: identityKeyForAccount(master, index),
       rootKeyHex,
       deviceId,
-      release: open ? () => releaseActiveVaultAccount(runtime) : (to) => releaseIdleVaultAccount(master, index, to),
+      release: open ? (to) => releaseActiveVaultAccount(runtime, to) : (to) => releaseIdleVaultAccount(master, index, to),
       merge: open
-        ? async (json) => {
+        ? async (json, kind) => {
+            if (kind === 'custody') {
+              const entries = JSON.parse(json) as unknown
+              if (!Array.isArray(entries)) throw new Error('custody handover is not a list')
+              const { appendCustody } = await import('./custodyJournal')
+              const { identityKey, accountIndex, chain } = runtime.instance
+              const appended = appendCustody({ identityKey, accountIndex, chain }, entries)
+              if (!appended.ok) throw new Error('custody journal write refused')
+              const { scheduleCustodyJournalSync } = await import('./custodyJournalBackup')
+              scheduleCustodyJournalSync('handover')
+              return
+            }
             await history.mergeHandoverDocument(runtime, json)
             deviceSync.markHistoryBackupDirty()
             deviceSync.scheduleHistoryBackupPush('handover')
@@ -525,10 +536,10 @@ const directHandovers = createDirectHandover({
     if (!target.merge) return null
     return {
       open: target.open,
-      merge: async (json) => {
+      merge: async (json, kind) => {
         // Recheck after assembly; an account may have switched or moved away.
         if (!runtimeIsCurrent(ctx.runtime) || localHoldingOf(target)?.kind !== 'here') throw new Error('Handover holder changed')
-        await target.merge!(json)
+        await target.merge!(json, kind)
       },
     }
   },
