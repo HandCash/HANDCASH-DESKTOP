@@ -817,6 +817,12 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
+  networkDisabled: defineStorage({
+    key: 'handcash.network.disabled',
+    owner: 'custody',
+    scope: 'device',
+    version: 1,
+  }),
   deviceLockMode: defineStorage({
     key: 'handcash.brc100.deviceLock.mode',
     owner: 'custody',
