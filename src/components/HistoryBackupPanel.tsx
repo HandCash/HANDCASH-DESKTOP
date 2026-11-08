@@ -3,6 +3,7 @@ import { getActiveWallet } from '../wallet/session'
 
 import { useEffect, useRef, useState } from 'react'
 import {
+  downloadAndRestoreBrc39Backup,
   exportBrc39ToFile,
   fetchRemoteBrc39Meta,
   HistoryThinOverwriteError,
@@ -31,11 +32,11 @@ import {
 } from '../wallet/backupStatus'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
-import { inspectLocalToolboxState } from '../wallet/layers'
+import { inspectLocalToolboxState, type LocalToolboxState } from '../wallet/layers'
 import { useAsyncAction, type AsyncActionOutcome } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
-import { CloudUploadIcon, DownloadIcon, FileIcon } from './icons'
+import { CloudUploadIcon, DownloadIcon, FileIcon, WarningIcon, SyncIcon, DatabaseIcon } from './icons'
 import { HistoryBackupUrlField, SettingsControlRow, SettingsSection } from './settings'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
@@ -52,12 +53,23 @@ type HistoryActionKind =
   | 'file'
   | 'upload'
   | 'overwrite'
-  | 'restore'
+  | 'restore-merge'
+  | 'restore-replace'
   | 'import'
   | 'check'
   | 'local'
 
 const sats = (n: number | null) => (n == null ? 'unknown balance' : `${n.toLocaleString()} sats`)
+
+interface CloudLocalComparison {
+  remote: {
+    exists: boolean
+    exportedAt: number | null
+    spendableSats: number | null
+    actionCount: number | null
+  } | null
+  local: LocalToolboxState | null
+}
 
 export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -69,6 +81,7 @@ export function HistoryBackupPanel() {
   const [exportTick, setExportTick] = useState(0)
   const [localSnaps, setLocalSnaps] = useState<LocalBrc39ArchiveMeta[]>([])
   const [cloudDetail, setCloudDetail] = useState<string | null>(null)
+  const [comparison, setComparison] = useState<CloudLocalComparison | null>(null)
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
   const resolvedUrl = resolveHistoryBackupBaseUrl(prefs)
   const effectiveUrl = resolvedUrl || displayHistoryBackupBaseUrl(prefs)
@@ -82,8 +95,17 @@ export function HistoryBackupPanel() {
     setLocalSnaps(await listLocalBrc39Archive(id))
   }
 
+  const refreshComparison = async () => {
+    const [remote, local] = await Promise.all([
+      fetchRemoteBrc39Meta().catch(() => null),
+      inspectLocalToolboxState().catch(() => null),
+    ])
+    setComparison({ remote, local })
+  }
+
   useEffect(() => {
     void refreshLocalArchive()
+    void refreshComparison()
   }, [historyUnlocked, exportTick])
 
   const fail = (title: string, outcome: AsyncActionOutcome) => {
@@ -100,11 +122,12 @@ export function HistoryBackupPanel() {
       const health = await refreshCloudBackupHealth()
       setCloudDetail(health.message)
       setPrefs(getHistoryBackupPrefs())
+      await refreshComparison()
       if (health.phase === 'ok') toastSuccess(health.label, health.message ?? undefined)
       else if (health.phase === 'pending')
         toastSuccess(health.label, health.message ?? 'Upload will retry automatically')
       else if (health.phase === 'error' || health.phase === 'delayed') {
-        toastError(health.label, health.message ?? 'Check the URL')
+        toastError(health.label, health.message ?? 'Check the connection')
       }
       else toastSuccess(health.label, health.message ?? undefined)
     })
@@ -164,6 +187,7 @@ export function HistoryBackupPanel() {
     toastSuccess('Uploaded', formatWhen(result.exportedAt))
     markExported()
     await refreshLocalArchive()
+    await refreshComparison()
   }
 
   /**
@@ -188,10 +212,7 @@ export function HistoryBackupPanel() {
     setPrefs(getHistoryBackupPrefs())
     if (!outcome.ok) return fail('Upload failed', outcome)
     if (guard.refusal === null) return
-    const [remote, local] = await Promise.all([
-      fetchRemoteBrc39Meta().catch(() => null),
-      inspectLocalToolboxState().catch(() => null),
-    ])
+    await refreshComparison()
     const forced = await action.run(
       'overwrite',
       async () => {
@@ -202,8 +223,8 @@ export function HistoryBackupPanel() {
       {
         confirm: {
           title: 'Overwrite the cloud copy?',
-          body: remote?.exists
-            ? `Cloud: ${sats(remote.spendableSats)} · ${remote.actionCount ?? '?'} actions, from ${formatWhen(remote.exportedAt)}. This device: ${sats(local?.spendableSats ?? null)} · ${local?.actionCount ?? '?'} actions. The cloud copy is replaced.`
+          body: comparison?.remote?.exists
+            ? `Cloud: ${sats(comparison.remote.spendableSats)} · ${comparison.remote.actionCount ?? '?'} actions, from ${formatWhen(comparison.remote.exportedAt)}. This device: ${sats(comparison.local?.spendableSats ?? null)} · ${comparison.local?.actionCount ?? '?'} actions. The cloud copy is replaced.`
             : 'The cloud copy could not be checked. Uploading replaces whatever is stored there.',
           confirmLabel: 'Overwrite',
           danger: true,
@@ -214,41 +235,105 @@ export function HistoryBackupPanel() {
     fail('Upload failed', forced)
   }
 
-  const runRestoreUrl = async () => {
+  const runRestoreMerge = async () => {
     if (!historyUnlocked) return
-    const remote = await fetchRemoteBrc39Meta().catch(() => null)
+    await refreshComparison()
     const outcome = await action.run(
-      'restore',
+      'restore-merge',
       async () => {
         ensureSuggestedHistoryBackupUrl()
         clearBackupBackoff()
-        // Wipe toolbox IDB then pull — merge alone can under-restore after a
-        // soft-latch race left local rows that win LWW over cloud spendable outs.
-        const result = await replaceLocalHistoryFromCloud(password)
+        // Safe merge: downloads cloud backup and merges into local history
+        // Local data not in cloud is preserved. Cloud data not local is added.
+        const result = await downloadAndRestoreBrc39Backup(password)
         const recomposed = await recomposeWallet({
           password: password ?? undefined,
           history: 'skip',
-          reason: 'restore-url',
+          reason: 'restore-merge',
         })
         playWalletSound('success')
         toastSuccess(
-          'Replaced from history',
+          'Restored from cloud (merged)',
           `${result.inserts + result.updates} changes` +
             (recomposed.spendableSats != null ? ` · chain ${recomposed.spendableSats} sats` : ''),
         )
       },
       {
         confirm: {
-          title: 'Replace history from the cloud?',
-          body: remote?.exists
-            ? `Cloud copy from ${formatWhen(remote.exportedAt)} · ${sats(remote.spendableSats)} · ${remote.actionCount ?? '?'} actions. The current database stays on this device.`
+          title: 'Restore history from cloud (merge)?',
+          body: comparison?.remote?.exists
+            ? `Cloud copy from ${formatWhen(comparison.remote.exportedAt)} · ${sats(comparison.remote.spendableSats)} · ${comparison.remote.actionCount ?? '?'} actions. This device: ${sats(comparison.local?.spendableSats ?? null)} · ${comparison.local?.actionCount ?? '?'} actions. Cloud data will be merged; local data not in cloud is kept.`
             : 'No cloud copy could be read.',
-          confirmLabel: 'Replace',
-          danger: true,
+          confirmLabel: 'Restore',
+          danger: false,
         },
       },
     )
     fail('Restore failed', outcome)
+    await refreshComparison()
+  }
+
+  const runRestoreReplace = async () => {
+    if (!historyUnlocked) return
+    await refreshComparison()
+    
+    // First confirmation: show detailed comparison
+    const firstConfirmed = await action.run(
+      'restore-replace',
+      async () => {
+        // This is just to show the confirmation dialog, actual work is in second step
+      },
+      {
+        confirm: {
+          title: '⚠ Replace ALL history from cloud?',
+          body: comparison?.remote?.exists
+            ? `This DELETES this device's history and replaces it with the cloud copy.\n\nCloud: ${formatWhen(comparison.remote.exportedAt)} · ${sats(comparison.remote.spendableSats)} · ${comparison.remote.actionCount ?? '?'} actions\n\nThis device: ${sats(comparison.local?.spendableSats ?? null)} · ${comparison.local?.actionCount ?? '?'} actions\n\nP2P payments, tokens, and local labels NOT in the cloud will be LOST.`
+            : 'No cloud copy could be read. Replace would leave an empty history.',
+          confirmLabel: 'I understand — proceed',
+          danger: true,
+        },
+      },
+    )
+    if (!firstConfirmed.ok) return
+
+    // Second confirmation: explicit final warning
+    const secondConfirmed = await action.run(
+      'restore-replace',
+      async () => {},
+      {
+        confirm: {
+          title: 'Final warning: this cannot be undone',
+          body: 'The current local history database will be permanently replaced. Only the cloud copy will remain. If the cloud copy is older or incomplete, that data is gone forever.',
+          confirmLabel: 'Replace everything',
+          danger: true,
+        },
+      },
+    )
+    if (!secondConfirmed.ok) return
+
+    // Actually perform the replace
+    const outcome = await action.run(
+      'restore-replace',
+      async () => {
+        ensureSuggestedHistoryBackupUrl()
+        clearBackupBackoff()
+        // DANGEROUS: Full replace of local database with cloud copy
+        const result = await replaceLocalHistoryFromCloud(password)
+        const recomposed = await recomposeWallet({
+          password: password ?? undefined,
+          history: 'skip',
+          reason: 'restore-replace',
+        })
+        playWalletSound('success')
+        toastSuccess(
+          'Replaced from cloud',
+          `${result.inserts + result.updates} changes` +
+            (recomposed.spendableSats != null ? ` · chain ${recomposed.spendableSats} sats` : ''),
+        )
+      },
+    )
+    fail('Replace failed', outcome)
+    await refreshComparison()
   }
 
   const runImportFile = async (file: File | null) => {
@@ -262,13 +347,83 @@ export function HistoryBackupPanel() {
       })
       playWalletSound('success')
       toastSuccess(
-        'Imported history',
+        'Imported history (merged)',
         `${result.inserts + result.updates} changes` +
           (recomposed.spendableSats != null ? ` · chain ${recomposed.spendableSats} sats` : ''),
       )
     })
     if (fileRef.current) fileRef.current.value = ''
     fail('Import failed', outcome)
+  }
+
+  // Render comparison panel
+  const renderComparison = () => {
+    if (!comparison) return null
+    const { remote, local } = comparison
+    
+    return (
+      <div className="history-comparison" data-aeon-part="comparison">
+        <h4 className="history-comparison-title">Cloud vs This Device</h4>
+        <div className="history-comparison-grid">
+          <div className="history-comparison-col">
+            <span className="history-comparison-label">Cloud copy</span>
+            {remote?.exists ? (
+              <>
+                <div className="history-comparison-value">
+                  <SyncIcon size={16} /> {formatWhen(remote.exportedAt)}
+                </div>
+                <div className="history-comparison-value">
+                  {sats(remote.spendableSats)}
+                </div>
+                <div className="history-comparison-value">
+                  {remote.actionCount ?? '?'} actions
+                </div>
+              </>
+            ) : (
+              <div className="history-comparison-value empty">Not available</div>
+            )}
+          </div>
+          <div className="history-comparison-divider" />
+          <div className="history-comparison-col">
+            <span className="history-comparison-label">This device</span>
+            {local ? (
+              <>
+                <div className="history-comparison-value">
+                  <DatabaseIcon size={16} /> Now
+                </div>
+                <div className="history-comparison-value">
+                  {sats(local.spendableSats)}
+                </div>
+                <div className="history-comparison-value">
+                  {local.actionCount} actions
+                </div>
+              </>
+            ) : (
+              <div className="history-comparison-value empty">Unable to read</div>
+            )}
+          </div>
+        </div>
+        {remote?.exists && local && (
+          <p className="history-comparison-hint">
+            {remote.actionCount !== null && local.actionCount > (remote.actionCount ?? 0) && (
+              <span className="warning">
+                <WarningIcon size={14} /> This device has more actions than the cloud. Restore (merge) keeps them; Replace loses them.
+              </span>
+            )}
+            {remote.actionCount !== null && local.actionCount < (remote.actionCount ?? 0) && (
+              <span className="info">
+                <SyncIcon size={14} /> Cloud has more actions. Restore (merge) adds them; Replace keeps only cloud.
+              </span>
+            )}
+            {remote.spendableSats !== null && local.spendableSats > (remote.spendableSats ?? 0) && (
+              <span className="warning">
+                <WarningIcon size={14} /> This device has more spendable sats. Restore (merge) keeps them; Replace loses them.
+              </span>
+            )}
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -287,6 +442,8 @@ export function HistoryBackupPanel() {
       />
 
       <SettingsSection title="Cloud copy" part="cloud">
+        {renderComparison()}
+        
         <ul className="settings-list">
           <SettingsControlRow
             label="Last upload"
@@ -308,7 +465,7 @@ export function HistoryBackupPanel() {
           </SettingsControlRow>
           {historyUnlocked ? (
             <>
-              <SettingsControlRow label="Back up now" description="Upload this wallet’s history to the host">
+              <SettingsControlRow label="Back up now" description="Upload this wallet's history to the host">
                 <Button.Root
                   variant="ghost"
                   className="btn btn-ghost"
@@ -320,17 +477,19 @@ export function HistoryBackupPanel() {
                   </Button.Label>
                 </Button.Root>
               </SettingsControlRow>
+              
               <SettingsControlRow
-                label="Replace from cloud"
-                description="Swap this device’s history for the cloud copy"
+                label="Merge from cloud"
+                icon={<SyncIcon size={20} />}
+                description="Download cloud backup and merge into this device — keeps local data not in cloud"
               >
                 <Button.Root
-                  variant="ghost"
-                  className="btn btn-ghost"
+                  variant="solid"
+                  className="btn btn-primary"
                   disabled={busy || !effectiveUrl}
-                  onClick={() => void runRestoreUrl()}
+                  onClick={() => void runRestoreMerge()}
                 >
-                  <Button.Label>{action.running('restore') ? 'Replacing…' : 'Replace'}</Button.Label>
+                  <Button.Label>{action.running('restore-merge') ? 'Merging…' : 'Merge from cloud'}</Button.Label>
                 </Button.Root>
               </SettingsControlRow>
             </>
@@ -346,7 +505,7 @@ export function HistoryBackupPanel() {
       {!historyUnlocked ? (
         <ConfirmPasswordGate
           id="history-backup-password"
-          title="Confirm it’s you"
+          title="Confirm it's you"
           lede="Backups are sealed to your wallet key."
           actionLabel="Unlock history actions"
           onVerified={(pw) => {
@@ -361,7 +520,7 @@ export function HistoryBackupPanel() {
               <SettingsControlRow
                 label="Download a backup"
                 icon={<DownloadIcon size={20} />}
-                description="An encrypted .brc39 file of this wallet’s history"
+                description="An encrypted .brc39 file of this wallet's history"
               >
                 <Button.Root
                   variant="solid"
@@ -420,6 +579,28 @@ export function HistoryBackupPanel() {
             ) : (
               <p className="settings-row-desc">No snapshots yet. Export once, or spend, to write one.</p>
             )}
+          </SettingsSection>
+
+          <SettingsSection title="Dangerous operations" part="dangerous">
+            <p className="settings-row-desc" style={{color: 'var(--color-error)'}}>
+              These operations destroy local data. Only use them if you understand the consequences.
+            </p>
+            <ul className="settings-list">
+              <SettingsControlRow
+                label="Replace from cloud"
+                icon={<WarningIcon size={20} />}
+                description="DELETE this device's history and replace with cloud copy — loses local P2P payments, tokens, labels"
+              >
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost btn-danger"
+                  disabled={busy || !effectiveUrl}
+                  onClick={() => void runRestoreReplace()}
+                >
+                  <Button.Label>{action.running('restore-replace') ? 'Replacing…' : 'Replace'}</Button.Label>
+                </Button.Root>
+              </SettingsControlRow>
+            </ul>
           </SettingsSection>
 
           <div className="actions" data-aeon-part="session">
