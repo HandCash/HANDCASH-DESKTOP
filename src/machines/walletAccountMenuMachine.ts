@@ -9,8 +9,8 @@ type AfterSwitch = 'stay' | 'profile'
 /**
  * Wallet menu: switch and create accounts.
  *
- * Viewing an account another install holds enters `viewing` without opening
- * a signing runtime. Movement is reserved for signing intents, not selection.
+ * Choosing an account another install holds moves it here (`moving`, driven
+ * by `accountMoveMachine`; no step asks the user) and then switches to it.
  * `DISPLACED` arrives when this install stops holding the active account:
  * another install took it, or asked for it and this one released it. An idle
  * menu leaves the account at once; a busy one records it and asks for a fresh
@@ -31,7 +31,6 @@ export const walletAccountMenuMachine = setup({
       | { type: 'TOGGLE' }
       | { type: 'CLOSE' }
       | { type: 'CHOOSE'; accountIndex: number }
-      | { type: 'VIEW'; accountIndex: number }
       | { type: 'EDIT_PROFILE'; accountIndex: number; active: boolean }
       // Runtime selected and cached projection painted; local reads continue outside the menu.
       | { type: 'SWITCHED' }
@@ -98,13 +97,6 @@ export const walletAccountMenuMachine = setup({
           { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
           { target: 'creating', actions: 'clearError' },
         ],
-        VIEW: {
-          target: 'viewing',
-          actions: assign({
-            targetAccountIndex: ({ event }) => event.accountIndex,
-            error: null,
-          }),
-        },
         CHOOSE: {
           target: 'switching',
           actions: assign({
@@ -140,16 +132,6 @@ export const walletAccountMenuMachine = setup({
             error: null,
           }),
         },
-      },
-    },
-    // BRC-249, Moving on demand: viewing never authorizes a transfer or a signer.
-    viewing: {
-      on: {
-        CLOSE: { target: 'closed', actions: assign({ targetAccountIndex: null }) },
-        TOGGLE: { target: 'closed', actions: assign({ targetAccountIndex: null }) },
-        VIEW: { actions: assign({ targetAccountIndex: ({ event }) => event.accountIndex }) },
-        // Keep the preview display-only; recheck the foreground runtime on close.
-        DISPLACED: { actions: 'recordDisplacement' },
       },
     },
     moving: {

@@ -15,7 +15,6 @@ import type { ActiveWallet } from '../session'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { moveIfHeldElsewhere, spendNeedsMove } from '../spendAutoMove'
 import { getWalletRuntime } from '../walletRuntime'
-import { captureSigningIntent } from '../signingIntent'
 
 /**
  * A native coin on a UTXO chain (BRC-213). The wallet holds its own key on the
@@ -690,6 +689,11 @@ export function createCoinWallet(binding: CoinBinding) {
     if (heldElsewhere) refuse('held-elsewhere', heldElsewhere)
   }
 
+  /** BRC-249: a wallet another install holds moves here as part of the spend. Before the send's own lock. */
+  async function moveHere(): Promise<void> {
+    await moveIfHeldElsewhere(requireActive())
+  }
+
   /** Refuse a payment the wallet would refuse anyway, before anyone is asked to approve it. Local state only. */
   function preflightSend(args: SendCoinArgs): void {
     const active = requireActive()
@@ -711,8 +715,7 @@ export function createCoinWallet(binding: CoinBinding) {
   }
 
   /** Choose this wallet's spendable coins (each re-read as unspent) for `outputs` plus the fee, and sign. */
-  async function signOutputs(active: ActiveWallet, outputs: ReadonlyArray<{ script: Uint8Array; value: bigint }>, assertHeld: () => void): Promise<{ plan: CoinPaymentPlan; signed: LtcTx; txid: string }> {
-    assertHeld()
+  async function signOutputs(active: ActiveWallet, outputs: ReadonlyArray<{ script: Uint8Array; value: bigint }>): Promise<{ plan: CoinPaymentPlan; signed: LtcTx; txid: string }> {
     const own = keyOf(active)
     const state = readState()
     const spent = spentKeys(state)
@@ -734,8 +737,6 @@ export function createCoinWallet(binding: CoinBinding) {
     const total = outputs.reduce((sum, o) => sum + o.value, 0n)
     const plan = planCoinOutputs(binding, coins, outputs, own.script, await src().feeRate())
     if (!plan) refuse('insufficient', `This wallet cannot pay ${fmt(total)} plus its fee from its spendable coins.`)
-    // BRC-249 Moving on demand: network input/fee reads may outlive a switch or release.
-    assertHeld()
     const signed = binding.sign(
       plan.tx,
       plan.inputs.map((key) => keys.get(key)!.key),
@@ -756,16 +757,13 @@ export function createCoinWallet(binding: CoinBinding) {
    */
   async function send(args: SendCoinArgs, opts: { origin?: string; toLabel?: string } = {}): Promise<SendCoinResult> {
     assertOnlineForPayment()
-    const intent = captureSigningIntent()
-    await moveIfHeldElsewhere(intent.account)
+    await moveHere()
     return serial(async () => {
-      intent.assertCurrent()
-      const active = intent.account
+      const active = requireActive()
       assertOnlineForPayment()
       refuseHeldElsewhere(active)
       const { ensureHoldingFresh } = await import('../accountMove')
       await ensureHoldingFresh(active)
-      intent.assertCurrent()
       refuseHeldElsewhere(active)
       migrate()
       const startedAt = Date.now()
@@ -777,7 +775,7 @@ export function createCoinWallet(binding: CoinBinding) {
         if (recipient.kind === 'identity') await requireRecipientSupport(recipient.identityKey)
         const destination = recipient.kind === 'identity' ? identityDestination(active, recipient.identityKey) : addressDestination(active, recipient.address)
         await settlePayments()
-        const { plan, signed, txid } = await signOutputs(active, [{ script: destination.script, value: units }], intent.assertHeld)
+        const { plan, signed, txid } = await signOutputs(active, [{ script: destination.script, value: units }])
         const payment: Payment = {
           address: destination.address,
           litoshi: units.toString(),
@@ -833,16 +831,13 @@ export function createCoinWallet(binding: CoinBinding) {
     opts: { swapId: string; origin?: string; note: string },
   ): Promise<SendCoinResult> {
     assertOnlineForPayment()
-    const intent = captureSigningIntent()
-    await moveIfHeldElsewhere(intent.account)
+    await moveHere()
     return serial(async () => {
-      intent.assertCurrent()
-      const active = intent.account
+      const active = requireActive()
       assertOnlineForPayment()
       refuseHeldElsewhere(active)
       const { ensureHoldingFresh } = await import('../accountMove')
       await ensureHoldingFresh(active)
-      intent.assertCurrent()
       refuseHeldElsewhere(active)
       migrate()
       if (outputs.length === 0 || outputs.some((o) => o.litoshi < binding.dust)) refuse('bad-args', `each lock holds at least ${binding.dust}.`)
@@ -855,7 +850,6 @@ export function createCoinWallet(binding: CoinBinding) {
         const { plan, signed, txid } = await signOutputs(
           active,
           outputs.map((o) => ({ script: o.script, value: o.litoshi })),
-          intent.assertHeld,
         )
         const payment: Payment = {
           address: outputs[0]!.address,

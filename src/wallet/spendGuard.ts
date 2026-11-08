@@ -236,12 +236,7 @@ export function runExclusiveSpend<T>(
         identityKey: instance.identityKey,
         accountIndex: instance.accountIndex,
         vaultMaster: instance.vaultMaster,
-      }).then(() => {
-        // BRC-249 Moving on demand: a queued signing intent belongs to the
-        // captured account/runtime, never whichever account is selected later.
-        if (runtime) assertRuntimeCurrent(runtime)
-        return runExclusiveSpend(fn, onSpendRegion, opts)
-      })
+      }).then(() => runExclusiveSpend(fn, onSpendRegion, opts))
     }
     throw new Error(heldElsewhere)
   }

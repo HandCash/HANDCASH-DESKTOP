@@ -5051,12 +5051,6 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wa
   background: color-mix(in srgb, var(--hc-text) 6%, transparent);
 }
 
-[data-aeon-scope="wallet-account-menu"] [data-aeon-part="read-only-account"] {
-  padding: 8px;
-  overflow-wrap: anywhere;
-  font-size: var(--hc-text-sm);
-}
-
 .wallet-account-error {
   margin: 6px 8px 2px;
   color: var(--hc-danger);
