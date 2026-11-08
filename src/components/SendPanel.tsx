@@ -171,7 +171,7 @@ export function SendPanel({
   const fiatSymbol = getFiatSymbol(fiatCode)
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   /** Local balance read before Review — a phase of `editing`, owned by the chart. */
-  const reviewBusy = sendSnap.matches({ editing: 'checking' })
+  const reviewBusy = sendSnap.matches({ editing: { amount: 'checking' } })
   const [scanningTo, setScanningTo] = useState(false)
   const [network, setNetwork] = useState<MarketCoin>('bsv')
   const [destAssetId, setDestAssetId] = useState('bsv')
