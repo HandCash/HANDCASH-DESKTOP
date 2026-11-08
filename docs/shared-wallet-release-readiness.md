@@ -49,6 +49,18 @@ After the shared display/signing boundary is implemented, the phone operator mus
 4. Exercise live/idle/offline holder release and displaced history without duplicate broadcast or non-holder backup overwrite. Do not use production funds or move production keys for acceptance.
 5. Verify Android install-over preserves the vault; provide header/Settings screenshots in both themes. No adb was available in this environment.
 
+## Recovery verification — 2026-11-07
+
+Recovered source is `bddd222e`, not the fixes-only release candidate `0f95dd42`. The later commit contains incomplete read-only menu and signing-guard changes; do not tag HEAD as the approved fixes-only release. Preserve those changes separately and release from the reviewed fixes-only source.
+
+Fresh isolated verification: 10 focused files / 119 tests passed, including signed pairing receipts, menu viewing, spend movement/guards, signing intents, Settings preferences, phone tilt, Mobile release contract and Aeon adherence. Renderer and Electron type checks passed. Settings row browser fixtures passed at 320, 360 and 430px with no sideways overflow. This is not a running native-app or physical-device acceptance check. Shared unkept tests and untracked verification files were not copied or changed.
+
+GitHub queries still find no `v1.3.667` or `v0.1.780` tag/release. Published Desktop `v1.3.666` includes Linux, Mac and Windows assets; Mobile `v0.1.779` includes its APK, checksum and core-pin artifact. Latest listed CI run `42387231127` failed on the machine catalog count (57 versus expected 56); the current candidate already contains the catalog fix from `bc32ebfe`; its three focused tests passed in this recovery pass. Linux run `42379661998` and Windows run `42379661569` succeeded for the prior release, not the unpublished candidate.
+
+Publication remains gated by the missing 1.3.667 changelog entry, mandatory Jev UI review and clean fixes-only source. No Jev credential is available in the command process; the review script falls back to reading environment files, so it was not run. Alignity read_file/edit_file reported CHANGELOG.md missing despite the terminal confirming it exists; the attempted passage edit changed nothing. Do not bypass the edit tool or secret-file restriction. No commits, tags, pushes, artifacts or real-account changes were made in this recovery pass.
+
+The offline ownership policy question remains open: local offline signing plus forced takeover cannot guarantee exclusive signing. Full read-only projection and a common signing fence are still implementation work, not merely device testing.
+
 ## Latest verification and release handoff
 
 Job `jb2` completed: 18 focused files / 198 tests passed, followed by renderer and Electron type checks and `git diff --check`. The final Mobile release check failed: Mobile pins `8cce7b5d008589c0ddc4221fc75de09d91e664cf`, while this worktree's Desktop HEAD is `348f4710f9972b00baa8838cd63097d9f7c3b12c`. This is a source-alignment failure, not a test failure. No job remains running from this verification. All feature edits remain unkept; no Mobile source or real account was changed.
