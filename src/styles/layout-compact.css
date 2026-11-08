@@ -788,23 +788,6 @@ html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen
   height: auto;
 }
 
-/* Settings / Identity: content gets the screen, not the balance card + ticker. */
-html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--section-focus {
-  gap: 8px;
-}
-
-html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--section-focus .wallet-hero,
-html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--section-focus .what-is-bsv {
-  display: none !important;
-}
-
-html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--section-focus .wallet-nav-shell {
-  order: 3;
-  flex: 1 1 auto;
-  min-height: 0;
-  height: auto;
-}
-
 html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.chat-with-scroll) {
   overflow: hidden;
   display: flex;
