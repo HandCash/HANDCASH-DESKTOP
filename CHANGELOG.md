@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.671] - 2026-11-08
+
+### Fixed
+
+- Without an OS keyring the vault is stored unsealed and labelled honestly.
+- Atomic file writes skip directory fsync on Windows.
+- Log redaction no longer hides harmless fields.
+- The install checksum is described as an integrity check only.
+
 ## [1.3.667] - 2026-11-07
 
 ### Fixed

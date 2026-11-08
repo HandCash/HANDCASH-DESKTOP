@@ -38,7 +38,7 @@ describe('diagnosticLog', () => {
 
     const lines = appLog.getAppLogs().map((e) => e.message)
     expect(lines.some((line) => line.includes('[spend] test-gate'))).toBe(true)
-    expect(lines.some((line) => line.includes('spendable=2'))).toBe(true)
+    expect(lines.some((line) => line.includes('spendable=[REDACTED]'))).toBe(true)
     expect(lines.some((line) => line.includes('pendingChange=162767'))).toBe(true)
   })
 
