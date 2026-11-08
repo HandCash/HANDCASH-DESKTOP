@@ -28,6 +28,7 @@ import {
 } from './accountRelease'
 import { accountMoveMachine, type AccountMovePhase, type MoveFailure, type RecordView } from './accountMoveMachine'
 import { appendAppLog } from './appLog'
+import { createDirectHandover } from './directHandover'
 import { isHoldingFresh, noteHoldingGap, noteHoldingServed } from './holdingFreshness'
 import type { ListedMessage } from './messageTransport'
 import {
@@ -285,7 +286,7 @@ export type ServeTarget = {
   rootKeyHex: string
   deviceId: string
   /** Release the account (flush history, write `released`). */
-  release: () => Promise<void>
+  release: (to: string) => Promise<void>
   /** Merge a complete handover document; null while the account is not open here. */
   merge: ((json: string) => Promise<void>) | null
   /** Read the record again: a request named a newer seq than we know. */
@@ -327,7 +328,7 @@ async function acceptAndRelease(
     `[account-holding] a${target.index} release requested by ${request.deviceId.slice(0, 8)} (${request.via}) — accepted (${answered})`,
   )
   try {
-    await target.release()
+    await target.release(request.deviceId)
     return { kind: 'released', to: request.deviceId }
   } catch (error) {
     appendAppLog('warn', `[account-holding] a${target.index} release after accept failed: ${messageOf(error)}`)
@@ -454,7 +455,7 @@ async function serveContext() {
       identityKey: identityKeyForAccount(master, index),
       rootKeyHex,
       deviceId,
-      release: open ? () => releaseActiveVaultAccount(runtime) : () => releaseIdleVaultAccount(master, index),
+      release: open ? () => releaseActiveVaultAccount(runtime) : (to) => releaseIdleVaultAccount(master, index, to),
       merge: open
         ? async (json) => {
             await history.mergeHandoverDocument(runtime, json)
@@ -515,7 +516,32 @@ async function serveTick(): Promise<void> {
   }
 }
 
+const directHandovers = createDirectHandover({
+  send: sendOverVaultLink,
+  inbox: async (identityKey) => {
+    const ctx = await serveContext()
+    if (!ctx || ctx.runtime.instance.identityKey !== identityKey || !ctx.held.includes(ctx.activeIndex)) return null
+    const target = ctx.targetFor(ctx.activeIndex)
+    if (!target.merge) return null
+    return {
+      open: target.open,
+      merge: async (json) => {
+        // Recheck after assembly; an account may have switched or moved away.
+        if (!runtimeIsCurrent(ctx.runtime) || localHoldingOf(target)?.kind !== 'here') throw new Error('Handover holder changed')
+        await target.merge!(json)
+      },
+    }
+  },
+})
+
+/** Application receipt, not the link's frame ACK, confirms the history merge. */
+export const sendDirectHandover = directHandovers.send
+
 function onDirectBody(body: string, fromDevice: string): void {
+  // Do not queue receipts behind a serve tick waiting for that same receipt.
+  void directHandovers.receive(body, fromDevice).catch((error: unknown) =>
+    appendAppLog('warn', `[account-holding] direct history failed: ${messageOf(error)}`),
+  )
   let probe: { type?: unknown; identityKey?: unknown }
   try {
     probe = JSON.parse(body) as typeof probe
@@ -552,6 +578,7 @@ export function stopHoldingService(): void {
   gapListener = null
   directListener?.()
   directListener = null
+  directHandovers.stop()
   stopVaultLink()
   noteHoldingGap()
 }

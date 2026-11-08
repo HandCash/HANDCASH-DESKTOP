@@ -628,7 +628,7 @@ export async function releaseActiveVaultAccount(runtime: WalletRuntime): Promise
  * backup is uploaded only while it is open, so what changed since then goes
  * to the new holder as a handover once the release is written.
  */
-export async function releaseIdleVaultAccount(master: VaultMaster, index: number): Promise<void> {
+export async function releaseIdleVaultAccount(master: VaultMaster, index: number, to?: string): Promise<void> {
   const identityKey = identityKeyForAccount(master, index)
   const { getWalletRuntime } = await import('./walletRuntime')
   if (getWalletRuntime()?.instance.identityKey === identityKey) {
@@ -639,7 +639,8 @@ export async function releaseIdleVaultAccount(master: VaultMaster, index: number
   dropWarmAccount(identityKey)
   await releaseVaultAccount({ master, index })
   const { handOverAccounts } = await import('./accountHandover')
-  await handOverAccounts(master, [index])
+  // Draft BRC-249: try the requester's link first; the box stays the durable path.
+  await handOverAccounts(master, [index], undefined, { to })
   appendAppLog('info', `[account-holding] release a${index} (not open) done ${Date.now() - started}ms`)
 }
 
