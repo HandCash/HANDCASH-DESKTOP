@@ -23,24 +23,24 @@ export function BrandLogo({
 }: Props) {
   return (
     <div className={`brand ${className}`.trim()} data-aeon-scope="identity" data-aeon-part="root">
-      <DeferredImage
-        className="brand-logo-mark"
-        src={markSrc[variant]}
-        width={size}
-        height={size}
-        alt="HandCash"
-        draggable={false}
-        skeletonWidth={size}
-        skeletonHeight={size}
-        skeletonRadius={8}
-        skeletonClassName="brand-logo-skeleton"
-      />
+      <span className="brand-mark-wrap">
+        <DeferredImage
+          className="brand-logo-mark"
+          src={markSrc[variant]}
+          width={size}
+          height={size}
+          alt="HandCash"
+          draggable={false}
+          skeletonWidth={size}
+          skeletonHeight={size}
+          skeletonRadius={8}
+          skeletonClassName="brand-logo-skeleton"
+        />
+        <span className="brand-beta">BETA</span>
+      </span>
       {showWordmark && (
         <div className="brand-wordmark">
-          <div className="brand-name">
-            HandCash
-            <span className="brand-beta">BETA</span>
-          </div>
+          <div className="brand-name">HandCash</div>
         </div>
       )}
     </div>

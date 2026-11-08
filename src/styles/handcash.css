@@ -253,6 +253,13 @@ body {
   min-height: 34px;
 }
 
+.brand-mark-wrap {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
 .brand-logo-mark {
   width: 28px;
   height: 28px;
@@ -320,11 +327,16 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 .brand-beta {
+  /* Overlays the logo mark's bottom-right corner; takes no layout space. */
+  position: absolute;
+  right: -6px;
+  bottom: -5px;
+  pointer-events: none;
   font-family: var(--hc-font);
-  font-size: var(--hc-text-2xs);
+  font-size: 8px;
   font-weight: 800;
   letter-spacing: var(--hc-tracking-label);
-  padding: 0 var(--hc-space-1);
+  padding: 0 3px;
   border-radius: var(--hc-radius-sm);
   /* Always HandCash yellow — never follows Omarchy / sheet accent. */
   border: 1px solid color-mix(in srgb, #f5c518 55%, transparent);
