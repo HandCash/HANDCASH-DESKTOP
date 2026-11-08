@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.667] - 2026-11-07
+
+### Fixed
+
+- Shorter Settings copy, with chart-owned appearance and sound preferences.
+- Compact password-screen and Settings row spacing.
+- Balance header without a repeated heading or currency flag.
+- Phone background tilt is twenty times subtler.
+- Mobile releases verify the exact shared source commit.
+- The machine catalog test includes the Settings preferences chart.
+
+Two-device read-only viewing and signing-only ownership moves are deferred.
+
 ## [1.3.666] - 2026-11-07
 
 ### Fixed
