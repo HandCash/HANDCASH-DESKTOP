@@ -425,7 +425,7 @@ html:is(.platform-mobile, .layout-compact)
   box-sizing: border-box;
   min-height: 34px;
   padding: 4px 12px;
-  border: 1px solid hsl(var(--border));
+  border: var(--hc-border-w) solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
   box-shadow: none;
@@ -459,7 +459,7 @@ html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head::after {
   left: var(--wallet-nav-hairline-inset);
   right: var(--wallet-nav-hairline-inset);
   bottom: 0;
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: var(--hc-border-w) solid hsl(var(--border));
   pointer-events: none;
 }
 
@@ -521,7 +521,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px 2px 1px;
-  border: 1px solid hsl(var(--border));
+  border: var(--hc-border-w) solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
   backdrop-filter: none;
