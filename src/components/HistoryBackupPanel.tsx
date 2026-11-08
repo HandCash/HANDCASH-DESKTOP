@@ -9,7 +9,6 @@ import {
   HistoryThinOverwriteError,
   importBrc39FromFile,
   listLocalBrc39Archive,
-  replaceLocalHistoryFromCloud,
   restoreLocalBrc39Archive,
   uploadBrc39Backup,
 } from '../wallet/historyBackup'
@@ -35,13 +34,12 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { inspectLocalToolboxState } from '../wallet/layers'
 import {
   describeHistorySide,
-  replaceFromCloudVerdict,
   type HistorySides,
 } from '../wallet/historyReplaceGuard'
 import { useAsyncAction, type AsyncActionOutcome } from '../hooks/useAsyncAction'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
-import { CloudUploadIcon, DownloadIcon, FileIcon, WarningIcon } from './icons'
+import { CloudUploadIcon, DownloadIcon, FileIcon } from './icons'
 import { HistoryBackupUrlField, SettingsControlRow, SettingsSection } from './settings'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
@@ -57,9 +55,7 @@ function formatWhen(ts: number | null): string {
 type HistoryActionKind =
   | 'file'
   | 'upload'
-  | 'overwrite'
   | 'restore'
-  | 'replace'
   | 'import'
   | 'check'
   | 'local'
@@ -71,9 +67,6 @@ const readSides = async (): Promise<HistorySides> => {
   ])
   return { remote, local }
 }
-
-const sidesBody = ({ remote, local }: HistorySides) =>
-  `Cloud: ${remote?.exists ? `${describeHistorySide(remote)}, from ${formatWhen(remote.exportedAt)}` : 'not readable'}. This device: ${describeHistorySide(local)}.`
 
 export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -89,7 +82,6 @@ export function HistoryBackupPanel() {
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
   const resolvedUrl = resolveHistoryBackupBaseUrl(prefs)
   const effectiveUrl = resolvedUrl || displayHistoryBackupBaseUrl(prefs)
-  const replaceVerdict = sides ? replaceFromCloudVerdict(sides) : null
 
   const refreshLocalArchive = async () => {
     const id = getActiveWallet()?.identityKey
@@ -193,8 +185,8 @@ export function HistoryBackupPanel() {
   }
 
   /**
-   * Guarded first: the same empty-local / thinner-than-remote check the
-   * automatic path runs. Only a refusal asks to overwrite, naming both sides.
+   * Use the automatic path's empty-local / thinner-than-remote guard.
+   * A refusal never offers force: merge the remote history before retrying.
    */
   const runUpload = async () => {
     if (!historyUnlocked) return
@@ -214,27 +206,7 @@ export function HistoryBackupPanel() {
     setPrefs(getHistoryBackupPrefs())
     if (!outcome.ok) return fail('Upload failed', outcome)
     if (guard.refusal === null) return
-    const now = await refreshSides()
-    const forced = await action.run(
-      'overwrite',
-      async () => {
-        await uploaded(
-          await uploadBrc39Backup(password ?? '', { force: true, passwordAlreadyVerified: true }),
-        )
-      },
-      {
-        confirm: {
-          title: 'Overwrite the cloud copy?',
-          body: now.remote?.exists
-            ? `${sidesBody(now)} The cloud copy is replaced by this device’s.`
-            : 'The cloud copy could not be checked. Uploading replaces whatever is stored there.',
-          confirmLabel: 'Overwrite',
-          danger: true,
-        },
-      },
-    )
-    setPrefs(getHistoryBackupPrefs())
-    fail('Upload failed', forced)
+    toastError('Backup not uploaded', `${guard.refusal} Restore from cloud to merge its history before backing up again.`)
     await refreshSides()
   }
 
@@ -261,52 +233,6 @@ export function HistoryBackupPanel() {
       )
     })
     fail('Restore failed', outcome)
-    await refreshSides()
-  }
-
-  /**
-   * Recovery only: select a fresh ledger built from the cloud copy, for when
-   * merge cannot fix this one (local rows winning over the cloud's spendable
-   * outputs). Allowed only when the cloud copy is at least as rich as this
-   * device; the current ledger is set aside on the device, never deleted.
-   */
-  const runReplace = async () => {
-    if (!historyUnlocked) return
-    const now = await refreshSides()
-    const verdict = replaceFromCloudVerdict(now)
-    if (!verdict.allowed) {
-      playWalletSound('deny')
-      toastError('Replace refused', verdict.reason)
-      return
-    }
-    const outcome = await action.run(
-      'replace',
-      async () => {
-        ensureSuggestedHistoryBackupUrl()
-        clearBackupBackoff()
-        const result = await replaceLocalHistoryFromCloud(password)
-        const recomposed = await recomposeWallet({
-          password: password ?? undefined,
-          history: 'skip',
-          reason: 'restore-url',
-        })
-        playWalletSound('success')
-        toastSuccess(
-          'Ledger rebuilt from cloud',
-          `${result.inserts + result.updates} records` +
-            (recomposed.spendableSats != null ? ` · ${recomposed.spendableSats.toLocaleString()} sats` : ''),
-        )
-      },
-      {
-        confirm: {
-          title: 'Rebuild this ledger from the cloud copy?',
-          body: `${sidesBody(now)} This device switches to a new ledger made from the cloud copy. The current one is set aside on this device, not merged. Use Restore from cloud unless restore left your balance wrong.`,
-          confirmLabel: 'Rebuild',
-          danger: true,
-        },
-      },
-    )
-    fail('Rebuild failed', outcome)
     await refreshSides()
   }
 
@@ -390,7 +316,7 @@ export function HistoryBackupPanel() {
                   onClick={() => void runUpload()}
                 >
                   <Button.Label>
-                    {action.running('upload') || action.running('overwrite') ? 'Backing up…' : 'Back up'}
+                    {action.running('upload') ? 'Backing up…' : 'Back up'}
                   </Button.Label>
                 </Button.Root>
               </SettingsControlRow>
@@ -494,29 +420,6 @@ export function HistoryBackupPanel() {
             ) : (
               <p className="settings-row-desc">No snapshots yet. Export once, or spend, to write one.</p>
             )}
-          </SettingsSection>
-
-          <SettingsSection title="Recovery" part="recovery">
-            <ul className="settings-list">
-              <SettingsControlRow
-                label="Rebuild from cloud"
-                icon={<WarningIcon size={20} />}
-                description={
-                  replaceVerdict && !replaceVerdict.allowed
-                    ? replaceVerdict.reason
-                    : 'Only if Restore left your balance wrong. Switches to a ledger made from the cloud copy; the current one is set aside'
-                }
-              >
-                <Button.Root
-                  variant="ghost"
-                  className="btn btn-ghost"
-                  disabled={busy || !effectiveUrl || !replaceVerdict?.allowed}
-                  onClick={() => void runReplace()}
-                >
-                  <Button.Label>{action.running('replace') ? 'Rebuilding…' : 'Rebuild'}</Button.Label>
-                </Button.Root>
-              </SettingsControlRow>
-            </ul>
           </SettingsSection>
 
           <div className="actions" data-aeon-part="session">
