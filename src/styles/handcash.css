@@ -4735,9 +4735,6 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome {
   margin-inline-start: auto;
 }
 
-<<<<<<< HEAD
-html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-pill {
-=======
 html:not(.platform-mobile):not(.layout-compact) .dashboard :is(.dashboard-main, .dashboard-side) > .panel {
   border-color: color-mix(in srgb, hsl(var(--border)) 75%, hsl(var(--card)));
 }
@@ -4748,7 +4745,6 @@ html:not(.platform-mobile):not(.layout-compact) .dashboard .connected-panel-head
 
 html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-pill {
   border-color: color-mix(in srgb, hsl(var(--border)) 45%, hsl(var(--card)));
->>>>>>> origin/master
   background: color-mix(in srgb, hsl(var(--secondary)) 35%, hsl(var(--card)));
 }
 
