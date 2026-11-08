@@ -32,8 +32,8 @@ const button = (text) => h('button', { className: 'btn btn-ghost btn-compact' },
 const list = (...rows) => h('ul', { className: 'settings-list' }, ...rows)
 const rows = () => [
   h(SettingsControlRow, { key: 'a', label: 'Last upload', icon, description: '10/6/2026, 9:49:06 PM' }, button('CHECK')),
-  h(SettingsControlRow, { key: 'b', label: 'Restore from cloud (merge)', icon, description: 'Download cloud backup and merge into this device' }, button('RESTORE')),
-  h(SettingsControlRow, { key: 'c', label: 'Replace from cloud (dangerous)', icon, description: 'DELETE this device history and replace with cloud copy' }, button('REPLACE')),
+  h(SettingsControlRow, { key: 'b', label: 'Restore from cloud', icon, description: 'Merge the cloud copy in; nothing on this device is removed' }, button('RESTORE')),
+  h(SettingsControlRow, { key: 'c', label: 'Rebuild from cloud', icon, description: 'This device has 3 actions the cloud copy lacks. Back up first.' }, button('REBUILD')),
   h(SettingsControlRow, { key: 'd', label: 'No icon row', description: 'Description beside no icon' }, button('RESTORE')),
   h(SettingsControlRow, { key: 'e', label: 'HandCash password', icon, description: 'Unlock this wallet with a password' }, h('div', { className: 'actions' }, button('CHANGE'), button('REMOVE'))),
   h(SettingsControlRow, { key: 'f', label: 'Heal wallet UTXOs', icon, description: 'Recover spendable outputs from wallet history' }, h('span', { className: 'status-pill' }, 'Ready'), button('HEAL')),

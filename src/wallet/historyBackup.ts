@@ -565,25 +565,6 @@ async function downloadAndRestoreBrc39BackupExclusive(
   return result
 }
 
-/** Merge cloud backup into local history.
- * Downloads the cloud backup and merges it into the current database using
- * merge mode (adds missing entries, updates existing, preserves local-only data). */
-export async function mergeLocalHistoryFromCloud(
-  password?: string | null,
-): Promise<HistoryImportResult> {
-  const active = getActiveWallet()
-  if (!active) throw new Error('Unlock the wallet first')
-  const { rootKeyHex, identityKey } = active
-  const url = historyBackupObjectUrl(identityKey, getHistoryBackupPrefs())
-  const response = await signedIdentityFetch(rootKeyHex, 'history', url)
-  if (!response.ok) throw new Error(`Download failed (${response.status})`)
-  const bytes = await readBoundedBackup(response)
-  const result = await restoreBrc39BackupBytes(bytes, password, 'merge')
-  appendAppLog('info', `[cloud-backup] merged cloud backup via ${result.crypto}`)
-  void refreshCloudBackupHealth()
-  return result
-}
-
 /** Recover into a separate database. The current ledger is never deleted.
  * Validate and import fully before selecting the replacement; on boot failure
  * select and reopen the original database. A process death at the selection

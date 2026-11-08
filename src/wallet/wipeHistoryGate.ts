@@ -102,7 +102,7 @@ export function wipeRefusalMessage(refusal: WipeHistoryRefusal): string {
     case 'locked':
       return 'Unlock the wallet to sync history first.'
     case 'cloud-richer':
-      return 'The cloud copy has history this device lacks. Use Merge from cloud in History backup to add it, then wipe.'
+      return 'The cloud copy has history this device lacks. Restore from cloud in History backup, then wipe.'
     case 'upload-failed':
       return `History didn’t sync: ${refusal.detail}`
     case 'unconfirmed':

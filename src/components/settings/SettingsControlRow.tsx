@@ -6,7 +6,8 @@ type Props = {
   label: string
   description?: ReactNode
   icon?: ReactNode
-  children: ReactNode
+  /** Trailing control; omit for a read-only row. */
+  children?: ReactNode
 }
 
 /** Preference row — ListRow leading · label · trailing control. */
@@ -21,7 +22,7 @@ export function SettingsControlRow({ label, description, icon, children }: Props
         ) : null}
         <ListRow.Label>{label}</ListRow.Label>
         {description ? <ListRow.Description>{description}</ListRow.Description> : null}
-        <ListRow.Trailing>{children}</ListRow.Trailing>
+        {children ? <ListRow.Trailing>{children}</ListRow.Trailing> : null}
       </ListRow.Root>
     </li>
   )
