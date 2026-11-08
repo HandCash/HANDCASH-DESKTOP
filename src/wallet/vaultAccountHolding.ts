@@ -596,20 +596,49 @@ async function flushAccountHistory(runtime: WalletRuntime): Promise<void> {
 }
 
 /**
+ * Without the cloud history backup, release only to a requester whose
+ * authenticated link is open, and only with nothing signed but unbroadcast:
+ * those would be voided on hand-over, and a signed payment is never aborted.
+ */
+async function canReleaseDirect(runtime: WalletRuntime, to: string | undefined): Promise<boolean> {
+  if (!to) return false
+  const { vaultLinkOpen } = await import('./vaultLink')
+  if (!vaultLinkOpen(to)) return false
+  const { unbroadcastCount } = await import('./accountHandover')
+  const active = runtime.instance
+  return (await unbroadcastCount(active.vaultMaster, active.accountIndex).catch(() => 1)) === 0
+}
+
+/**
  * Hand the active account to another install: refuse spends, flush its
  * history, announce the release. The caller switches to another account.
+ * When the cloud backup fails and `to` is linked, the history and custody
+ * journal go to it peer to peer (draft BRC-249) instead.
  */
-export async function releaseActiveVaultAccount(runtime: WalletRuntime): Promise<void> {
+export async function releaseActiveVaultAccount(runtime: WalletRuntime, to?: string): Promise<void> {
   const active = runtime.instance
   const started = Date.now()
   releasingIdentityKey = active.identityKey
   try {
     const { waitForForegroundSpendIdle } = await import('./walletCoordinator')
     await waitForForegroundSpendIdle()
-    await flushAccountHistory(runtime)
+    let direct = false
+    try {
+      await flushAccountHistory(runtime)
+    } catch (error) {
+      if (!runtimeIsCurrent(runtime) || !(await canReleaseDirect(runtime, to))) throw error
+      direct = true
+      appendAppLog('warn', `[account-holding] a${active.accountIndex} cloud backup failed (${messageOf(error)}); handing over peer to peer`)
+    }
     await releaseVaultAccount({ master: active.vaultMaster, index: active.accountIndex })
     const { dropWarmAccount } = await import('./walletPool')
     dropWarmAccount(active.identityKey)
+    if (direct) {
+      const { handOverAccounts } = await import('./accountHandover')
+      await handOverAccounts(active.vaultMaster, [active.accountIndex], undefined, { to, custodyDirect: true })
+      appendAppLog('info', `[account-holding] release a${active.accountIndex} done ${Date.now() - started}ms (peer to peer)`)
+      return
+    }
     // A receive ingested during the flush must reach the backup before another install opens it.
     const { isHistoryBackupDirty } = await import('./deviceSync')
     if (isHistoryBackupDirty()) {

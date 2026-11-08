@@ -17,15 +17,15 @@ export function createDirectHandover(io: {
   /** Null unless this install currently holds and has opened the named account. */
   inbox: (identityKey: string) => {
     open: (sealed: string) => string | null
-    merge: (json: string) => Promise<void>
+    merge: (json: string, kind?: 'custody') => Promise<void>
   } | null | Promise<{
     open: (sealed: string) => string | null
-    merge: (json: string) => Promise<void>
+    merge: (json: string, kind?: 'custody') => Promise<void>
   } | null>
 }) {
   const waiting = new Map<string, { device: string; resolve: (merged: boolean) => void }>()
   const groups = new Map<string, {
-    at: number; total: number; parts: Map<number, string>; merging: boolean
+    at: number; total: number; parts: Map<number, string>; merging: boolean; kind?: 'custody'
   }>()
   const keyOf = (identity: string, id: string) => JSON.stringify([identity, id])
   return {
@@ -70,17 +70,17 @@ export function createDirectHandover(io: {
       let group = groups.get(key)
       if (!group) {
         if (groups.size >= MAX_GROUPS) return
-        group = { at: now, total: part.parts, parts: new Map(), merging: false }
+        group = { at: now, total: part.parts, parts: new Map(), merging: false, ...(part.kind ? { kind: part.kind } : {}) }
         groups.set(key, group)
       }
-      if (group.total !== part.parts || group.merging) return
+      if (group.total !== part.parts || group.kind !== part.kind || group.merging) return
       const prior = group.parts.get(part.part)
       if (prior !== undefined && prior !== part.data) { groups.delete(key); return }
       group.parts.set(part.part, part.data)
       if (group.parts.size !== group.total) return
       group.merging = true
       try {
-        await inbox.merge(Array.from({ length: group.total }, (_, i) => group.parts.get(i)!).join(''))
+        await inbox.merge(Array.from({ length: group.total }, (_, i) => group.parts.get(i)!).join(''), group.kind)
         const receipt: Receipt = { type: 'direct-handover-merged', identityKey: part.identityKey, handoverId: part.handoverId }
         await io.send(device, JSON.stringify(receipt))
       } finally {

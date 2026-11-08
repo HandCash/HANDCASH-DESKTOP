@@ -17,11 +17,25 @@ describe('direct history handover', () => {
     await receiver.receive(frame(part(1, 'B')), 'source')
     expect(merge).not.toHaveBeenCalled()
     const receiving = receiver.receive(frame(part(0, 'A')), 'source')
-    await vi.waitFor(() => expect(merge).toHaveBeenCalledWith('AB'))
+    await vi.waitFor(() => expect(merge).toHaveBeenCalledWith('AB', undefined))
     expect(send).not.toHaveBeenCalled()
     finish()
     await receiving
     expect(JSON.parse(send.mock.calls[0]![1])).toMatchObject({ type: 'direct-handover-merged', handoverId: 'transfer' })
+  })
+
+  it('passes the custody kind to the merge and refuses a part of another kind', async () => {
+    const merge = vi.fn(async () => {})
+    const send = vi.fn(async () => 'direct' as const)
+    const receiver = createDirectHandover({ send, inbox: () => ({ open: s => s, merge }) })
+    const custody = (n: number, data: string, kind?: string) => JSON.stringify({
+      ...JSON.parse(part(n, data)), handoverId: 'transfer-custody', ...(kind ? { kind } : {}),
+    })
+    await receiver.receive(frame(custody(0, '[1,', 'custody')), 'source')
+    await receiver.receive(frame(custody(1, 'mixed')), 'source')
+    expect(merge).not.toHaveBeenCalled()
+    await receiver.receive(frame(custody(1, '2]', 'custody')), 'source')
+    expect(merge).toHaveBeenCalledWith('[1,2]', 'custody')
   })
 
   it('rejects unauthenticated, non-holder, oversized and conflicting parts', async () => {

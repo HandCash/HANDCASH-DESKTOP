@@ -47,7 +47,15 @@ export type HandoverPart = {
   part: number
   parts: number
   data: string
+  /** Absent: a BRC-38 history delta. `custody`: the account's custody journal entries (JSON array). */
+  kind?: 'custody'
 }
+
+/** A release whose cloud backup failed keeps trying the link this long before the box. */
+export const CUSTODY_DIRECT_MS = 10 * 60_000
+const DIRECT_RETRY_MS = 15_000
+const lastDirectTry = new Map<string, number>()
+const directDelivered = new Map<string, Set<'delta' | 'custody'>>()
 
 type PendingHandover = {
   masterIdentityKey: string
@@ -57,6 +65,11 @@ type PendingHandover = {
   until: number
   /** The install that asked for the release: the direct link to try before the holder record names it. */
   to?: string
+  /**
+   * The release went out without its cloud history and custody backup: this
+   * handover is the only copy, so it waits for the link before using the box.
+   */
+  custodyDirect?: boolean
 }
 
 /** Where a displaced account's state lives and how to post for it. */
@@ -70,6 +83,8 @@ export type HandoverIo = {
   send: (rootKeyHex: string, body: string) => Promise<void>
   /** True only after the authenticated holder merged every part. */
   sendDirect?: (master: VaultMaster, index: number, rootKeyHex: string, parts: HandoverPart[], to?: string) => Promise<boolean>
+  /** The account's custody journal entries (spend recipes for managed change and BRC-29). */
+  custody?: (owner: { identityKey: string; accountIndex: number; chain: 'main' | 'test' }) => readonly unknown[]
   dropMinerRetry: (txid: string, owner: { identityKey: string; accountIndex: number; chain: 'main' | 'test' }) => void
   stopMonitor: (identityKey: string) => void
   /**
@@ -108,13 +123,14 @@ function lastUploadedAt(owner: { identityKey: string; accountIndex: number; chai
 }
 
 async function defaultIo(): Promise<HandoverIo> {
-  const [{ getOrCreateDeviceId }, { getWalletRuntime }, { SetupClient }, transport, outbox, pool] = await Promise.all([
+  const [{ getOrCreateDeviceId }, { getWalletRuntime }, { SetupClient }, transport, outbox, pool, { custodyEntries }] = await Promise.all([
     import('./deviceWallets'),
     import('./walletRuntime'),
     import('@handcash/wallet-engine'),
     import('./messageTransport'),
     import('./pendingMinerOutbox'),
     import('./walletPool'),
+    import('./custodyJournal'),
   ])
   return {
     deviceId: getOrCreateDeviceId,
@@ -145,6 +161,7 @@ async function defaultIo(): Promise<HandoverIo> {
       return sendDirectHandover(device, parts[0]!.identityKey, parts[0]!.handoverId,
         parts.map(part => transport.sealToSelf(rootKeyHex, JSON.stringify(part))))
     },
+    custody: custodyEntries,
     dropMinerRetry: (txid, owner) => outbox.removePendingMinerSubmit(txid, owner),
     stopMonitor: pool.dropWarmAccount,
     settleVoidedNotices: async ({ rootKeyHex, owner, txids }) => {
@@ -163,7 +180,7 @@ export async function handOverAccounts(
   master: VaultMaster,
   indices: number[],
   io?: HandoverIo,
-  opts: { to?: string } = {},
+  opts: { to?: string; custodyDirect?: boolean } = {},
 ): Promise<void> {
   const resolved = io ?? (await defaultIo())
   const masterIdentityKey = vaultIdentityKey(master)
@@ -173,7 +190,14 @@ export async function handOverAccounts(
     const identityKey = identityKeyForAccount(master, index)
     resolved.stopMonitor(identityKey)
     if (pending.some((p) => p.identityKey === identityKey)) continue
-    pending.push({ masterIdentityKey, index, identityKey, until, ...(opts.to ? { to: opts.to } : {}) })
+    pending.push({
+      masterIdentityKey,
+      index,
+      identityKey,
+      until,
+      ...(opts.to ? { to: opts.to } : {}),
+      ...(opts.custodyDirect ? { custodyDirect: true } : {}),
+    })
   }
   writePending(pending)
   await flushPendingHandovers(master, resolved)
@@ -197,22 +221,57 @@ export async function flushPendingHandovers(master: VaultMaster, io?: HandoverIo
   }
 }
 
-async function handOver(master: VaultMaster, entry: PendingHandover, io: HandoverIo): Promise<boolean> {
-  const started = Date.now()
-  const where = io.account(master, entry.index)
+async function storageFor(master: VaultMaster, index: number, io: HandoverIo) {
+  const where = io.account(master, index)
   if (!where) throw new Error('vault is not open')
-  const rootKeyHex = rootKeyHexForAccount(master, entry.index)
-  const owner = { identityKey: entry.identityKey, accountIndex: entry.index, chain: where.chain }
+  const rootKeyHex = rootKeyHexForAccount(master, index)
   const { resolveWalletEngineDatabase } = await import('./walletEngineMigration')
   const databaseName = await resolveWalletEngineDatabase({
     chain: where.chain,
     handle: where.handle,
     rootKeyHex,
-    accountIndex: entry.index,
+    accountIndex: index,
   })
+  return { chain: where.chain, rootKeyHex, databaseName }
+}
+
+/** How many transactions this install signed for the account but never broadcast. */
+export async function unbroadcastCount(master: VaultMaster, index: number, io?: HandoverIo): Promise<number> {
+  const resolved = io ?? (await defaultIo())
+  const storageArgs = await storageFor(master, index, resolved)
+  const identityKey = identityKeyForAccount(master, index)
+  return (await resolved.withStorage(storageArgs, (storage) => listUnbroadcast(storage, identityKey))).length
+}
+
+/** Split `json` into handover parts; null when it is over {@link HANDOVER_MAX_PARTS}. */
+function partsOf(
+  json: string,
+  base: Omit<HandoverPart, 'part' | 'parts' | 'data' | 'kind'>,
+  kind?: 'custody',
+): HandoverPart[] | null {
+  const parts = Math.ceil(json.length / HANDOVER_PART_CHARS)
+  if (parts > HANDOVER_MAX_PARTS) return null
+  return Array.from({ length: parts }, (_, part) => ({
+    ...base,
+    part,
+    parts,
+    data: json.slice(part * HANDOVER_PART_CHARS, (part + 1) * HANDOVER_PART_CHARS),
+    ...(kind ? { kind } : {}),
+  }))
+}
+
+async function handOver(master: VaultMaster, entry: PendingHandover, io: HandoverIo): Promise<boolean> {
+  if (entry.custodyDirect) {
+    const last = lastDirectTry.get(entry.identityKey) ?? 0
+    if (Date.now() - last < DIRECT_RETRY_MS) return false
+    lastDirectTry.set(entry.identityKey, Date.now())
+  }
+  const started = Date.now()
+  const storageArgs = await storageFor(master, entry.index, io)
+  const { rootKeyHex, chain } = storageArgs
+  const owner = { identityKey: entry.identityKey, accountIndex: entry.index, chain }
   // Uploads stop once the account is taken, so this is still the upload before the take.
   const since = lastUploadedAt(owner)
-  const storageArgs = { chain: where.chain, rootKeyHex, databaseName }
   // Before voiding: once voided they are no longer listed, so a retry could not settle them.
   const unbroadcast = await io.withStorage(storageArgs, (storage) => listUnbroadcast(storage, entry.identityKey))
   const settled = await io.settleVoidedNotices({ rootKeyHex, owner, txids: unbroadcast })
@@ -222,41 +281,57 @@ async function handOver(master: VaultMaster, entry: PendingHandover, io: Handove
     return { delta, voided: await voidUnbroadcast(storage, entry.identityKey) }
   })
   for (const txid of voided) io.dropMinerRetry(txid, owner)
-  if (!delta) {
-    appendAppLog('info', `[account-holding] handover a${entry.index}: nothing since last upload · voided ${voided.length}`)
-    return true
-  }
-  const parts = Math.ceil(delta.json.length / HANDOVER_PART_CHARS)
-  if (parts > HANDOVER_MAX_PARTS) {
-    appendAppLog(
-      'error',
-      `[account-holding] handover a${entry.index} kept here: ${delta.json.length} chars is over ${HANDOVER_MAX_PARTS} parts`,
-    )
-    return true
-  }
   const handoverId = `${entry.identityKey.slice(0, 16)}-${entry.until}`
-  const deviceId = io.deviceId()
-  const bodies: HandoverPart[] = []
-  for (let part = 0; part < parts; part++) {
-    const body: HandoverPart = {
-      v: 1,
-      type: 'handover',
-      identityKey: entry.identityKey,
-      deviceId,
-      handoverId,
-      part,
-      parts,
-      data: delta.json.slice(part * HANDOVER_PART_CHARS, (part + 1) * HANDOVER_PART_CHARS),
+  const base = { v: 1 as const, type: 'handover' as const, identityKey: entry.identityKey, deviceId: io.deviceId() }
+  let deltaBodies: HandoverPart[] = []
+  if (delta) {
+    deltaBodies = partsOf(delta.json, { ...base, handoverId }) ?? []
+    if (!deltaBodies.length) {
+      appendAppLog(
+        'error',
+        `[account-holding] handover a${entry.index} history kept here: ${delta.json.length} chars is over ${HANDOVER_MAX_PARTS} parts`,
+      )
     }
-    bodies.push(body)
+  }
+  // Recipes for managed change and BRC-29 outputs: the chain alone cannot rebuild them.
+  const custody = io.custody?.(owner) ?? []
+  let custodyBodies: HandoverPart[] = []
+  if (custody.length) {
+    const json = JSON.stringify(custody)
+    custodyBodies = partsOf(json, { ...base, handoverId: `${handoverId}-custody` }, 'custody') ?? []
+    if (!custodyBodies.length) {
+      appendAppLog('error', `[account-holding] handover a${entry.index} custody kept here: ${json.length} chars is over ${HANDOVER_MAX_PARTS} parts`)
+    }
+  }
+  if (!deltaBodies.length && !custodyBodies.length) {
+    appendAppLog('info', `[account-holding] handover a${entry.index}: nothing since last upload · voided ${voided.length}`)
+    directDelivered.delete(handoverId)
+    return true
   }
   // Draft BRC-249: a live holder merges over the vault link before acknowledging.
   // A missing application receipt leaves the durable box path authoritative.
-  const direct = await io.sendDirect?.(master, entry.index, rootKeyHex, bodies, entry.to).catch(() => false)
-  if (!direct) for (const body of bodies) await io.send(rootKeyHex, JSON.stringify(body))
+  const delivered = directDelivered.get(handoverId) ?? new Set<'delta' | 'custody'>()
+  directDelivered.set(handoverId, delivered)
+  for (const [what, bodies] of [['delta', deltaBodies], ['custody', custodyBodies]] as const) {
+    if (!bodies.length || delivered.has(what)) continue
+    const ok = await io.sendDirect?.(master, entry.index, rootKeyHex, bodies, entry.to).catch(() => false)
+    if (ok) delivered.add(what)
+  }
+  const boxed = [
+    ...(delivered.has('delta') ? [] : deltaBodies),
+    ...(delivered.has('custody') ? [] : custodyBodies),
+  ]
+  if (boxed.length && entry.custodyDirect && Date.now() - entry.until < CUSTODY_DIRECT_MS) {
+    // No cloud copy was written for this release: keep it peer to peer while the new holder may still connect.
+    appendAppLog('info', `[account-holding] handover a${entry.index}: waiting for the link (${boxed.length} part(s))`)
+    return false
+  }
+  for (const body of boxed) await io.send(rootKeyHex, JSON.stringify(body))
+  directDelivered.delete(handoverId)
+  lastDirectTry.delete(entry.identityKey)
   appendAppLog(
     'info',
-    `[account-holding] handover a${entry.index} done ${Date.now() - started}ms: ${delta.transactions} tx · ${delta.outputs} outputs · ${parts} part(s) · voided ${voided.length}`,
+    `[account-holding] handover a${entry.index} done ${Date.now() - started}ms: ${delta?.transactions ?? 0} tx · ${delta?.outputs ?? 0} outputs · ${custody.length} recipe(s) · ${deltaBodies.length + custodyBodies.length} part(s), ${boxed.length} by box · voided ${voided.length}`,
   )
   return true
 }
@@ -307,6 +382,7 @@ export function parseHandoverPart(plaintext: string, identityKey: string): Hando
   }
   const p = raw as Partial<HandoverPart> | null
   if (!p || p.v !== 1 || p.type !== 'handover') return null
+  if (p.kind !== undefined && p.kind !== 'custody') return null
   if (p.identityKey !== identityKey.trim().toLowerCase()) return null
   if (typeof p.deviceId !== 'string' || typeof p.handoverId !== 'string' || typeof p.data !== 'string') return null
   if (!Number.isSafeInteger(p.parts) || (p.parts as number) < 1 || (p.parts as number) > HANDOVER_MAX_PARTS) return null
@@ -318,7 +394,7 @@ export type HandoverInbox = {
   /** Open a sealed body; null when it is not sealed by the account. */
   open: (body: string) => string | null
   /** Null while the account is not open here: complete handovers wait in the box. */
-  merge: ((json: string) => Promise<void>) | null
+  merge: ((json: string, kind?: 'custody') => Promise<void>) | null
   acknowledge: (messageIds: string[]) => Promise<void>
 }
 
@@ -337,7 +413,10 @@ export async function receiveHandovers(args: {
   const { identityKey, deviceId, messages, inbox } = args
   const now = args.now ?? Date.now()
   const seen = new Set<string>()
-  const groups = new Map<string, { parts: Map<number, string>; total: number; ids: string[]; newest: number }>()
+  const groups = new Map<
+    string,
+    { parts: Map<number, string>; total: number; ids: string[]; newest: number; kind?: 'custody' }
+  >()
   const stale: string[] = []
   for (const m of messages) {
     const plaintext = inbox.open(m.body)
@@ -351,7 +430,9 @@ export async function receiveHandovers(args: {
       total: part.parts,
       ids: [] as string[],
       newest: 0,
+      ...(part.kind ? { kind: part.kind } : {}),
     }
+    if (group.kind !== part.kind || group.total !== part.parts) continue
     group.parts.set(part.part, part.data)
     group.ids.push(m.messageId)
     group.newest = Math.max(group.newest, Number(m.createdAt) || 0)
@@ -366,7 +447,7 @@ export async function receiveHandovers(args: {
     const json = Array.from({ length: group.total }, (_, i) => group.parts.get(i) ?? '').join('')
     const started = Date.now()
     try {
-      await inbox.merge(json)
+      await inbox.merge(json, group.kind)
       await inbox.acknowledge(group.ids)
       appendAppLog('info', `[account-holding] handover ${handoverId} merged done ${Date.now() - started}ms (${group.total} part(s))`)
     } catch (error) {
