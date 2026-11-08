@@ -5857,10 +5857,11 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
   align-items: stretch;
 }
 
+/* QR + owned handle share one row: no empty gutters around a lone QR. */
 .identity-hero {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: stretch;
   gap: var(--hc-space-3);
   width: 100%;
   min-width: 0;
@@ -5912,12 +5913,48 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
 /* Handle as IPT (iptnft) — certificate held; tip awaits countersigned mode. */
 [data-aeon-scope='handle-ipt'] {
   display: grid;
+  align-content: center;
   gap: 6px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 10px 12px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--hc-radius);
   background: color-mix(in srgb, var(--hc-accent) 4%, transparent);
+}
+
+/* Held handle: accent edge + larger name so ownership reads first. */
+[data-aeon-scope='handle-ipt'][data-aeon-state='certificate'],
+[data-aeon-scope='handle-ipt'][data-aeon-state='tip'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 40%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='held'] {
+  grid-template-columns: minmax(0, auto) auto;
+  align-items: center;
+  column-gap: 10px;
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='held'] .identity-qr-handle {
+  font-size: clamp(1.35rem, 6cqi, 2rem);
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='owned'] {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-accent) 18%, transparent);
+  color: var(--hc-accent);
+  font-size: var(--hc-text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='handle-ipt'] [data-aeon-part='held'] [data-aeon-part='lede'] {
+  grid-column: 1 / -1;
 }
 
 [data-aeon-scope='handle-ipt'] [data-aeon-part='head'] {
@@ -6551,6 +6588,23 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
 @container identity-panel (min-width: 520px) {
   .identity-hero {
     gap: var(--hc-space-3) var(--hc-space-4);
+  }
+}
+
+/* Wide panel: label and value on one row instead of stacked. */
+@container identity-panel (min-width: 461px) {
+  .identity-field {
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+}
+
+/* Too narrow for QR + handle side by side: stack, handle full width. */
+@container identity-panel (max-width: 340px) {
+  .identity-hero {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
   }
 }
 

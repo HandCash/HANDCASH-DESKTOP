@@ -141,11 +141,11 @@ export function IdentityPanel({ profile }: Props) {
                 )}
               </div>
             </div>
-          </div>
 
           {/*
            * Handle = issuer-permissioned token (iptnft). Certificate binds the
-           * name today; on-chain tip waits on countersigned mode.
+           * name today; on-chain tip waits on countersigned mode. Sits beside
+           * the QR so the owned handle leads the panel.
            */}
           <section
             className="handle-ipt"
@@ -182,6 +182,12 @@ export function IdentityPanel({ profile }: Props) {
                 >
                   {handleIpt.label}
                 </button>
+                <span
+                  data-aeon-part="owned"
+                  title="Your BRC-169 certificate binds this handle to this wallet"
+                >
+                  Owned
+                </span>
                 <p data-aeon-part="lede">
                   Issuer-permissioned token ({handleIpt.profile}). Bound by
                   your BRC-169 certificate; the on-chain tip ships with
@@ -190,6 +196,7 @@ export function IdentityPanel({ profile }: Props) {
               </div>
             )}
           </section>
+          </div>
 
           <ul className="identity-list">
             <li className="identity-field identity-key-row">
