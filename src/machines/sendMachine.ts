@@ -11,7 +11,7 @@ export type SendContext = {
 
 /**
  * Chart: sendPayment
- * States: editing.idle → editing.checking → confirming → handoff | failure
+ * States: editing.destination → editing.amount.idle → confirming → handoff | failure
  *
  * The panel owns composing and confirming a payment — not watching it land.
  * `CONFIRM` hands the payment to the wallet and closes the panel, so progress
@@ -19,9 +19,11 @@ export type SendContext = {
  * Activity instead of being mirrored here. `failure` is reached only by a
  * pre-flight refusal, which the user can still edit their way out of.
  *
- * `editing.checking` is the local balance read before Review: the form stays
- * mounted (`matches('editing')`), the Review button locks, and a refusal
- * (`REFUSE`) drops back to `editing.idle` — the panel reports why.
+ * Three steps: `destination` (coin + recipient), `amount` (how much), then
+ * `confirming` (review). `NEXT` needs a recipient; `REVIEW` needs an amount.
+ * `editing.amount.checking` is the local balance read before Review: the form
+ * stays mounted (`matches('editing')`), the Review button locks, and a refusal
+ * (`REFUSE`) drops back to `editing.amount.idle` — the panel reports why.
  */
 export const sendMachine = setup({
   types: {
@@ -34,6 +36,7 @@ export const sendMachine = setup({
           friendLabel?: string | null
           payeeIdentityKey?: string | null
         }
+      | { type: 'NEXT' }
       | { type: 'CHECK' }
       | { type: 'REVIEW' }
       | { type: 'REFUSE' }
@@ -43,6 +46,7 @@ export const sendMachine = setup({
       | { type: 'RESET' },
   },
   guards: {
+    hasRecipient: ({ context }) => context.to.trim().length > 0,
     reviewable: ({ context }) =>
       context.to.trim().length > 0 && Number(context.amount) > 0,
   },
@@ -58,7 +62,7 @@ export const sendMachine = setup({
   },
   states: {
     editing: {
-      initial: 'idle',
+      initial: 'destination',
       on: {
         EDIT: {
           actions: assign({
@@ -75,30 +79,43 @@ export const sendMachine = setup({
         },
       },
       states: {
-        idle: {
+        /** Step 1: the coin and who gets paid. */
+        destination: {
           on: {
-            CHECK: {
-              guard: 'reviewable',
-              target: 'checking',
-            },
-            REVIEW: {
-              guard: 'reviewable',
-              target: '#sendPayment.confirming',
-            },
+            NEXT: { guard: 'hasRecipient', target: 'amount' },
           },
         },
-        /** Local balance read before Review; a second CHECK is ignored. */
-        checking: {
-          on: {
-            REVIEW: '#sendPayment.confirming',
-            REFUSE: 'idle',
+        /** Step 2: how much. A draft keeps its recipient when the user steps back. */
+        amount: {
+          initial: 'idle',
+          states: {
+            idle: {
+              on: {
+                BACK: '#sendPayment.editing.destination',
+                CHECK: {
+                  guard: 'reviewable',
+                  target: 'checking',
+                },
+                REVIEW: {
+                  guard: 'reviewable',
+                  target: '#sendPayment.confirming',
+                },
+              },
+            },
+            /** Local balance read before Review; a second CHECK is ignored. */
+            checking: {
+              on: {
+                REVIEW: '#sendPayment.confirming',
+                REFUSE: 'idle',
+              },
+            },
           },
         },
       },
     },
     confirming: {
       on: {
-        BACK: 'editing',
+        BACK: '#sendPayment.editing.amount',
         CONFIRM: 'handoff',
         FAIL: {
           target: 'failure',
@@ -123,7 +140,7 @@ export const sendMachine = setup({
     },
     failure: {
       on: {
-        BACK: 'editing',
+        BACK: '#sendPayment.editing.amount',
         RESET: { target: 'editing', actions: assign({ error: null }) },
       },
     },
