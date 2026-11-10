@@ -39,6 +39,14 @@ export function ChatThreadHeader({
           <Button.Label>←</Button.Label>
         </Button.Root>
       ) : null}
+      <Button.Root
+        variant="ghost"
+        className="chat-call-btn btn btn-ghost"
+        aria-label={`Call ${friend.label}`}
+        onClick={() => callEngine().call(friend.identityKey)}
+      >
+        <Button.Label>Call</Button.Label>
+      </Button.Root>
       <PeerIdentityBlock
         label={friend.label}
         peer={peer}
@@ -47,14 +55,6 @@ export function ChatThreadHeader({
         name={<strong>{friend.label}</strong>}
         fallback={<span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>}
       />
-      <Button.Root
-        variant="ghost"
-        className="btn btn-ghost"
-        aria-label={`Call ${friend.label}`}
-        onClick={() => callEngine().call(friend.identityKey)}
-      >
-        <Button.Label>Call</Button.Label>
-      </Button.Root>
     </header>
   )
 }
