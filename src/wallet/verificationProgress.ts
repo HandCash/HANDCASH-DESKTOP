@@ -10,6 +10,7 @@
  * two left tips stuck on Verifying forever after an aborted lineage walk.
  */
 import { isItemProven } from './provenCache'
+import { whenInputQuiet } from './inputQuiet'
 
 export type VerificationPhase = 'idle' | 'verifying' | 'identifying'
 
@@ -48,8 +49,26 @@ function normalize(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
 
+/** Longest a progress repaint waits behind scrolling. */
+const EMIT_INPUT_WAIT_MS = 600
+let emitScheduled = false
+
+/**
+ * Activity and Collect re-render every row on a progress change, and a batch
+ * import changes progress per item. One repaint per frame carries the latest
+ * state; while the user scrolls it waits (bounded) for the fling to end.
+ */
 function emit(): void {
-  for (const listener of listeners) listener(progress)
+  if (emitScheduled) return
+  emitScheduled = true
+  const flush = () => {
+    emitScheduled = false
+    for (const listener of listeners) listener(progress)
+  }
+  void whenInputQuiet(EMIT_INPUT_WAIT_MS).then(() => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush)
+    else setTimeout(flush, 0)
+  })
 }
 
 export function getVerificationProgress(): VerificationProgress {

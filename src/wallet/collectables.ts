@@ -180,6 +180,7 @@ import { signTipInputs } from './signTipInputs'
 import { fillItemScripts } from './itemScriptFill'
 import { listOutputsInSlices } from './basketSubReads'
 import { uiBudgetExpired, yieldToUi } from './yieldToUi'
+import { whenInputQuiet } from './inputQuiet'
 import {
   clearGenesisFailure,
   getProvenVerdict,
@@ -713,6 +714,7 @@ export function rebindCollectablesForAccount(): void {
   collectablesAccountEpoch += 1
   emptyItemRead.reset()
   explicitVerificationRequests.clear()
+  cardVerificationQueue = []
   if (durableListTimer) clearTimeout(durableListTimer)
   durableListTimer = null
   pendingDurableLists.clear()
@@ -2202,6 +2204,8 @@ async function proveHeldGenesis(
       if (outpoint !== preferred && listInFlight && listInFlight !== ownRead) {
         break
       }
+      if (outpoint !== preferred) await whenInputQuiet()
+      if (epoch !== collectablesAccountEpoch) return
       const alreadyProven = getProvenVerdict(outpoint)?.tier === 'brc150'
       if (!alreadyProven) {
         setVerificationProgress(
@@ -2228,6 +2232,7 @@ async function proveHeldGenesis(
           // UI shares this thread.
           getBeef: async (txid) => {
             await yieldToUi()
+            if (outpoint !== preferred) await whenInputQuiet()
             const local = await localBeefForDisplay(wallet, txid)
             if (local) return local
             // Parents of history-less tips are not in local storage.
@@ -2379,6 +2384,45 @@ async function proveHeldGenesis(
 }
 
 /**
+ * Card verifications run one at a time. A batch import used to start one per
+ * item at once, each parsing and checking BEEF on the UI thread beside the
+ * genesis walk, which is what made scrolling hitch. The tip the user asked for
+ * last (details panel) jumps the queue; the rest start only once input is quiet.
+ */
+type CardVerificationJob = { target: string; run: () => Promise<unknown> }
+let cardVerificationQueue: CardVerificationJob[] = []
+let cardVerificationRunning = false
+
+function enqueueCardVerification(target: string, run: () => Promise<unknown>): void {
+  cardVerificationQueue.push({ target, run })
+  void drainCardVerifications()
+}
+
+async function drainCardVerifications(): Promise<void> {
+  if (cardVerificationRunning) return
+  cardVerificationRunning = true
+  const epoch = collectablesAccountEpoch
+  try {
+    while (cardVerificationQueue.length > 0 && epoch === collectablesAccountEpoch) {
+      const preferred = peekPreferredCollectableVerification()
+      const at = preferred
+        ? cardVerificationQueue.findIndex((job) => job.target === preferred)
+        : -1
+      const [job] = cardVerificationQueue.splice(Math.max(0, at), 1)
+      if (!job) break
+      if (job.target !== preferred) await whenInputQuiet()
+      if (epoch !== collectablesAccountEpoch) break
+      await job.run().catch(() => {})
+    }
+  } finally {
+    cardVerificationRunning = false
+    if (cardVerificationQueue.length > 0 && epoch !== collectablesAccountEpoch) {
+      void drainCardVerifications()
+    }
+  }
+}
+
+/**
  * Ask the wallet to verify this tip next, and start a walk if one is not already
  * running. Used by the item details panel so opening an unverified collectable
  * surfaces "Verifying…" instead of a dead "Unverified" badge.
@@ -2408,7 +2452,8 @@ export function requestCollectableVerification(outpoint: string): void {
     'Proving tip-to-origin lineage (BRC-150)'
   )
   if (cached?.origin) {
-    void verifyItemAuthenticity(target, cached.origin)
+    const origin = cached.origin
+    enqueueCardVerification(target, () => verifyItemAuthenticity(target, origin)
       .then((result) => {
         applyAuthenticityResult(target, result)
         if (result.proven) return
@@ -2431,7 +2476,7 @@ export function requestCollectableVerification(outpoint: string): void {
         clearAwaitingVerification(target)
         clearVerificationProgress(target)
       })
-      .finally(() => explicitVerificationRequests.delete(target))
+      .finally(() => explicitVerificationRequests.delete(target)))
     return
   }
   if (!shouldAttemptGenesis(target)) {
