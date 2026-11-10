@@ -290,7 +290,10 @@ describe('one install per account across devices', () => {
     // Discovery lists account 1 as this install's while the takeover stands.
     writeVaultAccounts({ ...readVaultAccounts(MASTER_IK), discovered: true })
     createVaultAccount({ master: MASTER, name: 'Wallet 1', index: 1, holding: { kind: 'here', seq: 0 } })
-    const claimed = await checkVaultAccountHoldings(MASTER, { io: h.io('B') })
+    const waiting = await checkVaultAccountHoldings(MASTER, { io: h.io('B'), importSettled: () => false })
+    expect(waiting.incomplete).toBe(true)
+    expect(h.holderOf(0)).toMatchObject({ deviceId: 'A' })
+    const claimed = await checkVaultAccountHoldings(MASTER, { io: h.io('B'), importSettled: () => true })
     expect(claimed.incomplete).toBe(false)
     expect(h.holderOf(0)).toMatchObject({ deviceId: 'B', seq: 2 })
     expect(h.holderOf(1)).toMatchObject({ deviceId: 'B', seq: 2 })

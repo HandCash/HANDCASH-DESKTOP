@@ -3197,13 +3197,9 @@ function loadOlderPagesWhenIdle(): void {
  */
 function absentFromCompleteBasket(
   page: ItemOutput[],
-  _seeded: ItemOutput[],
+  seeded: ItemOutput[],
 ): Collectable[] {
-  // Only items actually in the basket (the page) are "listed".
-  // Seeded items are PENDING — they have not been confirmed in the basket yet.
-  // A complete basket read is the authoritative source: if a seeded item is
-  // not in the page, it is absent from the basket and should be retired.
-  const listed = new Set(page.map((o) => outpointKey(o.outpoint)))
+  const listed = new Set([...page, ...seeded].map((o) => outpointKey(o.outpoint)))
   return cachedCollectables.filter(
     (held) =>
       !listed.has(outpointKey(held.outpoint)) &&

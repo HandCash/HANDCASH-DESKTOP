@@ -99,13 +99,7 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) body {
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .titlebar {
-  background: var(--hc-bg);
-  border-bottom-color: hsl(var(--border));
-}
-
-html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact) .titlebar,
-html:not([data-aeon-mode='light']):is(.platform-mobile, .layout-compact) .titlebar {
-  background: var(--hc-bg);
+  background: color-mix(in srgb, hsl(var(--background)) 94%, transparent);
   border-bottom-color: hsl(var(--border));
 }
 

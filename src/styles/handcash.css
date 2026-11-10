@@ -4518,6 +4518,16 @@ li[data-aeon-state='failed'] .history-progress-range {
   /* Fiat / identity triggers own the inset so we don't double-pad. */
   padding: 2px;
   box-sizing: border-box;
+  /* Balance + handle read as primary text: white on dark, black on paper. */
+  color: var(--hc-text);
+}
+
+.wallet-hero-metric .wallet-hero-title,
+.wallet-hero-metric .wallet-hero-metric-amount,
+.wallet-hero-identity-chrome .wallet-hero-identity,
+.wallet-hero-identity-chrome .wallet-hero-identity-copy,
+.wallet-hero-identity-chrome .wallet-hero-identity span {
+  color: var(--hc-text);
 }
 
 html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions-pill {
@@ -4702,7 +4712,7 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   font-variant-caps: all-small-caps;
   letter-spacing: 0.05em;
   line-height: 1.2;
-  color: #fafafa;
+  color: var(--hc-text);
 }
 
 .wallet-hero-title-approx {
@@ -4720,7 +4730,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero-title-approx {
 }
 
 html[data-aeon-mode='light'] .wallet-hero-metric .wallet-hero-title {
-  color: hsl(var(--primary));
+  color: var(--hc-text);
 }
 
 .wallet-hero-metric-amount {
@@ -4872,7 +4882,7 @@ html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-p
   padding: 0;
   border-radius: calc(var(--wallet-nav-pill-radius, 999px) - 2px);
   opacity: 1;
-  color: var(--hc-muted);
+  color: var(--hc-text);
 }
 
 html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wallet-hero-identity-copy {
