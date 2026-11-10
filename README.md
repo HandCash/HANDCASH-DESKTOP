@@ -49,7 +49,7 @@ npm run package
 
 # explicit targets
 npm run package:linux      # AppImage → release/ (primary Linux ship format)
-npm run package:linux:all  # AppImage + deb (deb needs host fpm/libcrypt)
+npm run package:electron:linux:all  # AppImage + deb (deb needs host fpm/libcrypt)
 npm run package:mac        # DMG + zip
 npm run package:win        # NSIS installer + portable
 ```
