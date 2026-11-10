@@ -1511,6 +1511,12 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   background: var(--wallet-nav-unselected, #000);
 }
 
+html[data-aeon-mode='light'] .wallet-actions .btn,
+html[data-aeon-mode='light'] .wallet-actions .btn-ghost,
+html[data-aeon-mode='light'] .wallet-actions .btn-primary {
+  background: #ffffff;
+}
+
 .wallet-actions .btn:hover,
 .wallet-actions .btn-ghost:hover,
 .wallet-actions .btn-primary:hover,
@@ -1519,6 +1525,16 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 .wallet-actions .btn[aria-pressed='true'],
 .wallet-actions .btn[data-aeon-state='selected'] {
   background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 14%, #000));
+}
+
+html[data-aeon-mode='light'] .wallet-actions .btn:hover,
+html[data-aeon-mode='light'] .wallet-actions .btn-ghost:hover,
+html[data-aeon-mode='light'] .wallet-actions .btn-primary:hover,
+html[data-aeon-mode='light'] .wallet-actions .btn:active,
+html[data-aeon-mode='light'] .wallet-actions .btn:focus-visible,
+html[data-aeon-mode='light'] .wallet-actions .btn[aria-pressed='true'],
+html[data-aeon-mode='light'] .wallet-actions .btn[data-aeon-state='selected'] {
+  background: color-mix(in srgb, var(--hc-text) 8%, #ffffff);
 }
 
 .btn-danger {
