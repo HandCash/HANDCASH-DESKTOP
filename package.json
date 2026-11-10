@@ -62,7 +62,8 @@
     "icons:tray:check": "node scripts/build-tray-icons.mjs --check",
     "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs",
     "ltc:probe": "node scripts/ltc-probe.mjs",
-    "coin:checkpoint": "node scripts/coin-checkpoint.mjs"
+    "coin:checkpoint": "node scripts/coin-checkpoint.mjs",
+    "mock": "vite --open /mock/index.html"
   },
   "dependencies": {
     "@1sat/templates": "^0.0.2",

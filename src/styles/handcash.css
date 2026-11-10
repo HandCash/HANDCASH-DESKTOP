@@ -4570,10 +4570,9 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   display: none;
 }
 
+/* Caret removed visually; the trigger stays a focusable, clickable button. */
 .fiat-currency-trigger .wallet-account-caret {
-  flex: 0 0 auto;
-  width: 16px;
-  opacity: 0.75;
+  display: none;
 }
 
 .fiat-currency-dropdown {
@@ -4598,7 +4597,7 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   overscroll-behavior: contain;
   border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
   border: var(--hc-border-w) solid hsl(var(--border));
-  background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 7%, #0a0a0a));
+  background: var(--hc-bg);
   box-shadow: 0 10px 28px color-mix(in srgb, #000 45%, transparent);
   color: var(--hc-text);
 }
@@ -4767,7 +4766,13 @@ html:not(.platform-mobile):not(.layout-compact) .dashboard .connected-panel-head
 
 html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-pill {
   border-color: color-mix(in srgb, hsl(var(--border)) 45%, hsl(var(--card)));
-  background: color-mix(in srgb, hsl(var(--secondary)) 35%, hsl(var(--card)));
+  background: var(--hc-bg);
+}
+
+.wallet-hero-metric .wallet-hero-title,
+.wallet-hero-metric .wallet-hero-metric-amount {
+  align-self: center;
+  line-height: 1;
 }
 
 .wallet-hero-identity-chrome .wallet-hero-identity-row,
@@ -5948,15 +5953,25 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
   box-sizing: border-box;
   padding: 10px 12px;
   border: var(--hc-border-w) solid hsl(var(--border));
-  border-radius: var(--hc-radius);
-  background: color-mix(in srgb, var(--hc-accent) 4%, transparent);
+  border-radius: calc(var(--hc-radius) * 2);
+  background: var(--hc-bg);
+  box-shadow: inset 0 2px 0 color-mix(in srgb, var(--hc-accent) 55%, transparent);
+}
+
+[data-aeon-scope='handle-ipt'][data-aeon-state='empty'] {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.chat-call-btn {
+  margin-inline-end: auto;
 }
 
 /* Held handle: accent edge + larger name so ownership reads first. */
 [data-aeon-scope='handle-ipt'][data-aeon-state='certificate'],
 [data-aeon-scope='handle-ipt'][data-aeon-state='tip'] {
   border-color: color-mix(in srgb, var(--hc-accent) 40%, hsl(var(--border)));
-  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
+  background: var(--hc-bg);
 }
 
 [data-aeon-scope='handle-ipt'] [data-aeon-part='held'] {
