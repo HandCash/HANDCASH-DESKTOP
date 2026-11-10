@@ -307,7 +307,6 @@ export function SendPanel({
     if (reviewBusy || offlineBlock || !destReady) return
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
-    send({ type: 'CHECK' })
     if (coinWallet || isArcUsd) {
       try {
         // A payment to an identity is refused here, before review, unless its wallet's signed record says it receives the coin.
