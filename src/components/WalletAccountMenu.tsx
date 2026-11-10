@@ -347,7 +347,7 @@ export function WalletAccountMenu({
           }}
         >
           {current?.profile ? <ProfileAvatar profile={current.profile} label={current.profile.name} /> : null}
-          <span>{current?.profile?.name ?? identityLabel}</span>
+          <span>{current?.handle ?? current?.profile?.name ?? identityLabel}</span>
           <ExpandMoreIcon
             size={16}
             className={open ? 'wallet-account-caret is-open' : 'wallet-account-caret'}

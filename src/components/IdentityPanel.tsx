@@ -1,5 +1,6 @@
 import { Button } from '@aeon-ui/react'
 import { PublicIdentitiesPanel } from './PublicIdentitiesPanel'
+import { IdentityCards } from './IdentityCards'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
@@ -125,6 +126,7 @@ export function IdentityPanel({ profile }: Props) {
        * scroll body. No extra identity-body pad shell.
        */}
       <div className="nav-section-scroll-body">
+        <IdentityCards identityKey={profile.identityKey} ownHandle={handleIpt} />
         <section className="identity-card" aria-label="Wallet identity">
           <div className="identity-hero">
             <div className="identity-qr">
