@@ -86,6 +86,29 @@ export async function fetchDevicePeerSnapshot(
   return data
 }
 
+export type DevicePeerHistory = {
+  identityKey: string
+  exportedAt: number
+  /** BRC-39 bytes, sealed to the root key already; base64. */
+  brc39B64: string
+}
+
+/** Pull a paired install's BRC-39 history directly, no backup provider. */
+export async function fetchDevicePeerHistory(
+  peerBaseUrl: string,
+  expectedIdentityKey: string,
+  rootKeyHex: string,
+  timeoutMs = 30_000,
+): Promise<{ bytes: Uint8Array; exportedAt: number }> {
+  const data = await getSealed<DevicePeerHistory>(peerBaseUrl, '/handcash-device/v1/history', rootKeyHex, timeoutMs)
+  if (data.identityKey !== expectedIdentityKey) throw new Error('Peer identity mismatch on history')
+  if (typeof data.brc39B64 !== 'string' || !data.brc39B64) throw new Error('Peer sent no history')
+  const bin = atob(data.brc39B64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return { bytes, exportedAt: Number(data.exportedAt) || 0 }
+}
+
 /**
  * Verify pair QR and enrich with optional LAN health.
  * This is only for same-identity devices. Different identities use the

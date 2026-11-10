@@ -20221,7 +20221,6 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 .call-dock-info { display: grid; gap: 2px; font-size: 13px; }
 .call-dock-actions { display: flex; gap: 8px; }
 
-<<<<<<< HEAD
 /* Top bar balance + handle: always primary text (white dark / black light), never coin tint or dimmed. */
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-primary,
@@ -20240,7 +20239,8 @@ html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balan
 .wallet-hero .wallet-nav-actions-pill .wallet-account-caret {
   color: var(--hc-text);
   opacity: 1;
-=======
+}
+
 /* Fiat menu: flag in the trigger; dropdown reuses the wallet-account dropdown chrome. */
 .fiat-currency-menu {
   position: relative;
@@ -20269,7 +20269,6 @@ html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balan
 }
 .wallet-hero:has(.fiat-currency-menu-dropdown) .wallet-hero-main {
   pointer-events: none;
->>>>>>> b6207edf (Fiat menu flag and dropdown style)
 }
 
 /* Send step 2 (amount): everything fits the viewport — the keypad shrinks to take what is left. */
