@@ -19,6 +19,7 @@ import { importIdentityCard, requestIdentityCard } from '../wallet/identityCardS
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { usePeerIdentity } from '../hooks/usePeerIdentity'
 import { CopyIcon, MessagesIcon } from './icons'
+import { callEngine } from '../wallet/calls/callService'
 import { PeerIdentityBlock, PeerIdentityLine } from './PeerIdentity'
 
 const MAX_CARD_FILE_BYTES = 400 * 1024
@@ -228,6 +229,14 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           >
             <MessagesIcon size={16} />
             Message
+          </Button.Root>
+          <Button.Root
+            variant="ghost"
+            className="btn btn-ghost"
+            aria-label={`Call ${friend.label}`}
+            onClick={() => callEngine().call(friend.identityKey)}
+          >
+            <Button.Label>Call</Button.Label>
           </Button.Root>
           {handleFixed ? null : (
             <Button.Root variant="ghost"
