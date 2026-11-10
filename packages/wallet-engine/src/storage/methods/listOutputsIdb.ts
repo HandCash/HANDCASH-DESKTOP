@@ -26,6 +26,7 @@ interface IdbOutputQuery {
   limit: number
   offset: number
   orderDescending: boolean
+  skipTotal?: boolean
 }
 
 function normalizeListOffset(offset: number): {
@@ -126,6 +127,11 @@ async function loadIdbOutputs(query: IdbOutputQuery): Promise<{ outputs: TableOu
       return { outputs, totalOutputs: skipped + outputs.length }
     }
   }
+  if (query.skipTotal === true && outputs.length > 0) {
+    // Caller is slicing one logical page and only needs the total once, on the
+    // last slice. A lower bound spares a whole-basket count per slice.
+    return { outputs, totalOutputs: (applyPaging ? offset : 0) + outputs.length }
+  }
   args.paged = undefined
   return {
     outputs,
@@ -212,7 +218,8 @@ export async function listOutputsIdb(
     specOp,
     limit,
     offset,
-    orderDescending
+    orderDescending,
+    skipTotal: (vargs as { skipTotal?: boolean }).skipTotal === true
   })
   result.totalOutputs = totalOutputs
   if (specOp != null) {

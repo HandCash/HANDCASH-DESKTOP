@@ -62,10 +62,13 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
     if (!opts.inSpend && spendWaiting()) yieldedMs += await letSpendPass()
     const want = Math.min(subRows, limit - outputs.length)
     const at = skip + outputs.length
+    // Only the last slice pays for the whole-basket total count.
+    const lastSlice = outputs.length + want >= limit
     const page = await listOutputs({
       ...args,
       limit: want,
       offset: newestFirst ? -(at + 1) : at,
+      ...(lastSlice ? {} : { skipTotal: true }),
     })
     slices++
     const rows = page.outputs ?? []
