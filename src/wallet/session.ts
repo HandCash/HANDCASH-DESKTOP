@@ -1032,6 +1032,7 @@ export async function fetchBalanceRead(
     spendable += pendingChange
   } catch (err) {
     console.warn('[balance] unconfirmed change credit skipped', err)
+    return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
   if (summary) {
     try {

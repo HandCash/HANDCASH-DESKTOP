@@ -201,6 +201,19 @@ describe('unconfirmedChangeSats', () => {
     })
   })
 
+  it('rejects failed display reads rather than reporting missing change as zero', async () => {
+    findOutputs.mockRejectedValue(new Error('database connection is closing'))
+    await expect(unconfirmedChangeSats({ background: true })).rejects.toThrow('closing')
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
+  })
+
+  it('rejects failed transaction-status reads in a display scan', async () => {
+    findOutputs.mockResolvedValue([{ change: true, spendable: false, satoshis: 9000,
+      transactionId: 1, lockingScript: sampleScript, txid: LIVE_TXID, vout: 0 }])
+    findTransactions.mockRejectedValue(new Error('status unavailable'))
+    await expect(unconfirmedChangeSats({ background: true })).rejects.toThrow('status unavailable')
+  })
+
   it('uses bounded keyset pages beyond 2000 physical rows without offset rescans', async () => {
     let locked = false
     const readPendingChangePage = vi.fn(async (_identity: string, after: number) => ({

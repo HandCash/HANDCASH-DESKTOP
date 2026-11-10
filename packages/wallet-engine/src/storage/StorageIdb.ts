@@ -131,6 +131,37 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   dbName: string
   db?: IDBPDatabase<StorageIdbSchema>
   private managedChangeDefaultsMigrated = false
+  private connectionReady?: Promise<void>
+
+  /** Recover before an operation starts; never replay a transaction or its writes. */
+  async ensureConnectionReady(): Promise<void> {
+    if (this.connectionReady) return this.connectionReady
+    const check = async () => {
+      const previous = this.db
+      if (!previous) throw new WERR_INVALID_OPERATION('Storage is closed')
+      try {
+        await previous.transaction('settings', 'readonly').done
+        return
+      } catch (error) {
+        if ((error as { name?: string }).name !== 'InvalidStateError') throw error
+      }
+      // Invalidate display pages before reopening the same durable database.
+      this.cashSummaryRevision++
+      const reopened = await this.initDB()
+      if (this.db !== previous) {
+        reopened.close()
+        throw new WERR_INVALID_OPERATION('Storage closed during recovery')
+      }
+      this.db = reopened
+    }
+    const ready = check()
+    this.connectionReady = ready
+    try {
+      await ready
+    } finally {
+      if (this.connectionReady === ready) this.connectionReady = undefined
+    }
+  }
   private cashSummaryRevision = 0
   private cashSummaryWrites = 0
   private readonly cashSummaryTransactions = new WeakSet<object>()

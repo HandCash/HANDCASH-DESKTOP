@@ -4392,10 +4392,10 @@ export async function sendCollectable(args: {
             >['outputs']
           >[number]
 
-          const heldRow = cachedItem
-            ? null
-            : await readHeldItemRow(wallet, normalizeOutpoint(outpoint), originTag)
-          const match: HeldOutput | undefined = cachedItem || heldRow
+          // BRC-150 proves lineage, not custody. Even a cached card needs the
+          // exact held row: its BRC-29 remittance reconstructs the signing key.
+          const heldRow = await readHeldItemRow(wallet, normalizeOutpoint(outpoint), originTag)
+          const match: HeldOutput | undefined = heldRow
             ? ({
                 outpoint,
                 satoshis: 1,
@@ -5281,13 +5281,18 @@ export async function sendCollectables(
             // selection must not hold the thread for all of them at once.
             if (uiBudgetExpired()) await yieldToUi()
             const cached = cachedNow.get(outpoint) ?? null
+            // Read only this tip's custody metadata, never the whole basket.
+            const heldRow = await readHeldItemRow(
+              wallet, outpoint, parseOrigin(cached?.origin, outpoint).replace(/_(\d+)$/, '.$1'),
+            )
             const match =
-              cached
+              cached && heldRow
                 ? ({
                     outpoint,
                     satoshis: 1,
                     spendable: true,
                     tags: [],
+                    customInstructions: heldRow.customInstructions,
                     ...(cached.lockingScript
                       ? { lockingScript: cached.lockingScript }
                       : {}),
