@@ -653,6 +653,8 @@ export class Wallet implements WalletInterface, ProtoWallet {
   ): Promise<ListOutputsResult> {
     validateOriginator(originator)
     const { vargs } = this.validateAuthAndArgs(args, validateListOutputsArgs)
+    // Internal: a slicing caller defers the whole-basket total to its last slice.
+    if ((args as { skipTotal?: boolean }).skipTotal === true) (vargs as { skipTotal?: boolean }).skipTotal = true
     if (this.autoKnownTxids && !vargs.knownTxids) {
       vargs.knownTxids = this.getKnownTxids()
     }
