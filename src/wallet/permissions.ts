@@ -73,6 +73,8 @@ export type ConnectedApp = {
   acceptIncomingFunds?: boolean
   /** `in-app`: connected in a Mobile app tab, so the loopback socket may not use it. */
   connectedVia?: 'in-app'
+  /** BRC-73 grant lapse time (ms). Absent = never expires. Expired grants read as not connected. */
+  expiresAt?: number
 }
 
 export type PendingPermission = {
@@ -174,6 +176,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
                 ? false
                 : undefined,
           ...(a.connectedVia === 'in-app' ? { connectedVia: 'in-app' as const } : {}),
+          ...(typeof a.expiresAt === 'number' ? { expiresAt: a.expiresAt } : {}),
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -185,7 +188,17 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
   return []
 }
 
+/** Drops grants whose `expiresAt` has passed (grantExpiry chart: expired). */
+function liveGrants(apps: ConnectedApp[]): ConnectedApp[] {
+  const now = Date.now()
+  return apps.filter((a) => a.expiresAt == null || a.expiresAt > now)
+}
+
 function readConnected(): ConnectedApp[] {
+  return liveGrants(readConnectedRaw())
+}
+
+function readConnectedRaw(): ConnectedApp[] {
   // Prefer durable / new key; fall back to legacy allowlist key (primary only).
   const next = durableGetItem(connectedAppsStorageKey())
   if (next) return migrateRaw(next)
@@ -464,6 +477,7 @@ export function allowOrigin(origin: string | undefined, channel: BridgeChannel =
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
       ...(prior?.countersignedViews?.length ? { countersignedViews: prior.countersignedViews } : {}),
+      ...(prior?.expiresAt != null ? { expiresAt: prior.expiresAt } : {}),
       // Plain BSV receive is part of Connect. Preserve an explicit user opt-out
       // ("Require receive approval"); otherwise grant / restore the default.
       acceptIncomingFunds: prior?.acceptIncomingFunds === false ? false : true,
@@ -524,6 +538,18 @@ function patchTokenAccess(
   copy[idx] = { ...copy[idx]!, tokenAccess: next }
   writeConnected(copy)
   return next
+}
+
+/** Sets or clears (null) when a connected app's grant lapses. */
+export function setGrantExpiry(origin: string, expiresAt: number | null): void {
+  const { idx, apps } = findConnectedApp(origin)
+  if (idx < 0) return
+  const next = { ...apps[idx]! }
+  if (expiresAt == null) delete next.expiresAt
+  else next.expiresAt = expiresAt
+  const copy = [...apps]
+  copy[idx] = next
+  writeConnected(copy)
 }
 
 export function revokeOrigin(origin: string): void {
