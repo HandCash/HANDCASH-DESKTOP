@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.672] - 2026-11-09
+
+### Fixed
+
+- First load of a wallet with many 1-sat items reads the ordinal index four pages at a time, and Refresh and Collect share one address scan.
+
+### Added
+
+- Grant expiry chart, a stepped send flow with a handle card, and a BSV SDK import boundary test.
+
 ## [1.3.671] - 2026-11-08
 
 ### Fixed
