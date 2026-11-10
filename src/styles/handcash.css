@@ -20205,3 +20205,8 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   white-space: nowrap;
   overflow: hidden;
 }
+
+.call-dock { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: grid; gap: 8px; padding: 12px; min-width: 240px; border-radius: 12px; background: var(--panel, #111); color: inherit; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+.call-dock-video { width: 100%; max-height: 180px; border-radius: 8px; background: #000; }
+.call-dock-info { display: grid; gap: 2px; font-size: 13px; }
+.call-dock-actions { display: flex; gap: 8px; }
