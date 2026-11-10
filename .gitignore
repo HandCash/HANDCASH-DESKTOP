@@ -19,3 +19,7 @@ out/
 .live-idb.json
 
 tsconfig.tsbuildinfo
+
+# local scratch
+.release-*
+.feature-peer-chat/
