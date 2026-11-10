@@ -130,6 +130,25 @@ describe('the background lineage walk budget', () => {
     expect(beef.getBeefForTxidCached).not.toHaveBeenCalled()
   })
 
+  it('walks every receipt before any basket read, including a later import batch', async () => {
+    beef.local = true
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    beef.getLocalBeefForTxid.mockImplementationOnce(async () => {
+      await gate
+      return { local: true }
+    })
+    const { noteIngestedItems, getCachedCollectables } = await import('./collectables')
+    const seed = (tips: string[]) => noteIngestedItems(tips.map((outpoint) => ({ outpoint, chain: 'main' as const, name: 'Imported' })))
+    seed(TIPS.slice(0, 6))
+    await vi.waitFor(() => expect(walks.tips.length).toBe(1))
+    seed(TIPS.slice(6))
+    release()
+    await vi.waitFor(() => expect(new Set(walks.tips).size).toBe(TIPS.length), { timeout: 4_000 })
+    expect(getCachedCollectables().every((c) => !c.proven)).toBe(true)
+    expect(beef.getBeefForTxidCached).not.toHaveBeenCalled()
+  })
+
   it('repaints the grid once per burst of proofs, not once per proof', async () => {
     beef.local = true
     walks.prove = true

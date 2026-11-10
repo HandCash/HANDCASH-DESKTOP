@@ -733,6 +733,7 @@ export function rebindCollectablesForAccount(): void {
   liveScan = null
   genesisWalkTimes = []
   provingGenesis = false
+  ingestedGenesisPending = false
   collectableVerifyWalkDeferred = false
   listInFlight = null
   listMoreInFlight = null
@@ -1652,6 +1653,11 @@ export function noteIngestedItems(items: readonly IngestedItem[]): void {
   // Newly painted tips (Activity, inbox, market buy) jump the BRC-150 queue —
   // do not wait for the user to open the item. Also re-prefer when the tip was
   // already on the list so an Activity row for a known item still leads.
+  if (provingGenesis) ingestedGenesisPending = true
+  // Start the inventory walk directly: per-card remittance checks may still be
+  // waiting for the just-broadcast output to appear in Toolbox.
+  const wallet = getActiveWallet()
+  if (wallet) void proveHeldGenesis(wallet, listInFlight)
   for (const target of verify) requestCollectableVerification(target)
 }
 
@@ -2093,6 +2099,7 @@ const GENESIS_WALK_WINDOW_MS = 10 * 60_000
 const ACTIVITY_REPAIR_DEPTH = 50
 let genesisWalkTimes: number[] = []
 let provingGenesis = false
+let ingestedGenesisPending = false
 
 function genesisWalkBudgetSpent(now = Date.now()): boolean {
   genesisWalkTimes = genesisWalkTimes.filter(
@@ -2137,9 +2144,11 @@ async function proveHeldGenesis(
     return
   }
 
-  const held = lastItemOutputs
+  // Import receipts arrive before Toolbox's basket read catches up. They are
+  // inventory candidates, not proof: every seed still takes the full BRC-150 walk.
+  const held = [...new Set([...lastItemOutputs, ...seededItems.values()]
     .filter(isListableItem)
-    .map((o) => normalizeOutpoint(o.outpoint))
+    .map((o) => normalizeOutpoint(o.outpoint)))]
   // Activity may retain a historical tip after it was sent. Do not spend live
   // UI/network budget proving an outpoint that is no longer inventory; its
   // cached name remains available and the recipient proves the new tip.
@@ -2360,6 +2369,12 @@ async function proveHeldGenesis(
     settleStaleAwaitingVerification(
       (outpoint) => queued.has(outpoint) && shouldAttemptGenesis(outpoint)
     )
+    // A later import batch was not in this pass's snapshot. Drain it without
+    // waiting for a list refresh or the user opening an item; keep the budget.
+    if (ingestedGenesisPending) {
+      ingestedGenesisPending = false
+      void proveHeldGenesis(wallet, listInFlight)
+    }
   }
 }
 
