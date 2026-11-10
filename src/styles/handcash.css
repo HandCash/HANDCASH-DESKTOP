@@ -20373,3 +20373,25 @@ html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balan
     display: none;
   }
 }
+html[data-aeon-mode='light'] .id-card[data-aeon-state='key'] {
+  background: linear-gradient(135deg, #2a2a30 0%, #55555f 100%);
+}
+
+/* Send · Swap · Receive: white plates on the light sheet (black stays dark-mode only). */
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn,
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn-ghost,
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn-primary,
+html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon {
+  background: #ffffff !important;
+  color: var(--hc-text) !important;
+  border-color: color-mix(in srgb, var(--hc-text) 14%, transparent);
+}
+
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn:hover,
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn:active,
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn:focus-visible,
+html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:hover,
+html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:active,
+html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
+  background: color-mix(in srgb, var(--hc-text) 8%, #ffffff) !important;
+}
