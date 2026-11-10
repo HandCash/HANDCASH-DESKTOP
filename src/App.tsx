@@ -32,6 +32,7 @@ import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
 import { AppToastHost } from './components/AppToastHost'
+import { CallDock } from './components/calls/CallDock'
 import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
 import { showToast, toastError, toastSuccess } from './wallet/toast'
@@ -487,6 +488,7 @@ export function App() {
           )}
         </main>
 
+        {snapshot.matches('ready') && <CallDock />}
         <AppToastHost />
         <UpdatePrompt />
         <ScreenshotToast />

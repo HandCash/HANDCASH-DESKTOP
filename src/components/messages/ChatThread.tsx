@@ -1,5 +1,6 @@
 import type { Ref } from 'react'
 import { Button, Thread } from '@aeon-ui/react'
+import { callEngine } from '../../wallet/calls/callService'
 import type { PeerIdentityView } from '../../hooks/usePeerIdentity'
 import { activityEntryTitle, type ActivityEntry } from '../../features/activity'
 import {
@@ -46,6 +47,14 @@ export function ChatThreadHeader({
         name={<strong>{friend.label}</strong>}
         fallback={<span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>}
       />
+      <Button.Root
+        variant="ghost"
+        className="btn btn-ghost"
+        aria-label={`Call ${friend.label}`}
+        onClick={() => callEngine().call(friend.identityKey)}
+      >
+        <Button.Label>Call</Button.Label>
+      </Button.Root>
     </header>
   )
 }
