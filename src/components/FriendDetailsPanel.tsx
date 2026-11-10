@@ -18,7 +18,7 @@ import { identityCardRefusalMessage } from '../wallet/identityCard'
 import { importIdentityCard, requestIdentityCard } from '../wallet/identityCardShare'
 import { useAsyncAction } from '../hooks/useAsyncAction'
 import { usePeerIdentity } from '../hooks/usePeerIdentity'
-import { CopyIcon, MessagesIcon } from './icons'
+import { CopyIcon, MessagesIcon, PhoneIcon } from './icons'
 import { callEngine } from '../wallet/calls/callService'
 import { PeerIdentityBlock, PeerIdentityLine } from './PeerIdentity'
 
@@ -236,6 +236,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             aria-label={`Call ${friend.label}`}
             onClick={() => callEngine().call(friend.identityKey)}
           >
+            <PhoneIcon size={16} />
             <Button.Label>Call</Button.Label>
           </Button.Root>
           {handleFixed ? null : (

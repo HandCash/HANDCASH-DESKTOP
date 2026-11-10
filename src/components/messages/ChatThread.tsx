@@ -14,6 +14,7 @@ import { formatSatsLabel } from '../../wallet/brc218'
 import type { Friend } from '../../wallet/friends'
 import { openPaymentDetails } from '../../wallet/navStore'
 import { EmptyState } from '../EmptyState'
+import { PhoneIcon } from '../icons'
 import { PeerIdentityBlock } from '../PeerIdentity'
 import { MessageBubble, type MessageActions } from './MessageBubble'
 
@@ -45,6 +46,7 @@ export function ChatThreadHeader({
         aria-label={`Call ${friend.label}`}
         onClick={() => callEngine().call(friend.identityKey)}
       >
+        <PhoneIcon size={16} />
         <Button.Label>Call</Button.Label>
       </Button.Root>
       <PeerIdentityBlock
