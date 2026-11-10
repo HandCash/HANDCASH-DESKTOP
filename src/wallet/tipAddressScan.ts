@@ -29,6 +29,8 @@ const PAGE_LIMIT = 1_000
  * real inventory (hc-a580a: 2,823 tips, 1,000 read, the rest never listed).
  */
 const MAX_PAGES = 50
+/** Pages requested at once after the first; small enough not to trip rate limits. */
+const WAVE = 4
 const REQUEST_TIMEOUT_MS = 8_000
 /** Don't pay the timeout again on every poll after the indexer just failed. */
 const HOST_COOLDOWN_MS = 45_000
@@ -113,15 +115,37 @@ export async function scanAddressOrdinalTxos(
   const started = Date.now()
   let pages = 0
   try {
-    for (let page = 0; page < MAX_PAGES; page++) {
-      const rows = await fetchTxoPage(address, chain, page * PAGE_LIMIT)
-      pages += 1
-      for (const row of rows) {
-        const utxo = toLegacyUtxo(row)
-        if (utxo) byOutpoint.set(utxo.outpoint, utxo)
+    // First page alone (most wallets end there), then waves of WAVE pages in
+    // flight: a 50k-tip wallet pays ~13 round trips instead of 50 in series.
+    let page = 0
+    let done = false
+    while (!done && page < MAX_PAGES) {
+      const wave = Math.min(page === 0 ? 1 : WAVE, MAX_PAGES - page)
+      const settled = await Promise.allSettled(
+        Array.from({ length: wave }, (_, i) =>
+          fetchTxoPage(address, chain, (page + i) * PAGE_LIMIT),
+        ),
+      )
+      let failure: unknown = null
+      for (const result of settled) {
+        if (result.status === 'rejected') {
+          failure = result.reason
+          break
+        }
+        pages += 1
+        for (const row of result.value) {
+          const utxo = toLegacyUtxo(row)
+          if (utxo) byOutpoint.set(utxo.outpoint, utxo)
+        }
+        if (result.value.length < PAGE_LIMIT) {
+          done = true
+          break
+        }
       }
-      if (rows.length < PAGE_LIMIT) break
-      if (page === MAX_PAGES - 1) {
+      // Pages that answered before the failure are kept by the loop above.
+      if (failure) throw failure
+      page += wave
+      if (!done && page >= MAX_PAGES) {
         console.warn(
           `[ordinal-scan] stopped at ${MAX_PAGES * PAGE_LIMIT} tip(s) — the rest stay unlisted`,
         )
@@ -180,12 +204,25 @@ export function mergeIndexedTips(
  * ownership set from the bare provider scan let the send gate call index-only
  * tips spent and hide them.
  */
-export async function scanLiveTipUtxos(
+export function scanLiveTipUtxos(
   active: ActiveWallet,
 ): Promise<LegacyScanResult> {
-  const [addressScan, ordinalTxos] = await Promise.all([
-    scanLegacyAddress(active),
-    scanAddressOrdinalTxos(active.address, active.chain),
-  ])
-  return mergeIndexedTips(addressScan, ordinalTxos)
+  // Chain ingest and the Collect list ask at the same moment on first load;
+  // callers share one pass per address instead of paying for it twice.
+  const key = `${active.chain}:${active.address}`
+  const running = liveScanInFlight.get(key)
+  if (running) return running
+  const promise = (async () => {
+    const [addressScan, ordinalTxos] = await Promise.all([
+      scanLegacyAddress(active),
+      scanAddressOrdinalTxos(active.address, active.chain),
+    ])
+    return mergeIndexedTips(addressScan, ordinalTxos)
+  })().finally(() => {
+    if (liveScanInFlight.get(key) === promise) liveScanInFlight.delete(key)
+  })
+  liveScanInFlight.set(key, promise)
+  return promise
 }
+
+const liveScanInFlight = new Map<string, Promise<LegacyScanResult>>()
