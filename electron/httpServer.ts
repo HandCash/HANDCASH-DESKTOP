@@ -266,7 +266,7 @@ export async function startHttpServer(
   app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 
   app.use((req, _res, next) => {
-    log.info(`[HTTP] ${req.method} ${req.url}`)
+    log.info(`[HTTP] ${req.method} ${req.path}`)
     next()
   })
 
