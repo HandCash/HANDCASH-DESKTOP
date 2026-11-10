@@ -172,7 +172,8 @@ export async function unconfirmedChangeSats(opts?: {
       txCache.set(txId, live)
       if (live === 'settled') settled.add(txId)
       return live
-    } catch {
+    } catch (error) {
+      if (opts?.background) throw error
       txCache.set(txId, 'none')
       return 'none'
     }
@@ -238,12 +239,16 @@ export async function unconfirmedChangeSats(opts?: {
         storage.runAsStorageProvider((sp) => scanPage(sp as ScanStorage, page)),
       )
       if (done) break
+      if (opts?.background && !keyset && page + 1 === MAX_PAGES) {
+        throw new Error('Pending-change display scan is incomplete')
+      }
       // The manager lock is released before yielding: queued sends run first.
       await yieldToUi()
     }
     return extra
   } catch (err) {
     console.warn('[balance-view] unconfirmed change credit skipped', err)
+    if (opts?.background) throw err
     return 0
   }
 }

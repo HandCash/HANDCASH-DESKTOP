@@ -362,9 +362,15 @@ export class WalletStorageManager implements sdk.WalletStorage {
     this.releaseActiveLock(this.readerLocks)
   }
 
+  private async ensureConnectionReady(active: object): Promise<void> {
+    const storage = active as { ensureConnectionReady?: () => Promise<void> }
+    await storage.ensureConnectionReady?.()
+  }
+
   async runAsWriter<R>(writer: (active: sdk.WalletStorageWriter) => Promise<R>): Promise<R> {
     try {
       const active = await this.getActiveForWriter()
+      await this.ensureConnectionReady(active)
       const r = await writer(active)
       return r
     } finally {
@@ -375,6 +381,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
   async runAsReader<R>(reader: (active: sdk.WalletStorageReader) => Promise<R>): Promise<R> {
     try {
       const active = await this.getActiveForReader()
+      await this.ensureConnectionReady(active)
       const r = await reader(active)
       return r
     } finally {
@@ -394,6 +401,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
   ): Promise<R> {
     try {
       const active = activeSync ?? (await this.getActiveForSync())
+      if (activeSync == null) await this.ensureConnectionReady(active)
       const r = await sync(active)
       return r
     } finally {
@@ -404,6 +412,7 @@ export class WalletStorageManager implements sdk.WalletStorage {
   async runAsStorageProvider<R>(sync: (active: StorageProvider) => Promise<R>): Promise<R> {
     try {
       const active = await this.getActiveForStorageProvider()
+      await this.ensureConnectionReady(active)
       const r = await sync(active)
       return r
     } finally {
