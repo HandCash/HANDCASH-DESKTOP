@@ -35,6 +35,7 @@ const WALLET_ROUTES = new Set([
   'GET /handcash-device/v1/health',
   'GET /handcash-device/v1/snapshot',
   'GET /handcash-device/v1/pair-info',
+  'GET /handcash-device/v1/history',
 ])
 
 const replay = new DeviceAuthReplayCache()
@@ -110,6 +111,24 @@ async function answerFor(
         label: local.label,
         platform: local.platform,
       },
+    }
+  }
+
+  if (route === '/handcash-device/v1/history') {
+    // The device proof already shows the asker holds this root key, so the
+    // vault password is not asked again. Bytes stay BRC-39 sealed.
+    try {
+      const { createBrc39BackupBytes } = await import('./historyBackup')
+      const bytes = await createBrc39BackupBytes('', { passwordAlreadyVerified: true })
+      let bin = ''
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+      }
+      return {
+        value: { identityKey: active.identityKey, exportedAt: Date.now(), brc39B64: btoa(bin) },
+      }
+    } catch (err) {
+      return { error: errorResponse(500, 'HISTORY_UNAVAILABLE', err instanceof Error ? err.message : String(err)) }
     }
   }
 

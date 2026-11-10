@@ -1218,6 +1218,9 @@ export function formatSats(sats: number): string {
  * misbehaving one so the switch cannot hang.
  */
 export const ACCOUNT_SWITCH_INGEST_DRAIN_MS = 8_000
+export const ACCOUNT_SWITCH_IMPORT_DRAIN_MS = 90_000
+export const ACCOUNT_SWITCH_BUSY =
+  'This wallet is still importing or syncing. Your holdings are safe — try switching again in a moment.'
 
 /**
  * Select another vault account (same unlock / mnemonic; different on-chain
@@ -1233,7 +1236,7 @@ export async function switchVaultAccount(args: {
   accountIndex: number
 }): Promise<ActiveWallet> {
   const started = Date.now()
-  const { waitForForegroundSpendIdle, waitForChainIngestIdle } = await import(
+  const { waitForForegroundSpendIdle, waitForChainIngestIdle, waitForWalletRegionsIdle } = await import(
     './walletCoordinator'
   )
   const {
@@ -1266,6 +1269,15 @@ export async function switchVaultAccount(args: {
   // still owns those foreground projections. Its signed miner submission is
   // retained separately and continues in the background after this fence.
   await waitForForegroundSpendIdle()
+  // An import (recompose) or history restore is pinned to the outgoing
+  // runtime; disposing it mid-pass would drop what that pass was about to
+  // record. Let it finish first, and refuse the switch rather than abandon it.
+  if (active != null && !(await waitForWalletRegionsIdle(ACCOUNT_SWITCH_IMPORT_DRAIN_MS))) {
+    logDiag('vault-account', 'warn', 'switch-deferred-import-active', {
+      waitedMs: ACCOUNT_SWITCH_IMPORT_DRAIN_MS,
+    })
+    throw new Error(ACCOUNT_SWITCH_BUSY)
+  }
   setActiveVaultAccountIndex(vaultIdentityKey(args.vaultMaster), args.accountIndex)
   logDiag('vault-account', 'info', 'switch', {
     from: active?.accountIndex ?? null,

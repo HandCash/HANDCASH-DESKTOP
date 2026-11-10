@@ -618,16 +618,18 @@ export async function autoPushHistoryBackupIfConfigured(
       const remote = emptyLocal ? await fetchRemoteBrc39Meta() : null
       remoteExists = Boolean(remote?.exists)
       remoteBytes = remote?.bytes ?? null
-      if (remoteExists && emptyLocal) {
+      const { historyPeers, pullHistoryPeerFirst } = await import('./historySource')
+      const hasPeer = emptyLocal && historyPeers(getActiveWallet()?.identityKey ?? '').length > 0
+      if ((remoteExists || hasPeer) && emptyLocal) {
         appendAppLog(
           'info',
-          '[cloud-backup] empty localState + remote BRC-39 — pulling historyReplica',
+          `[history] empty localState — pulling historyReplica (${hasPeer ? 'paired device first' : 'backup'})`,
         )
         try {
           if (reason === 'restore' || reason === 'restore-url') {
             await replaceLocalHistoryFromCloud(password)
           } else {
-            await downloadAndRestoreBrc39Backup(password)
+            await pullHistoryPeerFirst(password)
           }
           result.pulled = true
           await downloadAndMergeFriendsBackup().catch(() => 0)
@@ -796,12 +798,16 @@ export async function mergeArrivedAccountHistory(
   const { appendAppLog } = await import('./appLog')
   const started = Date.now()
   try {
-    const remote = await fetchRemoteBrc39Meta()
-    if (!remote?.exists) {
-      result.skipReason = 'no remote backup'
-      return result
+    const { historyPeers, pullHistoryPeerFirst } = await import('./historySource')
+    const hasPeer = historyPeers(getActiveWallet()?.identityKey ?? '').length > 0
+    if (!hasPeer) {
+      const remote = await fetchRemoteBrc39Meta()
+      if (!remote?.exists) {
+        result.skipReason = 'no remote backup'
+        return result
+      }
     }
-    await downloadAndRestoreBrc39Backup(password)
+    await pullHistoryPeerFirst(password)
     result.pulled = true
     await downloadAndMergeFriendsBackup().catch(() => 0)
     await downloadAndMergeActivityBackup().catch(() => 0)
