@@ -99,7 +99,7 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) body {
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .titlebar {
-  background: color-mix(in srgb, hsl(var(--background)) 94%, transparent);
+  background: var(--hc-bg);
   border-bottom-color: hsl(var(--border));
 }
 
