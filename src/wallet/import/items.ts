@@ -559,6 +559,11 @@ export async function importItems(args: {
   const stored = await readStoredImportItems(source.id, outpoints)
   const cursorAddress = peekPhraseItemMigrateCursor()?.sourceAddress ?? null
   const deriver = keyDeriverFor(source.secret)
+  // HandCash commonly has one address per item: index once, not per item.
+  const holdingOf = new Map<string, AddressHoldings>()
+  for (const holding of source.scan?.holdings ?? []) {
+    if (!holding.uncompressed && !holdingOf.has(holding.address)) holdingOf.set(holding.address, holding)
+  }
   const keyOf = new Map<string, { keyHex: string } | 'ownKey'>()
   const chosen: Array<{ item: StoredImportItem; holding: AddressHoldings; keyHex: string }> = []
   for (const outpoint of outpoints) {
@@ -567,7 +572,7 @@ export async function importItems(args: {
       refuse(outpoint, 'unlisted')
       continue
     }
-    const holding = source.scan?.holdings.find((h) => h.address === item.address && !h.uncompressed)
+    const holding = holdingOf.get(item.address)
     if (!holding) {
       refuse(outpoint, 'gone')
       continue

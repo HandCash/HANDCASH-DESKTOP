@@ -317,6 +317,63 @@ describe('readIndexedOutpoints', () => {
     expect(read).toEqual({ rows: 148, silent: 2, failed: 0, stopped: false })
   })
 
+  it('names 1,000 outputs in 300ms instead of 1,000ms at 100ms per request', async () => {
+    vi.useFakeTimers()
+    try {
+      const started = Date.now()
+      const outputs = Array.from({ length: 1000 }, (_, i) => `${i}_0`)
+      const saved: string[] = []
+      const run = readIndexedOutpoints({
+        chain: 'main', outpoints: outputs,
+        fetchImpl: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 100))
+          return new Response('[]')
+        },
+        onChunk: (answers) => { saved.push(...answers.keys()) },
+      })
+      await vi.runAllTimersAsync()
+      expect(await run).toEqual({ rows: 0, silent: 1000, failed: 0, stopped: false })
+      expect(saved).toEqual(outputs)
+      expect(Date.now() - started).toBe(300)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads 1,000 outputs in four-request waves, but saves in order and stops refilling on pause', async () => {
+    const outputs = Array.from({ length: 1000 }, (_, i) => `${i}_0`)
+    let active = 0
+    let peak = 0
+    let stopped = false
+    const releases: Array<() => void> = []
+    const fetchImpl = vi.fn(async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await new Promise<void>((resolve) => releases.push(resolve))
+      active -= 1
+      return new Response('[]')
+    })
+    const saved: string[] = []
+    const run = readIndexedOutpoints({
+      chain: 'main', outpoints: outputs, fetchImpl,
+      shouldStop: () => stopped,
+      onChunk: (answers) => {
+        saved.push([...answers.keys()][0]!)
+        stopped = true
+      },
+    })
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    // A later response must not save ahead of the first.
+    releases[3]!()
+    await Promise.resolve()
+    expect(saved).toEqual([])
+    releases.slice(0, 3).forEach((release) => release())
+    expect(await run).toMatchObject({ stopped: true })
+    expect(peak).toBe(4)
+    expect(fetchImpl).toHaveBeenCalledTimes(4)
+    expect(saved).toEqual(['0_0'])
+  })
+
   it('hands each chunk over with the facts the index names', async () => {
     const origin = `${'a'.repeat(64)}_0`
     const signer = '1BHLmsoMt4J4oyKbpPu2PoBDiP8C5h2sQx'
