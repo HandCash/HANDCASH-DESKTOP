@@ -1501,6 +1501,26 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   opacity: 1;
 }
 
+/* Same plates as the action bar: black idle, gray when selected / pressed. */
+.wallet-actions .btn,
+.wallet-actions .btn-ghost,
+.wallet-actions .btn-primary,
+html[data-aeon-mode='light'] .wallet-actions .btn,
+html[data-aeon-mode='light'] .wallet-actions .btn-ghost,
+html[data-aeon-mode='light'] .wallet-actions .btn-primary {
+  background: var(--wallet-nav-unselected, #000);
+}
+
+.wallet-actions .btn:hover,
+.wallet-actions .btn-ghost:hover,
+.wallet-actions .btn-primary:hover,
+.wallet-actions .btn:active,
+.wallet-actions .btn:focus-visible,
+.wallet-actions .btn[aria-pressed='true'],
+.wallet-actions .btn[data-aeon-state='selected'] {
+  background: var(--wallet-nav-select, color-mix(in srgb, var(--hc-text) 14%, #000));
+}
+
 .btn-danger {
   background: hsl(var(--destructive));
   color: hsl(var(--destructive-foreground));
@@ -4773,6 +4793,23 @@ html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-p
 .wallet-hero-metric .wallet-hero-metric-amount {
   align-self: center;
   line-height: 1;
+  /* Trim the font's ascender/descender slack so digits sit on the pill's centre line. */
+  text-box: trim-both cap alphabetic;
+}
+
+.fiat-currency-trigger {
+  padding-block: 0;
+  align-items: center;
+}
+
+/* Balance / identity pills match the page, never gray — dark, light, compact, mobile. */
+.wallet-nav-actions-pill.wallet-hero-metric,
+.wallet-nav-actions-pill.wallet-hero-identity-chrome,
+html[data-aeon-mode='light'] .wallet-nav-actions-pill.wallet-hero-metric,
+html[data-aeon-mode='light'] .wallet-nav-actions-pill.wallet-hero-identity-chrome,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill.wallet-hero-metric,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill.wallet-hero-identity-chrome {
+  background: var(--hc-bg);
 }
 
 .wallet-hero-identity-chrome .wallet-hero-identity-row,
