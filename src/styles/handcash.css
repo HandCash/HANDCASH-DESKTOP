@@ -20221,6 +20221,7 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 .call-dock-info { display: grid; gap: 2px; font-size: 13px; }
 .call-dock-actions { display: flex; gap: 8px; }
 
+<<<<<<< HEAD
 /* Top bar balance + handle: always primary text (white dark / black light), never coin tint or dimmed. */
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-primary,
@@ -20239,4 +20240,85 @@ html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balan
 .wallet-hero .wallet-nav-actions-pill .wallet-account-caret {
   color: var(--hc-text);
   opacity: 1;
+=======
+/* Fiat menu: flag in the trigger; dropdown reuses the wallet-account dropdown chrome. */
+.fiat-currency-menu {
+  position: relative;
+}
+.fiat-currency-trigger .fiat-currency-flag {
+  display: inline-block;
+  flex: 0 0 auto;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+.wallet-account-dropdown.fiat-currency-menu-dropdown {
+  left: 0;
+  right: auto;
+  min-width: 0;
+  width: min(300px, calc(100vw - 24px));
+}
+.wallet-account-option-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.fiat-currency-option-flag {
+  font-size: 1.4rem;
+  line-height: 1;
+}
+.wallet-hero:has(.fiat-currency-menu-dropdown) .wallet-hero-main {
+  pointer-events: none;
+>>>>>>> b6207edf (Fiat menu flag and dropdown style)
+}
+
+/* Send step 2 (amount): everything fits the viewport — the keypad shrinks to take what is left. */
+.send-stage-edit {
+  overflow-y: hidden;
+}
+
+.send-stage-edit .send-layout {
+  height: 100%;
+  gap: 4px;
+  padding-bottom: 4px;
+}
+
+.send-stage-edit .send-panel-intro {
+  margin: 0;
+}
+
+.send-stage-edit .send-amount-hero {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.send-stage-edit .amount-pad {
+  flex: 1 1 auto;
+  min-height: 132px;
+  margin-top: 4px;
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.send-stage-edit .amount-pad [data-aeon-part='key'] {
+  min-height: 0;
+  height: 100%;
+  font-size: clamp(1rem, 3.2vh, 1.4rem);
+}
+
+.send-stage-edit .send-side {
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+@media (max-height: 700px) {
+  .send-stage-edit .send-panel-intro {
+    display: none;
+  }
+  .send-stage-edit .send-eta-row {
+    display: none;
+  }
 }

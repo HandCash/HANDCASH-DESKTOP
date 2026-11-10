@@ -499,6 +499,10 @@ export async function refreshFromChainExclusive(
         knownItems: opts?.knownItems,
         fundingOnly,
         guard,
+        onFundingImported: async () => {
+          const early = await fetchBalanceSats(active.wallet)
+          publishBalance(early)
+        },
       }),
     )
     const softTimer = setTimeout(() => {

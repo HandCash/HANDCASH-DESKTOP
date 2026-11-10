@@ -643,7 +643,11 @@ describe('refreshFromChain receive announcement', () => {
   })
 
   it('toasts only when this pass swept new legacy funding', async () => {
-    mockFetchBalanceSats.mockResolvedValueOnce(1_000).mockResolvedValueOnce(6_000)
+    // before, early publish (funding imported, ahead of NFT work), after
+    mockFetchBalanceSats
+      .mockResolvedValueOnce(1_000)
+      .mockResolvedValueOnce(6_000)
+      .mockResolvedValueOnce(6_000)
     mockScanLegacyAddress.mockResolvedValue({
       address: 'addr',
       chain: 'main',

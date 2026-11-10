@@ -61,12 +61,14 @@ import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { toastSuccess } from '../wallet/toast'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput } from '../wallet/handleResolve'
+import { isBsvAddress } from '../wallet/swap/exolixSwap'
+import { isEthAddress } from '../wallet/arcUsdc/address'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { formatBsvSignificant } from '../wallet/session'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
-import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
+import { BackIcon, CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 import { useWalletActionDock } from './WalletActionDock'
 import {
@@ -289,11 +291,19 @@ export function SendPanel({
     : formatSecondaryFromSats(amountSats, currency, usdPerBsv)
   const overHeld = (coin !== null || isArcUsd) && BigInt(amountSats) > heldUnits
 
+  /** A recipient is payable only when it is a resolved identity or an address valid on this network. */
+  const recipientTo = sendSnap.context.to.trim()
+  const recipientValid =
+    recipientTo.length > 0 &&
+    (!!sendSnap.context.payeeIdentityKey ||
+      (isArcUsd ? isEthAddress(recipientTo) : coin ? true : isBsvAddress(recipientTo)))
+  const recipientInvalid = recipientTo.length > 0 && !recipientValid
+
   const canReview =
     destReady &&
+    recipientValid &&
     !offlineBlock &&
     !reviewBusy &&
-    sendSnap.context.to.trim().length > 0 &&
     amountSats > 0 &&
     !overHeld &&
     (currency === 'bsv' || coinUsd != null)
@@ -582,12 +592,14 @@ export function SendPanel({
                 label: 'Back',
                 onClick: () => send({ type: 'BACK' }),
                 disabled: reviewBusy,
+                icon: <BackIcon size={18} />,
+                tone: 'secondary',
               },
           primary: destReady && choosingDestination
             ? {
                 label: 'Continue',
                 onClick: () => send({ type: 'NEXT' }),
-                disabled: !!offlineBlock || !sendSnap.can({ type: 'NEXT' }),
+                disabled: !!offlineBlock || !recipientValid || !sendSnap.can({ type: 'NEXT' }),
                 icon: <CheckIcon size={18} />,
                 tone: 'primary',
               }
@@ -629,12 +641,13 @@ export function SendPanel({
               label: 'Close',
               onClick: onClose,
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Edit',
               onClick: () => send({ type: 'BACK' }),
-              icon: <CheckIcon size={18} />,
-              tone: 'primary',
+              icon: <BackIcon size={18} />,
+              tone: 'secondary',
             },
           },
   )
@@ -822,6 +835,11 @@ export function SendPanel({
                     </button>
                   </div>
                 )}
+                {recipientInvalid && !parseHandleInput(recipientQuery) ? (
+                  <p className="wallet-sync-note is-error" role="alert">
+                    {isArcUsd ? 'Enter a valid 0x Arc address.' : 'Not a valid recipient address.'}
+                  </p>
+                ) : null}
                 {resolvedName ? (
                   <p className="send-resolved" aria-live="polite">
                     Sending to <strong>{resolvedName}</strong>
