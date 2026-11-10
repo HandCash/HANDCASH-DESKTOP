@@ -39,8 +39,9 @@ function asPositive(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : null
 }
 
+/** Every amount on screen reads this, so it must not parse storage per call; freshness is refresh's concern. */
 function readCache(): RateCache | null {
-  if (memory && Date.now() - memory.fetchedAt < CACHE_TTL_MS) return memory
+  if (memory) return memory
   try {
     const raw = localStorage.getItem(CACHE_KEY)
     if (!raw) return null
@@ -57,12 +58,46 @@ function readCache(): RateCache | null {
   }
 }
 
+/**
+ * A source that prices only some fiats (BRC-CLOUD and the ticker give USD alone)
+ * must not erase the others: their cross rate to USD is carried over and
+ * rescaled, so a CAD or EUR amount never falls back to the USD number.
+ */
+export function mergeFiatRates(
+  previous: Partial<Record<FiatCode, number>> | null,
+  next: Partial<Record<FiatCode, number>>,
+): Partial<Record<FiatCode, number>> {
+  const usd = asPositive(next.usd)
+  if (!usd) return { ...(previous ?? {}) }
+  const out: Partial<Record<FiatCode, number>> = { ...next, usd }
+  const prevUsd = asPositive(previous?.usd)
+  if (!previous || !prevUsd) return out
+  for (const code of FIAT_CODES) {
+    if (asPositive(out[code]) != null) continue
+    const prev = asPositive(previous[code])
+    if (prev != null) out[code] = (prev / prevUsd) * usd
+  }
+  return out
+}
+
 function writeCache(perBsv: Partial<Record<FiatCode, number>>): void {
-  const usd = asPositive(perBsv.usd)
+  const merged = mergeFiatRates(readCache()?.perBsv ?? null, perBsv)
+  const usd = asPositive(merged.usd)
   if (!usd) return
-  memory = { perBsv: { ...perBsv, usd }, usdPerBsv: usd, fetchedAt: Date.now() }
-  localStorage.setItem(CACHE_KEY, JSON.stringify(memory))
+  memory = { perBsv: merged, usdPerBsv: usd, fetchedAt: Date.now() }
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(memory))
+  } catch {
+    // memory still serves this session
+  }
   for (const cb of listeners) cb(usd)
+}
+
+/** The ticker's fresh BSV price is the rate every calculation uses, so the two never disagree. */
+export function noteUsdPerBsv(usd: number): void {
+  if (!asPositive(usd)) return
+  if (memory && memory.usdPerBsv === usd) return
+  writeCache({ usd })
 }
 
 function parseCoinGeckoRow(row: Record<string, unknown> | undefined): Partial<Record<FiatCode, number>> {
@@ -115,7 +150,13 @@ async function fetchFromCoinGecko(): Promise<Partial<Record<FiatCode, number>>> 
           perBsv?: Partial<Record<FiatCode, number>>
         }
         if (data.perBsv && asPositive(data.perBsv.usd)) return data.perBsv
-        if (asPositive(data.usdPerBsv)) return { usd: data.usdPerBsv }
+        const usd = asPositive(data.usdPerBsv)
+        if (usd) {
+          const code = getFiatCurrency()
+          const crossKnown = code === 'usd' || asPositive(readCache()?.perBsv[code]) != null
+          if (crossKnown) return { usd }
+          return await tryDirect().catch(() => ({ usd }))
+        }
       }
     } catch (err) {
       if (err instanceof Error && err.message === 'coingecko 429') throw err
@@ -186,6 +227,25 @@ export function usdToPreferredFiat(usdAmount: number): number {
   return usdAmount * (fiat / usd)
 }
 
+/**
+ * Preferred-fiat price of one coin from its USD price. The caller's USD price
+ * wins (Send passes the chosen coin's, not BSV's); only the USD→fiat cross
+ * rate comes from the cache. Null when that fiat has no known cross rate.
+ */
+export function fiatPerUnit(
+  usdPerUnit: number | null,
+  code: FiatCode = getFiatCurrency(),
+): number | null {
+  const usd = asPositive(usdPerUnit)
+  if (!usd) return null
+  if (code === 'usd') return usd
+  const cache = readCache()
+  const cachedUsd = asPositive(cache?.usdPerBsv)
+  const cachedFiat = asPositive(cache?.perBsv[code])
+  if (!cachedUsd || !cachedFiat) return null
+  return usd * (cachedFiat / cachedUsd)
+}
+
 /** Convert a typed display amount (preferred fiat or BSV) into satoshis. */
 export function amountToSats(
   amount: string | number,
@@ -195,9 +255,9 @@ export function amountToSats(
   const n = typeof amount === 'number' ? amount : Number(String(amount).trim())
   if (!Number.isFinite(n) || n <= 0) return 0
   if (currency === 'bsv') return Math.round(n * 1e8)
-  const fiatPerBsv = getCachedFiatPerBsv(getFiatCurrency()) ?? usdPerBsv
-  if (fiatPerBsv == null || !(fiatPerBsv > 0)) return 0
-  return Math.round((n / fiatPerBsv) * 1e8)
+  const perBsv = fiatPerUnit(usdPerBsv)
+  if (perBsv == null) return 0
+  return Math.round((n / perBsv) * 1e8)
 }
 
 /** Format a typed primary amount for confirm/success copy. */
@@ -264,7 +324,7 @@ export function formatUsdFromSats(
   opts?: { compact?: boolean; signed?: boolean },
 ): string {
   const code = getFiatCurrency()
-  const perBsv = getCachedFiatPerBsv(code) ?? (code === 'usd' ? usdPerBsv : null)
+  const perBsv = fiatPerUnit(usdPerBsv, code)
   if (perBsv == null) return '—'
   return formatFiat(satsToFiat(sats, code, perBsv), { ...opts, alreadyPreferred: true })
 }

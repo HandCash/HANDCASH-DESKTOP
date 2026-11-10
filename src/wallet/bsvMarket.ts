@@ -2,6 +2,7 @@ import {
   formatUsd,
   isFxRateLimited,
   noteFxRateLimited,
+  noteUsdPerBsv,
   refreshUsdPerBsv,
 } from '../wallet/fx'
 import { storageRegistry } from '../storage/registry'
@@ -118,7 +119,7 @@ function normalizeSparklines(raw: unknown, legacy?: number[]): BsvSparklines {
 
 function readCache(coin: MarketCoin): BsvMarketStats | null {
   const held = memory[coin]
-  if (held && Date.now() - held.fetchedAt < CACHE_TTL_MS) return held
+  if (held) return held
   try {
     const raw = localStorage.getItem(COINS[coin].cacheKey)
     if (!raw) return null
@@ -363,7 +364,9 @@ export function refreshMarketBoard(force = false): Promise<void> {
       for (const coin of all) {
         const row = rows.find((r) => r.id === COINS[coin].gecko)
         const stats = row ? statsFromBoardRow(coin, row, readCache(coin), now) : null
-        if (stats) writeCache(coin, stats)
+        if (!stats) continue
+        writeCache(coin, stats)
+        if (coin === 'bsv') noteUsdPerBsv(stats.priceUsd)
       }
     } catch {
       // keep what is cached
@@ -440,6 +443,7 @@ async function refreshCoin(force: boolean, coin: MarketCoin): Promise<BsvMarketS
     fetchedAt: Date.now(),
   }
   writeCache(coin, stats)
+  if (bsv && gecko?.priceUsd) noteUsdPerBsv(gecko.priceUsd)
   return stats
 }
 

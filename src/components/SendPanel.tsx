@@ -21,8 +21,8 @@ import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
   formatTypedAmount,
+  fiatPerUnit,
   formatUsd,
-  getCachedFiatPerBsv,
   getCachedUsdPerBsv,
   satsToFiat,
   satsToUsd,
@@ -133,8 +133,8 @@ function amountInputFromSats(
   const raw =
     currency === 'usd'
       ? (() => {
-          const perBsv = getCachedFiatPerBsv() ?? usdPerBsv
-          return perBsv != null && perBsv > 0 ? satsToFiat(sats, undefined, perBsv) : null
+          const perBsv = fiatPerUnit(usdPerBsv)
+          return perBsv != null ? satsToFiat(sats, undefined, perBsv) : null
         })()
       : sats / 1e8
   if (raw == null || !Number.isFinite(raw) || raw <= 0) return ''
