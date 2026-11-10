@@ -1168,7 +1168,14 @@ export async function classifyLegacyUtxos(
   // head of the list once its misses expired, and an address holding two
   // thousand old items never reached the tail.
   const lastMiss = new Map<LegacyUtxo, number>()
-  for (const u of candidates) lastMiss.set(u, lastInscriptionMiss(`${u.txid}.${u.vout}`))
+  // The first lookup parses the whole persisted miss map; give input a turn
+  // before and after it, and keep the thousands-long prelude inside the budget.
+  await yieldToUi()
+  for (const u of candidates) {
+    lastMiss.set(u, lastInscriptionMiss(`${u.txid}.${u.vout}`))
+    if (uiBudgetExpired()) await yieldToUi()
+  }
+  await yieldToUi()
   const walkOrder = [
     ...candidates
       .filter((u) => !latchedCollectables.has(outpointKey(u.outpoint)))
@@ -1368,6 +1375,8 @@ export async function classifyLegacyUtxos(
   }
 
   // This pass's misses reach storage in one write, before the caller imports.
+  // Serializing thousands of entries is synchronous: take it on a fresh turn.
+  await yieldToUi()
   flushInscriptionMisses()
 
   return { funding, oneSats, heldOneSats, heldUneconomical, pendingTips }
