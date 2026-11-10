@@ -22,6 +22,16 @@ function basket(n: number) {
 }
 
 describe('listOutputsInSlices', () => {
+  it('asks for the whole-basket total on the last slice only', async () => {
+    const seen: Array<boolean | undefined> = []
+    const listOutputs = async (args: { limit: number; offset: number; skipTotal?: boolean }) => {
+      seen.push(args.skipTotal)
+      return { outputs: Array.from({ length: args.limit }, (_, i) => i), totalOutputs: 99 }
+    }
+    await listOutputsInSlices(listOutputs, { limit: 30, offset: 0 }, { subRows: 10 })
+    expect(seen).toEqual([true, true, undefined])
+  })
+
   it('never yields to the spend it runs inside', async () => {
     spend.waiting = 1
     try {
