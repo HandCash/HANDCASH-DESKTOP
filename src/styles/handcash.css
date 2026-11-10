@@ -275,7 +275,7 @@ body {
 html[data-aeon-mode='light'] .brand-logo-mark {
   background: transparent;
   box-shadow: none;
-  filter: brightness(0);
+  filter: brightness(0.55) saturate(1.3);
 }
 
 .brand-mark {
@@ -1920,7 +1920,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn[data-aeon-state='selected'] {
 html[data-aeon-mode='light'] .wallet-balance .balance,
 html[data-aeon-mode='light'] .wallet-balance .balance-primary {
   /* Light sheet already redefines --coin-*; --coin-color resolves per [data-chain]. */
-  color: var(--coin-color, #0a3d22) !important;
+  color: hsl(143 78% 26%) !important;
 }
 
 .wallet-balance .balance-secondary {
