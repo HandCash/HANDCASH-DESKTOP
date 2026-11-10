@@ -52,6 +52,7 @@ import { relaySigninMachine } from './relaySigninMachine'
 import { onboardEmailMachine } from './onboardEmailMachine'
 import { callMachine } from './callMachine'
 import { callViewMachine } from './callViewMachine'
+import { grantExpiryMachine } from './grantExpiryMachine'
 import { entryMeshMachine } from './entryMeshMachine'
 import { recordingPlayerMachine } from './recordingPlayerMachine'
 import { fiatCurrencyMenuMachine } from './fiatCurrencyMenuMachine'
@@ -115,6 +116,7 @@ export const machineManifest = Object.freeze({
   onboardEmail: onboardEmailMachine,
   call: callMachine,
   callView: callViewMachine,
+  grantExpiry: grantExpiryMachine,
   entryMesh: entryMeshMachine,
   recordingPlayer: recordingPlayerMachine,
   fiatCurrencyMenu: fiatCurrencyMenuMachine,
