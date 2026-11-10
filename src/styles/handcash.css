@@ -20220,3 +20220,23 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 .call-dock-video { width: 100%; max-height: 180px; border-radius: 8px; background: #000; }
 .call-dock-info { display: grid; gap: 2px; font-size: 13px; }
 .call-dock-actions { display: flex; gap: 8px; }
+
+/* Top bar balance + handle: always primary text (white dark / black light), never coin tint or dimmed. */
+.wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,
+.wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-primary,
+.wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-secondary,
+html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,
+html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-primary,
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-title,
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-metric-amount,
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-identity,
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-identity span,
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-identity-copy {
+  color: var(--hc-text) !important;
+  opacity: 1 !important;
+}
+.wallet-hero .wallet-nav-actions-pill .wallet-hero-identity svg,
+.wallet-hero .wallet-nav-actions-pill .wallet-account-caret {
+  color: var(--hc-text);
+  opacity: 1;
+}
