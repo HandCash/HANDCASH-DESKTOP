@@ -49,14 +49,16 @@ describe('scanAddressOrdinalTxos', () => {
       )
     const fetchMock = vi.fn(async (url: string) => {
       const offset = Number(new URL(url).searchParams.get('offset'))
-      return new Response(JSON.stringify(page(offset, offset < 2_000 ? 1_000 : 823)), { status: 200 })
+      const n = offset < 2_000 ? 1_000 : offset === 2_000 ? 823 : 0
+      return new Response(JSON.stringify(page(offset, n)), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
 
     expect(utxos).toHaveLength(2_823)
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // First page alone, then one wave of four (pages past the end answer empty).
+    expect(fetchMock).toHaveBeenCalledTimes(5)
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('limit=1000')
   })
 
