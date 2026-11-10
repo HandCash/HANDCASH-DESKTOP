@@ -374,28 +374,37 @@ export async function readUnspentOnChain(args: {
   let stopped = false
   const stop = () => (stopped ||= args.shouldStop?.() === true)
 
-  for (let i = 0; i < args.outputs.length && !stop(); i += TERANODE_CHUNK) {
-    const chunk = args.outputs.slice(i, i + TERANODE_CHUNK)
-    for (const host of teranodeUtxoHosts(args.chain)) {
-      try {
-        const res = await fetchImpl(`${host}/utxos/json`, {
-          method: 'POST',
-          headers: { accept: 'application/json', 'content-type': 'application/octet-stream' },
-          body: teranodeUtxoRequestBody(chunk),
-          signal: AbortSignal.timeout(20_000),
-        })
-        if (!res.ok) continue
-        const body = (await res.json()) as unknown
-        if (!Array.isArray(body) || body.length !== chunk.length) continue
-        chunk.forEach((o, j) => answers.set(o.outpoint, parseTeranodeUtxoEntry(body[j], '').kind))
-        break
-      } catch {
-        /* the next node, then WhatsOnChain */
+  let nextOutput = 0
+  let checkedOutputs = 0
+  const readLane = async () => {
+    while (nextOutput < args.outputs.length && !stop()) {
+      const i = nextOutput
+      nextOutput += TERANODE_CHUNK
+      const chunk = args.outputs.slice(i, i + TERANODE_CHUNK)
+      for (const host of teranodeUtxoHosts(args.chain)) {
+        try {
+          const res = await fetchImpl(`${host}/utxos/json`, {
+            method: 'POST',
+            headers: { accept: 'application/json', 'content-type': 'application/octet-stream' },
+            body: teranodeUtxoRequestBody(chunk),
+            signal: AbortSignal.timeout(20_000),
+          })
+          if (!res.ok) continue
+          const body = (await res.json()) as unknown
+          if (!Array.isArray(body) || body.length !== chunk.length) continue
+          chunk.forEach((o, j) => answers.set(o.outpoint, parseTeranodeUtxoEntry(body[j], '').kind))
+          break
+        } catch {
+          /* the next node, then WhatsOnChain */
+        }
       }
+      checkedOutputs += chunk.length
+      args.onProgress?.(checkedOutputs, args.outputs.length)
+      await yieldToUi()
     }
-    args.onProgress?.(Math.min(i + TERANODE_CHUNK, args.outputs.length), args.outputs.length)
-    await yieldToUi()
   }
+  // Only independent chain reads overlap. Explorer fallback retains its pacing.
+  await Promise.all(Array.from({ length: Math.min(4, Math.ceil(args.outputs.length / TERANODE_CHUNK)) }, readLane))
 
   const rest = args.outputs.filter((o) => (answers.get(o.outpoint) ?? 'unknown') === 'unknown')
   for (let i = 0; i < rest.length && !stop(); i += WOC_CHUNK) {
@@ -442,8 +451,8 @@ export type IndexAnswer =
 
 /**
  * The 1Sat index's answer for each outpoint, a hundred per request, in the
- * order asked. Each chunk is handed over and awaited before the next, so a
- * stopped read keeps what it decided. Names only: the index misses outputs
+ * order asked. Four chunks download ahead; saves remain ordered and awaited,
+ * so a stopped read keeps what it decided. Names only: the index misses outputs
  * and lags spends, so whether an output is spent is the chain's to say.
  */
 export async function readIndexedOutpoints(args: {
@@ -459,12 +468,7 @@ export async function readIndexedOutpoints(args: {
   let silent = 0
   let failed = 0
   let stopped = false
-  for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
-    if (args.shouldStop?.()) {
-      stopped = true
-      break
-    }
-    const chunk = args.outpoints.slice(i, i + OUTPOINT_CHUNK)
+  const readChunk = async (chunk: readonly string[]): Promise<unknown> => {
     let rows: unknown = null
     for (let attempt = 0; attempt < 2 && rows == null; attempt += 1) {
       try {
@@ -479,6 +483,27 @@ export async function readIndexedOutpoints(args: {
         /* one retry, then the chunk counts as failed */
       }
     }
+    return rows
+  }
+  // Network reads only: never parallelize storage callbacks or signing.
+  const ahead = new Map<number, Promise<unknown>>()
+  let next = 0
+  const fill = () => {
+    while (ahead.size < 4 && next < args.outpoints.length && !args.shouldStop?.()) {
+      const offset = next
+      next += OUTPOINT_CHUNK
+      ahead.set(offset, readChunk(args.outpoints.slice(offset, next)))
+    }
+  }
+  fill()
+  for (let i = 0; i < args.outpoints.length; i += OUTPOINT_CHUNK) {
+    if (args.shouldStop?.()) {
+      stopped = true
+      break
+    }
+    const chunk = args.outpoints.slice(i, i + OUTPOINT_CHUNK)
+    const rows = await ahead.get(i)
+    ahead.delete(i)
     const answers = new Map<string, IndexAnswer>()
     if (Array.isArray(rows)) {
       const asked = new Set(chunk)
@@ -497,6 +522,7 @@ export async function readIndexedOutpoints(args: {
     }
     await args.onChunk(answers)
     args.onProgress?.(Math.min(i + OUTPOINT_CHUNK, args.outpoints.length), args.outpoints.length)
+    fill()
     await yieldToUi()
   }
   return { rows: rowCount, silent, failed, stopped }
