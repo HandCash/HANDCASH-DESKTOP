@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
 import { sendMachine } from './sendMachine'
@@ -9,6 +10,22 @@ function drafted() {
 }
 
 describe('sendMachine', () => {
+  it('wires the destination dock to NEXT before checking and reviewing the amount', () => {
+    // The regression was in the projection: Review sent CHECK while still at destination.
+    const panel = readFileSync(new URL('../components/SendPanel.tsx', import.meta.url), 'utf8')
+    expect(panel).toMatch(/primary: destReady && choosingDestination\s*\? \{\s*label: 'Continue',\s*onClick: \(\) => send\(\{ type: 'NEXT' \}\)/)
+
+    const actor = drafted()
+    actor.send({ type: 'NEXT' })
+    actor.send({ type: 'CHECK' })
+    expect(actor.getSnapshot().matches({ editing: { amount: 'checking' } })).toBe(true)
+    actor.send({ type: 'REVIEW' })
+    expect(actor.getSnapshot().matches('confirming')).toBe(true)
+    actor.send({ type: 'BACK' })
+    expect(actor.getSnapshot().matches({ editing: { amount: 'idle' } })).toBe(true)
+    actor.stop()
+  })
+
   it('starts on the destination step', () => {
     const actor = createActor(sendMachine).start()
     expect(actor.getSnapshot().matches({ editing: 'destination' })).toBe(true)

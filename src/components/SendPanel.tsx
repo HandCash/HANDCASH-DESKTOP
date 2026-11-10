@@ -172,6 +172,7 @@ export function SendPanel({
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   /** Local balance read before Review — a phase of `editing`, owned by the chart. */
   const reviewBusy = sendSnap.matches({ editing: { amount: 'checking' } })
+  const choosingDestination = sendSnap.matches({ editing: 'destination' })
   const [scanningTo, setScanningTo] = useState(false)
   const [network, setNetwork] = useState<MarketCoin>('bsv')
   const [destAssetId, setDestAssetId] = useState('bsv')
@@ -304,7 +305,7 @@ export function SendPanel({
   }
 
   const goReview = async () => {
-    if (reviewBusy || offlineBlock || !destReady) return
+    if (!sendSnap.matches({ editing: { amount: 'idle' } }) || offlineBlock || !destReady) return
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
     send({ type: 'CHECK' })
@@ -570,13 +571,27 @@ export function SendPanel({
     sendSnap.matches('editing')
       ? {
           ariaLabel: 'Send actions',
-          secondary: {
-            label: 'Cancel',
-            onClick: onClose,
-            icon: <CloseIcon size={18} />,
-            tone: 'danger',
-          },
-          primary: destReady
+          secondary: choosingDestination
+            ? {
+                label: 'Cancel',
+                onClick: onClose,
+                icon: <CloseIcon size={18} />,
+                tone: 'danger',
+              }
+            : {
+                label: 'Back',
+                onClick: () => send({ type: 'BACK' }),
+                disabled: reviewBusy,
+              },
+          primary: destReady && choosingDestination
+            ? {
+                label: 'Continue',
+                onClick: () => send({ type: 'NEXT' }),
+                disabled: !!offlineBlock || !sendSnap.can({ type: 'NEXT' }),
+                icon: <CheckIcon size={18} />,
+                tone: 'primary',
+              }
+            : destReady
             ? {
                 label: reviewBusy ? 'Checking…' : 'Review',
                 onClick: () => void goReview(),
@@ -631,7 +646,7 @@ export function SendPanel({
           {offlineBlock}
         </p>
       ) : null}
-      {sendSnap.matches('editing') && (
+      {choosingDestination && (
         <AssetPicker
           label="Coin"
           value={coinValue}
@@ -662,6 +677,7 @@ export function SendPanel({
               <h3 className="send-panel-title">{`Send ${ticker}`}</h3>
             </header>
 
+            {!choosingDestination && (
             <div className="send-amount-hero" data-currency={currency}>
               <label htmlFor="amount" className="send-amount-label">
                 Amount
@@ -752,8 +768,10 @@ export function SendPanel({
                 />
               ) : null}
             </div>
+            )}
 
             <div className="send-side">
+              {choosingDestination ? (
               <div className="field friend-recipient-field send-to-field">
                 <label htmlFor="to">To</label>
                 {scanningTo ? (
@@ -836,6 +854,9 @@ export function SendPanel({
                 ) : null}
               </div>
 
+              ) : (
+                <p className="send-resolved">Sending to <strong>{recipientLabel}</strong></p>
+              )}
               <p className="send-eta-row" data-ready={destReady ? '' : undefined}>
                 <span className="send-eta-label">Arrival</span>
                 <strong className="send-eta-value">{destAsset.eta}</strong>

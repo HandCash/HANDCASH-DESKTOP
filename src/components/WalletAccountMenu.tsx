@@ -92,7 +92,7 @@ export function WalletAccountMenu({
       actions: { recheckDisplacement: () => queueMicrotask(() => displacementCheckRef.current()) },
     }),
   )
-  const [snapshot, send, actor] = useMachine(menuMachine)
+  const [snapshot, send] = useMachine(menuMachine)
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -297,22 +297,15 @@ export function WalletAccountMenu({
     const store = readVaultAccounts(vaultIdentityKey(active.vaultMaster))
     const account = store.accounts.find((a) => a.index === active.accountIndex)
     if (!account || isHeldHere(account)) return
-    const { performSwitch: toAccount, performCreate: toNew, nextHeldAccount: next } = leaveRef.current
-    const nextAccountIndex = next(active.accountIndex)
-    const menu = actor.getSnapshot()
-    if (!menu.matches('closed') && !menu.matches('open')) {
-      send({ type: 'DISPLACED', nextAccountIndex })
-      return
-    }
+    // Stay on the wallet to look at it: spends are already refused while another
+    // device holds it, and switching away is the user's choice.
     displacedRef.current = active.identityKey
     const holding = holdingOf(account)
     if (holding.kind === 'elsewhere' && holding.deviceId == null) {
-      toastSuccess('Wallet moved', 'Your other device asked for this wallet, so it moved there.')
+      toastSuccess('Wallet moved', 'Your other device asked for this wallet. You can still view it here; it no longer spends here.')
     } else {
-      toastError('Wallet moved', 'Another device now holds this wallet, so it no longer spends here.')
+      toastError('Wallet moved', 'Another device now holds this wallet. You can still view it here; it no longer spends here.')
     }
-    send({ type: 'DISPLACED', nextAccountIndex })
-    void (nextAccountIndex != null ? toAccount(nextAccountIndex) : toNew())
   }
 
   useEffect(() => {

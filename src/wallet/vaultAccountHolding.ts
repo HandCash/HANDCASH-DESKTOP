@@ -39,6 +39,7 @@ import {
 } from './vaultAccounts'
 import type { AccountProbe } from './vaultAccountDiscovery'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
+import { getBoundSyncHealthIdentity, getSyncHealth, subscribeSyncHealth } from './walletHealth'
 import { runtimeIsCurrent, type WalletRuntime } from './walletRuntime'
 
 export type HolderIo = {
@@ -86,6 +87,7 @@ async function reconcileAccount(args: {
   index: number
   io: HolderIo
   deviceId: string
+  settled: (identityKey: string) => boolean
 }): Promise<AccountOutcome> {
   const { master, index, io, deviceId } = args
   const masterIdentityKey = vaultIdentityKey(master)
@@ -96,6 +98,12 @@ async function reconcileAccount(args: {
     if (!account) return { kind: 'incomplete', reason: 'account no longer listed' }
     const local = holdingOf(account)
     const read = await io.read(keys)
+    // A restore claims the wallet from the device that holds it only once its
+    // history is in here, so the other device is never displaced by an empty copy.
+    if (store.takeover === true && local.kind === 'here' && read.kind === 'record' && !args.settled(keys.identityKey)) {
+      const mine = read.record.state === 'held' && read.record.deviceId === deviceId
+      if (!mine) return { kind: 'incomplete', reason: 'still importing; the other device keeps this wallet until then' }
+    }
     const step = decideHoldingStep({ local, read, deviceId, takeover: store.takeover === true })
     if (step.kind === 'keep') {
       return read.kind === 'unreachable' || read.kind === 'unsupported'
@@ -122,6 +130,12 @@ async function reconcileAccount(args: {
   return { kind: 'incomplete', reason: 'holder record kept changing' }
 }
 
+/** This account is the open one and its chain/history import has finished. */
+function importSettled(identityKey: string): boolean {
+  const bound = getBoundSyncHealthIdentity()
+  return bound.identityKey?.toLowerCase() === identityKey.toLowerCase() && getSyncHealth().phase === 'ok'
+}
+
 export type HoldingCheck = {
   /** Accounts this install held before the check and no longer does. */
   displaced: number[]
@@ -140,6 +154,8 @@ export async function checkVaultAccountHoldings(
   opts: {
     indices?: number[]
     io?: HolderIo
+    /** Whether an account's import has finished; a restore claims a wallet only then. */
+    importSettled?: (identityKey: string) => boolean
     /** Accounts this check found taken elsewhere; defaults to handing their changes over. */
     onDisplaced?: (indices: number[]) => void
   } = {},
@@ -152,7 +168,7 @@ export async function checkVaultAccountHoldings(
   const wasHere = new Set(before.accounts.filter(isHeldHere).map((a) => a.index))
   const indices = opts.indices ?? before.accounts.map((a) => a.index)
   const outcomes = await Promise.all(
-    indices.map((index) => reconcileAccount({ master, index, io, deviceId })),
+    indices.map((index) => reconcileAccount({ master, index, io, deviceId, settled: opts.importSettled ?? importSettled })),
   )
   // A check that ran, reachable or not, closes the gap for what it covered.
   for (const index of indices) noteHoldingChecked(identityKeyForAccount(master, index), started)
@@ -681,6 +697,12 @@ let watchTimer: ReturnType<typeof setInterval> | null = null
 /** Notice a takeover by another install within minutes, without touching the spend path. */
 export function watchActiveAccountHolding(master: VaultMaster, activeIndex: () => number | null): void {
   stopHoldingWatch()
+  // A restore waits for its import: claim the wallet the moment it finishes.
+  unwatchSync = subscribeSyncHealth((health) => {
+    const index = activeIndex()
+    if (index == null || health.phase !== 'ok') return
+    void checkVaultAccountHoldings(master, { indices: [index] }).catch(() => {})
+  })
   watchTimer = setInterval(() => {
     const index = activeIndex()
     if (index == null) return
@@ -690,7 +712,11 @@ export function watchActiveAccountHolding(master: VaultMaster, activeIndex: () =
   }, HOLDING_WATCH_MS)
 }
 
+let unwatchSync: (() => void) | null = null
+
 export function stopHoldingWatch(): void {
+  unwatchSync?.()
+  unwatchSync = null
   if (watchTimer) clearInterval(watchTimer)
   watchTimer = null
 }
