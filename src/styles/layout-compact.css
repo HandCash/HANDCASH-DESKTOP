@@ -103,6 +103,12 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .titlebar {
   border-bottom-color: hsl(var(--border));
 }
 
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact) .titlebar,
+html:not([data-aeon-mode='light']):is(.platform-mobile, .layout-compact) .titlebar {
+  background: var(--hc-bg);
+  border-bottom-color: hsl(var(--border));
+}
+
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-stage {
   background: transparent;
 }
