@@ -182,7 +182,15 @@ function childPanelKey(state: NavState): string {
   return `${state.section}:${child.type}`
 }
 
+// Keep-alive avoids remounts, but without memo every tab press still renders
+// every visited panel (including hidden activity rows and identity cards).
+// Store/context subscriptions inside each panel remain live independently.
 const MemoInventoryPanel = memo(InventoryPanel)
+const MemoTransactionsPanel = memo(TransactionsPanel)
+const MemoFriendsPanel = memo(FriendsPanel)
+const MemoIdentityPanel = memo(IdentityPanel)
+const MemoSettingsPanel = memo(SettingsPanel)
+const MemoConnectedAppsPanel = memo(ConnectedAppsPanel)
 
 /** The coin menu with the live BSV balance, kept out of WalletNav's own renders. */
 function NavTickerCoins({
@@ -272,6 +280,7 @@ export const WalletNav = memo(function WalletNav({
       }),
     [],
   )
+  const showBrowserTabs = useCallback(() => setTabSwitcherOpen(true), [])
   const rememberBrowserPreview = useCallback((origin: string, dataUrl: string) => {
     setBrowserPreviews((current) =>
       current[origin] === dataUrl ? current : { ...current, [origin]: dataUrl },
@@ -884,7 +893,7 @@ export const WalletNav = memo(function WalletNav({
                   />
                 ) : (
                   <RenderProbe id="activity">
-                    <TransactionsPanel chain={profile.chain} />
+                    <MemoTransactionsPanel chain={profile.chain} />
                   </RenderProbe>
                 )}
               </div>
@@ -899,10 +908,10 @@ export const WalletNav = memo(function WalletNav({
                     : undefined
                 }
               >
-                <ConnectedAppsPanel
+                <MemoConnectedAppsPanel
                   apps={apps}
                   openTabCount={browserState.tabs.length}
-                  onShowTabs={() => setTabSwitcherOpen(true)}
+                  onShowTabs={showBrowserTabs}
                 />
               </div>
             )}
@@ -928,7 +937,7 @@ export const WalletNav = memo(function WalletNav({
                 }
               >
                 <RenderProbe id="friends">
-                  <FriendsPanel chain={profile.chain} />
+                  <MemoFriendsPanel chain={profile.chain} />
                 </RenderProbe>
               </div>
             )}
@@ -942,7 +951,7 @@ export const WalletNav = memo(function WalletNav({
                     : undefined
                 }
               >
-                <IdentityPanel profile={profile} />
+                <MemoIdentityPanel profile={profile} />
               </div>
             )}
             {mountedLight.has('settings') && (
@@ -956,7 +965,7 @@ export const WalletNav = memo(function WalletNav({
                 }
               >
                 <RenderProbe id="settings">
-                  <SettingsPanel />
+                  <MemoSettingsPanel />
                 </RenderProbe>
               </div>
             )}
