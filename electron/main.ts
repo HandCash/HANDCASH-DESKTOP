@@ -15,7 +15,9 @@ import {
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { format } from 'node:util'
 import log from 'electron-log'
+import { createLogScrubber } from './logPrivacy.js'
 import {
   failPendingBridgeRequests,
   startHttpServer,
@@ -106,6 +108,8 @@ const openDevTools =
 const DEV_ORIGIN = UI_ORIGIN
 
 log.transports.file.level = 'info'
+const scrubLog = createLogScrubber()
+log.hooks.push((message) => ({ ...message, data: [scrubLog(format(...message.data))] }))
 
 let mainWindow: BrowserWindow | null = null
 let bridge: BridgeServerHandle | null = null

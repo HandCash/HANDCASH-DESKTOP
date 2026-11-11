@@ -10,6 +10,7 @@
 import {
   formatAppLogs,
   redactAppLogMessage,
+  redactAppLogSecrets,
   getPreviousSessionLogs,
   type AppLogEntry,
 } from './appLog'
@@ -68,15 +69,22 @@ async function platformTail(): Promise<string> {
       .join('\n')
       .trim()
   }
+  // The ring was scrubbed line by line as it was written; scrubbing it again
+  // would re-key its pseudonyms. Shell lines may predate the scrubber.
+  main = scrubLines(main)
   if (renderer && main) {
     return `${renderer}\n\n—— electron main (tail) ——\n${main}`
   }
   return renderer || main
 }
 
+function scrubLines(text: string): string {
+  return text.split('\n').map(redactAppLogMessage).join('\n')
+}
+
 function previousBlock(previous: AppLogEntry[]): string {
   if (previous.length === 0) return ''
-  return `—— previous session (ended without a clean exit) ——\n${formatAppLogs(previous)}\n\n`
+  return `—— previous session (ended without a clean exit) ——\n${scrubLines(formatAppLogs(previous))}\n\n`
 }
 
 function sessionHeader(reason: string, lineCount: number): string {
@@ -90,6 +98,7 @@ function sessionHeader(reason: string, lineCount: number): string {
     `# reason ${reason} · lines ${lineCount}`,
     `# uploaded ${new Date().toISOString()}`,
     `# userAgent ${ua}`,
+    '# privacy identifiers are per-session pseudonyms; peers, addresses and amounts removed',
     '',
   ].join('\n')
 }
@@ -107,7 +116,7 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
     return { ok: false, error: 'Upload URL must use HTTPS without embedded credentials' }
   }
 
-  const redactedBody = redactAppLogMessage(body)
+  const redactedBody = redactAppLogSecrets(body)
   try {
     const res = await fetch(target.toString(), {
       method: 'POST',

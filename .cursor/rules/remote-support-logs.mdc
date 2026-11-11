@@ -8,6 +8,13 @@ alwaysApply: true
 Devices POST session logs to BRC-CLOUD. **Do not ask the user to paste logs** when
 the upload URL / bucket is known — fetch `/latest` (and the bucket index) first.
 
+Logs carry no identity relationships or transaction details
+(`src/wallet/logPrivacy.ts`, twin `electron/logPrivacy.ts`): txids, keys and
+device ids are per-run pseudonyms (same length, prefixes kept), peers and
+handles are `id-…` / `$h-…` / `p-…@paymail` tags, addresses / blobs are
+`[address]` / `[blob]` / `[hex]`, amounts are `[amt]` (0 and 1 sat stay). A
+pseudonym never resolves on chain; correlate inside one upload only.
+
 ## Triage with Jev, never by hand
 
 **Do not read uploaded logs line by line.** `npm run triage

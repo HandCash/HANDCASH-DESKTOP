@@ -8,6 +8,7 @@
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { formatLogArg } from './logFormat'
+import { scrubLogLine } from './logPrivacy'
 import { APP_VERSION } from '../version'
 
 export type AppLogLevel = 'info' | 'warn' | 'error'
@@ -36,21 +37,24 @@ const SENSITIVE_FIELD =
   /((?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)\s*["']?\s*[:=]\s*["']?)([^"',}\]\s]+|[^"']{2,})/gi
 const JSON_SENSITIVE_FIELD =
   /("(?:mnemonic|seed(?:Phrase|Hex)?|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization|(?:access|refresh|auth)[_-]?token|token|api[_-]?key|cookie|set-cookie)"\s*:\s*")([^"]*)(")/gi
-// Balance metadata, transaction IDs, UTXO details - unlabelled secrets that should not ship
-const UNLABELLED_SECRETS =
-  /\b(?:spendable|balance|txid|txn?hash|outpoint)\s*[:=]\s*([^\s"',}\]]+)/gi
-
 /**
- * Logs are durable and can be sent manually. Redact recognized custody fields
- * before storage and again on the final upload, including restored/shell lines.
- * Pattern matching is not a guarantee against unlabelled secrets.
+ * Recognized custody fields. Idempotent, so the final upload body runs it again
+ * over every line. Pattern matching is not a guarantee against unlabelled secrets.
  */
-export function redactAppLogMessage(message: string): string {
+export function redactAppLogSecrets(message: string): string {
   return message
     .replace(/\bBearer\s+[^\s"',}\]]+/gi, 'Bearer [REDACTED]')
     .replace(JSON_SENSITIVE_FIELD, '$1[REDACTED]$3')
     .replace(SENSITIVE_FIELD, '$1[REDACTED]')
-    .replace(UNLABELLED_SECRETS, (match) => match.replace(/([:=]\s*)[^\s"',}\]\]]+/, '$1[REDACTED]'))
+}
+
+/**
+ * Logs are durable and can be sent manually: custody fields, identity
+ * relationships and transaction details (`logPrivacy.ts`) are scrubbed before
+ * a line is kept. Restored and shell lines are scrubbed again at upload.
+ */
+export function redactAppLogMessage(message: string): string {
+  return scrubLogLine(redactAppLogSecrets(message))
 }
 
 function emit() {

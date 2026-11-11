@@ -867,10 +867,24 @@ function custodyFacts(events) {
 /* ------------------------------------------------------ activity facts */
 
 const ACTIVITY_WRITE_RE =
-  /^\[activity\] (new|merged|skipped) (spent|earned)\/([\w-]+) (-?\d+) sat (no-txid|[0-9a-f]{12}…) — (.*)$/
+  /^\[activity\] (new|merged|skipped) (spent|earned)\/([\w-]+) (-?(?:\d+|\[amt\])) sat (no-txid|[0-9a-f]{12}…) — (.*)$/
 const STUCK_CENSUS_RE = /^\[activity\] (\d+) outbound row\(s\) stuck past 90s — (.+?): (.*)$/
 const STUCK_ROW_RE =
-  /([\w-]+)\/(-?\d+)sat age=(\d+)s id=(\S+) pending=(\S+)(?: item=(\S+))?/g
+  /([\w-]+)\/(-?(?:\d+|\[amt\]))sat age=(\d+)s id=(\S+) pending=(\S+)(?: item=(\S+))?/g
+
+/**
+ * Wallet logs drop amounts other than 0 and 1 sat (`src/wallet/logPrivacy.ts`):
+ * `[amt]` is a non-zero amount of the given sign, null when unknown.
+ */
+function loggedSats(text) {
+  if (!text.includes('[amt]')) return Number(text)
+  return null
+}
+
+function loggedSign(text) {
+  if (!text.includes('[amt]')) return Math.sign(Number(text))
+  return text.startsWith('-') ? -1 : 1
+}
 const ORPHAN_REMOVED_RE = /^\[activity\] removed orphan approval placeholder id=(\S+) pending=(\S+)/
 const WRITE_REFUSED_RE = /^\[activity\] durable write refused/
 
@@ -897,7 +911,7 @@ function activityFacts(events) {
       const by = `${m[1]} ${m[2]}/${m[3]} · ${family(m[6])}`
       writesBy.set(by, (writesBy.get(by) ?? 0) + 1)
       // A zero-sat, txid-less spend is the "Approving" placeholder.
-      if (m[2] === 'spent' && Number(m[4]) <= 0 && m[5] === 'no-txid') {
+      if (m[2] === 'spent' && loggedSign(m[4]) <= 0 && m[5] === 'no-txid') {
         const key = `${m[3]} · ${family(m[6])}`
         placeholderWrites.set(key, (placeholderWrites.get(key) ?? 0) + 1)
       }
@@ -921,7 +935,8 @@ function activityFacts(events) {
       const row = rows.get(id) ?? {
         id,
         method: r[1],
-        sats: Number(r[2]),
+        sats: loggedSats(r[2]),
+        sign: loggedSign(r[2]),
         pendingId: r[5],
         item: r[6] ?? 'unknown',
         seen: 0,
@@ -957,7 +972,7 @@ function activityFacts(events) {
   }
 
   const stuckRows = [...rows.values()].sort((a, b) => b.maxAgeS - a.maxAgeS)
-  const isPlaceholder = (r) => r.sats <= 0 && (r.item === 'none' || r.item === 'unknown')
+  const isPlaceholder = (r) => r.sign <= 0 && (r.item === 'none' || r.item === 'unknown')
   return {
     writes,
     writesBy: [...writesBy.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([write, count]) => ({ write, count })),
@@ -976,7 +991,7 @@ function activityFacts(events) {
     // have removed is the fact the feed cannot explain on its own.
     placeholderRows: stuckRows.filter(isPlaceholder).length,
     placeholderRowsSurvivingSweep: stuckRows.filter((r) => isPlaceholder(r) && r.sweepsSurvived > 0 && r.seenAfterSweepRan > 0).length,
-    pricedRowsHeldWhileYielding: stuckRows.filter((r) => r.sats > 0 && r.seen > 1).length,
+    pricedRowsHeldWhileYielding: stuckRows.filter((r) => r.sign > 0 && r.seen > 1).length,
     rowsRewrittenFresh: stuckRows.filter((r) => r.ageShrank).length,
     // Ages that keep growing across the window mean the same durable row is
     // still there, not a new one each time.
@@ -2082,11 +2097,11 @@ function serverWalletFacts(events) {
     if (!m) continue
     const line = m[1]
     let r
-    if (/^funded \d+ sats/.test(line)) facts.funded += 1
+    if (/^funded (?:\d+|\[amt\]) sats/.test(line)) facts.funded += 1
     else if (/^fund \S+ internalized/.test(line)) facts.internalized += 1
     else if ((r = /^fund \S+ internalize deferred — (.*)$/.exec(line))) bump(facts.deferred, r[1])
     else if ((r = /^refresh failed — (.*)$/.exec(line))) bump(facts.refreshFailed, r[1])
-    else if (/^recovered \d+ sats/.test(line)) facts.recovered += 1
+    else if (/^recovered (?:\d+|\[amt\]) sats/.test(line)) facts.recovered += 1
     else if ((r = /^recover failed — (.*)$/.exec(line))) bump(facts.recoverFailed, r[1])
     else if ((r = /^open done (\d+)ms$/.exec(line))) facts.openMs.push(Number(r[1]))
   }
@@ -2510,7 +2525,7 @@ function accountSwitchFacts(events) {
 
 const IMPORT_LINES = [
   ['asked', /^\[import\] opened \/migrate for HandCash history/],
-  ['hints', /^\[import\] HandCash recovery hints txids=(\d+) complete=(true|false) sats=(\d+) items=(\d+)(?: origins=(\d+))?/],
+  ['hints', /^\[import\] HandCash recovery hints txids=(\d+) complete=(true|false) sats=(\d+|\[amt\]) items=(\d+)(?: origins=(\d+))?/],
   ['arrived', /^\[import\] HandCash history arrived txids=(\d+)/],
   ['noHints', /^\[import\] key recovery opened without HandCash history/],
   ['mismatch', /^\[import\] HandCash history is for \$(\S+), these keys prove \$(\S+)/],
@@ -2527,7 +2542,7 @@ const IMPORT_LINES = [
   ['discover', /^\[import\] discover done (\d+)ms checked=(\d+) used=(\d+) complete=(true|false)/],
   ['addressLookupFailed', /^\[import\] history lookup failed for (\d+) address/],
   ['holdings', /^\[import\] holdings done (\d+)ms addresses=(\d+)(?: read=(\d+))?/],
-  ['settled', /^\[import\] hinted scan settled sats=(\d+) items=(\d+) of sats=(\d+) items=(\d+)/],
+  ['settled', /^\[import\] hinted scan settled sats=(\d+|\[amt\]) items=(\d+) of sats=(\d+|\[amt\]) items=(\d+)/],
   ['refused', /^\[import\] hinted scan refused reason=(\S+)/],
   ['sweep', /^\[import\] sweep done (\d+)ms kind=(\S+) cash=(\d+)sats items=(\d+) tokens=(\d+) failed=(\d+)/],
   ['batchMoved', /^\[phrase-sweep\] moved (\d+) collectable\(s\) in (\d+) transaction/],
@@ -2996,7 +3011,7 @@ const FUNDING_REBUILD_RE = /^\[certainty\] [0-9a-f]{12} funding spent elsewhere 
 
 const UNSCRIPTED_CHANGE_RE =
   /^\[stale-output\] (\d+) change output\(s\) of ([0-9a-f]{12}) have no locking script\b/
-const CHANGE_REVIVED_RE = /^\[change-revive\] ([0-9a-f]{12}) revived=(\d+) sats=(\d+)/
+const CHANGE_REVIVED_RE = /^\[change-revive\] ([0-9a-f]{12}) revived=(\d+) sats=(\d+|\[amt\])/
 
 /**
  * Change this wallet signed but could not spend: rows with no locking script
@@ -3015,7 +3030,7 @@ function unscriptedChangeFacts(events) {
       continue
     }
     const r = CHANGE_REVIVED_RE.exec(e.text)
-    if (r) revived.set(r[1], { txid: r[1], outputs: Number(r[2]), sats: Number(r[3]) })
+    if (r) revived.set(r[1], { txid: r[1], outputs: Number(r[2]), sats: loggedSats(r[3]) })
   }
   return {
     txids: [...byTxid.values()].map((row) => ({ ...row, revived: revived.has(row.txid) })),
@@ -3026,7 +3041,7 @@ function unscriptedChangeFacts(events) {
 const ECHOED_RE =
   /^\[derived-change\] echoed (\d+) derivation\(s\)(?:, journaled (\d+) recipe\(s\))? from (\d+) output row\(s\)(?: done (\d+)ms)?/
 const ECHO_RECOVERY_RE =
-  /^\[(?:derived-change\] echo|custody-journal\]) recovery checked=(\d+) live=(\d+) sats=(\d+) imported=(\d+) failed=(\d+) spent=(\d+) unknown=(\d+) done (\d+)ms/
+  /^\[(?:derived-change\] echo|custody-journal\]) recovery checked=(\d+) live=(\d+) sats=(\d+|\[amt\]) imported=(\d+) failed=(\d+) spent=(\d+) unknown=(\d+) done (\d+)ms/
 const NO_ECHO_RE = /^\[derived-change\] ([0-9a-f]{12})… (\d+) output\(s\) live on chain with no toolbox row and no remittance echo/
 const NO_RECIPE_RE = /^\[custody-journal\] (\d+) outpoint\(s\) live on chain with no recipe/
 const JOURNAL_CAPTURED_RE = /^\[custody-journal\] captured (\d+) new recipe\(s\) from (\d+) output row\(s\) done (\d+)ms/
@@ -3285,7 +3300,7 @@ function derivationFacts(events) {
     }
     m = ECHO_RECOVERY_RE.exec(e.text)
     if (m) {
-      const [checked, live, sats, imported, failed, spent, unknown, ms] = m.slice(1).map(Number)
+      const [checked, live, sats, imported, failed, spent, unknown, ms] = m.slice(1).map(loggedSats)
       facts.recoveries.push({ checked, live, sats, imported, failed, spent, unknown, ms })
       continue
     }
@@ -3318,7 +3333,7 @@ function derivationFacts(events) {
 }
 
 const WRITTEN_OFF_RE =
-  /^\[written-off\] reconcile done (\d+)ms — candidates=(\d+) restored=(\d+) sats=(\d+) hidden=(\d+) hiddenSats=(\d+) spenders=(\d+) silent=(\d+) unproven=(\d+)/
+  /^\[written-off\] reconcile done (\d+)ms — candidates=(\d+) restored=(\d+) sats=(\d+|\[amt\]) hidden=(\d+) hiddenSats=(\d+|\[amt\]) spenders=(\d+) silent=(\d+) unproven=(\d+)/
 
 const LEDGER_RESTORED_RE = /^\[activity-ledger\] restored (\d+) row\(s\) from the last read/
 const LEDGER_READ_RE = /^\[activity-ledger\] (\d+) row\(s\) from wallet history done (\d+)ms/
@@ -3433,7 +3448,7 @@ function writtenOffFacts(events) {
   for (const e of events) {
     const m = WRITTEN_OFF_RE.exec(e.text)
     if (!m) continue
-    const n = m.slice(1).map(Number)
+    const n = m.slice(1).map(loggedSats)
     runs.push({
       at: new Date(e.at).toISOString(),
       ms: n[0],
@@ -3691,7 +3706,7 @@ function outputReadFacts(events) {
   return { byBasket, worst: worst.sort((a, b) => b.ms - a.ms).slice(0, 8) }
 }
 
-const RECEIVE_WRITE_RE = /^\[activity\] (new|merged) earned\/\S+ (\d+) sat ([0-9a-f]{12})/
+const RECEIVE_WRITE_RE = /^\[activity\] (new|merged) earned\/\S+ (\d+|\[amt\]) sat ([0-9a-f]{12})/
 const INGEST_MARK_RE = /^\[brc29-ingest ([0-9a-f]{12})…\] \+(\d+)ms (.+)$/
 const CONFLICT_PROBE_RE =
   /^\[tip-ingest\] conflict-probe done (\d+)ms ([0-9a-f]{12})(?: asked=(\d+) spent=(\d+) unspent=(\d+) unknown=(\d+) conflict=(\S+))?/

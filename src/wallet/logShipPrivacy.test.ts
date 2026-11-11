@@ -85,8 +85,28 @@ describe('log upload privacy evidence', () => {
     // Balance metadata and transaction IDs should now be redacted
     expect(body()).not.toContain('spendable=123')
     expect(body()).not.toContain('txid=SYNTHETIC_TX')
-    expect(body()).toContain('spendable=[REDACTED]')
+    expect(body()).toContain('spendable=[amt]')
     expect(body()).toContain('txid=[REDACTED]')
+  })
+
+  it('uploads no peers, txids, addresses or amounts from the ring, the previous session or the shell', async () => {
+    const txid = '4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b'
+    store.set('handcash.applog.current.v1', JSON.stringify([
+      { at: 1, level: 'info', message: `[send] paid $carol 7777 sats ${txid}` },
+    ]))
+    vi.stubGlobal('window', {
+      addEventListener: () => {},
+      handcash: { readLogs: async () => ({ ok: true, text: `[HTTP] peer=dave ${txid} 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa` }) },
+    })
+    const log = await import('./appLog')
+    log.installAppLogCapture()
+    log.appendAppLog('info', `[chat] to $erin@handcash.io 0.5 BSV ${txid.slice(0, 12)}…`)
+    const ship = await import('./logShip')
+    await ship.shipAppLogs()
+    for (const leak of ['carol', 'dave', 'erin', '7777', '0.5 BSV', txid.slice(0, 12), '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa']) {
+      expect(body()).not.toContain(leak)
+    }
+    expect(body()).toContain('# privacy identifiers are per-session pseudonyms')
   })
 
   it('re-redacts persisted previous-session entries at manual upload', async () => {
