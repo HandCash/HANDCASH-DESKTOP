@@ -39,11 +39,17 @@ interface RowSizes {
   extents: number[]
   sum: number
   count: number
+  /**
+   * Pitch for rows not measured yet, fixed from the first rows measured. A
+   * running average moved the spacer over rows a fling skipped on every
+   * measurement, so the content shifted under a scroll still in flight.
+   */
+  estimate: number
   /** Offset of the first windowed element (start spacer or row) inside the list. */
   head: number
 }
 
-const emptySizes = (total: number): RowSizes => ({ total, extents: [], sum: 0, count: 0, head: 0 })
+const emptySizes = (total: number): RowSizes => ({ total, extents: [], sum: 0, count: 0, estimate: 0, head: 0 })
 
 function hintedWindow(o: UseWindowedRangeOptions): ListWindow {
   return computeListWindow({
@@ -120,15 +126,17 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
 
     const measureNow = () => {
       const { rowExtent, columns: cols } = readLayout()
-      const scrolledPast = scrollRootScrolledPast(root, list, axis)
       const viewportHeight = scrollRootExtent(root, axis)
+      // A hidden list (a keep-alive tab) has no viewport; keep its window for when it shows.
+      if (viewportHeight <= 0) return
+      const scrolledPast = scrollRootScrolledPast(root, list, axis)
       const sizes = sizesRef.current
       const next =
         cols === 1
           ? computeVariableListWindow({
               total,
               extents: sizes.extents,
-              estimate: sizes.count > 0 ? sizes.sum / sizes.count : rowExtent,
+              estimate: sizes.estimate || rowExtent,
               overscan,
               scrolledPast: scrolledPast - sizes.head,
               viewportHeight,
@@ -165,6 +173,19 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       sizesRef.current = emptySizes(total)
       schedule()
     }
+    // Row heights follow the list's width. A list shown again (0 → its size)
+    // keeps them and only re-windows: no scroll event announces that.
+    let width = list.clientWidth
+    const observer =
+      root !== window && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            const next = list.clientWidth
+            if (next > 0 && width > 0 && next !== width) onResize()
+            else schedule()
+            if (next > 0) width = next
+          })
+        : null
+    observer?.observe(root as HTMLElement)
 
     measureNow()
     const target: EventTarget = root === window ? window : root
@@ -174,6 +195,7 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       cancelled = true
       remeasureRef.current = null
       window.cancelAnimationFrame(frame)
+      observer?.disconnect()
       target.removeEventListener('scroll', schedule)
       window.removeEventListener('resize', onResize)
     }
@@ -217,6 +239,10 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
         }
       }
       index += 1
+    }
+    if (!sizes.estimate && sizes.count > 0) {
+      sizes.estimate = sizes.sum / sizes.count
+      changed = true
     }
     if (head !== null && Math.abs(head - sizes.head) > 0.5) {
       sizes.head = head

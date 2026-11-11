@@ -137,6 +137,88 @@ describe('useWindowedRange', () => {
     }
   })
 
+  it('keeps rows a fling skipped where they were while the scroll goes on', async () => {
+    const heightOf = (n: number) => (n % 3 === 0 ? 120 : 40)
+    function Mixed() {
+      const ref = useRef<HTMLUListElement>(null)
+      const w = useWindowedRange({ total: 3_000, itemExtent: ROW, overscan: 2, scrollRef: ref })
+      return (
+        <ul ref={ref} style={{ overflowY: 'auto' }} data-testid="mixed">
+          {w.padStart > 0 ? <li {...listWindowPadAttrs('start')} style={{ height: w.padStart }} /> : null}
+          {Array.from({ length: w.end - w.start }, (_, i) => w.start + i).map((n) => (
+            <li key={n} data-row={n} style={{ height: heightOf(n) }} />
+          ))}
+          {w.padEnd > 0 ? <li {...listWindowPadAttrs('end')} style={{ height: w.padEnd }} /> : null}
+        </ul>
+      )
+    }
+    const box = (top: number, height: number) =>
+      ({ top, left: 0, width: 300, height, bottom: top + height, right: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.tagName === 'UL') return box(0, VIEWPORT)
+      const parent = this.parentElement!
+      let top = -parent.scrollTop
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === this) break
+        top += Number.parseFloat((sibling as HTMLElement).style.height) || 0
+      }
+      return box(top, Number.parseFloat(this.style.height) || 0)
+    })
+    const { getByTestId } = render(<Mixed />)
+    const list = getByTestId('mixed')
+    const seenAt = new Map<number, number>()
+    for (const past of [20_000, ...Array.from({ length: 30 }, (_, i) => 20_000 + (i + 1) * 230)]) {
+      await act(async () => {
+        list.scrollTop = past
+        list.dispatchEvent(new Event('scroll'))
+        for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+      })
+      for (const row of list.querySelectorAll<HTMLElement>('[data-row]')) {
+        const at = row.getBoundingClientRect().top + past
+        const n = Number(row.dataset.row)
+        if (seenAt.has(n)) expect(at).toBe(seenAt.get(n))
+        else seenAt.set(n, at)
+      }
+    }
+    expect(seenAt.size).toBeGreaterThan(50)
+  })
+
+  it('keeps its window while hidden and re-windows when shown, without a scroll', async () => {
+    let resized: (() => void) | undefined
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(cb: () => void) {
+          resized = cb
+        }
+        observe() {}
+        disconnect() {}
+      },
+    )
+    const { getByTestId, rerender } = render(<List total={10_000} />)
+    const list = getByTestId('list')
+    await act(async () => {
+      list.scrollTop = ROW * 5_000
+      list.dispatchEvent(new Event('scroll'))
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    // Hidden: no layout box, so no height and no scroll offset.
+    let viewport = 0
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', { configurable: true, get: () => viewport })
+    list.scrollTop = 0
+    rerender(<List total={10_001} />)
+    // Shown again: the offset comes back with the box, and nothing scrolls.
+    viewport = VIEWPORT
+    list.scrollTop = ROW * 5_000
+    await act(async () => {
+      resized?.()
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(list.querySelector('li:not([data-aeon-window-pad])')!.textContent).toBe('Row 4998')
+    expect(mountedRows(list)).toBe(VIEWPORT / ROW + 4)
+    vi.unstubAllGlobals()
+  })
+
   it('windows a horizontal strip by scrollLeft', async () => {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 400 })
     function Strip() {
