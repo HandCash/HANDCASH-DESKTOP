@@ -22,6 +22,20 @@ describe('computeListWindow', () => {
     expect(w.padStart + (w.end - w.start) * 50 + w.padEnd).toBe(10_000 * 50)
   })
 
+  it('moves a stepped window once per step and still covers the viewport plus overscan', () => {
+    const at = (row: number) => computeListWindow({ ...base, overscan: 4, step: 4, total: 10_000, scrolledPast: 50 * row })
+    const starts = new Set<number>()
+    for (let row = 100; row < 120; row++) {
+      const w = at(row)
+      starts.add(w.start)
+      expect(w.start % 4).toBe(0)
+      expect(w.start).toBeLessThanOrEqual(row - 4)
+      expect(w.end).toBeGreaterThanOrEqual(row + 10 + 4)
+      expect(w.padStart + (w.end - w.start) * 50 + w.padEnd).toBe(10_000 * 50)
+    }
+    expect(starts.size).toBe(5)
+  })
+
   it('pins the last window to the end instead of running past it', () => {
     const w = computeListWindow({ ...base, total: 1_000, scrolledPast: 50 * 5_000 })
     expect(w).toEqual({ start: 986, end: 1_000, padStart: 986 * 50, padEnd: 0 })

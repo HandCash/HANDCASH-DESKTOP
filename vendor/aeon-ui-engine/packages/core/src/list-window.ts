@@ -32,6 +32,12 @@ export interface ListWindowInput {
   viewportHeight: number
   /** Below this many items the whole list mounts. */
   minItems?: number
+  /**
+   * Rows the window moves at a time. The start snaps down to a multiple of it
+   * and one extra step mounts below, so a fling re-renders once per step
+   * instead of once per row. 1 moves with every row.
+   */
+  step?: number
 }
 
 /**
@@ -55,9 +61,12 @@ export function computeListWindow(input: ListWindowInput): ListWindow {
   if (total < minItems || !(rowExtent > 0)) return fullListWindow(total)
   const columns = Math.max(1, Math.floor(input.columns ?? 1))
   const overscan = Math.max(0, Math.floor(input.overscan ?? 8))
+  const step = Math.max(1, Math.floor(input.step ?? 1))
   const rows = Math.ceil(total / columns)
-  const firstRow = Math.max(0, Math.floor(Math.max(0, input.scrolledPast) / rowExtent) - overscan)
-  const visibleRows = Math.ceil(Math.max(0, input.viewportHeight) / rowExtent) + overscan * 2
+  const leadRow = Math.max(0, Math.floor(Math.max(0, input.scrolledPast) / rowExtent) - overscan)
+  const firstRow = Math.floor(leadRow / step) * step
+  const visibleRows =
+    Math.ceil(Math.max(0, input.viewportHeight) / rowExtent) + overscan * 2 + (step > 1 ? step : 0)
   const startRow = Math.min(firstRow, Math.max(0, rows - visibleRows))
   const endRow = Math.min(rows, startRow + visibleRows)
   return {
