@@ -118,6 +118,7 @@ import {
   buildCollectableCustomInstructions,
   extendProvenanceV2,
   getRememberedProvenanceRemittance,
+  provenanceForProvenTip,
   parseProvenanceV2,
   rememberProvenanceRemittance,
   rememberProvenLineage,
@@ -4804,15 +4805,15 @@ export async function sendCollectable(args: {
           const itemChart = createActor(itemSendMachine).start()
           itemChart.send({ type: 'START', outpoint, settlePath })
 
-          const rememberedRemittance = getRememberedProvenanceRemittance(outpoint)
-          let provenance: ProvenanceRemittance | null = null
-          if (
-            provenTier === 'brc150' &&
-            rememberedRemittance &&
-            rememberedRemittance.beefB64
-          ) {
-            provenance = rememberedRemittance
-          }
+          const provenance: ProvenanceRemittance | null =
+            provenTier === 'brc150'
+              ? await provenanceForProvenTip({
+                  tipOutpoint: outpoint,
+                  origin,
+                  wallet,
+                  inputBeef: inputBEEF,
+                })
+              : null
           itemChart.send({ type: 'BUILT' })
 
           const recoverSendFailure = async (
@@ -4877,7 +4878,9 @@ export async function sendCollectable(args: {
                           app,
                           ...(collectionId ? { collectionId } : {}),
                           ...(content ? { content } : {}),
-                          provenance,
+                          provenance: heldRemittance(recipientKey)
+                            ? provenance
+                            : null,
                         }),
                       },
                       heldRemittance(recipientKey),
@@ -5462,10 +5465,14 @@ export async function sendCollectables(
                 )
               }
             }
-            const remembered = getRememberedProvenanceRemittance(outpoint)
             const provenance =
-              provenTier === 'brc150' && remembered?.beefB64
-                ? remembered
+              provenTier === 'brc150'
+                ? await provenanceForProvenTip({
+                    tipOutpoint: outpoint,
+                    origin,
+                    wallet,
+                    inputBeef: inputBEEF,
+                  })
                 : null
             const tags = stampBrc164Id([
               'ordinal',
@@ -5555,7 +5562,9 @@ export async function sendCollectables(
                           ? { collectionId: item.collectionId }
                           : {}),
                         ...(item.content ? { content: item.content } : {}),
-                        provenance: item.provenance,
+                        provenance: heldRemittance(outputKeys[index]!)
+                          ? item.provenance
+                          : null,
                       }),
                     },
                     heldRemittance(outputKeys[index]!),

@@ -317,11 +317,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Retired BRC-150 proof cache; only reclaimed. The verdict lives in `collectableProven`. */
   remittance: defineStorage({
     key: 'handcash.brc150.remittance.v1',
     owner: 'collectables',
     scope: 'wallet',
     version: 1,
+    retention: 'rebuildable',
   }),
   autoPay: defineStorage({
     key: 'handcash.brc100.autoPay',

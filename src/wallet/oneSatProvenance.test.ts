@@ -10,6 +10,7 @@ import {
   accountLocalKey,
   bindAccountLocalKeyScope,
 } from './accountLocalKeys'
+import { resetProvenCacheForTests } from './provenCache'
 
 const durableStore = new Map<string, string>()
 
@@ -37,8 +38,8 @@ import {
   encodeRemittanceForPeerBox,
   rememberPeerRemittanceForHeldTips,
   rebindOneSatProvenanceForAccount,
-  compactStoredRemittances,
-  REMITTANCE_DURABLE_MAX_BYTES,
+  rememberProvenanceRemittance,
+  REMITTANCE_SESSION_MAX_ENTRIES,
   REMITTANCE_MAX_BEEF_B64_CHARS,
   REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
@@ -71,55 +72,35 @@ describe('deriving a path through a batch transfer', () => {
   })
 })
 
-describe('durable remittance retention', () => {
-  it('keeps the newest complete cache entries within its byte budget', () => {
-    const source = Object.fromEntries(
-      Array.from({ length: 20 }, (_, i) => {
-        const tip = `${i.toString(16).padStart(64, '0')}_0`
-        return [
-          tip,
-          {
-            tip,
-            origin: `${'f'.repeat(64)}_0`,
-            path: [tip],
-            beefB64: 'A'.repeat(40_000),
-            at: i,
-          },
-        ]
-      }),
-    )
-
-    const compacted = compactStoredRemittances(source)
-
-    expect(compacted.body.length).toBeLessThanOrEqual(
-      REMITTANCE_DURABLE_MAX_BYTES,
-    )
-    expect(compacted.dropped).toBeGreaterThan(0)
-    expect(compacted.map[`${(19).toString(16).padStart(64, '0')}_0`]).toBeDefined()
-    expect(compacted.map[`${(0).toString(16).padStart(64, '0')}_0`]).toBeUndefined()
+describe('remittance memory', () => {
+  beforeEach(() => {
+    durableStore.clear()
+    clearRememberedProvenanceRemittances()
   })
 
-  /**
-   * Ingest persists one remittance per tip. Every probe of the trim search
-   * re-encodes the whole cache, so running it on a cache that already fits
-   * charged each tip a `log2(n)` multiple of serializing up to 384KB.
-   */
-  it('does not run the trim search on a cache that already fits', () => {
-    const source = Object.fromEntries(
-      Array.from({ length: 50 }, (_, i) => {
-        const tip = `${i.toString(16).padStart(64, '0')}_0`
-        return [tip, { tip, origin: `${'f'.repeat(64)}_0`, path: [tip], at: i }]
-      }),
-    )
+  function proofFor(i: number): ProvenanceV2 {
+    const tip = `${i.toString(16).padStart(64, '0')}_0`
+    return { v: 2, tip, origin: `${'f'.repeat(64)}_0`, path: [tip, `${'f'.repeat(64)}_0`], beefB64: 'AA' }
+  }
 
-    const spy = vi.spyOn(JSON, 'stringify')
-    const compacted = compactStoredRemittances(source)
-    const encodes = spy.mock.calls.length
-    spy.mockRestore()
+  it('keeps only the newest proofs in memory', () => {
+    const count = REMITTANCE_SESSION_MAX_ENTRIES + 4
+    for (let i = 0; i < count; i++) rememberProvenanceRemittance(proofFor(i))
 
-    expect(compacted.dropped).toBe(0)
-    expect(Object.keys(compacted.map)).toHaveLength(50)
-    expect(encodes).toBe(1)
+    expect(getRememberedProvenanceRemittance(proofFor(0).tip)).toBeNull()
+    expect(getRememberedProvenanceRemittance(proofFor(3).tip)).toBeNull()
+    expect(getRememberedProvenanceRemittance(proofFor(4).tip)).not.toBeNull()
+    expect(getRememberedProvenanceRemittance(proofFor(count - 1).tip)).not.toBeNull()
+  })
+
+  it('writes no proof to durable storage and reclaims the retired cache', () => {
+    const retired = accountLocalKey('handcash.brc150.remittance.v1')
+    durableStore.set(retired, JSON.stringify({ x: { beefB64: 'A'.repeat(40_000) } }))
+
+    rememberProvenanceRemittance(proofFor(1))
+
+    expect(durableStore.has(retired)).toBe(false)
+    expect([...durableStore.values()].some((v) => v.includes('beefB64'))).toBe(false)
   })
 })
 
@@ -465,6 +446,7 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
 describe('keeping a proven lineage for the next send', () => {
   beforeEach(() => {
     durableStore.clear()
+    resetProvenCacheForTests()
     clearRememberedProvenanceRemittances()
   })
 
@@ -529,25 +511,9 @@ describe('keeping a proven lineage for the next send', () => {
     expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
   })
 
-  it('reloads a kept remittance from durable storage after a cold start', async () => {
-    const { provenance, held } = buildV2Fixture()
-    rememberProvenLineage({
-      tipOutpoint: provenance.tip,
-      origin: provenance.origin,
-      path: provenance.path,
-      beef: bytesOf(provenance.beefB64),
-    })
-
-    rebindOneSatProvenanceForAccount() // Flush the optimisation cache before simulating reload.
-    vi.resetModules()
-    const fresh = await import('./oneSatProvenance')
-    const found = fresh.getRememberedProvenanceRemittance(provenance.tip)
-    expect(found).not.toBeNull()
-    expect(fresh.verifyProvenanceV2(found, held).proven).toBe(true)
-    fresh.clearRememberedProvenanceRemittances()
-  })
-
-  it('rebinds remittance memory without deleting the prior account', () => {
+  // Only the outcome outlives the session: the verdict with its proven path,
+  // which a send replays. The proof itself is never persisted.
+  it('keeps the proven path, not the proof, across a cold start', async () => {
     const { provenance } = buildV2Fixture()
     rememberProvenLineage({
       tipOutpoint: provenance.tip,
@@ -555,7 +521,25 @@ describe('keeping a proven lineage for the next send', () => {
       path: provenance.path,
       beef: bytesOf(provenance.beefB64),
     })
-    const primaryKey = accountLocalKey('handcash.brc150.remittance.v1')
+
+    expect([...durableStore.values()].some((v) => v.includes(provenance.beefB64))).toBe(false)
+    vi.resetModules()
+    const fresh = await import('./oneSatProvenance')
+    const { getProvenVerdict } = await import('./provenCache')
+    expect(fresh.getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
+    expect(getProvenVerdict(provenance.tip.replace(/_(\d+)$/, '.$1'))?.path).toEqual(
+      provenance.path.map((p) => p.replace(/_(\d+)$/, '.$1')),
+    )
+  })
+
+  it('drops remittance memory when another account is bound', () => {
+    const { provenance } = buildV2Fixture()
+    rememberProvenLineage({
+      tipOutpoint: provenance.tip,
+      origin: provenance.origin,
+      path: provenance.path,
+      beef: bytesOf(provenance.beefB64),
+    })
 
     bindAccountLocalKeyScope({
       accountIndex: 1,
@@ -564,13 +548,7 @@ describe('keeping a proven lineage for the next send', () => {
     })
     rebindOneSatProvenanceForAccount()
 
-    // The deferred write must land under the account it came from, even though
-    // the scope has already moved by the time we are told to rebind.
     expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
-    expect(durableStore.has(primaryKey)).toBe(true)
-    expect(
-      durableStore.has(accountLocalKey('handcash.brc150.remittance.v1')),
-    ).toBe(false)
   })
 })
 

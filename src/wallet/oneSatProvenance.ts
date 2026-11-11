@@ -15,7 +15,7 @@ import { storageRegistry } from '../storage/registry'
 import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { hasOrdEnvelope } from './ordinalOwnership'
-import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { durableRemoveItem } from './durableStorage'
 import { accountLocalKey } from './accountLocalKeys'
 import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
@@ -653,200 +653,48 @@ export function rememberPeerRemittanceForHeldTips(
   const parsed = parseProvenanceV2(provenance)
   if (!parsed) return
   rememberProvenanceRemittance(parsed)
-  loadDurableRemittances()
   for (const held of heldOutpoints) {
     const key = toUnderscore(held).toLowerCase()
     if (!/^[0-9a-f]{64}_\d+$/i.test(key)) continue
-    remittanceByTip.set(key, parsed)
+    keepRemittance(key, parsed)
   }
 }
 
 /**
- * Session + durable cache of tip-named remittances built by extending a parent
- * proof after item settle (or imported). Avoids re-hydrate on the next send.
+ * Session working set of tip-named proofs: an inbox envelope's, a verification
+ * walk's, or one extended after item settle. Spares the next send a replay.
  *
- * Full `beefB64` is only persisted when it fits a per-entry cap — path + origin
- * always travel so offline detail badges and send rebuilds survive restarts.
+ * Proofs stay in memory, newest few only. What outlives them is the outcome:
+ * `provenCache` keeps the verdict and the proven path, and
+ * `tryBuildProvenanceV2` replays that path when a send needs the proof again.
  */
 const remittanceByTip = new Map<string, ProvenanceV2>()
-const REMITTANCE_DURABLE_KEY = storageRegistry.remittance.key
-const REMITTANCE_DURABLE_MAX_ENTRIES = 800
-/** Optimisation cache gets a bounded share of mobile's 5MB origin store. */
-export const REMITTANCE_DURABLE_MAX_BYTES = 384 * 1024
-/** ~36KB binary — keeps many slim proofs without blowing localStorage. */
-const REMITTANCE_DURABLE_MAX_BEEF_B64 = 48_000
-
-export type StoredRemittance = {
-  tip: string
-  origin: string
-  path: string[]
-  beefB64?: string
-  at: number
-}
-
-let durableRemittanceLoaded = false
-
-function remittanceStorageKey(): string {
-  return accountLocalKey(REMITTANCE_DURABLE_KEY)
-}
-
-export function compactStoredRemittances(
-  source: Record<string, StoredRemittance>,
-): { map: Record<string, StoredRemittance>; body: string; dropped: number } {
-  const newest = Object.entries(source)
-    .filter(([, entry]) => Boolean(entry?.tip && entry.origin && Array.isArray(entry.path)))
-    .sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0))
-    .slice(0, REMITTANCE_DURABLE_MAX_ENTRIES)
-
-  const encode = (count: number) =>
-    JSON.stringify(Object.fromEntries(newest.slice(0, count)))
-
-  // Cache that already fits is the overwhelmingly common case, and each probe
-  // of the search below re-encodes the whole cache. Prove it fits once instead.
-  const full = encode(newest.length)
-  if (full.length <= REMITTANCE_DURABLE_MAX_BYTES) {
-    return {
-      map: Object.fromEntries(newest),
-      body: full,
-      dropped: Object.keys(source).length - newest.length,
-    }
-  }
-
-  let low = 0
-  let high = newest.length
-  let keep = 0
-  let body = '{}'
-  while (low <= high) {
-    const count = Math.floor((low + high) / 2)
-    const candidate = encode(count)
-    if (candidate.length <= REMITTANCE_DURABLE_MAX_BYTES) {
-      keep = count
-      body = candidate
-      low = count + 1
-    } else {
-      high = count - 1
-    }
-  }
-  return {
-    map: Object.fromEntries(newest.slice(0, keep)),
-    body,
-    dropped: Object.keys(source).length - keep,
-  }
-}
-
-function loadDurableRemittances(): void {
-  if (durableRemittanceLoaded) return
-  durableRemittanceLoaded = true
-  try {
-    const raw = durableGetItem(remittanceStorageKey())
-    if (!raw) return
-    const parsed = JSON.parse(raw) as Record<string, StoredRemittance>
-    const compacted = compactStoredRemittances(parsed)
-    for (const entry of Object.values(compacted.map)) {
-      if (!entry?.tip || !entry.origin || !Array.isArray(entry.path)) continue
-      const tip = toUnderscore(entry.tip).toLowerCase()
-      if (remittanceByTip.has(tip)) continue
-      remittanceByTip.set(tip, {
-        v: 2,
-        tip,
-        origin: toUnderscore(entry.origin).toLowerCase(),
-        path: entry.path.map((x) => toUnderscore(x).toLowerCase()),
-        beefB64: entry.beefB64 ?? '',
-      })
-    }
-    if (compacted.dropped > 0) {
-      durableSetItem(remittanceStorageKey(), compacted.body)
-      console.info(
-        `[brc150] dropped ${compacted.dropped} oldest cached remittance(s) to keep durable cache under ${Math.round(
-          REMITTANCE_DURABLE_MAX_BYTES / 1024,
-        )}KB`,
-      )
-    }
-  } catch {
-    // Optimisation only.
-  }
-}
-
+/** Each proof runs to ~400k characters at the wire cap. */
+export const REMITTANCE_SESSION_MAX_ENTRIES = 32
 /**
- * Working copy of the durable cache. Ingest persists one remittance per tip,
- * and re-reading plus re-encoding the whole cache on each of those turned a
- * basket walk into quadratic work against a blob allowed to reach 384KB.
+ * Proof cache earlier releases kept in synchronous durable storage (up to
+ * 384KB per account, read and rewritten on the UI thread). Only reclaimed.
  */
-let durableRemittanceMap: Record<string, StoredRemittance> | null = null
-/**
- * Account key the working map was read from. A deferred write must land under
- * the account it belongs to, and callers rebind the scope *before* telling us
- * about it, so the current key is not a safe target for a pending flush.
- */
-let durableRemittanceKey: string | null = null
-let durableRemittanceFlush: ReturnType<typeof setTimeout> | null = null
+const RETIRED_REMITTANCE_KEY = storageRegistry.remittance.key
+let retiredRemittancesReclaimed = false
 
-function durableRemittanceWorkingMap(): Record<string, StoredRemittance> {
-  const key = remittanceStorageKey()
-  if (durableRemittanceMap && durableRemittanceKey === key) {
-    return durableRemittanceMap
-  }
-  flushDurableRemittances()
+function reclaimRetiredRemittances(): void {
+  if (retiredRemittancesReclaimed) return
+  retiredRemittancesReclaimed = true
   try {
-    const raw = durableGetItem(key)
-    durableRemittanceMap = raw
-      ? (JSON.parse(raw) as Record<string, StoredRemittance>)
-      : {}
+    durableRemoveItem(accountLocalKey(RETIRED_REMITTANCE_KEY))
   } catch {
-    durableRemittanceMap = {}
-  }
-  durableRemittanceKey = key
-  return durableRemittanceMap
-}
-
-/**
- * Write the cache back once the current burst of tips is done. This is an
- * optimisation cache — every reader falls back to rebuilding the proof — so
- * trading immediate durability for one write per burst is safe.
- */
-function scheduleDurableRemittanceFlush(): void {
-  if (durableRemittanceFlush != null) return
-  durableRemittanceFlush = setTimeout(() => {
-    durableRemittanceFlush = null
-    flushDurableRemittances()
-  }, 0)
-}
-
-function flushDurableRemittances(): void {
-  const map = durableRemittanceMap
-  const key = durableRemittanceKey
-  if (durableRemittanceFlush != null) {
-    clearTimeout(durableRemittanceFlush)
-    durableRemittanceFlush = null
-  }
-  if (!map || !key) return
-  try {
-    const compacted = compactStoredRemittances(map)
-    durableRemittanceMap = compacted.map
-    durableSetItem(key, compacted.body)
-  } catch {
-    // Optimisation only.
+    // Reclaim only.
   }
 }
 
-function persistDurableRemittance(p: ProvenanceV2): void {
-  try {
-    const map = durableRemittanceWorkingMap()
-    const tip = toUnderscore(p.tip).toLowerCase()
-    const beefB64 =
-      p.beefB64 && p.beefB64.length <= REMITTANCE_DURABLE_MAX_BEEF_B64
-        ? p.beefB64
-        : undefined
-    map[tip] = {
-      tip,
-      origin: p.origin,
-      path: p.path,
-      ...(beefB64 ? { beefB64 } : {}),
-      at: Date.now(),
-    }
-    scheduleDurableRemittanceFlush()
-  } catch {
-    // Optimisation only.
+function keepRemittance(tip: string, p: ProvenanceV2): void {
+  remittanceByTip.delete(tip)
+  remittanceByTip.set(tip, p)
+  while (remittanceByTip.size > REMITTANCE_SESSION_MAX_ENTRIES) {
+    const oldest = remittanceByTip.keys().next().value
+    if (oldest === undefined) break
+    remittanceByTip.delete(oldest)
   }
 }
 
@@ -865,7 +713,7 @@ function syncProvenPathFromRemittance(p: ProvenanceV2): void {
 }
 
 export function rememberProvenanceRemittance(p: ProvenanceV2): void {
-  loadDurableRemittances()
+  reclaimRetiredRemittances()
   const tip = toUnderscore(p.tip).toLowerCase()
   const normalized: ProvenanceV2 = {
     ...p,
@@ -873,44 +721,41 @@ export function rememberProvenanceRemittance(p: ProvenanceV2): void {
     origin: toUnderscore(p.origin).toLowerCase(),
     path: p.path.map((x) => toUnderscore(x).toLowerCase()),
   }
-  remittanceByTip.set(tip, normalized)
-  persistDurableRemittance(normalized)
+  keepRemittance(tip, normalized)
   syncProvenPathFromRemittance(normalized)
 }
 
 export function getRememberedProvenanceRemittance(
   tipOutpoint: string,
 ): ProvenanceV2 | null {
-  loadDurableRemittances()
+  reclaimRetiredRemittances()
   return remittanceByTip.get(toUnderscore(tipOutpoint).toLowerCase()) ?? null
+}
+
+/**
+ * The proof a send attaches for a tip this device proved: the session copy,
+ * else a replay of the verdict's proven path. Never a lineage walk.
+ */
+export async function provenanceForProvenTip(args: {
+  tipOutpoint: string
+  origin: string
+  wallet: ActiveWallet
+  inputBeef?: number[]
+}): Promise<ProvenanceV2 | null> {
+  const remembered = getRememberedProvenanceRemittance(args.tipOutpoint)
+  if (remembered?.beefB64) return remembered
+  return tryBuildProvenanceV2({ ...args, trustProven: true })
 }
 
 /** Drop account-owned memory before reading the newly bound account. */
 export function rebindOneSatProvenanceForAccount(): void {
-  // Writes back under the key the map came from, not the freshly bound one.
-  flushDurableRemittances()
   remittanceByTip.clear()
-  durableRemittanceMap = null
-  durableRemittanceKey = null
-  durableRemittanceLoaded = false
+  retiredRemittancesReclaimed = false
 }
 
 /** Test / explicit wipe helper. */
 export function clearRememberedProvenanceRemittances(): void {
-  // Drop the working copy first so the rebind has nothing to flush back over
-  // the key we are about to remove.
-  if (durableRemittanceFlush != null) {
-    clearTimeout(durableRemittanceFlush)
-    durableRemittanceFlush = null
-  }
-  durableRemittanceMap = null
-  durableRemittanceKey = null
   rebindOneSatProvenanceForAccount()
-  try {
-    durableRemoveItem(remittanceStorageKey())
-  } catch {
-    // Optimisation only.
-  }
 }
 
 /** Largest assembled lineage that still fits a remittance, in bytes. */
