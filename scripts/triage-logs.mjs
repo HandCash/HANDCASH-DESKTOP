@@ -50,18 +50,40 @@ const LOG_BASE = 'https://brc-cloud.bcryderman.workers.dev/v1/logs'
 
 const DASHBOARD_VERDICTS = 'https://brc-cloud.bcryderman.workers.dev/logs-dashboard/api/verdicts'
 
-/** The environment first, then this repo's .env, then the HandCash workspace .env one level up. */
+/** A git worktree has no .env of its own; its `.git` file points into the main checkout. */
+function mainCheckout() {
+  try {
+    const hit = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(path.join(root, '.git'), 'utf8'))
+    return hit ? path.resolve(hit[1].trim(), '..', '..', '..') : null
+  } catch {
+    return null
+  }
+}
+
+/** The environment first, then this checkout's .env, the main checkout's, then the HandCash workspace .env. */
 function envSecret(names) {
   for (const name of names) {
     if (process.env[name]?.trim()) return process.env[name].trim()
   }
-  for (const envFile of [path.join(root, '.env'), path.join(root, '..', '.env')]) {
+  const main = mainCheckout()
+  const dirs = [root, main, path.join(root, '..'), main && path.join(main, '..')].filter(Boolean)
+  for (const envFile of dirs.map((dir) => path.join(dir, '.env'))) {
     if (!fs.existsSync(envFile)) continue
     const env = fs.readFileSync(envFile, 'utf8')
-    const hit = env.match(new RegExp(`^\\s*(?:${names.join('|')})\\s*=\\s*(.+)$`, 'm'))
+    const hit = env.match(new RegExp(`^\\s*(?:export\\s+)?(?:${names.join('|')})\\s*=\\s*(.+)$`, 'm'))
     if (hit) return hit[1].trim().replace(/^["']|["']$/g, '')
   }
   return null
+}
+
+/** Where envSecret looked, for a missing-secret error that says which files exist. */
+function envFilesChecked() {
+  const main = mainCheckout()
+  return [root, main, path.join(root, '..'), main && path.join(main, '..')]
+    .filter(Boolean)
+    .map((dir) => path.join(dir, '.env'))
+    .map((file) => `${file}${fs.existsSync(file) ? '' : ' (missing)'}`)
+    .join(', ')
 }
 
 function jevApiKey() {
@@ -73,7 +95,7 @@ function jevApiKey() {
 /** The live dashboard's Jev verdicts — already distilled, no Jev call here. */
 async function fetchVerdicts({ bucket, limit, json, all }) {
   const token = envSecret(['LOG_DASHBOARD_READ_TOKEN'])
-  if (!token) throw new Error('LOG_DASHBOARD_READ_TOKEN is not set (env or HANDCASH-DESKTOP/.env)')
+  if (!token) throw new Error(`LOG_DASHBOARD_READ_TOKEN is not set (environment or ${envFilesChecked()})`)
   const url = new URL(DASHBOARD_VERDICTS)
   if (bucket) url.searchParams.set('bucket', bucket)
   if (limit) url.searchParams.set('limit', String(limit))
