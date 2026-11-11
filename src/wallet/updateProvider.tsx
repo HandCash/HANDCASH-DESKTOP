@@ -15,6 +15,7 @@ import {
 } from '../machines/updateMachine'
 import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { thinShellReleaseUpdater, type ReleaseUpdater } from './desktopReleaseUpdate'
 
 const MODE_KEY = 'handcash.update.mode'
 
@@ -31,6 +32,14 @@ type UpdateApi = {
 }
 
 const UpdateCtx = createContext<UpdateApi | null>(null)
+
+type ShellUpdater = Partial<ReleaseUpdater> & {
+  getAppInfo?: () => Promise<{ version: string }>
+}
+
+function updater(): ShellUpdater | undefined {
+  return thinShellReleaseUpdater() ?? window.handcash
+}
 
 function readStoredMode(): UpdateMode | null {
   const raw = durableGetItem(MODE_KEY)
@@ -62,7 +71,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       },
     })
 
-    const api = window.handcash
+    const api = updater()
     if (!api?.getUpdateStatus || !api.onUpdateStatus) {
       void api?.getAppInfo?.().then((info) => {
         const next = contextRef.current
@@ -116,7 +125,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
 
   const check = useCallback(async () => {
     send({ type: 'CHECK' })
-    const api = window.handcash
+    const api = updater()
     if (!api?.checkForUpdates) {
       const ctx = contextRef.current
       send({
@@ -133,15 +142,30 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
       })
       return
     }
-    const status = await api.checkForUpdates()
-    send({ type: 'SYNC', status })
+    try {
+      send({ type: 'SYNC', status: await api.checkForUpdates() })
+    } catch (err) {
+      const ctx = contextRef.current
+      send({
+        type: 'SYNC',
+        status: {
+          phase: 'error',
+          mode: ctx.mode,
+          currentVersion: ctx.currentVersion,
+          availableVersion: null,
+          percent: null,
+          error: err instanceof Error ? err.message : String(err),
+          canInstall: false,
+        },
+      })
+    }
   }, [send])
 
   const setMode = useCallback(
     async (mode: UpdateMode) => {
       durableSetItem(MODE_KEY, mode)
       send({ type: 'SET_MODE', mode })
-      const api = window.handcash
+      const api = updater()
       if (api?.setUpdateMode) {
         const status = await api.setUpdateMode(mode)
         send({ type: 'SYNC', status })
@@ -166,13 +190,13 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
 
   const download = useCallback(async () => {
     send({ type: 'DOWNLOAD' })
-    const status = await window.handcash?.downloadUpdate?.()
+    const status = await updater()?.downloadUpdate?.()
     if (status) send({ type: 'SYNC', status })
   }, [send])
 
   const install = useCallback(async () => {
     send({ type: 'INSTALL' })
-    await window.handcash?.installUpdate?.()
+    await updater()?.installUpdate?.()
   }, [send])
 
   const dismissPrompt = useCallback(() => {

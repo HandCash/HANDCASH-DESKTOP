@@ -13,8 +13,7 @@
     'http-request': new Set(),
     'http-request-cancelled': new Set(),
     'device-peer-http-request': new Set(),
-    'bridge-status': new Set(),
-    'update-status': new Set()
+    'bridge-status': new Set()
   };
 
   function call(method, params) {
@@ -169,24 +168,6 @@
     },
     deviceAuthClear: function () {
       return call('deviceAuthClear');
-    },
-    getUpdateStatus: function () {
-      return call('getUpdateStatus');
-    },
-    checkForUpdates: function () {
-      return call('checkForUpdates');
-    },
-    downloadUpdate: function () {
-      return call('downloadUpdate');
-    },
-    setUpdateMode: function (mode) {
-      return call('setUpdateMode', { mode: mode });
-    },
-    installUpdate: function () {
-      return call('installUpdate');
-    },
-    onUpdateStatus: function (handler) {
-      return subscribe('update-status', handler);
     }
   };
   Object.freeze(window.handcash);

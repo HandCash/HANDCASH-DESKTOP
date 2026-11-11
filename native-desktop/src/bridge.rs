@@ -205,16 +205,6 @@ pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> 
             id,
             value: json!({ "removed": state.store.wipe_all() }),
         },
-        "getUpdateStatus" | "checkForUpdates" | "downloadUpdate" | "setUpdateMode" => {
-            HostReply::Ok {
-                id,
-                value: stub_update_status(),
-            }
-        }
-        "installUpdate" => HostReply::Err {
-            id,
-            error: "auto-update not wired in thin shell".into(),
-        },
         "deviceAuthStatus" => HostReply::Ok {
             id,
             value: device_auth::status(),
@@ -242,19 +232,6 @@ pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> 
             error: format!("stub: {other} not implemented in thin desktop shell"),
         },
     }
-}
-
-/// Matches renderer `UpdateStatus` (idle stub — auto-update not wired yet).
-fn stub_update_status() -> Value {
-    json!({
-        "phase": "idle",
-        "mode": "manual",
-        "currentVersion": env!("CARGO_PKG_VERSION"),
-        "availableVersion": Value::Null,
-        "percent": Value::Null,
-        "error": Value::Null,
-        "canInstall": false,
-    })
 }
 
 pub fn reply_script(reply: &HostReply) -> Option<String> {
