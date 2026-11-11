@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 // Open BSV licence boundary: the BSV SDK / wallet-engine may only be used for BSV.
@@ -24,7 +24,7 @@ function sources(dir: string): string[] {
 describe('BSV SDK import boundary', () => {
   it('keeps @bsv/sdk and wallet-engine out of non-BSV coin modules', () => {
     const offenders = NON_BSV_DIRS.flatMap((d) => sources(join(WALLET, d)))
-      .map((p) => relative(WALLET, p))
+      .map((p) => relative(WALLET, p).split(sep).join('/'))
       .filter((rel) => !ALLOWED.has(rel))
       .filter((rel) => RESTRICTED.test(readFileSync(join(WALLET, rel), 'utf8')))
     expect(offenders).toEqual([])
