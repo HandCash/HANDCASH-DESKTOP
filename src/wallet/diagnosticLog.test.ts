@@ -38,8 +38,9 @@ describe('diagnosticLog', () => {
 
     const lines = appLog.getAppLogs().map((e) => e.message)
     expect(lines.some((line) => line.includes('[spend] test-gate'))).toBe(true)
-    expect(lines.some((line) => line.includes('spendable=[REDACTED]'))).toBe(true)
-    expect(lines.some((line) => line.includes('pendingChange=162767'))).toBe(true)
+    expect(lines.some((line) => line.includes('spendable=[amt]'))).toBe(true)
+    expect(lines.some((line) => line.includes('pendingChange=[amt]'))).toBe(true)
+    expect(lines.some((line) => line.includes('162767'))).toBe(false)
   })
 
   it('logs BRC-100 failures with origin host and code', async () => {
@@ -65,7 +66,8 @@ describe('diagnosticLog', () => {
     expect(line?.message).toContain('method=createAction')
     expect(line?.message).toContain('origin=market.handcash.io')
     expect(line?.message).toContain('code=INSUFFICIENT_OR_STALE_FUNDS')
-    expect(line?.message).toContain('sats=5000')
+    expect(line?.message).toContain('sats=[amt]')
+    expect(line?.message).not.toContain('5000')
   })
 
   /**
