@@ -40,6 +40,7 @@
   "dependencies": {
     "@aeon-ui/core": "workspace:*",
     "@aeon-ui/primitives": "workspace:*",
+    "@tanstack/virtual-core": "3.19.11",
     "@xstate/react": "^6.1.0",
     "xstate": "^5.32.0"
   },

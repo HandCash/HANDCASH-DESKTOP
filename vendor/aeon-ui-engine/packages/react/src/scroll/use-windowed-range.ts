@@ -1,6 +1,5 @@
 import {
   computeListWindow,
-  computeVariableListWindow,
   fullListWindow,
   LIST_WINDOW_MIN_ITEMS,
   LIST_WINDOW_PAD_ATTR,
@@ -9,10 +8,19 @@ import {
   resolveScrollRoot,
   sameListWindow,
   scrollRootExtent,
-  scrollRootScrolledPast,
   type ListWindow,
   type ListWindowAxis,
 } from '@aeon-ui/core'
+import {
+  elementScroll,
+  observeElementOffset,
+  observeWindowOffset,
+  Virtualizer,
+  windowScroll,
+  type Range,
+  type Rect,
+  type VirtualizerOptions,
+} from '@tanstack/virtual-core'
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 export interface UseWindowedRangeOptions {
@@ -33,23 +41,8 @@ export interface UseWindowedRangeOptions {
   step?: number
 }
 
-/** Pitches of one-column rows seen so far, by item index, for one `total`. */
-interface RowSizes {
-  total: number
-  extents: number[]
-  sum: number
-  count: number
-  /**
-   * Pitch for rows not measured yet, fixed from the first rows measured. A
-   * running average moved the spacer over rows a fling skipped on every
-   * measurement, so the content shifted under a scroll still in flight.
-   */
-  estimate: number
-  /** Offset of the first windowed element (start spacer or row) inside the list. */
-  head: number
-}
-
-const emptySizes = (total: number): RowSizes => ({ total, extents: [], sum: 0, count: 0, estimate: 0, head: 0 })
+type Root = HTMLElement | Window
+type RowVirtualizer = Virtualizer<Root, HTMLElement>
 
 function hintedWindow(o: UseWindowedRangeOptions): ListWindow {
   return computeListWindow({
@@ -65,16 +58,53 @@ function hintedWindow(o: UseWindowedRangeOptions): ListWindow {
 }
 
 /**
+ * Rows to mount for a visible range. The end is counted from the lead row's
+ * top, so scrolling within a row keeps the same end, and both edges snap to
+ * multiples of `step`, so a fling re-renders once per step, not per row.
+ */
+function steppedRows(virtualizer: RowVirtualizer, range: Range, viewport: number, step: number): number[] {
+  const rows = virtualizer.measurementsCache
+  const lead = rows[range.startIndex]
+  let last = range.endIndex
+  if (lead) {
+    const bottom = lead.start + viewport
+    last = range.startIndex
+    while (last < range.count - 1 && rows[last]!.end < bottom) last += 1
+  }
+  const start = Math.floor(Math.max(0, range.startIndex - range.overscan) / step) * step
+  const end = Math.min(range.count, Math.ceil((last + 1 + range.overscan) / step) * step)
+  return Array.from({ length: Math.max(0, end - start) }, (_, i) => start + i)
+}
+
+const scrollOffsetOf = (root: Root, axis: ListWindowAxis): number =>
+  root === window
+    ? axis === 'x'
+      ? window.scrollX
+      : window.scrollY
+    : axis === 'x'
+      ? (root as HTMLElement).scrollLeft
+      : (root as HTMLElement).scrollTop
+
+const edgeOf = (root: Root, axis: ListWindowAxis): number => {
+  if (root === window) return 0
+  const rect = (root as HTMLElement).getBoundingClientRect()
+  return axis === 'x' ? rect.left : rect.top
+}
+
+const rectOf = (root: Root): Rect => ({ width: scrollRootExtent(root, 'x'), height: scrollRootExtent(root, 'y') })
+
+/**
  * Windowed slice for long lists and grids. Render `items.slice(start, end)`
  * between spacers of `padStart` / `padEnd` (spread `listWindowPadAttrs`) or
  * as list padding; each row keeps its own data-aeon-* projection.
  *
  * The first render windows from the hints, so a long list never mounts whole.
- * A one-column list measures each mounted row once per window move and sizes
- * its spacers from those heights, so rows of different heights never shift the
- * content above the viewport. Grids share one measured pitch. A scroll frame
- * reads only the scroll offset; the window moves `step` rows at a time and is
- * published only when it moves, so a scroll inside the window renders nothing.
+ * After mount a TanStack virtualizer on the scroll root owns the range: it
+ * follows scroll and resize, keeps every measured row pitch, and finds the
+ * window by binary search. A one-column list measures each mounted row once
+ * per window move; grids window whole rows of one measured pitch. The window
+ * moves `step` rows at a time and is published only when it moves, so a
+ * scroll inside the window renders nothing.
  */
 export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
   const {
@@ -89,15 +119,11 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
     step = Math.max(1, Math.floor(overscan / 2)),
   } = options
   const [range, setRange] = useState<ListWindow>(() => hintedWindow(options))
-  const sizesRef = useRef<RowSizes>(emptySizes(total))
-  const rootRef = useRef<HTMLElement | Window | null>(null)
-  const remeasureRef = useRef<(() => void) | null>(null)
+  const measureRef = useRef<((window: ListWindow) => void) | null>(null)
 
   useLayoutEffect(() => {
     const keep = (next: ListWindow) => setRange((current) => (sameListWindow(current, next) ? current : next))
-    remeasureRef.current = null
-    // Indices shift when the list changes length, so earlier pitches no longer line up.
-    if (sizesRef.current.total !== total) sizesRef.current = emptySizes(total)
+    measureRef.current = null
     if (total < minItems) {
       keep(fullListWindow(total))
       return
@@ -108,148 +134,154 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       return
     }
     const root = resolveScrollRoot(list, axis)
-    rootRef.current = root
-    let frame = 0
-    let cancelled = false
-    let layout: { rowExtent: number; columns: number } | null = null
-    let published: ListWindow | null = null
+    const horizontal = axis === 'x'
+    const columnsOf = (style: CSSStyleDeclaration) => (horizontal ? 1 : measureListColumns(style, columns))
+    let style = getComputedStyle(list)
+    let cols = columnsOf(style)
+    let pitch = measureListRowExtent(list, style, itemExtent, rowSelector, axis)
+    // Pitch for rows not measured yet, fixed from the first rows measured. A
+    // running average moved the spacer over rows a fling skipped on every
+    // measurement, so the content shifted under a scroll still in flight.
+    let estimate = 0
+    let width = list.clientWidth
+    let reportOffset: ((offset: number, isScrolling: boolean) => void) | null = null
 
-    const readLayout = () => {
-      if (layout) return layout
-      const style = getComputedStyle(list)
-      const rowExtent = measureListRowExtent(list, style, itemExtent, rowSelector, axis)
-      const next = { rowExtent, columns: axis === 'x' ? 1 : measureListColumns(style, columns) }
-      // The hint stands in until a real row has mounted; measure again then.
-      if (rowExtent !== itemExtent) layout = next
-      return next
+    const optionsFor = (scrollMargin: number): VirtualizerOptions<Root, HTMLElement> => ({
+      count: cols === 1 ? total : Math.ceil(total / cols),
+      getScrollElement: () => root,
+      estimateSize: () => (cols === 1 && estimate) || pitch,
+      horizontal,
+      overscan,
+      scrollMargin,
+      rangeExtractor: (visible) => steppedRows(virtualizer, visible, scrollRootExtent(root, axis), step),
+      initialOffset: () => scrollOffsetOf(root, axis),
+      initialRect: rectOf(root),
+      observeElementRect: (_instance, onRect) => {
+        const read = () => {
+          // Row heights follow the list's width. A list shown again (0 → its
+          // size) keeps them and only re-windows: no scroll event announces it,
+          // and its offset only comes back with the box.
+          const next = list.clientWidth
+          if (next > 0 && width > 0 && next !== width) relayout()
+          if (next > 0) width = next
+          reportOffset?.(scrollOffsetOf(root, axis), false)
+          onRect(rectOf(root))
+        }
+        read()
+        if (root === window) {
+          window.addEventListener('resize', read, { passive: true })
+          return () => window.removeEventListener('resize', read)
+        }
+        if (typeof ResizeObserver === 'undefined') return
+        const observer = new ResizeObserver(read)
+        observer.observe(root as HTMLElement)
+        return () => observer.disconnect()
+      },
+      observeElementOffset: (instance, onOffset) => {
+        reportOffset = onOffset
+        return root === window
+          ? observeWindowOffset(instance as unknown as Virtualizer<Window, HTMLElement>, onOffset)
+          : observeElementOffset(instance as unknown as Virtualizer<HTMLElement, HTMLElement>, onOffset)
+      },
+      scrollToFn: (offset, write, instance) =>
+        root === window
+          ? windowScroll(offset, write, instance as unknown as Virtualizer<Window, HTMLElement>)
+          : elementScroll(offset, write, instance as unknown as Virtualizer<HTMLElement, HTMLElement>),
+      onChange: () => publish(),
+    })
+
+    const virtualizer: RowVirtualizer = new Virtualizer(
+      optionsFor(root === list ? 0 : scrollOffsetOf(root, axis) + edgeOf(list, axis) - edgeOf(root, axis)),
+    )
+    // Spacers sit in flow, so the browser's scroll anchoring already holds the
+    // rows in view when one above changes size; a second correction written to
+    // scrollTop would double it and stop a fling.
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false
+
+    function relayout() {
+      estimate = 0
+      style = getComputedStyle(list!)
+      cols = columnsOf(style)
+      pitch = measureListRowExtent(list!, style, itemExtent, rowSelector, axis)
+      virtualizer.setOptions(optionsFor(virtualizer.options.scrollMargin))
+      virtualizer.measure()
     }
 
-    const measureNow = () => {
-      const { rowExtent, columns: cols } = readLayout()
-      const viewportHeight = scrollRootExtent(root, axis)
+    function publish() {
       // A hidden list (a keep-alive tab) has no viewport; keep its window for when it shows.
-      if (viewportHeight <= 0) return
-      const scrolledPast = scrollRootScrolledPast(root, list, axis)
-      const sizes = sizesRef.current
-      const next =
-        cols === 1
-          ? computeVariableListWindow({
-              total,
-              extents: sizes.extents,
-              estimate: sizes.estimate || rowExtent,
-              overscan,
-              scrolledPast: scrolledPast - sizes.head,
-              viewportHeight,
-              minItems,
-              step,
-            })
-          : computeListWindow({
-              total,
-              rowExtent,
-              columns: cols,
-              overscan,
-              scrolledPast,
-              viewportHeight,
-              minItems,
-              step,
-            })
-      if (published && sameListWindow(published, next)) return
-      // New grid rows mount with this window; their pitch is read on the next move.
-      if (published && cols !== 1) layout = null
-      published = next
-      keep(next)
-    }
-    remeasureRef.current = measureNow
-
-    const schedule = () => {
-      if (cancelled || frame) return
-      frame = window.requestAnimationFrame(() => {
-        frame = 0
-        if (!cancelled) measureNow()
+      if (scrollRootExtent(root, axis) <= 0) return
+      const rows = virtualizer.getVirtualItems()
+      const first = rows[0]
+      const last = rows[rows.length - 1]
+      if (!first || !last) return
+      const margin = virtualizer.options.scrollMargin
+      keep({
+        start: first.index * cols,
+        end: Math.min(total, (last.index + 1) * cols),
+        padStart: first.start - margin,
+        padEnd: Math.max(0, virtualizer.getTotalSize() - (last.end - margin)),
       })
     }
-    const onResize = () => {
-      layout = null
-      sizesRef.current = emptySizes(total)
-      schedule()
-    }
-    // Row heights follow the list's width. A list shown again (0 → its size)
-    // keeps them and only re-windows: no scroll event announces that.
-    let width = list.clientWidth
-    const observer =
-      root !== window && typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => {
-            const next = list.clientWidth
-            if (next > 0 && width > 0 && next !== width) onResize()
-            else schedule()
-            if (next > 0) width = next
-          })
-        : null
-    observer?.observe(root as HTMLElement)
 
-    measureNow()
-    const target: EventTarget = root === window ? window : root
-    target.addEventListener('scroll', schedule, { passive: true })
-    window.addEventListener('resize', onResize)
+    // Once per window move: where the rows begin, and the pitch of every mounted row of a one-column list.
+    measureRef.current = (shown) => {
+      const listRect = list.getBoundingClientRect()
+      if ((horizontal ? listRect.width : listRect.height) <= 0) return
+      style = getComputedStyle(list)
+      if (
+        columnsOf(style) !== cols ||
+        (cols !== 1 && Math.abs(measureListRowExtent(list, style, pitch, rowSelector, axis) - pitch) > 0.5)
+      ) {
+        relayout()
+        return
+      }
+      const gap = Number.parseFloat(horizontal ? style.columnGap : style.rowGap)
+      const gapPx = Number.isFinite(gap) ? gap : 0
+      const pitches: Array<[number, number]> = []
+      let head: number | null = null
+      let index = shown.start
+      for (const node of Array.from(list.children)) {
+        if (!(node instanceof HTMLElement)) continue
+        const pad = node.getAttribute(LIST_WINDOW_PAD_ATTR)
+        if (pad === 'end' || index >= shown.end) break
+        const isRow = !pad && (!rowSelector || node.matches(rowSelector))
+        if (pad !== 'start' && !isRow) continue
+        const rect = node.getBoundingClientRect()
+        if (head === null) head = horizontal ? rect.left : rect.top
+        if (!isRow) continue
+        if (cols !== 1) break
+        const size = horizontal ? rect.width : rect.height
+        if (size > 0) pitches.push([index, size + gapPx])
+        index += 1
+      }
+      let moved = false
+      if (head !== null) {
+        const margin = scrollOffsetOf(root, axis) + head - edgeOf(root, axis)
+        if (Math.abs(margin - virtualizer.options.scrollMargin) > 0.5) {
+          virtualizer.setOptions(optionsFor(margin))
+          moved = true
+        }
+      }
+      if (!estimate && pitches.length > 0) {
+        estimate = pitches.reduce((sum, [, size]) => sum + size, 0) / pitches.length
+        virtualizer.measure()
+      }
+      for (const [row, size] of pitches) virtualizer.resizeItem(row, size)
+      if (moved) publish()
+    }
+
+    const unmount = virtualizer._didMount()
+    virtualizer._willUpdate()
+    publish()
     return () => {
-      cancelled = true
-      remeasureRef.current = null
-      window.cancelAnimationFrame(frame)
-      observer?.disconnect()
-      target.removeEventListener('scroll', schedule)
-      window.removeEventListener('resize', onResize)
+      measureRef.current = null
+      unmount()
     }
   }, [total, itemExtent, columns, overscan, rowSelector, minItems, axis, scrollRef, step])
 
-  // Once per window move: record the pitch of every mounted row of a one-column list.
   useLayoutEffect(() => {
-    const list = scrollRef.current
-    const root = rootRef.current
-    const sizes = sizesRef.current
-    if (!list || !root || total < minItems || sizes.total !== total) return
-    const style = getComputedStyle(list)
-    if (axis === 'y' && measureListColumns(style, columns) !== 1) return
-    const listRect = list.getBoundingClientRect()
-    if ((axis === 'x' ? listRect.width : listRect.height) <= 0) return
-    const gap = Number.parseFloat(axis === 'x' ? style.columnGap : style.rowGap)
-    const gapPx = Number.isFinite(gap) ? gap : 0
-    const scrolled = root === list ? (axis === 'x' ? list.scrollLeft : list.scrollTop) : 0
-    let index = range.start
-    let head: number | null = null
-    let changed = false
-    for (const node of Array.from(list.children)) {
-      if (!(node instanceof HTMLElement)) continue
-      const pad = node.getAttribute(LIST_WINDOW_PAD_ATTR)
-      if (pad === 'end' || index >= range.end) break
-      const isRow = !pad && (!rowSelector || node.matches(rowSelector))
-      if (pad !== 'start' && !isRow) continue
-      const rect = node.getBoundingClientRect()
-      if (head === null) head = (axis === 'x' ? rect.left - listRect.left : rect.top - listRect.top) + scrolled
-      if (!isRow) continue
-      const size = axis === 'x' ? rect.width : rect.height
-      if (size > 0) {
-        const extent = size + gapPx
-        const before = sizes.extents[index]
-        if (before === undefined || Math.abs(before - extent) > 0.5) {
-          if (before === undefined) sizes.count += 1
-          else sizes.sum -= before
-          sizes.extents[index] = extent
-          sizes.sum += extent
-          changed = true
-        }
-      }
-      index += 1
-    }
-    if (!sizes.estimate && sizes.count > 0) {
-      sizes.estimate = sizes.sum / sizes.count
-      changed = true
-    }
-    if (head !== null && Math.abs(head - sizes.head) > 0.5) {
-      sizes.head = head
-      changed = true
-    }
-    if (changed) remeasureRef.current?.()
-  }, [range, total, minItems, columns, rowSelector, axis, scrollRef])
+    measureRef.current?.(range)
+  }, [range])
 
   return range
 }
