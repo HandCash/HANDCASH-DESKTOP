@@ -3,7 +3,7 @@
  */
 
 export { shouldAttachDeferredSrc } from './attachSrc'
-export { useScrollIdle } from './useScrollIdle'
+export { useReportFeedScroll, useScrollIdle } from './useScrollIdle'
 export {
   feedIsScrolling,
   noteFeedScroll,

@@ -13,7 +13,7 @@ import { ProfileFingerprint, SignerFingerprint } from './ProfileIdenticon'
 import { IssuerTrustBadge, issuerTrustNote, issuerViewState } from './IssuerIdentityMark'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
-import { useScrollIdle } from './uiFeed/useScrollIdle'
+import { useReportFeedScroll } from './uiFeed/useScrollIdle'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -327,7 +327,7 @@ function CollectableItems({
   const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
   const columns = compact ? GRID_COLUMNS_COMPACT : GRID_COLUMNS
   const listRef = useRef<HTMLUListElement>(null)
-  useScrollIdle(listRef)
+  useReportFeedScroll(listRef)
   const windowed = useWindowedRange({
     total: items.length,
     itemExtent: view === 'grid' ? GRID_ROW_EXTENT : 56,

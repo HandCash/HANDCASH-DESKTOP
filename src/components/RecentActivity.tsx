@@ -11,6 +11,7 @@ import { useBrc29NoticeDelivery } from '../hooks/useBrc29NoticeDelivery'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
 
 import {
+  memo,
   useEffect,
   useMemo,
   useRef,
@@ -42,7 +43,7 @@ import {
   WarningIcon,
 } from "./icons";
 import { DeferredImage } from "./DeferredImage";
-import { useScrollIdle } from "./uiFeed/useScrollIdle";
+import { useReportFeedScroll } from "./uiFeed/useScrollIdle";
 import { listWindowPadAttrs } from "@aeon-ui/core";
 import { useWindowedRange } from "@aeon-ui/react";
 import { CollectableVerifyMark } from "./CollectableVerifyMark";
@@ -563,6 +564,11 @@ function HistoryRow({
   assets?: readonly ActivityEntry[];
   /** Set when the transaction moved several collectables at once. */
   batch?: ActivityBatch | null;
+  /**
+   * Feed repaint generation. The row reads item, app and tx caches during
+   * render, so a cache move must reach it past `memo` without new row props.
+   */
+  paint?: number;
 }) {
   const spent = entry.kind === "spent";
   const event = isEventActivity(entry);
@@ -886,7 +892,7 @@ function useActivityFeed(limit: number) {
   );
   // Rows read item, app and tx caches at paint. When those move but the rows
   // did not, repaint the rows without recomposing the feed.
-  const [, setRepaint] = useState(0);
+  const [paint, setRepaint] = useState(0);
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), []);
   useEffect(() => subscribeDisplayCurrency(setCurrency), []);
@@ -970,8 +976,11 @@ function useActivityFeed(limit: number) {
     useMemo(() => mergeLiveActions(entries, live), [entries, live])
   );
 
-  return { entries: merged, live, usdPerBsv, currency, origins };
+  return { entries: merged, live, usdPerBsv, currency, origins, paint };
 }
+
+/** Scrolling shifts the window; rows that stay in it must not re-render. */
+const FeedHistoryRow = memo(HistoryRow);
 
 /**
  * Keep newest rows in view when the feed is at its default (top) scroll.
@@ -1102,7 +1111,7 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const headRef = useRef<HTMLDivElement | null>(null);
-  const { entries, live, usdPerBsv, currency, origins } = useActivityFeed(
+  const { entries, live, usdPerBsv, currency, origins, paint } = useActivityFeed(
     ACTIVITY_COMPOSE_WINDOW,
   );
   const coinPrices = useCoinPrices();
@@ -1123,7 +1132,7 @@ export function ActivityFeed({
     peekPhraseItemMigrateCursor()
   );
   const listRef = useRef<HTMLUListElement>(null);
-  useScrollIdle(listRef);
+  useReportFeedScroll(listRef);
   useEffect(() => subscribeVerificationProgress(setVerification), []);
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), []);
   const visiblePhraseImport = phraseImportBelongsToWallet(
@@ -1395,9 +1404,10 @@ export function ActivityFeed({
             />
           )
         ) : (
-          <HistoryRow
+          <FeedHistoryRow
             key={recordKeys[windowed.start + index] ?? record.key}
             rowKey={recordKeys[windowed.start + index] ?? record.key}
+            paint={paint}
             entry={record.subject}
             live={liveActionForEntry(record.subject, live)}
             amountEntry={record.money}

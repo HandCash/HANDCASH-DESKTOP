@@ -18,7 +18,16 @@ export function useScrollIdle(ref: RefObject<HTMLElement | null>): boolean {
   const [scrolling, setScrolling] = useState(feedIsScrolling)
 
   useEffect(() => subscribeFeedScroll(setScrolling), [])
+  useReportFeedScroll(ref)
 
+  return scrolling
+}
+
+/**
+ * Reports the feed's scrolls to `scrollActivity` without re-rendering its
+ * caller. A list that does not read the flag must not commit twice per fling.
+ */
+export function useReportFeedScroll(ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -32,6 +41,4 @@ export function useScrollIdle(ref: RefObject<HTMLElement | null>): boolean {
       forgetFeedScrollRoot(marked)
     }
   }, [ref])
-
-  return scrolling
 }

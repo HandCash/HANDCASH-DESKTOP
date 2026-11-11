@@ -37,7 +37,7 @@ import { SelectionCheckbox } from '../SelectionCheckbox'
 import { Skeleton, SkeletonLine } from '../Skeleton'
 import { useWalletActionDock } from '../WalletActionDock'
 import { CloseIcon, CollectablesIcon, DownloadIcon, ExpandMoreIcon } from '../icons'
-import { useScrollIdle } from '../uiFeed/useScrollIdle'
+import { useReportFeedScroll } from '../uiFeed/useScrollIdle'
 import { SearchField } from '../SearchField'
 
 const PORTS: ImportItemPorts = {
@@ -268,7 +268,7 @@ function ImportItems({
   onMore: () => void
 }) {
   const listRef = useRef<HTMLUListElement>(null)
-  useScrollIdle(listRef)
+  useReportFeedScroll(listRef)
   const perRow = view === 'grid' ? columns : 1
   const windowed = useWindowedRange({
     total: items.length,
