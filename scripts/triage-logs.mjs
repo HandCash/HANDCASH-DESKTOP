@@ -6,7 +6,10 @@
  *   node scripts/triage-logs.mjs desktop-local        # this machine, no upload
  *   node scripts/triage-logs.mjs --file <session.log> # any saved upload / ring
  *   node scripts/triage-logs.mjs recent [--limit N] [--json]
- *     # newest support tickets (manual uploads) from every device, new buckets included
+ *     # newest support tickets from every device: pressing Upload opens one in
+ *     # BRC-CLOUD D1. Read with this machine's `wrangler login`, no token.
+ *   node scripts/triage-logs.mjs T-XXXXXXXX [--state] [--json]
+ *     # triage the log a ticket names (R2, same login)
  *   node scripts/triage-logs.mjs verdicts [device] [--limit N] [--json] [--all]
  *     # the live dashboard's stored Jev verdicts (LOG_DASHBOARD_READ_TOKEN)
  *
@@ -25,6 +28,7 @@
  *
  * Needs JEV_API_KEY (read from .env or the environment).
  */
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -105,6 +109,66 @@ async function fetchVerdicts({ bucket, limit, json, all }) {
   const body = await res.text()
   if (!res.ok) throw new Error(`verdicts ${res.status}: ${body.slice(0, 200)}`)
   return json ? JSON.stringify(JSON.parse(body), null, 2) : body
+}
+
+const D1_DATABASE = 'brc-cloud'
+const R2_BUCKET = 'brc-cloud-blobs'
+const TICKET_ID = /^T-[0-9A-F]{8}$/
+
+function wrangler(args) {
+  try {
+    return execFileSync('npx', ['--yes', 'wrangler', ...args], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch (error) {
+    const why = String(error.stderr || error.stdout || error.message).trim().split('\n').slice(-3).join(' ')
+    throw new Error(`wrangler ${args.slice(0, 2).join(' ')} failed (run \`npx wrangler login\`): ${why}`)
+  }
+}
+
+function d1(sql) {
+  return JSON.parse(wrangler(['d1', 'execute', D1_DATABASE, '--remote', '--json', '--command', sql]))[0].results
+}
+
+const TICKET_COLUMNS = `t.id, t.name, t.platform, t.app_version AS version, t.subject, t.status, t.created_at AS createdAt,
+  (SELECT body FROM support_messages m WHERE m.ticket_id = t.id ORDER BY m.id LIMIT 1) AS first`
+
+/** A log ticket's first message is `log <r2 key>`; email tickets have none. */
+function ticketLogKey(ticket) {
+  return /^log (logs\/\S+)$/m.exec(ticket.first ?? '')?.[1] ?? null
+}
+
+function recentTickets(limit, json) {
+  const rows = d1(`SELECT ${TICKET_COLUMNS} FROM support_tickets t ORDER BY t.created_at DESC LIMIT ${Math.max(1, Math.min(200, limit | 0))}`)
+  const tickets = rows.map(({ first, ...t }) => ({ ...t, log: ticketLogKey({ first }) }))
+  if (json) return `${JSON.stringify(tickets, null, 2)}\n`
+  if (tickets.length === 0) return 'No support tickets yet.\n'
+  const device = (bucket) => Object.entries(KNOWN_BUCKETS).find(([, b]) => b === bucket)?.[0] ?? bucket
+  return `${tickets
+    .map((t) => {
+      const when = new Date(t.createdAt).toISOString().replace('T', ' ').slice(0, 16)
+      const what = t.log ? `log from ${device(t.name)} · npm run triage ${t.id}` : t.subject
+      return `${t.id}  ${when}Z  ${t.platform || '-'} ${t.version || '-'}  ${t.status}  ${what}`
+    })
+    .join('\n')}\n`
+}
+
+/** The ticket's log as `/latest` would serve it, header included. */
+function ticketLog(id) {
+  const ticket = d1(`SELECT ${TICKET_COLUMNS} FROM support_tickets t WHERE t.id = '${id}'`)[0]
+  if (!ticket) throw new Error(`no ticket ${id}`)
+  const key = ticketLogKey(ticket)
+  if (!key) throw new Error(`${id} is an email ticket with no log: ${ticket.subject}`)
+  const body = wrangler(['r2', 'object', 'get', `${R2_BUCKET}/${key}`, '--remote', '--pipe'])
+  const header = [
+    `# ${key.split('/').pop()}`,
+    `# uploaded ${new Date(ticket.createdAt).toISOString()}`,
+    `# version ${ticket.version || 'unknown'} · platform ${ticket.platform || 'unknown'}`,
+    '',
+  ].join('\n')
+  return header + body
 }
 
 async function fetchLogs(bucket, all) {
@@ -1035,7 +1099,10 @@ const positional = args.filter(
 const bucketArg = positional[0] ?? 'android'
 
 if (bucketArg === 'recent') {
-  process.stdout.write(await fetchVerdicts({ limit: limitArg ?? 5, json: flags.has('--json'), all: flags.has('--all') }))
+  process.stdout.write(recentTickets(limitArg ?? 10, flags.has('--json')))
+  if (envSecret(['LOG_DASHBOARD_READ_TOKEN']) && !flags.has('--json')) {
+    process.stdout.write(`\nDashboard verdicts:\n${await fetchVerdicts({ limit: limitArg ?? 5, all: flags.has('--all') })}`)
+  }
   process.exit(0)
 }
 
@@ -1098,6 +1165,8 @@ if (filePath) {
     latest.bridge = bridgeFacts(parseElectronLog(fs.readFileSync(paths.mainLog, 'utf8')))
   }
   latest.ledger = ledgerFacts(paths.prefs)
+} else if (TICKET_ID.test(bucketArg)) {
+  latest = parseSession(splitUploads(ticketLog(bucketArg))[0])
 } else {
   const bucket = KNOWN_BUCKETS[bucketArg] ?? bucketArg
   // `/all` is what makes "is this new?" answerable, so compare by default.

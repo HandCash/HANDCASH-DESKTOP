@@ -44,8 +44,14 @@ Object `LogDashboard`), `logDashboardApp.js`.
 
 ### Reading the dashboard from Cursor
 
+Every manual upload also opens a row in BRC-CLOUD D1 `support_tickets` (id
+`T-XXXXXXXX`, name = bucket, first message `log <R2 key>`), capped at 6 per
+bucket per hour and 200 a day. `recent` and `triage T-…` read D1 and R2 with
+this machine's `wrangler login`, so they need no token or `.env`.
+
 ```bash
-npm run triage recent                   # newest 5 support tickets, every device incl. new installs
+npm run triage recent                   # newest 10 support tickets (D1), every device incl. new installs
+npm run triage T-CF432A9D -- --state    # facts from the log that ticket names (R2)
 npm run triage verdicts                 # newest 10 verdicts, every watched device, plain text
 npm run triage verdicts android -- --limit 3
 npm run triage verdicts -- --json       # same, structured
