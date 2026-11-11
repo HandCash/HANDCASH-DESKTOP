@@ -520,8 +520,12 @@ const asRows = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : [])
 
 /** An import leg's record is a megabyte or more; forty of them at once is a renderer's memory. */
 const TX_CHUNK = 8
-/** One output page, then the storage lock is released so a send can read a balance. */
-const OUTPUT_PAGE = 200
+/**
+ * One output page, then the storage lock is released so a send can read a
+ * balance. IndexedDB clones each item row whole on the UI thread, remittance
+ * note included: 200 rows froze a phone for 3s a page, 10 is the collectables slice.
+ */
+const OUTPUT_PAGE = 10
 
 type TxCache = { namespace: string; userId: number; byId: Map<number, LedgerTx> }
 let txCache: TxCache | null = null

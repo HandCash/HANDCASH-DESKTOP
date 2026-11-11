@@ -143,7 +143,7 @@ describe('Activity ledger runtime ownership', () => {
     expect(owner.provider.findOutputs).toHaveBeenCalledWith({
       partial: { userId: 9, basketId: 3 },
       noScript: true,
-      paged: { limit: 200, offset: 0 },
+      paged: { limit: 10, offset: 0 },
     })
   })
   it('refuses an empty live read over a real history and keeps it', () => {
