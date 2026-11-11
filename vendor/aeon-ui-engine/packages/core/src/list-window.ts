@@ -77,6 +77,64 @@ export function computeListWindow(input: ListWindowInput): ListWindow {
   }
 }
 
+export interface VariableListWindowInput {
+  total: number
+  /** Pitch measured per item, gap included; items not measured yet use the estimate. */
+  extents: ReadonlyArray<number | undefined>
+  /** Pitch for items not measured yet. */
+  estimate: number
+  overscan?: number
+  /** How far the list's content has moved past the first windowed item. */
+  scrolledPast: number
+  viewportHeight: number
+  minItems?: number
+  /** Rows the window moves at a time; both edges snap to multiples of it. */
+  step?: number
+}
+
+/**
+ * Window for a one-column list whose rows differ in height. Spacers sum each
+ * row's own measured pitch, so moving the window never resizes the content
+ * above the viewport. One shared pitch read from whichever row came first did:
+ * a tall first row pulled the window back, a short one pushed it on, and the
+ * scroll position chased the spacers.
+ */
+export function computeVariableListWindow(input: VariableListWindowInput): ListWindow {
+  const total = Math.max(0, Math.floor(input.total))
+  const minItems = input.minItems ?? LIST_WINDOW_MIN_ITEMS
+  const estimate = input.estimate
+  if (total < minItems || !(estimate > 0)) return fullListWindow(total)
+  const overscan = Math.max(0, Math.floor(input.overscan ?? 8))
+  const step = Math.max(1, Math.floor(input.step ?? 1))
+  const pitch = (i: number) => {
+    const extent = input.extents[i]
+    return extent !== undefined && extent > 0 ? extent : estimate
+  }
+  const top = Math.max(0, input.scrolledPast)
+  let offset = 0
+  let i = 0
+  for (; i < total; i++) {
+    const next = offset + pitch(i)
+    if (next > top) break
+    offset = next
+  }
+  const lead = Math.min(i, total - 1)
+  // Counted from the lead row's top, so scrolling within a row keeps the same end.
+  const bottom = offset + Math.max(0, input.viewportHeight)
+  for (; i < total; i++) {
+    offset += pitch(i)
+    if (offset >= bottom) break
+  }
+  const last = Math.min(i, total - 1)
+  const start = Math.floor(Math.max(0, lead - overscan) / step) * step
+  const end = Math.min(total, Math.ceil((last + 1 + overscan) / step) * step)
+  let padStart = 0
+  for (let k = 0; k < start; k++) padStart += pitch(k)
+  let padEnd = 0
+  for (let k = end; k < total; k++) padEnd += pitch(k)
+  return { start, end, padStart, padEnd }
+}
+
 /** Attribute that marks a spacer, so row measuring skips it. */
 export const LIST_WINDOW_PAD_ATTR = 'data-aeon-window-pad'
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeListWindow, fullListWindow, LIST_WINDOW_MIN_ITEMS, sameListWindow, scrollRootScrolledPast } from './list-window.js'
+import { computeListWindow, computeVariableListWindow, fullListWindow, LIST_WINDOW_MIN_ITEMS, sameListWindow, scrollRootScrolledPast } from './list-window.js'
 
 const base = { rowExtent: 50, viewportHeight: 500, overscan: 2 }
 
@@ -56,6 +56,45 @@ describe('computeListWindow', () => {
   it('compares windows by value', () => {
     expect(sameListWindow(fullListWindow(3), fullListWindow(3))).toBe(true)
     expect(sameListWindow(fullListWindow(3), fullListWindow(4))).toBe(false)
+  })
+})
+
+describe('computeVariableListWindow', () => {
+  const pitchOf = (i: number) => (i % 3 === 0 ? 120 : 40)
+  const extents = Array.from({ length: 300 }, (_, i) => pitchOf(i))
+  const offsetOf = (index: number) => extents.slice(0, index).reduce((sum, h) => sum + h, 0)
+  const input = { total: 300, extents, estimate: 60, overscan: 4, viewportHeight: 400, step: 2 }
+
+  it('sizes the spacers from each row, so mounted rows sit where they are drawn', () => {
+    const w = computeVariableListWindow({ ...input, scrolledPast: offsetOf(150) })
+    expect(w.padStart).toBe(offsetOf(w.start))
+    expect(w.padStart + offsetOf(w.end) - offsetOf(w.start) + w.padEnd).toBe(offsetOf(300))
+    expect(w.start).toBeLessThanOrEqual(150)
+    expect(w.end).toBeGreaterThan(150)
+  })
+
+  it('only moves forward on a steady scroll down and always covers the viewport', () => {
+    let previous = 0
+    for (let past = 0; past <= offsetOf(300) - 400; past += 7) {
+      const w = computeVariableListWindow({ ...input, scrolledPast: past })
+      expect(w.start).toBeGreaterThanOrEqual(previous)
+      expect(w.padStart).toBeLessThanOrEqual(past)
+      expect(offsetOf(w.end)).toBeGreaterThanOrEqual(past + 400)
+      previous = w.start
+    }
+  })
+
+  it('reaches both ends of the list', () => {
+    expect(computeVariableListWindow({ ...input, scrolledPast: 0 }).start).toBe(0)
+    const bottom = computeVariableListWindow({ ...input, scrolledPast: offsetOf(300) - 400 })
+    expect(bottom.end).toBe(300)
+    expect(bottom.padEnd).toBe(0)
+  })
+
+  it('uses the estimate for rows not measured yet', () => {
+    const w = computeVariableListWindow({ ...input, extents: [], scrolledPast: 60 * 100 })
+    expect(w.padStart).toBe(w.start * 60)
+    expect(w.padEnd).toBe((300 - w.end) * 60)
   })
 })
 

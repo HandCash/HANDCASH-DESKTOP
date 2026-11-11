@@ -1,7 +1,9 @@
 import {
   computeListWindow,
+  computeVariableListWindow,
   fullListWindow,
   LIST_WINDOW_MIN_ITEMS,
+  LIST_WINDOW_PAD_ATTR,
   measureListColumns,
   measureListRowExtent,
   resolveScrollRoot,
@@ -11,7 +13,7 @@ import {
   type ListWindow,
   type ListWindowAxis,
 } from '@aeon-ui/core'
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 
 export interface UseWindowedRangeOptions {
   total: number
@@ -30,6 +32,18 @@ export interface UseWindowedRangeOptions {
   /** Rows the window moves at a time; defaults to half the overscan. */
   step?: number
 }
+
+/** Pitches of one-column rows seen so far, by item index, for one `total`. */
+interface RowSizes {
+  total: number
+  extents: number[]
+  sum: number
+  count: number
+  /** Offset of the first windowed element (start spacer or row) inside the list. */
+  head: number
+}
+
+const emptySizes = (total: number): RowSizes => ({ total, extents: [], sum: 0, count: 0, head: 0 })
 
 function hintedWindow(o: UseWindowedRangeOptions): ListWindow {
   return computeListWindow({
@@ -50,10 +64,11 @@ function hintedWindow(o: UseWindowedRangeOptions): ListWindow {
  * as list padding; each row keeps its own data-aeon-* projection.
  *
  * The first render windows from the hints, so a long list never mounts whole.
- * Row pitch and columns are measured when the effect starts, on resize, and
- * until a real row exists; a scroll frame reads only the scroll offset. The
- * window moves `step` rows at a time and is published only when it moves, so a
- * scroll inside the current window renders nothing.
+ * A one-column list measures each mounted row once per window move and sizes
+ * its spacers from those heights, so rows of different heights never shift the
+ * content above the viewport. Grids share one measured pitch. A scroll frame
+ * reads only the scroll offset; the window moves `step` rows at a time and is
+ * published only when it moves, so a scroll inside the window renders nothing.
  */
 export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
   const {
@@ -68,9 +83,15 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
     step = Math.max(1, Math.floor(overscan / 2)),
   } = options
   const [range, setRange] = useState<ListWindow>(() => hintedWindow(options))
+  const sizesRef = useRef<RowSizes>(emptySizes(total))
+  const rootRef = useRef<HTMLElement | Window | null>(null)
+  const remeasureRef = useRef<(() => void) | null>(null)
 
   useLayoutEffect(() => {
     const keep = (next: ListWindow) => setRange((current) => (sameListWindow(current, next) ? current : next))
+    remeasureRef.current = null
+    // Indices shift when the list changes length, so earlier pitches no longer line up.
+    if (sizesRef.current.total !== total) sizesRef.current = emptySizes(total)
     if (total < minItems) {
       keep(fullListWindow(total))
       return
@@ -81,6 +102,7 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       return
     }
     const root = resolveScrollRoot(list, axis)
+    rootRef.current = root
     let frame = 0
     let cancelled = false
     let layout: { rowExtent: number; columns: number } | null = null
@@ -98,22 +120,38 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
 
     const measureNow = () => {
       const { rowExtent, columns: cols } = readLayout()
-      const next = computeListWindow({
-        total,
-        rowExtent,
-        columns: cols,
-        overscan,
-        scrolledPast: scrollRootScrolledPast(root, list, axis),
-        viewportHeight: scrollRootExtent(root, axis),
-        minItems,
-        step,
-      })
+      const scrolledPast = scrollRootScrolledPast(root, list, axis)
+      const viewportHeight = scrollRootExtent(root, axis)
+      const sizes = sizesRef.current
+      const next =
+        cols === 1
+          ? computeVariableListWindow({
+              total,
+              extents: sizes.extents,
+              estimate: sizes.count > 0 ? sizes.sum / sizes.count : rowExtent,
+              overscan,
+              scrolledPast: scrolledPast - sizes.head,
+              viewportHeight,
+              minItems,
+              step,
+            })
+          : computeListWindow({
+              total,
+              rowExtent,
+              columns: cols,
+              overscan,
+              scrolledPast,
+              viewportHeight,
+              minItems,
+              step,
+            })
       if (published && sameListWindow(published, next)) return
-      // New rows mount with this window; their pitch is read on the next move.
-      if (published) layout = null
+      // New grid rows mount with this window; their pitch is read on the next move.
+      if (published && cols !== 1) layout = null
       published = next
       keep(next)
     }
+    remeasureRef.current = measureNow
 
     const schedule = () => {
       if (cancelled || frame) return
@@ -124,6 +162,7 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
     }
     const onResize = () => {
       layout = null
+      sizesRef.current = emptySizes(total)
       schedule()
     }
 
@@ -133,11 +172,58 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
     window.addEventListener('resize', onResize)
     return () => {
       cancelled = true
+      remeasureRef.current = null
       window.cancelAnimationFrame(frame)
       target.removeEventListener('scroll', schedule)
       window.removeEventListener('resize', onResize)
     }
   }, [total, itemExtent, columns, overscan, rowSelector, minItems, axis, scrollRef, step])
+
+  // Once per window move: record the pitch of every mounted row of a one-column list.
+  useLayoutEffect(() => {
+    const list = scrollRef.current
+    const root = rootRef.current
+    const sizes = sizesRef.current
+    if (!list || !root || total < minItems || sizes.total !== total) return
+    const style = getComputedStyle(list)
+    if (axis === 'y' && measureListColumns(style, columns) !== 1) return
+    const listRect = list.getBoundingClientRect()
+    if ((axis === 'x' ? listRect.width : listRect.height) <= 0) return
+    const gap = Number.parseFloat(axis === 'x' ? style.columnGap : style.rowGap)
+    const gapPx = Number.isFinite(gap) ? gap : 0
+    const scrolled = root === list ? (axis === 'x' ? list.scrollLeft : list.scrollTop) : 0
+    let index = range.start
+    let head: number | null = null
+    let changed = false
+    for (const node of Array.from(list.children)) {
+      if (!(node instanceof HTMLElement)) continue
+      const pad = node.getAttribute(LIST_WINDOW_PAD_ATTR)
+      if (pad === 'end' || index >= range.end) break
+      const isRow = !pad && (!rowSelector || node.matches(rowSelector))
+      if (pad !== 'start' && !isRow) continue
+      const rect = node.getBoundingClientRect()
+      if (head === null) head = (axis === 'x' ? rect.left - listRect.left : rect.top - listRect.top) + scrolled
+      if (!isRow) continue
+      const size = axis === 'x' ? rect.width : rect.height
+      if (size > 0) {
+        const extent = size + gapPx
+        const before = sizes.extents[index]
+        if (before === undefined || Math.abs(before - extent) > 0.5) {
+          if (before === undefined) sizes.count += 1
+          else sizes.sum -= before
+          sizes.extents[index] = extent
+          sizes.sum += extent
+          changed = true
+        }
+      }
+      index += 1
+    }
+    if (head !== null && Math.abs(head - sizes.head) > 0.5) {
+      sizes.head = head
+      changed = true
+    }
+    if (changed) remeasureRef.current?.()
+  }, [range, total, minItems, columns, rowSelector, axis, scrollRef])
 
   return range
 }

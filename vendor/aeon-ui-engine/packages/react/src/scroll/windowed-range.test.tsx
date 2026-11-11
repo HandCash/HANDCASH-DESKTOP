@@ -49,7 +49,7 @@ afterEach(() => {
 describe('useWindowedRange', () => {
   it('mounts only the visible rows of a long list, never the whole list first', () => {
     const { getByTestId } = render(<List total={10_000} />)
-    const visible = VIEWPORT / ROW + 2 * 2
+    const visible = VIEWPORT / ROW + 2
     expect(mountedRows(getByTestId('list'))).toBe(visible)
     expect(rowRenders).toBeLessThan(10_000 / 100)
   })
@@ -86,6 +86,55 @@ describe('useWindowedRange', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
     expect(rowRenders).toBe(0)
+  })
+
+  it('keeps rows of different heights where they are drawn while scrolling down', async () => {
+    const heightOf = (n: number) => (n % 3 === 0 ? 120 : 40)
+    const offsetOf = (n: number) => Array.from({ length: n }, (_, i) => heightOf(i)).reduce((a, b) => a + b, 0)
+    function Mixed() {
+      const ref = useRef<HTMLUListElement>(null)
+      const w = useWindowedRange({ total: 3_000, itemExtent: ROW, overscan: 2, scrollRef: ref })
+      return (
+        <ul ref={ref} style={{ overflowY: 'auto' }} data-testid="mixed">
+          {w.padStart > 0 ? <li {...listWindowPadAttrs('start')} style={{ height: w.padStart }} /> : null}
+          {Array.from({ length: w.end - w.start }, (_, i) => w.start + i).map((n) => (
+            <li key={n} data-row={n} style={{ height: heightOf(n) }} />
+          ))}
+          {w.padEnd > 0 ? <li {...listWindowPadAttrs('end')} style={{ height: w.padEnd }} /> : null}
+        </ul>
+      )
+    }
+    const box = (top: number, height: number) =>
+      ({ top, left: 0, width: 300, height, bottom: top + height, right: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.tagName === 'UL') return box(0, VIEWPORT)
+      const parent = this.parentElement!
+      let top = -parent.scrollTop
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === this) break
+        top += Number.parseFloat((sibling as HTMLElement).style.height) || 0
+      }
+      return box(top, Number.parseFloat(this.style.height) || 0)
+    })
+    const { getByTestId } = render(<Mixed />)
+    const list = getByTestId('mixed')
+    let previous = 0
+    for (let past = 0; past <= 30_000; past += 230) {
+      await act(async () => {
+        list.scrollTop = past
+        list.dispatchEvent(new Event('scroll'))
+        for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+      })
+      const rows = [...list.querySelectorAll<HTMLElement>('[data-row]')]
+      const first = Number(rows[0]!.dataset.row)
+      expect(first).toBeGreaterThanOrEqual(previous)
+      for (const row of rows) {
+        expect(row.getBoundingClientRect().top + past).toBe(offsetOf(Number(row.dataset.row)))
+      }
+      const lastRow = rows[rows.length - 1]!
+      expect(lastRow.getBoundingClientRect().bottom).toBeGreaterThanOrEqual(VIEWPORT)
+      previous = first
+    }
   })
 
   it('windows a horizontal strip by scrollLeft', async () => {
