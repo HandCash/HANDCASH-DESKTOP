@@ -1895,6 +1895,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   font-family: var(--hc-display);
   letter-spacing: 0.02em;
   line-height: 1.15;
+  /* Trim ascender/descender slack so the figure sits mid-way in its slot. */
+  text-box: trim-both cap alphabetic;
   white-space: nowrap;
   /* Focused coin tint — --coin-color from [data-chain]. */
   color: var(--coin-color, #57ff97);
