@@ -27,7 +27,7 @@
 import { Hash, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
 export type SpendRecipe =
   /** BRC-29 derivation; `sender` omitted means this wallet's own identity. */
@@ -77,10 +77,28 @@ type JournalState = {
   spent: Set<string>
   released: Set<string>
   root: string | null
+  /** Number the next segment is written under; segments run 1..seg-1 with no gap. */
+  seg: number
+  /** Admitted entries no stored file holds yet; they ride the next segment. */
+  unsaved: CustodyEntry[]
 }
 
 const KEY_BASE = storageRegistry.custodyJournal.key
 const states = new Map<string, JournalState>()
+
+/**
+ * Appends land in small segment files (`<base>.s<n>`), each written once and
+ * never edited, so an append costs its own bytes instead of a rewrite of the
+ * whole journal (2.1 MB on a busy wallet, written synchronously on the UI
+ * thread). Once this many segments exist they are folded into the base file:
+ * one whole write per many appends. Every file is a subset of the journal,
+ * so a fold interrupted at any step loses nothing; reads take the union.
+ */
+const FOLD_AT_SEGMENTS = 32
+/** After a refused fold, try again only every this many segments. */
+const FOLD_RETRY_EVERY = 8
+/** Upper bound on segment probes, against a store that answers every key. */
+const MAX_SEGMENTS = 4096
 
 const OUTPOINT_RE = /^([0-9a-f]{64})[._](\d+)$/
 
@@ -199,6 +217,24 @@ function admit(state: JournalState, entry: CustodyEntry, id: string): void {
   state.recipes.set(entry.op, { sats: entry.sats, r: entry.r })
 }
 
+function segmentKeyFor(owner: BoundAccountKeyScope, n: number): string {
+  return accountLocalKeyFor(`${KEY_BASE}.s${n}`, owner)
+}
+
+function admitFile(state: JournalState, raw: string | null, self: string): void {
+  try {
+    const file = raw ? (JSON.parse(raw) as Partial<JournalFile>) : null
+    for (const rawEntry of Array.isArray(file?.e) ? file.e : []) {
+      const entry = cleanCustodyEntry(rawEntry, self)
+      if (!entry) continue
+      const id = custodyEntryId(entry)
+      if (!state.ids.has(id)) admit(state, entry, id)
+    }
+  } catch {
+    // An unreadable file is reported by the next write failing to grow it.
+  }
+}
+
 function load(owner: BoundAccountKeyScope): JournalState {
   const key = keyFor(owner)
   const held = states.get(key)
@@ -210,21 +246,41 @@ function load(owner: BoundAccountKeyScope): JournalState {
     spent: new Set(),
     released: new Set(),
     root: null,
+    seg: 1,
+    unsaved: [],
   }
-  try {
-    const raw = durableGetItem(key)
-    const file = raw ? (JSON.parse(raw) as Partial<JournalFile>) : null
-    for (const rawEntry of Array.isArray(file?.e) ? file.e : []) {
-      const entry = cleanCustodyEntry(rawEntry, owner.identityKey)
-      if (!entry) continue
-      const id = custodyEntryId(entry)
-      if (!state.ids.has(id)) admit(state, entry, id)
-    }
-  } catch {
-    // An unreadable file is reported by the next write failing to grow it.
+  admitFile(state, durableGetItem(key), owner.identityKey)
+  while (state.seg < MAX_SEGMENTS) {
+    const raw = durableGetItem(segmentKeyFor(owner, state.seg))
+    if (raw == null) break
+    admitFile(state, raw, owner.identityKey)
+    state.seg += 1
   }
   states.set(key, state)
   return state
+}
+
+/**
+ * Fold every segment into the base file, then drop the segments from the
+ * highest down, so the ones left always run 1..k with no gap. The base is
+ * written first and holds the whole journal, so a stop between steps only
+ * leaves duplicates the next load merges away.
+ */
+function fold(owner: BoundAccountKeyScope, state: JournalState): void {
+  const startedAt = Date.now()
+  const file: JournalFile = { v: 1, e: state.entries }
+  if (!durableSetItem(keyFor(owner), JSON.stringify(file))) {
+    console.error(`[custody-journal] fold refused — ${state.seg - 1} segment(s) kept`)
+    return
+  }
+  for (let n = state.seg - 1; n >= 1; n--) durableRemoveItem(segmentKeyFor(owner, n))
+  state.seg = 1
+  const ms = Date.now() - startedAt
+  if (ms > 250) console.info(`[custody-journal] fold done ${ms}ms`)
+}
+
+function shouldFold(segments: number): boolean {
+  return segments >= FOLD_AT_SEGMENTS && (segments - FOLD_AT_SEGMENTS) % FOLD_RETRY_EVERY === 0
 }
 
 export type CustodyAppend = { added: number; ok: boolean }
@@ -245,14 +301,19 @@ export function appendCustody(
     const id = custodyEntryId(entry)
     if (state.ids.has(id)) continue
     admit(state, entry, id)
+    state.unsaved.push(entry)
     added += 1
   }
   if (added === 0) return { added, ok: true }
-  const file: JournalFile = { v: 1, e: state.entries }
-  const ok = durableSetItem(keyFor(owner), JSON.stringify(file))
-  if (!ok) {
+  const segment: JournalFile = { v: 1, e: state.unsaved }
+  const ok = durableSetItem(segmentKeyFor(owner, state.seg), JSON.stringify(segment))
+  if (ok) {
+    state.unsaved = []
+    state.seg += 1
+    if (shouldFold(state.seg - 1)) fold(owner, state)
+  } else {
     console.error(
-      `[custody-journal] write refused — ${added} recipe(s) held in memory only (${state.entries.length} total)`,
+      `[custody-journal] write refused — ${state.unsaved.length} recipe(s) held in memory only (${state.entries.length} total)`,
     )
   }
   for (const listener of listeners) listener(owner)

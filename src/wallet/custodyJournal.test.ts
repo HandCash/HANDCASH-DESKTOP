@@ -1,14 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { shouldWipeHandcashKey } from './wipePolicy'
+
 const store = new Map<string, string>()
+const writes: Array<{ key: string; bytes: number }> = []
 let refuseWrites = false
+let refuseKey: ((key: string) => boolean) | null = null
 
 vi.mock('./durableStorage', () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
-    if (refuseWrites) return false
+    if (refuseWrites || refuseKey?.(key)) return false
     store.set(key, value)
+    writes.push({ key, bytes: value.length })
     return true
+  },
+  durableRemoveItem: (key: string) => {
+    store.delete(key)
   },
 }))
 
@@ -27,7 +35,9 @@ async function load() {
 describe('custody journal', () => {
   beforeEach(() => {
     store.clear()
+    writes.length = 0
     refuseWrites = false
+    refuseKey = null
   })
 
   it('appends each distinct entry once and survives a reload', async () => {
@@ -152,5 +162,71 @@ describe('custody journal', () => {
     j.appendCustody(alice, [entry])
     j.appendCustody(alice, [entry])
     expect(heard).toHaveBeenCalledTimes(1)
+  })
+
+  const keyOf = (base: string) => `${base}:wallet:main:0:${alice.identityKey}`
+  const BASE = keyOf('handcash.custodyJournal.v1')
+  const outAt = (i: number) => ({ k: 'out', op: `${txA}.${i}`, sats: i + 1, r: pay(`p${i}`) })
+
+  it('writes each append as its own small segment, never rewriting what is stored', async () => {
+    const j = await load()
+    for (let i = 0; i < 10; i++) j.appendCustody(alice, [outAt(i)])
+    expect(writes).toHaveLength(10)
+    expect(new Set(writes.map((w) => w.key)).size).toBe(10)
+    const first = writes[0]!.bytes
+    for (const w of writes) expect(w.bytes).toBeLessThan(first * 1.2)
+    const reloaded = await load()
+    expect(reloaded.custodyEntries(alice).map((e) => e.op)).toEqual(Array.from({ length: 10 }, (_, i) => `${txA}.${i}`))
+  })
+
+  it('reads a journal stored whole before segments, and adds to it without rewriting it', async () => {
+    const j = await load()
+    j.appendCustody(alice, [outAt(0), outAt(1)])
+    const whole = JSON.stringify({ v: 1, e: j.custodyEntries(alice) })
+    store.clear()
+    store.set(BASE, whole)
+    const old = await load()
+    expect(old.custodyEntries(alice)).toHaveLength(2)
+    old.appendCustody(alice, [outAt(2)])
+    expect(store.get(BASE)).toBe(whole)
+    expect((await load()).custodyEntries(alice)).toHaveLength(3)
+  })
+
+  it('folds segments into one file with the same root, and keeps them when the fold is refused', async () => {
+    const j = await load()
+    for (let i = 0; i < 31; i++) j.appendCustody(alice, [outAt(i)])
+    const root = j.custodyJournalRoot(alice)
+    refuseKey = (key) => key === BASE
+    j.appendCustody(alice, [outAt(31)])
+    expect(store.size).toBe(32)
+    refuseKey = null
+    for (let i = 32; i < 40; i++) j.appendCustody(alice, [outAt(i)])
+    expect([...store.keys()]).toEqual([BASE])
+    const reloaded = await load()
+    expect(reloaded.custodyEntries(alice)).toHaveLength(40)
+    expect(reloaded.custodyJournalRoot(alice)).toBe(j.custodyJournalRoot(alice))
+    expect(reloaded.custodyJournalRoot(alice)).not.toBe(root)
+    reloaded.appendCustody(alice, [outAt(40)])
+    expect([...store.keys()].sort()).toEqual([BASE, keyOf('handcash.custodyJournal.v1.s1')].sort())
+  })
+
+  it('loses nothing when a fold stops after the base is written', async () => {
+    const j = await load()
+    for (let i = 0; i < 5; i++) j.appendCustody(alice, [outAt(i)])
+    const all = j.custodyEntries(alice)
+    store.set(BASE, JSON.stringify({ v: 1, e: all }))
+    store.delete(keyOf('handcash.custodyJournal.v1.s5'))
+    const reloaded = await load()
+    expect(reloaded.custodyEntries(alice)).toEqual(all)
+    expect(reloaded.custodyJournalRoot(alice)).toBe(j.custodyJournalRoot(alice))
+  })
+
+  it('keeps every journal file across a wallet wipe', async () => {
+    const j = await load()
+    for (let i = 0; i < 3; i++) j.appendCustody(alice, [outAt(i)])
+    const sub = { ...alice, identityKey: '02' + 'b2'.repeat(32) }
+    j.appendCustody(sub, [outAt(0)])
+    expect(store.size).toBe(4)
+    for (const key of store.keys()) expect(shouldWipeHandcashKey(key)).toBe(false)
   })
 })
