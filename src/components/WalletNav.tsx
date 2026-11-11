@@ -541,15 +541,17 @@ export const WalletNav = memo(function WalletNav({
       return
     }
     setOptimisticSection(next)
-    if (next !== 'collectables') {
-      setMountedLight((prev) => {
-        if (prev.has(next)) return prev
-        const copy = new Set(prev)
-        copy.add(next)
-        return copy
-      })
-    }
+    // Only chrome is urgent. Mounting a first-visit panel here would make its
+    // render and layout work block the same commit as the pressed tab.
     startTransition(() => {
+      if (next !== 'collectables') {
+        setMountedLight((prev) => {
+          if (prev.has(next)) return prev
+          const copy = new Set(prev)
+          copy.add(next)
+          return copy
+        })
+      }
       if (next !== nav.section) setNavSection(next)
       else if (nav.child?.type === 'app-browser') setNavSection('apps')
       else clearNavChild()
@@ -915,11 +917,11 @@ export const WalletNav = memo(function WalletNav({
                 />
               </div>
             )}
-            {/* Unmount Collect when leaving to free ordinal images; show as
-                soon as the optimistic tab selects it so labels/chrome stay sync.
+            {/* Collect content follows committed navigation, not the urgent
+                tab highlight. Unmount when leaving to free ordinal images.
                 Remount paints the last durable list (collectables.ts).
                 Slot wrapper matches Friends/Identity flex selectors (display:contents). */}
-            {activeSection === 'collectables' && !mobileInlinePermission ? (
+            {nav.section === 'collectables' && activeSection === 'collectables' && !mobileInlinePermission ? (
               <div className="wallet-nav-slot">
                 <RenderProbe id="collectables">
                   <MemoInventoryPanel />

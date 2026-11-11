@@ -23,6 +23,14 @@ describe('kept-alive navigation render boundaries', () => {
     }
   })
 
+  it('schedules first-visit content after urgent tab feedback', () => {
+    const select = source.slice(source.indexOf('  const selectSection ='), source.indexOf('  const hideSectionPanel ='))
+    const transition = select.lastIndexOf('startTransition(() => {')
+    expect(transition).toBeGreaterThan(select.indexOf('setOptimisticSection(next)'))
+    expect(select.indexOf('setMountedLight(')).toBeGreaterThan(transition)
+    expect(source).toContain("nav.section === 'collectables' && activeSection === 'collectables'")
+  })
+
   it('keeps the Apps callback stable so its memo boundary can bail out', () => {
     expect(source).toContain('const showBrowserTabs = useCallback(() => setTabSwitcherOpen(true), [])')
     expect(source).toContain('onShowTabs={showBrowserTabs}')
