@@ -164,14 +164,22 @@ function sourceKey(base: string): string {
   return storageRegistry.walletEngineSource.key + base
 }
 
-/** The source chosen for this pointer value. A restore that moves the pointer re-decides. */
-function decidedSource(base: string, selected: string): string | null {
-  const [use, from] = (durableGetItem(sourceKey(base)) ?? '').split('\n')
-  return use && from === selected ? use : null
+type SourceDecision = {
+  use: string
+  /** The account database's own transaction count when merging it into `use` failed. */
+  unmergedAt: number | null
 }
 
-function recordSource(base: string, selected: string, use: string): void {
-  durableSetItem(sourceKey(base), `${use}\n${selected}`)
+/** The source chosen for this pointer value. A restore that moves the pointer re-decides. */
+function decidedSource(base: string, selected: string): SourceDecision | null {
+  const [use, from, unmerged] = (durableGetItem(sourceKey(base)) ?? '').split('\n')
+  if (!use || from !== selected) return null
+  const at = unmerged ? Number(unmerged) : NaN
+  return { use, unmergedAt: Number.isSafeInteger(at) ? at : null }
+}
+
+function recordSource(base: string, selected: string, use: string, unmergedAt?: number): void {
+  durableSetItem(sourceKey(base), unmergedAt == null ? `${use}\n${selected}` : `${use}\n${selected}\n${unmergedAt}`)
 }
 
 /**
@@ -183,7 +191,8 @@ function recordSource(base: string, selected: string, use: string): void {
  * created a blank user there and showed a zero balance. Open the database that
  * holds more of this identity's transactions, after merging the other one into
  * it, so neither the shared history nor anything received since is dropped.
- * A merge that fails opens the larger database anyway and is retried next open.
+ * A merge that fails opens the larger database anyway and is retried once the
+ * account database holds more transactions than it did at the failure.
  */
 export async function resolveWalletEngineDatabase(args: MigrationArgs): Promise<string> {
   const { accountIndex, base, selected } = accountOf(args)
@@ -192,8 +201,14 @@ export async function resolveWalletEngineDatabase(args: MigrationArgs): Promise<
   if (typeof indexedDB === 'undefined') return selected
   const identityKey = PrivateKey.fromHex(args.rootKeyHex).toPublicKey().toString()
   const decided = decidedSource(base, selected)
-  if (decided === legacy && (await identityTransactionCount(legacy, identityKey)) != null) return legacy
-  if (decided === selected) return selected
+  if (
+    decided?.use === legacy &&
+    decided.unmergedAt == null &&
+    (await identityTransactionCount(legacy, identityKey)) != null
+  ) {
+    return legacy
+  }
+  if (decided?.use === selected) return selected
 
   const started = Date.now()
   const [ownCount, legacyCount] = await Promise.all([
@@ -204,13 +219,17 @@ export async function resolveWalletEngineDatabase(args: MigrationArgs): Promise<
     if (legacyCount) recordSource(base, selected, selected)
     return selected
   }
+  // The merge exports and parses the whole history on the UI thread, and a
+  // refusal repeats until the account database holds something new.
+  if (decided?.use === legacy && ownCount != null && decided.unmergedAt === ownCount) return legacy
   let merged = 0
   if (ownCount) {
     try {
       merged = await mergeIdentity(args, selected, legacy, identityKey)
     } catch (error) {
+      recordSource(base, selected, legacy, ownCount)
       console.warn(
-        `[wallet-engine] source merge deferred — a${accountIndex} ${selected} → ${legacy}:`,
+        `[wallet-engine] source merge deferred ${Date.now() - started}ms — a${accountIndex} ${selected} → ${legacy} (retried when ${selected} holds more than ${ownCount} txs):`,
         error instanceof Error ? error.message : String(error),
       )
       return legacy
@@ -316,7 +335,7 @@ export async function settleWalletEngineStorage(args: MigrationArgs): Promise<vo
   const legacy = legacyToolboxDatabaseName(args.chain)
   // The wallet already reads the shared database in place; copying it out is
   // the long write that froze unlock, and nothing needs it.
-  if (decidedSource(base, selected) === legacy) {
+  if (decidedSource(base, selected)?.use === legacy) {
     await dropAbandonedStages(base, selected)
     return
   }

@@ -459,24 +459,46 @@ function durableListJson(snapshot: DurableListSnapshot): string {
   })
 }
 
-/** Large cache writes are coalesced so background proof paint cannot block input. */
+/**
+ * Large cache writes are coalesced so background proof paint cannot block input.
+ * Every write is a synchronous shell call costing 60–100ms for an 800KB list on
+ * a phone, and verification repaints items every few hundred milliseconds.
+ */
 const pendingDurableLists = new Map<string, DurableListSnapshot>()
 let durableListTimer: ReturnType<typeof setTimeout> | null = null
+const DURABLE_LIST_COALESCE_MS = 2_000
 
-function flushPendingDurableLists(): void {
+function writeDurableList(key: string, snapshot: DurableListSnapshot): void {
+  try {
+    durableSetItem(key, durableListJson(snapshot))
+  } catch {
+    // Cache is an optimisation.
+  }
+}
+
+/** `now` writes in this task: a hidden page may be suspended before a yield returns. */
+function flushPendingDurableLists(opts?: { now?: boolean }): void {
+  if (durableListTimer != null) clearTimeout(durableListTimer)
   durableListTimer = null
   const pending = [...pendingDurableLists.entries()]
   pendingDurableLists.clear()
+  if (opts?.now) {
+    for (const [key, snapshot] of pending) writeDurableList(key, snapshot)
+    return
+  }
   void (async () => {
     for (const [key, snapshot] of pending) {
       await yieldToUi()
-      try {
-        durableSetItem(key, durableListJson(snapshot))
-      } catch {
-        // Cache is an optimisation.
-      }
+      writeDurableList(key, snapshot)
     }
   })()
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushPendingDurableLists({ now: true })
+  })
+  window.addEventListener('pagehide', () => flushPendingDurableLists({ now: true }))
 }
 
 /** Keep the identity package of every issuer the persisted list names. */
@@ -508,7 +530,7 @@ function persistDurableList(items: Collectable[]): void {
     }
     pendingDurableLists.set(listCacheKey(), snapshot)
     if (durableListTimer == null) {
-      durableListTimer = setTimeout(flushPendingDurableLists, 180)
+      durableListTimer = setTimeout(() => flushPendingDurableLists(), DURABLE_LIST_COALESCE_MS)
     }
   } catch {
     // Cache is an optimisation.
@@ -699,6 +721,7 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
   seededItems.clear()
   loadedSeedIdentity = null
   holdNamedIssuers([])
+  pendingDurableLists.delete(listCacheKey())
   durableRemoveItem(listCacheKey())
   durableRemoveItem(seededItemsKey())
   // Skip the empty notify when a re-read is about to replace the list —
