@@ -28,13 +28,17 @@ deploy) for the live dashboard below.
 `https://brc-cloud.bcryderman.workers.dev/logs-dashboard` — sign in as `$brandonc`
 with a BRC-100 wallet identity proof from HandCash Desktop. Every upload to a
 watched bucket is distilled by the same core + Jev within about a second and
-pushed over a WebSocket. Allowed handles: `LOG_DASHBOARD_HANDLES` in
+pushed over a WebSocket. A manual upload (Settings → Upload) from any bucket,
+new installs included, is a **support ticket**: recorded and distilled (unwatched
+buckets get Jev within 24 tickets/day, then are listed as `stored`). "Check the
+recent log uploads" = `npm run triage recent`. Allowed handles: `LOG_DASHBOARD_HANDLES` in
 `BRC-CLOUD/wrangler.jsonc`. Code: `BRC-CLOUD/src/logDashboard.js` (Durable
 Object `LogDashboard`), `logDashboardApp.js`.
 
 ### Reading the dashboard from Cursor
 
 ```bash
+npm run triage recent                   # newest 5 support tickets, every device incl. new installs
 npm run triage verdicts                 # newest 10 verdicts, every watched device, plain text
 npm run triage verdicts android -- --limit 3
 npm run triage verdicts -- --json       # same, structured

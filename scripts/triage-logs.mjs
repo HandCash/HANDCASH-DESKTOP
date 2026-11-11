@@ -5,6 +5,8 @@
  *   node scripts/triage-logs.mjs [bucket] [--all] [--json] [--state]
  *   node scripts/triage-logs.mjs desktop-local        # this machine, no upload
  *   node scripts/triage-logs.mjs --file <session.log> # any saved upload / ring
+ *   node scripts/triage-logs.mjs recent [--limit N] [--json]
+ *     # newest support tickets (manual uploads) from every device, new buckets included
  *   node scripts/triage-logs.mjs verdicts [device] [--limit N] [--json] [--all]
  *     # the live dashboard's stored Jev verdicts (LOG_DASHBOARD_READ_TOKEN)
  *
@@ -1009,6 +1011,11 @@ const positional = args.filter(
     (limitIdx < 0 || i !== limitIdx + 1),
 )
 const bucketArg = positional[0] ?? 'android'
+
+if (bucketArg === 'recent') {
+  process.stdout.write(await fetchVerdicts({ limit: limitArg ?? 5, json: flags.has('--json'), all: flags.has('--all') }))
+  process.exit(0)
+}
 
 if (bucketArg === 'verdicts') {
   process.stdout.write(
