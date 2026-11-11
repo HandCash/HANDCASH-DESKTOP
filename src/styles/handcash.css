@@ -115,24 +115,22 @@
   --hc-claimed: #e0b35a;
 
   /* Each coin's accent, one per TICKER_COIN_ORDER coin: a ring, bar or chip
-     beside its figures, never its type or a large fill. Kept apart from each
-     other and from the status inks under deuteranopia, protanopia and
-     tritanopia; dark values keep 4.5:1 on black, light ones 3:1 on #f3f5f3.
-     --coin-*-mark is the logo disc under a white glyph (4:1 or better), the
-     same on both sheets. */
-  --coin-bsv: #57ff97;
-  --coin-ltc: #5a8fd6;
-  --coin-bch: #38c9b0;
-  --coin-btc: #f08a3c;
-  --coin-doge: #f3dd3a;
-  /* Arc USD / USDC family blue — kept apart from LTC under CVD (see coinPalette.test). */
-  --coin-arc-usd: #7eaef1;
+     beside its figures, never its type or a large fill. Each is the coin's
+     official brand colour; only a shade that would fall under 3:1 on a
+     ground moves, along the brand hue (here LTC on #0c0c0c).
+     --coin-*-mark is the logo disc, the exact brand colour on both sheets. */
+  --coin-bsv: #eab300;
+  --coin-ltc: #3660a3;
+  --coin-bch: #0ac18e;
+  --coin-btc: #f7931a;
+  --coin-doge: #c2a633;
+  /* Arc USD is a USDC dollar: USDC blue. */
+  --coin-arc-usd: #2775ca;
   --coin-ltc-mark: #345d9d;
-  --coin-bch-mark: #078f69;
-  --coin-btc-mark: #b76d13;
-  --coin-doge-mark: #917c26;
-  /* Official USDC disc from cryptocurrency-icons (CC0). */
-  --coin-arc-usd-mark: #3e73c4;
+  --coin-bch-mark: #0ac18e;
+  --coin-btc-mark: #f7931a;
+  --coin-doge-mark: #c2a633;
+  --coin-arc-usd-mark: #2775ca;
 }
 
 /* White sheet — keep hsl(var(--*)) paths in lockstep with HANDCASH_LIGHT_PALETTE.
@@ -206,12 +204,13 @@ html[data-aeon-mode='light'] {
   --hc-gold-soft: #8a5b0a;
   --hc-claimed: #9a6700;
 
-  --coin-bsv: #0a3d22;
-  --coin-ltc: #3f72c8;
-  --coin-bch: #13958a;
-  --coin-btc: #de6a10;
-  --coin-doge: #6e6200;
-  --coin-arc-usd: #234e8b;
+  /* Brand hues darkened just enough for 3:1 on #f3f5f3. */
+  --coin-bsv: #af8600;
+  --coin-ltc: #345d9d;
+  --coin-bch: #089f75;
+  --coin-btc: #cf7507;
+  --coin-doge: #a28a2b;
+  --coin-arc-usd: #2775ca;
 }
 
 * {
@@ -2410,6 +2409,11 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   text-align: center;
   overflow-wrap: anywhere;
   word-break: break-word;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
 }
 
 .bsv-price {
@@ -19694,28 +19698,22 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
   cursor: pointer;
 }
 
+/* Toast covers the ticker bar in place (inset 0 from the base rule): the hidden bar keeps its height, so both share one footprint. */
 [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-cover {
-  padding: 10px 14px;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-/* Toast replaces the one-row bar in flow so a two-line message can grow. */
-[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'][data-aeon-state^='toast-'] .bsv-carousel-frame {
-  display: none;
-}
-
-[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'][data-aeon-state^='toast-'] .bsv-toast-cover {
-  position: relative;
-  inset: auto;
-  flex: 1 1 auto;
-  align-self: stretch;
-  min-height: 56px;
-  margin: -10px calc(-1 * var(--ticker-pad-x)) -8px;
+  padding: 6px var(--ticker-pad-x);
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'][data-aeon-state^='toast-'] .bsv-carousel-frame {
+  visibility: hidden;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-title,
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-body {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-title {
@@ -19724,10 +19722,10 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
 }
 
 [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-toast-body {
+  display: block;
   font-size: var(--hc-text-xs);
   font-weight: 700;
-  line-height: 1.35;
-  text-wrap: balance;
+  line-height: 1.3;
 }
 
 [data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] .bsv-asset-row {
@@ -20376,9 +20374,13 @@ html[data-aeon-mode='light'] .wallet-hero .wallet-nav-actions-pill .wallet-balan
 
 /* Identity credit-card deck: ID-1 ratio (85.6 x 54 mm). */
 .id-deck {
+  /* A scroll box has no automatic min height: without this the column squeezes the deck under the QR. */
+  flex: 0 0 auto;
   display: flex;
   gap: 14px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
   padding: 4px 2px 14px;
   scroll-snap-type: x mandatory;
 }

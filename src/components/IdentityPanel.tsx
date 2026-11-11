@@ -23,7 +23,6 @@ import {
 import { getWalletRuntime } from '../wallet/walletRuntime'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
-import { CopyIcon } from './icons'
 import { ProfileIdenticon } from './ProfileIdenticon'
 
 type Props = {
@@ -100,10 +99,6 @@ export function IdentityPanel({ profile }: Props) {
     [claimed, handleLabel],
   )
 
-  const copyIdentity = async () => {
-    await copyText(profile.identityKey, { label: 'wallet key' })
-  }
-
   const copyHandle = async () => {
     if (!claimed) return
     await copyText(claimed.display, { label: 'handle' })
@@ -162,8 +157,7 @@ export function IdentityPanel({ profile }: Props) {
             {handleIpt.state === 'empty' ? (
               <div data-aeon-part="empty">
                 <p className="identity-handle-missing">
-                  No handle claimed yet. A handle is an issuer-permissioned
-                  item — the certifier must countersign every transfer.
+                  No handle yet.
                 </p>
                 <Button.Root
                   variant="ghost"
@@ -190,30 +184,12 @@ export function IdentityPanel({ profile }: Props) {
                 >
                   Owned
                 </span>
-                <p data-aeon-part="lede">
-                  Issuer-permissioned token ({handleIpt.profile}). Bound by
-                  your BRC-169 certificate; the on-chain tip ships with
-                  countersigned IPT.
-                </p>
               </div>
             )}
           </section>
           </div>
 
           <ul className="identity-list">
-            <li className="identity-field identity-key-row">
-              <span className="identity-field-label">Wallet key</span>
-              <button
-                type="button"
-                className="mono identity-key"
-                title={`Click to copy wallet key
-${profile.identityKey}`}
-                onClick={() => void copyIdentity()}
-              >
-                <span>{shortIdentityKey(profile.identityKey)}</span>
-                <CopyIcon size={14} />
-              </button>
-            </li>
             <li className="identity-field">
               <span className="identity-field-label">Network</span>
               <strong
