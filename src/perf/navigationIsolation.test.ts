@@ -23,6 +23,14 @@ describe('kept-alive navigation render boundaries', () => {
     }
   })
 
+  it('schedules first-visit content after urgent tab feedback', () => {
+    const select = source.slice(source.indexOf('  const selectSection ='), source.indexOf('  const hideSectionPanel ='))
+    const transition = select.lastIndexOf('startTransition(() => {')
+    expect(transition).toBeGreaterThan(select.indexOf('setOptimisticSection(next)'))
+    expect(select.indexOf('setMountedLight(')).toBeGreaterThan(transition)
+    expect(source).toContain("nav.section === 'collectables' && activeSection === 'collectables'")
+  })
+
   it('keeps the Apps callback stable so its memo boundary can bail out', () => {
     expect(source).toContain('const showBrowserTabs = useCallback(() => setTabSwitcherOpen(true), [])')
     expect(source).toContain('onShowTabs={showBrowserTabs}')
@@ -33,6 +41,74 @@ describe('kept-alive navigation render boundaries', () => {
 // Exercises the exact memo declarations above with synthetic panel bodies,
 // not the full wallet or device navigation latency.
 describe.skipIf(!process.env.HANDCASH_PERF)('navigation isolation browser probe', () => {
+  it('commits tab feedback before rendering first-visit content', async () => {
+    const { build } = await import('esbuild')
+    const { chromium } = await import('@playwright/test')
+    // Execute the product handler, not a second implementation of its ordering.
+    const handler = source.slice(source.indexOf('  const selectSection ='), source.indexOf('  const hideSectionPanel ='))
+    const bundle = await build({
+      stdin: {
+        resolveDir: process.cwd(),
+        loader: 'tsx',
+        contents: `
+          import React, { startTransition, useLayoutEffect, useRef, useState } from 'react'
+          import { createRoot } from 'react-dom/client'
+          import { flushSync } from 'react-dom'
+          const events = []
+          const playWalletSound = () => {}
+          const getEmbeddedAppBrowser = () => null
+          const focusEmbeddedAppBrowser = () => {}
+          function Content() {
+            events.push('content-render')
+            return <p>Content ready</p>
+          }
+          function Probe() {
+            const [nav, setNav] = useState({ section: 'activity', child: null })
+            const [optimisticSection, setOptimisticSection] = useState(null)
+            const [mountedLight, setMountedLight] = useState(new Set(['activity']))
+            const clickSoundArmed = useRef(false)
+            const setNavSection = section => setNav({ section, child: null })
+            const clearNavChild = () => setNav(n => ({ ...n, child: null }))
+            ${handler}
+            const active = optimisticSection ?? nav.section
+            useLayoutEffect(() => { events.push('chrome-commit:' + active) }, [active])
+            return <>
+              <button onClick={() => selectSection('settings')}>Settings</button>
+              <button onClick={() => selectSection('collectables')}>Collect</button>
+              <span>{active}</span>
+              {mountedLight.has('settings') && active === 'settings' ? <Content /> : null}
+              {nav.section === 'collectables' && activeSectionForCollect(active) ? <Content /> : null}
+            </>
+          }
+          const activeSectionForCollect = active => active === 'collectables'
+          const root = createRoot(document.getElementById('root'))
+          flushSync(() => root.render(<Probe />))
+          window.events = events
+        `,
+      },
+      bundle: true,
+      write: false,
+      format: 'iife',
+      define: { 'process.env.NODE_ENV': '"production"' },
+    })
+    const browser = await chromium.launch({ headless: true })
+    try {
+      const page = await browser.newPage()
+      await page.setContent('<div id="root"></div>')
+      await page.addScriptTag({ content: bundle.outputFiles[0]!.text })
+      for (const [label, section] of [['Settings', 'settings'], ['Collect', 'collectables']]) {
+        await page.evaluate(() => { (window as unknown as { events: string[] }).events.length = 0 })
+        await page.getByRole('button', { name: label, exact: true }).click()
+        await page.getByText('Content ready', { exact: true }).waitFor()
+        const events = await page.evaluate(() => (window as unknown as { events: string[] }).events)
+        expect(events.indexOf(`chrome-commit:${section}`)).toBeGreaterThanOrEqual(0)
+        expect(events.indexOf('content-render')).toBeGreaterThan(events.indexOf(`chrome-commit:${section}`))
+      }
+    } finally {
+      await browser.close()
+    }
+  }, 30_000)
+
   it('skips unrelated projections but keeps local updates and changed props live', async () => {
     const { build } = await import('esbuild')
     const { chromium } = await import('@playwright/test')
