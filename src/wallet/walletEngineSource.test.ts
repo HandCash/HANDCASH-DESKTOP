@@ -1,7 +1,24 @@
 import 'fake-indexeddb/auto'
 import { MerklePath, P2PKH, PrivateKey, Script, Transaction, Utils } from '@bsv/sdk'
 import { SetupClient } from '@handcash/wallet-engine'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+const engine = vi.hoisted(() => ({ refuseImport: false, exports: 0 }))
+
+vi.mock('@handcash/wallet-engine', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@handcash/wallet-engine')>()
+  return {
+    ...actual,
+    exportBRC38Json: (...args: Parameters<typeof actual.exportBRC38Json>) => {
+      engine.exports += 1
+      return actual.exportBRC38Json(...args)
+    },
+    importBRC38: (...args: Parameters<typeof actual.importBRC38>) => {
+      if (engine.refuseImport) throw new Error('The provenTx parameter must be a server-verified proof.')
+      return actual.importBRC38(...args)
+    },
+  }
+})
 import { originalToolboxDatabaseName, selectToolboxDatabase } from './vaultAccounts'
 import { legacyToolboxDatabaseName, resolveWalletEngineDatabase } from './walletEngineMigration'
 
@@ -89,6 +106,39 @@ describe('which database an account opens', () => {
     // Decided once: the next open does not merge again.
     expect(await resolveWalletEngineDatabase(a.args)).toBe(legacy)
     expect(await balanceAt('main', a.root, legacy)).toBe(30_500)
+  })
+
+  it('does not export the history again after a refused merge until the account database receives more', async () => {
+    const a = account('main')
+    const legacy = legacyToolboxDatabaseName('main')
+    const own = originalToolboxDatabaseName({ chain: 'main', handle: a.handle, accountIndex: 0 })
+    const shared = await open('main', a.root, legacy)
+    await fund(shared, 10_000)
+    await fund(shared, 20_000)
+    await fund(shared, 40_000)
+    await shared.activeStorage.destroy()
+    const blank = await open('main', a.root, own)
+    await fund(blank, 500)
+    await blank.activeStorage.destroy()
+
+    engine.refuseImport = true
+    engine.exports = 0
+    try {
+      expect(await resolveWalletEngineDatabase(a.args)).toBe(legacy)
+      expect(engine.exports).toBe(1)
+      expect(await resolveWalletEngineDatabase(a.args)).toBe(legacy)
+      expect(engine.exports).toBe(1)
+
+      const received = await open('main', a.root, own)
+      await fund(received, 600)
+      await received.activeStorage.destroy()
+      engine.refuseImport = false
+      expect(await resolveWalletEngineDatabase(a.args)).toBe(legacy)
+      expect(engine.exports).toBe(2)
+      expect(await balanceAt('main', a.root, legacy)).toBe(71_100)
+    } finally {
+      engine.refuseImport = false
+    }
   })
 
   it('keeps an account database that is ahead of the shared one', async () => {
