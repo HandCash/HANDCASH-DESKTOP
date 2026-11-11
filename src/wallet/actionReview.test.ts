@@ -14,9 +14,11 @@ const updateTransactionStatus = vi.fn(async () => {});
 const reviewStatus = vi.fn(async () => ({ log: "ok" }));
 const validateOutputScript = vi.fn(async () => {});
 const updateOutput = vi.fn(async () => {});
-const findTransactions = vi.fn(async () => [
-  { transactionId: 7, status: "unsigned" },
-]);
+const findTransactions = vi.fn(async (args?: { partial?: { status?: string } }) =>
+  [{ transactionId: 7, status: "unsigned" }].filter(
+    (row) => args?.partial?.status == null || row.status === args.partial.status
+  )
+);
 const findOutputs = vi.fn(async () => [
   { outputId: 11, change: true, spendable: true, lockingScript: undefined },
   { outputId: 12, change: true, spendable: true, lockingScript: "76a914" },

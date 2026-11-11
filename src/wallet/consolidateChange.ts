@@ -89,6 +89,7 @@ export type ConsolidationOutcome =
     }
 
 type OutputRow = {
+  outputId?: number
   satoshis?: number
   change?: boolean
   basket?: string
@@ -124,24 +125,32 @@ async function countConsolidatableChange(
       // pool cannot be called settled, so the pass stands down (fail closed).
       if (typeof sp.findTransactions !== 'function') return null
       const unsettledTxIds = new Set<number>()
-      for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
-        const batch =
-          (await sp.findTransactions({
-            partial: {},
-            status: [...LIVE_LOCAL_TX_STATUSES],
-            noRawTx: true,
-            paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
-          })) ?? []
-        for (const row of batch) {
-          const id = Number(row.transactionId)
-          if (Number.isFinite(id) && id > 0) unsettledTxIds.add(id)
+      // One status per query walks the status index; a status list with an
+      // empty partial walks every transaction, rawTx included.
+      for (const status of LIVE_LOCAL_TX_STATUSES) {
+        let afterTransactionId: number | undefined
+        for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
+          const batch =
+            (await sp.findTransactions({
+              partial: { status },
+              noRawTx: true,
+              paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+              ...(afterTransactionId != null ? { afterTransactionId } : {}),
+            })) ?? []
+          for (const row of batch) {
+            const id = Number(row.transactionId)
+            if (Number.isFinite(id) && id > 0) unsettledTxIds.add(id)
+          }
+          if (batch.length < ENUM_PAGE) break
+          const lastId = Number(batch[batch.length - 1]?.transactionId)
+          afterTransactionId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
         }
-        if (batch.length < ENUM_PAGE) break
       }
 
       let fragments = 0
       let totalSats = 0
       let unsettledFragments = 0
+      let afterOutputId: number | undefined
       for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
         let batch: OutputRow[] = []
         try {
@@ -149,15 +158,19 @@ async function countConsolidatableChange(
             (await sp.findOutputs({
               partial: { spendable: true, change: true },
               paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+              ...(afterOutputId != null ? { afterOutputId } : {}),
             })) ?? []
         } catch {
           batch =
             (await sp.findOutputs({
               partial: { spendable: true },
               paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+              ...(afterOutputId != null ? { afterOutputId } : {}),
             })) ?? []
         }
         if (!batch.length) break
+        const lastId = Number(batch[batch.length - 1]?.outputId)
+        afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
 
         for (const row of batch) {
           if (row.change !== true) continue

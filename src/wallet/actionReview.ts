@@ -434,13 +434,19 @@ async function releaseUnsignedSpendReservationsNow(
   try {
     failedTxs = await wallet.storage.runAsStorageProvider(async (sp) => {
       let n = 0;
-      const stuck = await sp.findTransactions({
-        partial: {},
-        status: ["unprocessed", "unsigned"],
-        noRawTx: true,
-        paged: { limit: 100, offset: 0 },
-      });
-      for (const tx of stuck ?? []) {
+      // One status per query walks the status index; a status list with an
+      // empty partial walks every transaction, rawTx included.
+      const stuck: unknown[] = [];
+      for (const status of ["unprocessed", "unsigned"] as const) {
+        if (stuck.length >= 100) break;
+        const rows = await sp.findTransactions({
+          partial: { status },
+          noRawTx: true,
+          paged: { limit: 100 - stuck.length, offset: 0 },
+        });
+        stuck.push(...(rows ?? []));
+      }
+      for (const tx of stuck) {
         const id = Number((tx as { transactionId?: number }).transactionId);
         if (!Number.isFinite(id) || id <= 0) continue;
         try {

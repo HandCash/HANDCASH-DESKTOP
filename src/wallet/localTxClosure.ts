@@ -251,11 +251,13 @@ export type ClosureStorage = {
     status?: string[]
     noRawTx?: boolean
     paged: { limit: number; offset: number }
+    afterTransactionId?: number
   }) => Promise<StorageTxRow[] | undefined>
   updateTransactionStatus?: (status: string, transactionId: number) => Promise<unknown>
   findOutputs?: (args: {
     partial: Record<string, unknown>
     paged: { limit: number; offset: number }
+    afterOutputId?: number
   }) => Promise<StorageOutputRow[] | undefined>
   updateOutput?: (
     outputId: number,
@@ -273,16 +275,23 @@ async function pageTransactions(
 ): Promise<StorageTxRow[]> {
   if (typeof sp.findTransactions !== 'function') return []
   const rows: StorageTxRow[] = []
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const batch =
-      (await sp.findTransactions({
-        partial: {},
-        status: [...status],
-        noRawTx,
-        paged: { limit: PAGE, offset: page * PAGE },
-      })) ?? []
-    rows.push(...batch)
-    if (batch.length < PAGE) break
+  // One status per query walks the status index; a status list with an empty
+  // partial walks every transaction, rawTx included.
+  for (const one of status) {
+    let afterTransactionId: number | undefined
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const batch =
+        (await sp.findTransactions({
+          partial: { status: one },
+          noRawTx,
+          paged: { limit: PAGE, offset: page * PAGE },
+          ...(afterTransactionId != null ? { afterTransactionId } : {}),
+        })) ?? []
+      rows.push(...batch)
+      if (batch.length < PAGE) break
+      const lastId = Number(batch[batch.length - 1]?.transactionId)
+      afterTransactionId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
+    }
   }
   return rows
 }
@@ -294,12 +303,16 @@ async function pageTransactions(
 async function retireOutputsOf(sp: ClosureStorage, txid: string): Promise<number> {
   if (typeof sp.findOutputs !== 'function' || typeof sp.updateOutput !== 'function') return 0
   let retired = 0
+  let afterOutputId: number | undefined
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const batch =
       (await sp.findOutputs({
         partial: { txid },
         paged: { limit: PAGE, offset: page * PAGE },
+        ...(afterOutputId != null ? { afterOutputId } : {}),
       })) ?? []
+    const lastId = Number(batch[batch.length - 1]?.outputId)
+    afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
     for (const row of batch) {
       if (row.spendable !== true && row.spentBy == null) continue
       const outputId = Number(row.outputId)

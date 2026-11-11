@@ -259,6 +259,7 @@ export async function reconcileKnownUtxosByEvidence(opts?: {
       if (typeof sp.findOutputs !== "function") return;
       for (const spendable of [true, false]) {
         let sideCount = 0;
+        let afterOutputId: number | undefined;
         for (let offset = 0; sideCount < maxOutputs; offset += RESTORE_MAX) {
           const batch = await sp.findOutputs({
             partial: { spendable },
@@ -266,11 +267,15 @@ export async function reconcileKnownUtxosByEvidence(opts?: {
               limit: Math.min(RESTORE_MAX, maxOutputs - sideCount),
               offset,
             },
+            ...(afterOutputId != null ? { afterOutputId } : {}),
           });
           if (!Array.isArray(batch) || batch.length === 0) break;
           rows.push(...(batch as EvidenceOutputRow[]));
           sideCount += batch.length;
           if (batch.length < RESTORE_MAX) break;
+          afterOutputId = positiveId(
+            (batch[batch.length - 1] as EvidenceOutputRow).outputId
+          ) ?? undefined;
         }
       }
     });
@@ -1231,14 +1236,17 @@ export async function listFailedLocalTxids(): Promise<string[]> {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as LocalStorage;
       if (typeof sp.findTransactions !== "function") return;
+      let afterTransactionId: number | undefined;
       for (let page = 0; page < 2; page += 1) {
         const rows = await sp.findTransactions({
-          partial: {},
-          status: ["failed"],
+          partial: { status: "failed" },
           noRawTx: true,
           paged: { limit: 25, offset: page * 25 },
+          ...(afterTransactionId != null ? { afterTransactionId } : {}),
         });
         if (!rows?.length) break;
+        afterTransactionId =
+          positiveId(rows[rows.length - 1]?.transactionId) ?? undefined;
         for (const row of rows) {
           const txid = String(row.txid ?? "")
             .trim()
@@ -2117,12 +2125,17 @@ export async function reclaimOutputsSealedByDeadTxs(opts?: {
         return { live, txid };
       };
 
+      let afterOutputId: number | undefined;
       for (let offset = 0; offset < 4_000; offset += RESTORE_MAX) {
         const batch = await sp.findOutputs({
           partial: { spendable: false },
           paged: { limit: RESTORE_MAX, offset },
+          ...(afterOutputId != null ? { afterOutputId } : {}),
         });
         if (!Array.isArray(batch) || batch.length === 0) break;
+        afterOutputId = positiveId(
+          (batch[batch.length - 1] as EvidenceOutputRow).outputId
+        ) ?? undefined;
         for (const raw of batch as EvidenceOutputRow[]) {
           const outputId = positiveId(raw.outputId);
           const spentBy = positiveId(raw.spentBy);
@@ -2639,14 +2652,17 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
       const findTransactions = sp.findTransactions;
       if (typeof findTransactions !== "function") return;
       const scan = async (status: string, accept: (txid: string) => boolean) => {
+        let afterTransactionId: number | undefined;
         for (let page = 0; page < 5; page += 1) {
           const rows = await findTransactions.call(sp, {
-            partial: {},
-            status: [status],
+            partial: { status },
             noRawTx: true,
             paged: { limit: 25, offset: page * 25 },
+            ...(afterTransactionId != null ? { afterTransactionId } : {}),
           });
           if (!rows?.length) break;
+          afterTransactionId =
+            positiveId(rows[rows.length - 1]?.transactionId) ?? undefined;
           for (const row of rows) {
             const txid = String(row.txid ?? "")
               .trim()
@@ -3057,31 +3073,21 @@ export async function rehideInputsOfLiveLocalTxs(): Promise<number> {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage;
       if (typeof sp.findTransactions !== "function") return;
-      let rows: TxStatusRow[] = [];
-      try {
-        rows =
-          (await sp.findTransactions({
-            partial: {},
-            status: [...LIVE_LOCAL_TX],
+      const rows: TxStatusRow[] = [];
+      // One status per query walks the status index; a status list with an
+      // empty partial walks every transaction, rawTx included.
+      for (const status of LIVE_LOCAL_TX) {
+        if (rows.length >= REHIDE_TX_LIMIT) break;
+        if (shouldYieldChainIngestToSpend()) return;
+        try {
+          const batch = await sp.findTransactions({
+            partial: { status },
             noRawTx: false,
-            paged: { limit: REHIDE_TX_LIMIT, offset: 0 },
-          })) ?? [];
-      } catch (err) {
-        if (!isUndefinedPartialFilterError(err)) {
-          console.warn("[stale-output] live-tx list skipped", err);
-        }
-        for (const status of LIVE_LOCAL_TX) {
-          if (shouldYieldChainIngestToSpend()) return;
-          try {
-            const batch = await sp.findTransactions({
-              partial: { status },
-              noRawTx: false,
-              paged: { limit: 15, offset: 0 },
-            });
-            if (Array.isArray(batch)) rows.push(...batch);
-          } catch (inner) {
-            console.warn("[stale-output] live-tx list skipped", status, inner);
-          }
+            paged: { limit: REHIDE_TX_LIMIT - rows.length, offset: 0 },
+          });
+          if (Array.isArray(batch)) rows.push(...batch);
+        } catch (err) {
+          console.warn("[stale-output] live-tx list skipped", status, err);
         }
       }
       for (const row of rows.slice(0, REHIDE_TX_LIMIT)) {

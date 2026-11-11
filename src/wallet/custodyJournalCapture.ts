@@ -245,16 +245,20 @@ export async function journalAllToolboxOutputs(
     if (!sp.findOutputs) return { entries: [] as CustodyEntry[], rows: 0 }
     const rows: ToolboxRow[] = []
     for (const spendable of [true, false]) {
+      let afterOutputId: number | undefined
       for (let page = 0; page < MAX_PAGES; page += 1) {
         const batch = rowsOf(
           await sp.findOutputs({
             partial: { spendable },
             noScript: true,
             paged: { limit: PAGE, offset: page * PAGE },
+            ...(afterOutputId != null ? { afterOutputId } : {}),
           }),
         ) as ToolboxRow[]
         rows.push(...batch)
         if (batch.length < PAGE) break
+        const lastId = Number(batch[batch.length - 1]?.outputId)
+        afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
       }
     }
     const txids = new Map<number, string>()

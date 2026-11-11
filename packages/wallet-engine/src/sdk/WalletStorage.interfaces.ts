@@ -549,6 +549,12 @@ export interface FindTransactionsArgs extends FindSincePagedArgs {
   from?: Date
   to?: Date
   noRawTx?: boolean
+  /**
+   * IDB: resume the scan after this transactionId (below it when descending)
+   * and ignore `paged.offset`. An offset re-reads and clones every skipped row,
+   * rawTx and inputBEEF included.
+   */
+  afterTransactionId?: number
 }
 export interface FindTxLabelMapsArgs extends FindSincePagedArgs {
   partial: Partial<TableTxLabelMap>

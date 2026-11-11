@@ -55,15 +55,19 @@ async function readAllOutputRows(active: ActiveWallet): Promise<DerivedChangeRow
       const provider = sp as { findOutputs?: (args: unknown) => Promise<unknown> }
       if (typeof provider.findOutputs !== 'function') return
       for (const spendable of [true, false]) {
+        let afterOutputId: number | undefined
         for (let page = 0; page < ECHO_MAX_PAGES; page += 1) {
           const batch = await provider.findOutputs({
             partial: { spendable },
             noScript: true,
             paged: { limit: ECHO_PAGE, offset: page * ECHO_PAGE },
+            ...(afterOutputId != null ? { afterOutputId } : {}),
           })
           if (!Array.isArray(batch) || batch.length === 0) break
           rows.push(...(batch as DerivedChangeRow[]))
           if (batch.length < ECHO_PAGE) break
+          const lastId = Number((batch[batch.length - 1] as { outputId?: unknown }).outputId)
+          afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
         }
       }
     })

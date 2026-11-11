@@ -2131,11 +2131,12 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const dbTrx = this.toDbTrx(stores, 'readonly', args.trx)
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('transactions')
-    const cursor = await this.openTransactionsCursor(store, args.partial, direction)
+    let cursor = await this.openTransactionsCursor(store, args.partial, direction)
+    if (args.afterTransactionId != null) cursor = await resumeCursorAfter(cursor, args.afterTransactionId, direction)
     await scanCursor<TableTransaction>(
       cursor,
       args.since,
-      args.paged?.offset ?? 0,
+      args.afterTransactionId != null ? 0 : (args.paged?.offset ?? 0),
       args.paged?.limit,
       async r => {
         if (args.from != null && r.created_at.getTime() < args.from.getTime()) return false

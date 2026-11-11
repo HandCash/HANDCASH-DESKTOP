@@ -78,18 +78,24 @@ async function heldOutpoints(active: ActiveWallet): Promise<Set<string> | null> 
       const provider = sp as { findOutputs?: (args: unknown) => Promise<unknown> }
       if (typeof provider.findOutputs !== 'function') return
       for (const spendable of [true, false]) {
+        let afterOutputId: number | undefined
         for (let page = 0; page < MAX_PAGES; page += 1) {
           const batch = await provider.findOutputs({
             partial: { spendable },
             noScript: true,
             paged: { limit: PAGE, offset: page * PAGE },
+            ...(afterOutputId != null ? { afterOutputId } : {}),
           })
-          const rows = Array.isArray(batch) ? (batch as Array<{ txid?: string; vout?: number }>) : []
+          const rows = Array.isArray(batch)
+            ? (batch as Array<{ txid?: string; vout?: number; outputId?: number }>)
+            : []
           for (const row of rows) {
             const txid = String(row.txid ?? '').toLowerCase()
             if (/^[0-9a-f]{64}$/.test(txid) && Number.isInteger(row.vout)) held.add(`${txid}.${row.vout}`)
           }
           if (rows.length < PAGE) break
+          const lastId = Number(rows[rows.length - 1]?.outputId)
+          afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
         }
       }
     })

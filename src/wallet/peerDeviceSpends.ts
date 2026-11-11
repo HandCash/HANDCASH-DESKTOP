@@ -100,7 +100,7 @@ export function peerSpenderOf(outpoint: string): string | null {
 
 type LocalProvider = {
   makeAvailable?: () => Promise<{ storageIdentityKey?: string }>
-  findOutputs: (args: unknown) => Promise<Array<{ txid?: unknown; vout?: unknown }>>
+  findOutputs: (args: unknown) => Promise<Array<{ outputId?: unknown; txid?: unknown; vout?: unknown }>>
   findTransactions: (args: unknown) => Promise<unknown[]>
 }
 
@@ -122,17 +122,21 @@ async function readLocalView(
     if (storageIdentityKey && storageIdentityKey === snapshot.storageIdentityKey) return empty
 
     const spendable = new Set<string>()
+    let afterOutputId: number | undefined
     for (let page = 0; page < OUTPUT_PAGES; page += 1) {
       const rows = await sp.findOutputs({
         partial: { spendable: true },
         noScript: true,
         paged: { limit: OUTPUT_PAGE, offset: page * OUTPUT_PAGE },
+        ...(afterOutputId != null ? { afterOutputId } : {}),
       })
       for (const row of rows ?? []) {
         const outpoint = canonicalOutpoint(`${String(row.txid ?? '')}.${String(row.vout ?? '')}`)
         if (outpoint) spendable.add(outpoint)
       }
       if (!rows || rows.length < OUTPUT_PAGE) break
+      const lastId = Number(rows[rows.length - 1]?.outputId)
+      afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
     }
     const candidates = peerSpendCandidates(snapshot.txs, spendable)
     const knownHere = new Set<string>()

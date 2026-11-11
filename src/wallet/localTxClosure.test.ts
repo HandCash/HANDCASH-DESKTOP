@@ -149,6 +149,7 @@ function fakeStorage(rows: Row[], outputs: Array<{ outputId: number; txid: strin
       if (args.paged.offset > 0) return []
       return rows
         .filter((r) => !args.status || args.status.includes(r.status))
+        .filter((r) => args.partial?.status == null || r.status === args.partial.status)
         .map((r) => (args.noRawTx ? { ...r, rawTx: undefined } : r))
     }),
     updateTransactionStatus: vi.fn(async (status, transactionId) => {

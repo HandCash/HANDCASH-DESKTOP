@@ -253,16 +253,20 @@ async function readChangeRows(active: ActiveWallet): Promise<ChangeRow[]> {
   const storage = active.wallet.storage
   const rows: ChangeRow[] = []
   for (const spendable of [true, false]) {
+    let afterOutputId: number | undefined
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const batch = (await storage.runAsStorageProvider(async (sp) =>
         sp.findOutputs({
           partial: { spendable },
           paged: { limit: PAGE, offset: page * PAGE },
+          ...(afterOutputId != null ? { afterOutputId } : {}),
         }),
       )) as ChangeRow[] | undefined
       if (!batch?.length) break
       rows.push(...batch.filter(isChangeRow))
       if (batch.length < PAGE) break
+      const lastId = Number(batch[batch.length - 1]?.outputId)
+      afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
     }
   }
   return rows

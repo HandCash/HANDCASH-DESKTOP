@@ -79,6 +79,7 @@ export type DeadCoinSweepResult =
     }
 
 type OutputRow = {
+  outputId?: unknown
   txid?: unknown
   vout?: unknown
   outputIndex?: unknown
@@ -178,29 +179,37 @@ async function probeableChange(active: ActiveWallet): Promise<string[] | null> {
     // read here, and loading them validates each one against proven_txs.
     const unsettled = new Set<number>()
     for (const status of LIVE_LOCAL_TX_STATUSES) {
+      let afterTransactionId: number | undefined
       for (let page = 0; page < ENUM_MAX_PAGES; page += 1) {
         const batch =
           (await sp.findTransactions({
             partial: { status },
             noRawTx: true,
             paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+            ...(afterTransactionId != null ? { afterTransactionId } : {}),
           })) ?? []
         for (const row of batch) {
           const id = Number(row.transactionId)
           if (Number.isFinite(id) && id > 0) unsettled.add(id)
         }
         if (batch.length < ENUM_PAGE) break
+        const lastId = Number(batch[batch.length - 1]?.transactionId)
+        afterTransactionId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
       }
     }
 
     const outpoints: string[] = []
+    let afterOutputId: number | undefined
     for (let page = 0; page < ENUM_MAX_PAGES && outpoints.length < MAX_PROBES; page += 1) {
       const batch =
         (await sp.findOutputs({
           partial: { spendable: true, change: true },
           noScript: true,
           paged: { limit: ENUM_PAGE, offset: page * ENUM_PAGE },
+          ...(afterOutputId != null ? { afterOutputId } : {}),
         })) ?? []
+      const lastId = Number(batch[batch.length - 1]?.outputId)
+      afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
       for (const row of batch) {
         if (row.change !== true) continue
         const basket = String(row.basket ?? '').toLowerCase()

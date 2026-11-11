@@ -120,6 +120,7 @@ export async function reconcileWrittenOffItems(args: {
 
   const hidden: Hidden[] = []
   let basketId: number | null = null
+  let afterOutputId: number | undefined
   for (let page = 0; page < MAX_READ_PAGES; page += 1) {
     if (stop()) {
       result.stopped = true
@@ -136,9 +137,12 @@ export async function reconcileWrittenOffItems(args: {
           partial: { userId, basketId, spendable: false },
           noScript: true,
           paged: { limit: READ_PAGE, offset: page * READ_PAGE },
+          ...(afterOutputId != null ? { afterOutputId } : {}),
         })
       }),
     )
+    const lastId = Number(rows[rows.length - 1]?.outputId)
+    afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
     for (const row of rows) {
       const outputId = positiveId(row.outputId)
       const outpoint = outpointFromOutput(row)

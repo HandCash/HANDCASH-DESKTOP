@@ -1142,11 +1142,15 @@ describe('promotePendingLocalChangeOutputs', () => {
     })
   })
 
+  type StatusQuery = { status?: string[]; partial?: { status?: string; txid?: string } }
+  const asks = (args: StatusQuery, status: string) =>
+    args.status?.includes(status) === true || args.partial?.status === status
+
   it('promotes change from live pending txs without paging unspendable rows', async () => {
     const txid = 'ef'.repeat(32)
     txExistsOnChain.mockResolvedValue(true)
-    findTransactions.mockImplementation(async (args: { status?: string[] }) => {
-      if (args.status?.includes('unproven')) {
+    findTransactions.mockImplementation(async (args: StatusQuery) => {
+      if (asks(args, 'unproven')) {
         return [{ txid, status: 'unproven' }]
       }
       return []
@@ -1174,11 +1178,8 @@ describe('promotePendingLocalChangeOutputs', () => {
   it('promotes pending txs while explorers lag instead of failing the submit', async () => {
     const txid = 'cd'.repeat(32)
     txExistsOnChain.mockResolvedValue(false)
-    findTransactions.mockImplementation(async (args: {
-      status?: string[]
-      partial?: { txid?: string }
-    }) => {
-      if (args.partial?.txid === txid || args.status?.includes('unproven')) {
+    findTransactions.mockImplementation(async (args: StatusQuery) => {
+      if (args.partial?.txid === txid || asks(args, 'unproven')) {
         return [{ transactionId: 11, txid, status: 'unproven' }]
       }
       return []
@@ -1230,14 +1231,11 @@ describe('promotePendingLocalChangeOutputs', () => {
   it('frees change of an Arcade-pinned nosend leg so the next leg can spend it', async () => {
     const txid = '1a'.repeat(32)
     rememberArcadeSubmitContact(txid)
-    findTransactions.mockImplementation(async (args: {
-      status?: string[]
-      partial?: { txid?: string }
-    }) => {
+    findTransactions.mockImplementation(async (args: StatusQuery) => {
       if (args.partial?.txid === txid) {
         return [{ transactionId: 7, txid, status: 'nosend' }]
       }
-      return args.status?.includes('nosend') ? [{ txid, status: 'nosend' }] : []
+      return asks(args, 'nosend') ? [{ txid, status: 'nosend' }] : []
     })
     findOutputs.mockResolvedValue([
       {
@@ -1262,8 +1260,8 @@ describe('promotePendingLocalChangeOutputs', () => {
   it('does not re-seal a live tx it already promoted, until a coin is un-sealed', async () => {
     const txid = '3c'.repeat(32)
     txExistsOnChain.mockResolvedValue(true)
-    findTransactions.mockImplementation(async (args: { status?: string[] }) =>
-      args.status?.includes('unproven') ? [{ txid, status: 'unproven' }] : [],
+    findTransactions.mockImplementation(async (args: StatusQuery) =>
+      asks(args, 'unproven') ? [{ txid, status: 'unproven' }] : [],
     )
     findOutputs.mockResolvedValue([
       {
@@ -1301,8 +1299,8 @@ describe('promotePendingLocalChangeOutputs', () => {
 
   it('leaves change of an unpinned nosend tx app-held', async () => {
     const txid = '2b'.repeat(32)
-    findTransactions.mockImplementation(async (args: { status?: string[] }) =>
-      args.status?.includes('nosend') ? [{ txid, status: 'nosend' }] : [],
+    findTransactions.mockImplementation(async (args: StatusQuery) =>
+      asks(args, 'nosend') ? [{ txid, status: 'nosend' }] : [],
     )
     findOutputs.mockResolvedValue([])
 
