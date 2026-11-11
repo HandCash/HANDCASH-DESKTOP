@@ -658,10 +658,15 @@ export class Wallet implements WalletInterface, ProtoWallet {
     if (this.autoKnownTxids && !vargs.knownTxids) {
       vargs.knownTxids = this.getKnownTxids()
     }
-    const storageArgs =
+    const overlaid =
       this.actionBatch.hasWorkspace && vargs.basket !== specOpWalletBalance && !vargs.tags.includes(specOpWalletBalance)
-        ? { ...vargs, limit: 10000, offset: 0 }
-        : vargs
+    // Internal: resume a sliced read after its last row. An open batch re-pages
+    // by offset, and its result carries no `lastOutputId`, so callers fall back.
+    const resumeAfter = (args as { resumeAfterOutputId?: number }).resumeAfterOutputId
+    if (!overlaid && typeof resumeAfter === 'number' && Number.isSafeInteger(resumeAfter) && resumeAfter > 0) {
+      ;(vargs as { resumeAfterOutputId?: number }).resumeAfterOutputId = resumeAfter
+    }
+    const storageArgs = overlaid ? { ...vargs, limit: 10000, offset: 0 } : vargs
     const r = this.actionBatch.overlayListOutputs(await this.storage.listOutputs(storageArgs), vargs)
     if (r.BEEF != null) {
       this.beef.mergeBeefFromParty(this.storageParty, asArray(r.BEEF))

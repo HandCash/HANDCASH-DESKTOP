@@ -13,7 +13,7 @@ const SPEND_WAIT_POLL_MS = 200
 const SPEND_WAIT_MAX_MS = 90_000
 
 type ListArgs = { limit?: number; offset?: number }
-type ListResult<O> = { outputs?: O[]; totalOutputs?: number }
+type ListResult<O> = { outputs?: O[]; totalOutputs?: number; lastOutputId?: number }
 
 function spendWaiting(): boolean {
   return spendNeedsStorage() || shouldYieldChainIngestToSpend()
@@ -55,6 +55,7 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
   let totalOutputs: number | undefined
   let slices = 0
   let yieldedMs = 0
+  let resumeAfter: number | undefined
   while (outputs.length < limit) {
     // A macrotask, not a microtask: the tap that starts a send is a task, and
     // it has to run before this loop takes the lock again.
@@ -69,9 +70,13 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
       limit: want,
       offset: newestFirst ? -(at + 1) : at,
       ...(lastSlice ? {} : { skipTotal: true }),
+      // An offset makes storage re-read every row before it; the engine opens
+      // the scan after the previous slice's last row instead.
+      ...(resumeAfter != null ? { resumeAfterOutputId: resumeAfter } : {}),
     })
     slices++
     const rows = page.outputs ?? []
+    resumeAfter = rows.length >= want ? page.lastOutputId : undefined
     const taken = rows.slice(0, want)
     outputs.push(...taken)
     if (taken.length > 0) opts.onSlice?.(taken)

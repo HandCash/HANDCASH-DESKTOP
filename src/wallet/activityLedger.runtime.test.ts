@@ -146,6 +146,19 @@ describe('Activity ledger runtime ownership', () => {
       paged: { limit: 10, offset: 0 },
     })
   })
+  it('resumes the next item page after the last row instead of re-reading by offset', async () => {
+    const owner = wallet('owner'); control.current = owner.runtime
+    owner.provider.findOutputs.mockResolvedValueOnce(
+      Array.from({ length: 10 }, (_, i) => ({ outputId: 50 + i, transactionId: 1, txid: txid(1), basketId: 3, vout: i })) as never,
+    )
+    await refreshActivityLedger(owner.runtime)
+    expect(owner.provider.findOutputs).toHaveBeenNthCalledWith(2, {
+      partial: { userId: 9, basketId: 3 },
+      noScript: true,
+      paged: { limit: 10, offset: 10 },
+      afterOutputId: 59,
+    })
+  })
   it('refuses an empty live read over a real history and keeps it', () => {
     const owner = wallet('owner'); control.current = owner.runtime
     const rows = Array.from({ length: 25 }, (_, i) => ({

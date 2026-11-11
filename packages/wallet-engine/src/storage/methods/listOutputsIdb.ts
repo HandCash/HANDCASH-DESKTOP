@@ -2,7 +2,7 @@ import { type ValidListOutputsArgs } from '@bsv/sdk/wallet/validationHelpers'
 import { Beef, ListOutputsResult, OriginatorDomainNameStringUnder250Bytes, WalletOutput } from '@bsv/sdk'
 import { getListOutputsSpecOp, type ListOutputsSpecOp } from './ListOutputsSpecOp'
 import { StorageIdb } from '../StorageIdb'
-import { AuthId, FindOutputsArgs } from '../../sdk/WalletStorage.interfaces'
+import { AuthId, FindOutputsArgs, OutputScanStats } from '../../sdk/WalletStorage.interfaces'
 import { verifyId } from '../../utility/utilityHelpers'
 import { TableOutput } from '../schema/tables/TableOutput'
 import { TransactionStatus } from '../../sdk/types'
@@ -27,6 +27,29 @@ interface IdbOutputQuery {
   offset: number
   orderDescending: boolean
   skipTotal?: boolean
+  afterOutputId?: number
+  stats: ListReadStats
+}
+
+interface ListReadStats extends OutputScanStats {
+  countMs: number | null
+}
+
+/** A read this slow, or one that re-reads this many rows to honour an offset, is logged. */
+const SLOW_LIST_MS = 250
+const OFFSET_REREAD_ROWS = 100
+
+/**
+ * Internal, beside BRC-100 `listOutputs`: a slicing caller passes the
+ * `lastOutputId` of its previous slice as `resumeAfterOutputId` (with the
+ * equivalent offset), and the scan opens there instead of re-reading every
+ * newer row. Results that do not carry `lastOutputId` must be paged by offset.
+ */
+export interface ListOutputsResume {
+  resumeAfterOutputId?: number
+}
+export interface ListOutputsResumeResult {
+  lastOutputId?: number
 }
 
 function normalizeListOffset(offset: number): {
@@ -96,7 +119,9 @@ async function loadIdbOutputs(query: IdbOutputQuery): Promise<{ outputs: TableOu
     },
     txStatus: ['completed', 'unproven', 'nosend', 'sending'] as TransactionStatus[],
     noScript: specOp?.includeOutputScripts !== true,
-    orderDescending
+    orderDescending,
+    afterOutputId: query.afterOutputId,
+    scanStats: query.stats
   }
   // BRC-100 listOutputs: filter eligible managed change inside the cursor,
   // before paging, rather than materialising the entire wallet on every page.
@@ -133,10 +158,12 @@ async function loadIdbOutputs(query: IdbOutputQuery): Promise<{ outputs: TableOu
     return { outputs, totalOutputs: (applyPaging ? offset : 0) + outputs.length }
   }
   args.paged = undefined
-  return {
-    outputs,
-    totalOutputs: await storage.countOutputs(args, tagIds, queryModeAll)
-  }
+  args.afterOutputId = undefined
+  args.scanStats = undefined
+  const countStarted = Date.now()
+  const totalOutputs = await storage.countOutputs(args, tagIds, queryModeAll)
+  query.stats.countMs = Date.now() - countStarted
+  return { outputs, totalOutputs }
 }
 
 async function hydrateIdbWalletOutput(
@@ -209,6 +236,9 @@ export async function listOutputsIdb(
   const tagIds = await findIdbTagIds(storage, userId, tags)
   const isQueryModeAll = vargs.tagQueryMode === 'all'
   if (tagQueryCannotMatch(tags, tagIds, isQueryModeAll)) return result
+  const started = Date.now()
+  const stats: ListReadStats = { visited: 0, skipped: 0, countMs: null }
+  const resumeAfter = specOp == null ? (vargs as ListOutputsResume).resumeAfterOutputId : undefined
   let { outputs, totalOutputs } = await loadIdbOutputs({
     storage,
     userId,
@@ -219,18 +249,53 @@ export async function listOutputsIdb(
     limit,
     offset,
     orderDescending,
-    skipTotal: (vargs as { skipTotal?: boolean }).skipTotal === true
+    skipTotal: (vargs as { skipTotal?: boolean }).skipTotal === true,
+    afterOutputId: resumeAfter,
+    stats
   })
+  const loadedAt = Date.now()
+  const report = (returned: number) =>
+    logListRead(vargs, offset, resumeAfter != null, stats, returned, loadedAt - started, Date.now() - loadedAt)
   result.totalOutputs = totalOutputs
+  if (specOp == null && outputs.length > 0) {
+    ;(result as ListOutputsResumeResult).lastOutputId = outputs[outputs.length - 1].outputId
+  }
   if (specOp != null) {
     if (specOp.filterOutputs != null) {
       outputs = await specOp.filterOutputs(storage, auth, vargs, specOpTags, outputs)
       result.totalOutputs = outputs.length
     }
     if (specOp.resultFromOutputs != null) {
-      return specOp.resultFromOutputs(storage, auth, vargs, specOpTags, outputs)
+      const fromOutputs = await specOp.resultFromOutputs(storage, auth, vargs, specOpTags, outputs)
+      report(outputs.length)
+      return fromOutputs
     }
   }
   await hydrateIdbOutputResult(storage, outputs, vargs, result)
+  report(outputs.length)
   return result
+}
+
+/**
+ * One parseable line per slow read, or per read that re-read rows to honour an
+ * offset: `via=offset skipped=N` names a caller still paging by offset, and
+ * `count=Nms` a whole-basket count that ran because the page came back full.
+ */
+function logListRead(
+  vargs: ValidListOutputsArgs,
+  offset: number,
+  resumed: boolean,
+  stats: ListReadStats,
+  returned: number,
+  loadMs: number,
+  hydrateMs: number
+): void {
+  const ms = loadMs + hydrateMs
+  if (ms < SLOW_LIST_MS && stats.skipped < OFFSET_REREAD_ROWS) return
+  const line =
+    `[list-outputs] basket=${vargs.basket || '-'} limit=${vargs.limit} offset=${offset} ` +
+    `via=${resumed ? 'resume' : 'offset'} visited=${stats.visited} skipped=${stats.skipped} returned=${returned} ` +
+    `count=${stats.countMs == null ? 'none' : `${stats.countMs}ms`} load=${loadMs}ms hydrate=${hydrateMs}ms done ${ms}ms`
+  if (stats.skipped >= OFFSET_REREAD_ROWS) console.warn(line)
+  else console.info(line)
 }

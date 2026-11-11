@@ -56,6 +56,7 @@ import {
   FindMonitorEventsArgs,
   FindOutputBasketsArgs,
   FindOutputsArgs,
+  OutputScanStats,
   FindOutputTagMapsArgs,
   FindOutputTagsArgs,
   FindProvenTxReqsArgs,
@@ -96,6 +97,21 @@ export interface StorageIdbOptions extends StorageProviderOptions {}
  * profiling/instrumentation that wraps class-prototype methods cannot
  * intercept or mutate its `matches` / `accept` callbacks.
  */
+/**
+ * Move a single-key cursor past `after` by primary key without reading the rows
+ * in between. A store cursor's key is its primary key; an index cursor keeps
+ * its key and moves by primary key.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function resumeCursorAfter(cursor: any, after: number, direction: IDBCursorDirection): Promise<any> {
+  if (cursor == null) return cursor
+  const descending = direction === 'prev'
+  const at = Number(cursor.primaryKey)
+  if (descending ? at < after : at > after) return cursor
+  const target = descending ? after - 1 : after + 1
+  return cursor.source?.objectStore != null ? cursor.continuePrimaryKey(cursor.key, target) : cursor.continue(target)
+}
+
 async function scanCursor<T extends { updated_at: Date }>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   cursor: any,
@@ -104,12 +120,14 @@ async function scanCursor<T extends { updated_at: Date }>(
   limit: number | undefined,
   matches: (r: T) => boolean | Promise<boolean>,
   accept: (r: T) => void,
-  next?: () => Promise<unknown>
+  next?: () => Promise<unknown>,
+  stats?: OutputScanStats
 ): Promise<number> {
   let skipped = 0
   let count = 0
   for (; cursor != null; cursor = next == null ? await cursor.continue() : await next()) {
     const r: T = cursor.value
+    if (stats != null) stats.visited++
     if (since != null && since > r.updated_at) continue
     if (!(await matches(r))) continue
     if (skipped < offset) {
@@ -120,6 +138,7 @@ async function scanCursor<T extends { updated_at: Date }>(
     count++
     if ((limit ?? 0) > 0 && count >= (limit as number)) break
   }
+  if (stats != null) stats.skipped += skipped
   return count
 }
 
@@ -1884,11 +1903,12 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('outputs')
     const transactionEligibility = new Map<number, boolean>()
-    const cursor = await this.openOutputsCursor(store, args.partial, direction)
+    let cursor = await this.openOutputsCursor(store, args.partial, direction)
+    if (args.afterOutputId != null) cursor = await resumeCursorAfter(cursor, args.afterOutputId, direction)
     await scanCursor<TableOutput>(
       cursor,
       args.since,
-      args.paged?.offset ?? 0,
+      args.afterOutputId != null ? 0 : (args.paged?.offset ?? 0),
       args.paged?.limit,
       async r => {
         if (!matchesOutputPartial(r, args.partial)) return false
@@ -1913,7 +1933,9 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if (args.noScript === true) (r as any).script = undefined
         filtered(r)
-      }
+      },
+      undefined,
+      args.scanStats
     )
     if (args.trx == null) await dbTrx.done
   }

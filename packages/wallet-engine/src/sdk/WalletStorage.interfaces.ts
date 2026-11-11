@@ -283,6 +283,19 @@ export interface FindOutputsArgs extends FindSincePagedArgs {
   partial: Partial<TableOutput>
   noScript?: boolean
   txStatus?: TransactionStatus[]
+  /**
+   * IDB: resume the scan after this outputId (below it when descending) and
+   * ignore `paged.offset`. An offset re-reads and clones every skipped row,
+   * remittance included, so paging a basket by offset costs the square of it.
+   */
+  afterOutputId?: number
+  /** IDB: filled with the rows the cursor read and the rows the offset skipped. */
+  scanStats?: OutputScanStats
+}
+
+export interface OutputScanStats {
+  visited: number
+  skipped: number
 }
 
 export type StorageProvidedBy = 'you' | 'storage' | 'you-and-storage'

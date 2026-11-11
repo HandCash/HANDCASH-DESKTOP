@@ -217,6 +217,7 @@ function sessionFacts(header, events) {
   const incomingFinality = incomingFinalityFacts(events)
   const incomingReceives = incomingReceiveFacts(events)
   const storageLock = storageLockFacts(events)
+  const outputReads = outputReadFacts(events)
   const longFrames = longFrameFacts(events)
   const renders = renderFacts(events)
   const writtenOff = writtenOffFacts(events)
@@ -336,6 +337,9 @@ function sessionFacts(header, events) {
     // held`). A stuck entry is a hold that never released: every send behind
     // it times out with nothing broadcast.
     storageLock,
+    // Slow wallet storage `listOutputs` reads per basket (`[list-outputs]`):
+    // offset re-reads, whole-basket counts, rows read vs returned.
+    outputReads,
     // The scripts that actually held the main thread in long animation frames.
     // This outranks `freezes.byActiveLayer` and `workloads`, which only say
     // what was in flight: a phase awaiting a lock is never the freeze owner.
@@ -3631,6 +3635,60 @@ function storageLockFacts(events) {
     // A hold reported here never released while the session was recorded.
     stuck,
   }
+}
+
+const LIST_READ_RE =
+  /^\[list-outputs\] basket=(\S+) limit=(\d+) offset=(\d+) via=(resume|offset) visited=(\d+) skipped=(\d+) returned=(\d+) count=(none|\d+ms) load=(\d+)ms hydrate=(\d+)ms done (\d+)ms$/
+
+/**
+ * Wallet storage `listOutputs` reads that were slow or re-read rows to honour
+ * an offset, per basket. `offsetRereads` > 0 names a caller still paging by
+ * offset (each slice clones every row before it); `wholeCounts` are full-basket
+ * counts run because a page came back full.
+ */
+function outputReadFacts(events) {
+  const byBasket = {}
+  const worst = []
+  for (const e of events) {
+    const m = LIST_READ_RE.exec(e.text)
+    if (!m) continue
+    const [, basket, limit, offset, via, visited, skipped, returned, count, loadMs, hydrateMs, ms] = m
+    const b = (byBasket[basket] ??= {
+      reads: 0,
+      totalMs: 0,
+      worstMs: 0,
+      offsetRereads: 0,
+      rowsReread: 0,
+      rowsVisited: 0,
+      rowsReturned: 0,
+      wholeCounts: 0,
+      countMs: 0,
+      hydrateMs: 0,
+    })
+    b.reads += 1
+    b.totalMs += Number(ms)
+    b.worstMs = Math.max(b.worstMs, Number(ms))
+    if (Number(skipped) > 0) b.offsetRereads += 1
+    b.rowsReread += Number(skipped)
+    b.rowsVisited += Number(visited)
+    b.rowsReturned += Number(returned)
+    if (count !== 'none') {
+      b.wholeCounts += 1
+      b.countMs += Number(count.slice(0, -2))
+    }
+    b.hydrateMs += Number(hydrateMs)
+    worst.push({
+      at: new Date(e.at).toISOString().slice(11, 19),
+      basket,
+      limit: Number(limit),
+      offset: Number(offset),
+      via,
+      skipped: Number(skipped),
+      loadMs: Number(loadMs),
+      ms: Number(ms),
+    })
+  }
+  return { byBasket, worst: worst.sort((a, b) => b.ms - a.ms).slice(0, 8) }
 }
 
 const RECEIVE_WRITE_RE = /^\[activity\] (new|merged) earned\/\S+ (\d+) sat ([0-9a-f]{12})/

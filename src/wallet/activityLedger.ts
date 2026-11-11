@@ -41,6 +41,7 @@ export type LedgerTx = {
 }
 
 export type LedgerOutput = {
+  outputId?: number
   transactionId?: number
   spentBy?: number | null
   basketId?: number | null
@@ -524,6 +525,8 @@ const TX_CHUNK = 8
  * One output page, then the storage lock is released so a send can read a
  * balance. IndexedDB clones each item row whole on the UI thread, remittance
  * note included: 200 rows froze a phone for 3s a page, 10 is the collectables slice.
+ * Each page resumes after the last row read (`afterOutputId`); paging by
+ * offset alone re-clones every earlier row, once per page.
  */
 const OUTPUT_PAGE = 10
 
@@ -661,6 +664,7 @@ async function readItemOutputs(
   const outputs: LedgerOutput[] = []
   for (const basket of itemBaskets) {
     let offset = 0
+    let afterOutputId: number | undefined
     for (;;) {
       await yieldToWaitingSends(runtime)
       const page = asRows<LedgerOutput>(
@@ -670,12 +674,15 @@ async function readItemOutputs(
             partial: { userId, basketId: basket.basketId },
             noScript: true,
             paged: { limit: OUTPUT_PAGE, offset },
+            ...(afterOutputId != null ? { afterOutputId } : {}),
           })
         })),
       )
       outputs.push(...page)
       if (page.length < OUTPUT_PAGE) break
       offset += page.length
+      const lastId = Number(page[page.length - 1]?.outputId)
+      afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
       await yieldToUi()
     }
   }

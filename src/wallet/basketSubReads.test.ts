@@ -44,6 +44,19 @@ describe('listOutputsInSlices', () => {
     }
   })
 
+  it('resumes each slice after the last row the previous one returned', async () => {
+    const seen: Array<number | undefined> = []
+    const listOutputs = async (args: { limit: number; offset: number; resumeAfterOutputId?: number }) => {
+      seen.push(args.resumeAfterOutputId)
+      const skip = -args.offset - 1
+      const outputs = Array.from({ length: Math.max(0, Math.min(args.limit, 25 - skip)) }, (_, i) => skip + i)
+      return { outputs, totalOutputs: 25, lastOutputId: outputs.length ? 1000 - outputs[outputs.length - 1] : undefined }
+    }
+    const read = await listOutputsInSlices(listOutputs, { limit: 100, offset: -1 }, { subRows: 10 })
+    expect(read.outputs).toEqual(Array.from({ length: 25 }, (_, i) => i))
+    expect(seen).toEqual([undefined, 991, 981])
+  })
+
   it('reads one page as newest-first slices in order', async () => {
     const { listOutputs, calls, rows } = basket(250)
     const read = await listOutputsInSlices(listOutputs, { limit: 1000, offset: -1 }, { subRows: 100 })
