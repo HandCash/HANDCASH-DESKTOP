@@ -16,6 +16,17 @@ export function coinBudgetSats(chain: CoinChain, units: bigint): number | null {
   return Number.isSafeInteger(sats) && sats > 0 ? sats : null
 }
 
+/** USDC atoms per dollar (6 decimals on Arc). */
+const USDC_ATOMS_PER_USD = 1_000_000
+
+/** The same budget count for a USDC payment: its dollar value in satoshis. Null without a BSV price. */
+export function usdcBudgetSats(atoms: bigint): number | null {
+  const usdPerBsv = getCachedUsdPerBsv()
+  if (!usdPerBsv || !(usdPerBsv > 0)) return null
+  const sats = Math.ceil((Number(atoms) / USDC_ATOMS_PER_USD / usdPerBsv) * 1e8)
+  return Number.isSafeInteger(sats) && sats > 0 ? sats : null
+}
+
 /** USD value of `units` on `chain` at the last known price; null without one. */
 export function coinUsdValue(chain: CoinChain, units: bigint): number | null {
   const usdPerCoin = getCachedBsvMarket(chain)?.priceUsd

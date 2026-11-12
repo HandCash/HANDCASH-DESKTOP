@@ -47,7 +47,7 @@ import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
 import type { IssuanceAttestation } from './identityIssuance'
 import { formatUsd } from './fx'
-import { coinBudgetSats, coinUsdValue } from './coins/budget'
+import { coinBudgetSats, coinUsdValue, usdcBudgetSats } from './coins/budget'
 import { coinApprovalTitle, COIN_INFO, formatCoin, isCoinChain } from './coins/coinChains'
 import { bntAmountLabel } from './bnt/assetLabel'
 
@@ -1314,7 +1314,7 @@ export function summarizeAction(method: string, args: unknown): {
           : 'Payment from a connected app',
       amountLabel: units != null ? `${(Number(units) / 1e6).toLocaleString('en-US', { maximumFractionDigits: 6 })} USDC` : undefined,
       amountNote: usd != null ? formatUsd(usd) : undefined,
-      budgetSats: usd != null ? Math.round(usd * 1e8) : undefined,
+      budgetSats: units != null ? usdcBudgetSats(units) ?? undefined : undefined,
       details: [
         address ? `To: ${address}` : 'Unknown address',
         'Paid as USDC on Arc from this wallet; the Arc network fee is added on top',

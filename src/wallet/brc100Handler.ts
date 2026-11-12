@@ -39,7 +39,7 @@ import {
   resolveBridgeCaller,
   type BridgeChannel,
 } from './bridgeOrigin'
-import { getAutoPaySettings, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
+import { getAutoPaySettings, isBudgetedPayment, reserveApprovedPayment, settleAutoPayReservation, type AutoPayReservation } from './autoPay'
 import {
   isTokenReceiveArgs,
   isItemBasket,
@@ -466,6 +466,31 @@ async function coinApprovedBudgetSats(chain: CoinChain, args: unknown): Promise<
   if (counted != null) return counted
   await refreshCoinPrices(chain)
   return coinBudgetSats(chain, units)
+}
+
+/** Sats-equivalent an approved USDC payment counts against the app's budget; null without a BSV price. */
+async function usdcApprovedBudgetSats(args: unknown): Promise<number | null> {
+  const body = (args ?? {}) as { amount?: unknown; litoshi?: unknown }
+  const raw = String(body.amount ?? body.litoshi ?? '')
+  if (!/^\d+$/.test(raw) || BigInt(raw) <= 0n) return 0
+  const { usdcBudgetSats } = await import('./coins/budget')
+  const atoms = BigInt(raw)
+  const counted = usdcBudgetSats(atoms)
+  if (counted != null) return counted
+  await refreshBsvPrice()
+  return usdcBudgetSats(atoms)
+}
+
+/** What an approved app payment counts against its budget, whatever it pays in (BSV, a native coin or USDC). */
+function approvedBudgetSats(method: string, coinChain: CoinChain | null, args: unknown): Promise<number | null> {
+  if (coinChain) return coinApprovedBudgetSats(coinChain, args)
+  if (method === 'sendArcUsd') return usdcApprovedBudgetSats(args)
+  return Promise.resolve(extractSatsFromArgs(method, args))
+}
+
+async function refreshBsvPrice(): Promise<void> {
+  const { refreshUsdPerBsv } = await import('./fx')
+  await refreshUsdPerBsv().catch(() => null)
 }
 
 /** Both prices a coin payment is valued with; cached results return at once. */
@@ -1335,6 +1360,8 @@ async function handleBrc100RequestInner(
       const { arcUsdWallet, ArcUsdRefusalError } = await import('./arcUsdc')
       try {
         assertOnlineForPayment()
+        // The prompt and Auto-pay count it at its dollar value in satoshis.
+        await refreshBsvPrice()
         const body = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {}
         await arcUsdWallet.preflightRecipient({
           address: body.address,
@@ -1423,8 +1450,8 @@ async function handleBrc100RequestInner(
         }),
       }
     }
-    if ((method === 'createAction' || coinChain) && !automaticReservation && getAutoPaySettings(originator)?.enabled) {
-      const approvedSats = coinChain ? await coinApprovedBudgetSats(coinChain, args) : extractSatsFromArgs(method, args)
+    if (isBudgetedPayment(method) && !automaticReservation && getAutoPaySettings(originator)?.enabled) {
+      const approvedSats = await approvedBudgetSats(method, coinChain, args)
       if (approvedSats == null) return {
         status: 503,
         body: JSON.stringify({ status: 'error', code: 'SPENDING_BUDGET_UNAVAILABLE',

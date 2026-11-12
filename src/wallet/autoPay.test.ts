@@ -94,6 +94,20 @@ describe('autoPay', () => {
     expect(canAutoProcessPayment('game.example', 'transferBntAsset', 2_000_000)).toBe(false)
   })
 
+  it('counts BSV, native coins and USDC on one budget; items, tokens and signAction always prompt', async () => {
+    const { setAutoPaySettings, canAutoProcessPayment, isBudgetedPayment } = await import('./autoPay')
+    setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })
+    for (const method of ['createAction', 'sendCoins', 'sendArcUsd']) {
+      expect(isBudgetedPayment(method)).toBe(true)
+      expect(canAutoProcessPayment('game.example', method, 2_000_000)).toBe(true)
+      expect(canAutoProcessPayment('game.example', method, 20_000_001)).toBe(false)
+    }
+    for (const method of ['signAction', 'transferBntAsset', 'mintBntAsset', 'issueBntAsset', 'executeArcUsdcFractionalize']) {
+      expect(isBudgetedPayment(method)).toBe(false)
+      expect(canAutoProcessPayment('game.example', method, 2_000_000)).toBe(false)
+    }
+  })
+
   it('falls back to cached maxSats when FX is missing', async () => {
     const { setAutoPaySettings, canAutoProcessPayment } = await import('./autoPay')
     setAutoPaySettings('game.example', { enabled: true, maxUsd: 10, windowHours: 24 })

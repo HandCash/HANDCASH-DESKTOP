@@ -219,6 +219,20 @@ export function clearAutoPaySettings(origin?: string): void {
   writeStore(store)
 }
 
+/**
+ * App payments one per-app budget counts, each at its dollar value: BSV
+ * (`createAction`), native coins (`sendCoins`, BRC-213 §9) and USDC
+ * (`sendArcUsd`). Every one prompts unless Auto-pay or a spending grant covers
+ * it, and an approved one is charged either way. A `signAction` must authorize
+ * its exact prepared action, and items and tokens always prompt, so none of
+ * them is here.
+ */
+const BUDGETED_PAYMENT_METHODS: ReadonlySet<string> = new Set(['createAction', 'sendCoins', 'sendArcUsd'])
+
+export function isBudgetedPayment(method: string): boolean {
+  return BUDGETED_PAYMENT_METHODS.has(method)
+}
+
 /** Whether this payment can skip the approve dialog. */
 export function canAutoProcessPayment(
   origin: string | undefined,
@@ -228,11 +242,7 @@ export function canAutoProcessPayment(
   const settings = getAutoPaySettings(origin)
   if (!settings?.enabled) return false
 
-  // A signAction must authorize its exact prepared action. Merely enabling
-  // Auto-pay is not authority to sign an arbitrary reference/spend payload.
-  // A native coin payment (BRC-213: LTC, BCH) is a plain coin payment like
-  // createAction, counted at its BSV-equivalent dollar value.
-  if (method !== 'createAction' && method !== 'sendCoins') return false
+  if (!isBudgetedPayment(method)) return false
 
   const sats = typeof amountSats === 'number' ? Math.max(0, amountSats) : 0
   if (sats <= 0) return false
