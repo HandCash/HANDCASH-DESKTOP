@@ -3425,13 +3425,21 @@ button.wallet-detail-value.is-copied {
   flex-direction: column;
 }
 
+/*
+ * The stage never scrolls and never changes layout: every section and child
+ * panel owns its scroller (.history-list, .settings-scroll-body,
+ * .nav-section-with-scroll, .nav-child-body). Choosing the stage's display or
+ * overflow from :has(visible slot …) flipped the scroll container on every tab
+ * switch, which relaid out the whole stage twice per switch.
+ */
 .wallet-nav-stage {
   position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 8px var(--hc-pad-panel) var(--hc-space-3);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -3458,15 +3466,6 @@ button.wallet-detail-value.is-copied {
   background: hsl(var(--muted-foreground) / 0.45);
 }
 
-.wallet-nav-stage:has(.nav-child-stage),
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .history-with-filters
-  ) {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
 .wallet-nav-stage:has(.nav-child-stage) > .wallet-nav-panel.nav-child-stage {
   position: relative;
   z-index: 2;
@@ -3476,7 +3475,11 @@ button.wallet-detail-value.is-copied {
 }
 
 .wallet-nav-panel {
-  min-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /*
@@ -3496,16 +3499,6 @@ button.wallet-detail-value.is-copied {
   display: none !important;
   pointer-events: none !important;
   visibility: hidden !important;
-}
-
-.wallet-nav-stage:has(.empty-state),
-.wallet-nav-stage:has(.nav-child-stage .empty-state),
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .empty-state
-  ) {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .wallet-nav-stage:has(.empty-state) > .wallet-nav-panel,
@@ -3542,30 +3535,7 @@ button.wallet-detail-value.is-copied {
   flex: 1 1 auto;
 }
 
-.wallet-nav-stage:has(.nav-child-stage .history-with-filters) > .wallet-nav-panel,
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .history-with-filters
-  )
-  > .wallet-nav-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
-  ) {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .settings-with-scroll
-  )
-  > .wallet-nav-panel {
+.wallet-nav-stage:has(.nav-child-stage .history-with-filters) > .wallet-nav-panel {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -3643,32 +3613,6 @@ button.wallet-detail-value.is-copied {
 }
 
 /* Friends / Collectables / other nav tabs — pinned head + inner scroll (mirrors Settings). */
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
-  ),
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
-  ) {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
-  )
-  > .wallet-nav-panel,
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
-  )
-  > .wallet-nav-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
 .nav-section-with-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -10749,21 +10693,8 @@ html[data-aeon-mode='light'] .shortcut-key {
   flex-direction: column;
 }
 
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-with-scroll
-  ),
-.wallet-nav-stage:has(.nav-child-stage .chat-with-scroll) {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
 .wallet-nav-stage:has(.nav-child-stage .chat-with-scroll)
-  > .wallet-nav-panel.nav-child-stage,
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-with-scroll
-  )
-  > .wallet-nav-panel {
+  > .wallet-nav-panel.nav-child-stage {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
@@ -10837,25 +10768,6 @@ html[data-aeon-mode='light'] .shortcut-key {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-}
-
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-shell--nested
-  ) {
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.wallet-nav-stage:has(
-    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-shell--nested
-  )
-  > .wallet-nav-panel {
-  flex: 1 1 auto;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
 }
 
 .nav-child-stage:has(.chat-shell--nested) {
