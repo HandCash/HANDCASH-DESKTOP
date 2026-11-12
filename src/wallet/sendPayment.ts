@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 import { P2PKH } from '@bsv/sdk'
@@ -161,7 +162,7 @@ export async function sendSatsToAddress(opts: {
               }
               console.warn(
                 '[send] createAction poison — repairing and retrying once',
-                firstErr instanceof Error ? firstErr.message : String(firstErr),
+                errorText(firstErr),
               )
               await recoverFromReviewActions({ err: firstErr, active })
               result = await active.wallet.createAction(createActionArgs)
@@ -284,7 +285,7 @@ export async function sendSatsToAddress(opts: {
             failDualLayerSend(
               dualId,
               'UNKNOWN',
-              err instanceof Error ? err.message : String(err),
+              errorText(err),
               { hideInputs: isAlreadySpentInputError(err) },
             )
             if (isAlreadySpentInputError(err)) {
@@ -319,7 +320,7 @@ export async function sendSatsToAddress(opts: {
             }
             chart.send({
               type: 'FAIL',
-              error: err instanceof Error ? err.message : String(err),
+              error: errorText(err),
             })
             throw err
           }
@@ -327,7 +328,7 @@ export async function sendSatsToAddress(opts: {
           if (!chart.getSnapshot().matches('failed') && !chart.getSnapshot().matches('done')) {
             chart.send({
               type: 'FAIL',
-              error: err instanceof Error ? err.message : String(err),
+              error: errorText(err),
             })
           }
           throw err
@@ -351,7 +352,7 @@ export async function sendSatsToAddress(opts: {
     clearPendingSend(pending.id)
     failOutboundSendPending({
       pendingId: pending.id,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     })
     const blocked = spendBlockedMessage(err)
     if (blocked) throw new Error(blocked)

@@ -1,3 +1,4 @@
+import { errorText } from '../../wallet/errorText'
 import type { Friend } from '../../wallet/friends'
 import { getFriendById } from '../../wallet/friends'
 import { appendMessage, updateMessage, type ChatMessage } from '../../wallet/messageStore'
@@ -149,7 +150,7 @@ export async function confirmChatPayment(
     playPaymentSuccessSound()
     ctx.onSent?.(balanceSats)
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
+    const error = errorText(err)
     updateMessage(msg.id, { meta: { payStatus: 'failed', status: 'Failed', error } })
     playWalletSound('error')
   }

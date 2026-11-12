@@ -1,3 +1,4 @@
+import { errorText } from '../../wallet/errorText'
 import {
   useEffect,
   useMemo,
@@ -406,7 +407,7 @@ export function useChatComposer(args: {
         )
         playWalletSound('soft')
       } catch (err) {
-        addSystemNote(notePeerId, localNote(err instanceof Error ? err.message : String(err)))
+        addSystemNote(notePeerId, localNote(errorText(err)))
         playWalletSound('error')
       }
       return

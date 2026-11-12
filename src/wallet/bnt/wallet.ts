@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { Beef, Transaction, Utils } from '@bsv/sdk'
 import { rememberHeldBntAssets } from './heldAssets'
 import { bntDeployArt } from './art'
@@ -714,7 +715,7 @@ async function commitSigned(signed: SignedBnt, assetIds: readonly string[], awai
     return
   }
   await propagateSignedSend(handle).catch((err) => {
-    console.warn('[bnt] propagation queued', err instanceof Error ? err.message : String(err))
+    console.warn('[bnt] propagation queued', errorText(err))
   })
 }
 
@@ -882,7 +883,7 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
   try {
     encodeBntPayload(fields)
   } catch (err) {
-    refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
+    refuse('bad-asset-args', errorText(err))
   }
   return { fields, supply: BigInt(supplyRaw) }
 }
@@ -939,7 +940,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
         try {
           encodeBntPayload(fields)
         } catch (err) {
-          refuse('bad-asset-args', err instanceof Error ? err.message : String(err))
+          refuse('bad-asset-args', errorText(err))
         }
       }
       const prefix = freshDerivationString()
@@ -1012,7 +1013,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       log('issue', startedAt)
       return { assetId: issued.assetId, txid: signed.txid, kind: fields.kind, supply: supply.toString(), basket }
     } catch (err) {
-      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      chart.send({ type: 'FAIL', error: errorText(err) })
       throw err
     } finally {
       chart.stop()
@@ -1153,7 +1154,7 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
         ...(issued ? { issued: { units: issued.units.toString(), members: issued.members.toString() } } : {}),
       }
     } catch (err) {
-      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      chart.send({ type: 'FAIL', error: errorText(err) })
       throw err
     } finally {
       chart.stop()
@@ -1293,7 +1294,7 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       log('transfer', startedAt)
       return { assetId, txid: signed.txid, amount: amount.toString(), recipient, delivered }
     } catch (err) {
-      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      chart.send({ type: 'FAIL', error: errorText(err) })
       throw err
     } finally {
       chart.stop()
@@ -1407,7 +1408,7 @@ export async function burnBntUnits(
       log('burn', startedAt)
       return { assetId, txid: signed.txid, amount: args.amount.toString() }
     } catch (err) {
-      chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      chart.send({ type: 'FAIL', error: errorText(err) })
       throw err
     } finally {
       chart.stop()
@@ -1467,7 +1468,7 @@ async function deliverEntry(active: ActiveWallet, entry: BntOutboxEntry): Promis
     writeBntState(state)
     return true
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = errorText(err)
     console.warn(`[bnt] delivery to ${entry.recipient.slice(0, 12)}… queued — ${message}`)
     const state = readBntState()
     const current = state.outbox[id]
@@ -1617,7 +1618,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
       }),
     )
   } catch (err) {
-    console.warn('[bnt] transfer filing deferred', err instanceof Error ? err.message : String(err))
+    console.warn('[bnt] transfer filing deferred', errorText(err))
     return 'retry'
   }
   await markBntValidated(walk.validated, wire.asset)
@@ -1711,7 +1712,7 @@ export async function serveBntBox(opts?: { force?: boolean }): Promise<void> {
           acks.push(m.messageId)
         }
       } catch (err) {
-        console.warn(`[bnt] box ${wire.t} failed`, err instanceof Error ? err.message : String(err))
+        console.warn(`[bnt] box ${wire.t} failed`, errorText(err))
       }
     }
     if (acks.length) await acknowledgeOwnBox(active.rootKeyHex, BNT_BOX, acks).catch(() => {})
@@ -1720,7 +1721,7 @@ export async function serveBntBox(opts?: { force?: boolean }): Promise<void> {
       for (const [key, at] of sent) if (Date.now() - at >= NEED_RESEND_MS) sent.delete(key)
     }
     await flushOutbox(active).catch((err) => {
-      console.warn('[bnt] outbox deferred', err instanceof Error ? err.message : String(err))
+      console.warn('[bnt] outbox deferred', errorText(err))
     })
   } finally {
     serving = false

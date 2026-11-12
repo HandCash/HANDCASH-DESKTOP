@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { getActiveWallet } from '../wallet/session'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -228,7 +229,7 @@ export function SendCollectablePanel({
       } catch (err) {
         setTo('')
         setRecipientIdentityKey(null)
-        setError(err instanceof Error ? err.message : String(err))
+        setError(errorText(err))
       }
       return
     }
@@ -276,7 +277,7 @@ export function SendCollectablePanel({
       setFriendLabel(friend.label)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(errorText(err))
       playWalletSound('deny')
     }
   }
@@ -365,7 +366,7 @@ export function SendCollectablePanel({
         }
       } catch (err) {
         playWalletSound('error')
-        toastError('Send failed', err instanceof Error ? err.message : String(err))
+        toastError('Send failed', errorText(err))
       } finally {
         sendingRef.current = false
       }
@@ -386,7 +387,7 @@ export function SendCollectablePanel({
       })
       sendUi({ type: 'REVIEW' })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorText(err)
       setError(message)
       playWalletSound('deny')
     }

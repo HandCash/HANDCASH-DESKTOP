@@ -6,6 +6,7 @@
  * keeping the worker warm would hold that much native memory for the life of
  * the app — on a phone that is the difference between a backup and an OOM kill.
  */
+import { errorText } from './errorText'
 import type {
   Brc39EncryptResponse,
   Brc39DocumentResponse,
@@ -113,7 +114,7 @@ export async function encryptBrc39Document(
       )
       return reply.bytes
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       if (/timed out/i.test(msg)) throw err
       workersUsable = false
       appendAppLog('warn', `[cloud-backup] BRC-39 worker unavailable (${msg}) — encrypting inline`)

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
@@ -316,7 +317,7 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
       brc39 = { inserts: result.inserts, updates: result.updates }
       pulled = true
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       if (!/404|No BRC-39/i.test(msg)) throw err
       skippedPullReason = 'no remote history yet'
     }
@@ -487,7 +488,7 @@ async function flushHistoryBackupPush(
       }
       try {
         const { appendAppLog } = await import('./appLog')
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = errorText(err)
         appendAppLog('warn', `[utxo-archive] local snapshot failed (${reason}): ${msg}`)
       } catch {
         /* ignore */
@@ -635,7 +636,7 @@ export async function autoPushHistoryBackupIfConfigured(
           await downloadAndMergeFriendsBackup().catch(() => 0)
           await downloadAndMergeActivityBackup().catch(() => 0)
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
+          const msg = errorText(err)
           result.pullError = msg
           appendAppLog('warn', `[cloud-backup] empty-local pull failed: ${msg}`)
           if (
@@ -651,7 +652,7 @@ export async function autoPushHistoryBackupIfConfigured(
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       appendAppLog('warn', `[cloud-backup] empty-local pull probe failed: ${msg}`)
     }
   }
@@ -749,7 +750,7 @@ export async function autoPushHistoryBackupIfConfigured(
     appendAppLog('info', `[cloud-backup] auto-sync ok (${reason})`)
   } catch (err) {
     if (attemptOpen) closeBackupAttempt(false)
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorText(err)
     if (
       err instanceof Error &&
       (err.name === 'HistoryDeferredForSpendError' ||
@@ -813,7 +814,7 @@ export async function mergeArrivedAccountHistory(
     await downloadAndMergeActivityBackup().catch(() => 0)
     appendAppLog('info', `[cloud-backup] arrived-account merge done ${Date.now() - started}ms`)
   } catch (err) {
-    result.pullError = err instanceof Error ? err.message : String(err)
+    result.pullError = errorText(err)
     appendAppLog('warn', `[cloud-backup] arrived-account merge failed: ${result.pullError}`)
   }
   return result

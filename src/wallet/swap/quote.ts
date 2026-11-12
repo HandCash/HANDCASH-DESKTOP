@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type { SwapAsset } from './assets'
 import { fetchExolixQuote, type ExolixQuote, type ExolixRefusal } from './exolix'
 import { routeSwap, type SwapRequest, type SwapRouting } from './routing'
@@ -38,7 +39,7 @@ export async function quoteSwap(req: SwapRequest, deps: SwapQuoteDeps): Promise<
   const now = deps.now ?? Date.now
   const [listed, exolix] = await Promise.all([
     deps.listOffers({ give: req.to, get: req.from }).catch((err: unknown) => {
-      console.warn(`[swap] offers unavailable — ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[swap] offers unavailable — ${errorText(err)}`)
       return [] as unknown[]
     }),
     (deps.fetchExolix ?? fetchExolixQuote)(req, { now }),

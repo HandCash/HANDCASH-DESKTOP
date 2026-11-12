@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { assign, fromPromise, setup } from 'xstate'
 import type { SwapRequest, SwapRoute } from '../wallet/swap/routing'
 import { SWAP_QUOTE_TTL_MS, type SwapQuote, type SwapQuoteRefusal } from '../wallet/swap/quote'
@@ -103,7 +104,7 @@ export const swapMachine = setup({
         ],
         onError: {
           target: 'refused',
-          actions: assign(({ event }) => ({ refusal: { kind: 'failed' as const, detail: event.error instanceof Error ? event.error.message : String(event.error) } })),
+          actions: assign(({ event }) => ({ refusal: { kind: 'failed' as const, detail: errorText(event.error) } })),
         },
       },
     },
@@ -167,7 +168,7 @@ export const swapMachine = setup({
         onError: {
           target: 'offering',
           actions: assign(({ event }) => ({
-            failure: { reason: 'publish-failed', message: event.error instanceof Error ? event.error.message : String(event.error) },
+            failure: { reason: 'publish-failed', message: errorText(event.error) },
           })),
         },
       },

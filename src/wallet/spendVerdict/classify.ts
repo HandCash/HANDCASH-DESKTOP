@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 /**
  * Classify miner / Arcade / createAction rejection *text*.
  *
@@ -44,7 +45,7 @@ export function isGhostMissingInputsMessage(reason: string): boolean {
  * Not proof the UTXO is gone — callers still probe the chain.
  */
 export function isAlreadySpentInputError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err)
+  const message = errorText(err)
   const kind = classifySpendFailureMessage(message)
   return kind === 'alreadySpent' || kind === 'ghostMissingInputs'
 }

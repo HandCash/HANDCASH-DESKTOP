@@ -6,6 +6,7 @@
  * provenance and the transfer BEEF. A notice is never given up on: retries back
  * off to once an hour, and after `STALL_ATTEMPTS` the row is reported stalled.
  */
+import { errorText } from './errorText'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   accountKeyScopeFor,
@@ -181,7 +182,7 @@ async function flushOnce(
           console.warn(
             '[item-outbox] no BEEF for retry',
             row.txid,
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         }
       }
@@ -220,7 +221,7 @@ async function flushOnce(
       console.warn(
         '[item-outbox] retry failed',
         row.txid,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     }
     const attempts = (row.attempts ?? 0) + 1

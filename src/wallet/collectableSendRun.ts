@@ -13,6 +13,7 @@
  *    unknown error must never multiply itself into a retry storm.
  */
 import { normalizeCollectableBatchOutpoints } from './collectableBatch'
+import { errorText } from './errorText'
 
 /** One transaction's worth of tips within a run. */
 export type CollectableSendLeg = {
@@ -101,8 +102,7 @@ const ITEM_CONFLICTS = [
 export function classifySendRunFailure(
   reason: unknown,
 ): SendRunFailureDecision {
-  const message = (reason instanceof Error ? reason.message : String(reason ?? ''))
-    .toLowerCase()
+  const message = errorText(reason).toLowerCase()
   if (WALLET_FAILURES.some((needle) => message.includes(needle))) {
     return { action: 'stop', reason: 'wallet' }
   }

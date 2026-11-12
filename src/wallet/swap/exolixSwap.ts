@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import * as Utils from '../primitives/base58check'
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
@@ -93,7 +94,7 @@ async function exolixCall(url: string, init: RequestInit, fetcher: typeof fetch)
     return body
   } catch (err) {
     if (err instanceof SwapRefusal) throw err
-    throw new SwapRefusal('unavailable', err instanceof Error ? err.message : String(err))
+    throw new SwapRefusal('unavailable', errorText(err))
   } finally {
     clearTimeout(timer)
   }
@@ -229,7 +230,7 @@ export async function refreshSwapRecords(opts: { fetch?: typeof fetch; now?: () 
         writeSwapRecord({ ...record, status, ...(payoutTxid ? { payoutTxid } : {}), updatedAt: (opts.now ?? Date.now)() })
       }
     } catch (err) {
-      console.warn(`[swap] exolix ${record.id} status unavailable — ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[swap] exolix ${record.id} status unavailable — ${errorText(err)}`)
     }
   }
 }

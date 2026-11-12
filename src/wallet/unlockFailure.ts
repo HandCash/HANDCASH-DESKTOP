@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 /**
  * Why an unlock failed, in the holder's terms.
  *
@@ -46,7 +47,7 @@ function errorName(err: unknown): string {
 /** The untranslated text, for logs and support — never for the unlock screen. */
 export function rawUnlockError(err: unknown): string {
   const name = errorName(err)
-  const message = err instanceof Error ? err.message : String(err)
+  const message = errorText(err)
   return name && !message.startsWith(name) ? `${name}: ${message}` : message
 }
 

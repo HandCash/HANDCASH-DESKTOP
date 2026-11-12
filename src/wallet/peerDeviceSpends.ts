@@ -14,6 +14,7 @@
  * signing within the same backup debounce are still a race only a node can
  * settle.
  */
+import { errorText } from './errorText'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -235,7 +236,7 @@ async function refreshOnce(): Promise<PeerRefresh> {
     )
     return result
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorText(err)
     failed = { exportedAt: meta.exportedAt, at: Date.now() }
     console.warn(`[peer-device] snapshot ${meta.exportedAt} unread — ${reason}`)
     return { kind: 'failed', reason }
@@ -254,7 +255,7 @@ export function refreshPeerDeviceSpends(opts?: { force?: boolean }): Promise<Pee
   inFlight = refreshOnce()
     .catch((err): PeerRefresh => ({
       kind: 'failed',
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }))
     .finally(() => {
       inFlight = null

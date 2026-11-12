@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { and, assign, fromCallback, fromPromise, sendTo, setup, stateIn } from 'xstate'
 import type { CacheCommand, CacheState, CacheUpdate } from '@aeon-ui/primitives'
 import { offerRoom, type SignedSwapOffer } from '../wallet/swap/offer'
@@ -48,7 +49,7 @@ export function amountFits(context: Context): boolean {
   return !!offer && !!room && context.pay !== null && context.pay >= room.min && context.pay <= room.max && previewTake(offer, context.pay) !== null
 }
 
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+const message = (error: unknown) => errorText(error)
 
 const update = (event: Event) => (event.type === 'CACHE.UPDATE' ? event : null)
 

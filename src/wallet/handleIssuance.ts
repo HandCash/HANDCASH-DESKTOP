@@ -12,6 +12,7 @@
  * through, never shown in the prompt, stored or logged; the HMAC secret that
  * mints tickets never reaches this wallet.
  */
+import { errorText } from './errorText'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { normalizeHandleName } from './handleFormat'
 import type { ClaimedHandleCertificate } from './handleClaim'
@@ -242,7 +243,7 @@ function claimFailure(err: unknown): HandleIssueError {
   // The host may have bound the handle and spent the ticket before the reply was lost.
   return new HandleIssueError(
     'HANDLE_ISSUE_FAILED',
-    `The handle may or may not have been issued: ${err instanceof Error ? err.message : String(err)}. Resolve the handle before trying again.`,
+    `The handle may or may not have been issued: ${errorText(err)}. Resolve the handle before trying again.`,
     typeof reason === 'string' ? reason : undefined,
   )
 }

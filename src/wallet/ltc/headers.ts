@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { storageRegistry } from '../../storage/registry'
 import { defaultLtcChain, type LtcChain } from './chain'
 import { LTC_CHECKPOINT, type LtcCheckpoint } from './checkpoint'
@@ -310,7 +311,7 @@ export function createHeaderChain(opts: {
     const out = new Map<number, string[]>()
     for (const c of dirty) out.set(c, chunks.get(c)!)
     dirty.clear()
-    await store.write(m, out).catch((err) => console.warn(`[${rules.logTag}] save failed — ${err instanceof Error ? err.message : String(err)}`))
+    await store.write(m, out).catch((err) => console.warn(`[${rules.logTag}] save failed — ${errorText(err)}`))
   }
 
   /** Headers `lo..hi` ascending, from pages of ten. */
@@ -459,7 +460,7 @@ export function createHeaderChain(opts: {
         if (m.tip.height < want) return { kind: 'shallow', confirmations: m.tip.height - height + 1 }
         return { kind: 'buried' }
       } catch (err) {
-        return { kind: 'unavailable', detail: err instanceof Error ? err.message : String(err) }
+        return { kind: 'unavailable', detail: errorText(err) }
       }
     },
   }

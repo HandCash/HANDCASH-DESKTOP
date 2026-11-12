@@ -6,6 +6,7 @@
  * `collectableSendRunMachine` makes the legal transitions reviewable without
  * adding another orchestration branch to the wallet's largest domain module.
  */
+import { errorText } from './errorText'
 import { createActor } from 'xstate'
 import {
   sendCollectables,
@@ -126,7 +127,7 @@ export async function sendCollectablesRun(
         )} (${chart.getSnapshot().context.sentItems}/${plan.itemCount})`,
       )
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
+      const reason = errorText(err)
       result.lastError = reason
       const decision = classifySendRunFailure(err)
       console.warn(

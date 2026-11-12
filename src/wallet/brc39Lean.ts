@@ -9,6 +9,7 @@
  * for a history of tens of megabytes. Here the plaintext is one `Uint8Array`
  * and AES-GCM runs natively in WebCrypto.
  */
+import { errorText } from './errorText'
 import {
   ARGON2ID_MAX_ITERATIONS,
   ARGON2ID_MAX_MEMORY_KIB,
@@ -35,7 +36,7 @@ export class Brc39LeanUnsupportedError extends Error {
 }
 
 function wasmUnavailable(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorText(error)
   return /webassembly.*(?:not supported|unavailable|disabled|compile|instantiate|module)/i.test(message)
 }
 
@@ -89,7 +90,7 @@ export async function encryptBrc39Lean(json: string, password: string): Promise<
       new TextEncoder().encode(json),
     )
   } catch (error) {
-    throw new Brc39LeanUnsupportedError(error instanceof Error ? error.message : String(error))
+    throw new Brc39LeanUnsupportedError(errorText(error))
   }
   const out = new Uint8Array(HEADER_LENGTH + SALT_LENGTH + NONCE_LENGTH + sealed.byteLength)
   out.set(MAGIC, 0)

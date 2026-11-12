@@ -12,6 +12,7 @@
  * delayed broadcast is not yet in the indexer, and toolbox storage may not
  * expose `getBeefForTransaction` until proven.
  */
+import { errorText } from './errorText'
 import { Beef, Transaction, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
@@ -956,7 +957,7 @@ export function noteAtomicBeefFailure(
 ): void {
   const key = keyOf(txid)
   if (!key) return
-  const msg = err instanceof Error ? err.message : String(err)
+  const msg = errorText(err)
   if (/AtomicBEEF backoff/i.test(msg)) return
   const ms =
     opts?.purpose === 'inboundItemHint'

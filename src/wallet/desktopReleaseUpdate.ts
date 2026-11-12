@@ -3,6 +3,7 @@
  * platform's zip, opened in the system browser. The shell has no updater of its
  * own; Mac (MacUpdate.swift) and Mobile (mobileUpdate.ts) bring theirs.
  */
+import { errorText } from './errorText'
 import type { UpdateMode, UpdateStatus } from '../machines/updateMachine'
 import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -150,7 +151,7 @@ export function createReleaseUpdater(deps: {
           : set({
               phase: 'error',
               canInstall: false,
-              error: err instanceof Error ? err.message : String(err),
+              error: errorText(err),
             })
       } finally {
         clearTimeout(timeout)
@@ -175,7 +176,7 @@ export function createReleaseUpdater(deps: {
       await deps.openUrl(pending.zipUrl)
       return set({ phase: 'available', availableVersion: pending.version, canInstall: true, error: ZIP_HINT })
     } catch (err) {
-      return set({ phase: 'error', error: err instanceof Error ? err.message : String(err) })
+      return set({ phase: 'error', error: errorText(err) })
     }
   }
 

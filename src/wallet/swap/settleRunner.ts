@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { createActor } from 'xstate'
 import { swapSettleMachine, type SwapSettleEvent, type SwapSettlePhase } from '../../machines/swapSettleMachine'
 import { SWAP_ASSET_INFO, unitsToDecimal } from './assets'
@@ -192,7 +193,7 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
       }
       if (step.for === 'secret') {
         await armClaimTower(active, r).catch((err: unknown) => {
-          warn(r.terms.swapId, `claim watchtower deferred — ${err instanceof Error ? err.message : String(err)}`)
+          warn(r.terms.swapId, `claim watchtower deferred — ${errorText(err)}`)
         })
       }
       return step
@@ -229,7 +230,7 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
       }
       c.take({ type: 'OK' })
     } catch (err) {
-      c.take({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      c.take({ type: 'FAIL', error: errorText(err) })
       // A coin chain judges a lock time by its median block time, up to an hour or so behind the clock.
       if ((step.kind === 'refund' || step.kind === 'refund-fee') && err instanceof Error && /non-?final/i.test(err.message)) {
         throw new Error("the chain's clock has not reached the lock time yet; trying again")
@@ -240,7 +241,7 @@ async function advance(active: ActiveWallet, record: SettleRecord): Promise<Sett
     }
     return step
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = errorText(err)
     updateSwap(record.terms.swapId, (x) => ({ ...x, lastError: message.slice(0, 300) }))
     warn(record.terms.swapId, `step deferred — ${message}`)
     return { kind: 'wait', for: 'locktime' }
@@ -271,7 +272,7 @@ export async function serveSwapSettle(opts?: { force?: boolean }): Promise<void>
   if (replayedFor !== account) {
     replayedFor = account
     const rebuilt = await replaySwapCustody(active).catch((err: unknown) => {
-      console.warn(`[swap-settle] custody replay deferred — ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[swap-settle] custody replay deferred — ${errorText(err)}`)
       replayedFor = null
       return 0
     })

@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button, Field, StatusBanner } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -23,7 +24,7 @@ type Props = {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 export function RecoveryMethod({

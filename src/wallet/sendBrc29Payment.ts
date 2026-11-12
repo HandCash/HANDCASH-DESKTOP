@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { pinnedActiveWallet } from './pinnedWallet'
 
@@ -186,7 +187,7 @@ async function broadcastAtomicBeefOnce(
     console.warn(
       '[brc29] postBeef hard reject',
       id,
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
     // Only Arcade's verdict makes a tx dead for every view on this device. A
     // refusal this device reached alone (local SPV, an incomplete ancestry)
@@ -449,7 +450,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             }
             console.warn(
               '[brc29] createAction poison — repairing and retrying once',
-              firstErr instanceof Error ? firstErr.message : String(firstErr),
+              errorText(firstErr),
             )
             await recoverFromReviewActions({ err: firstErr, active })
             result = await active.wallet.createAction(createActionArgs)
@@ -544,7 +545,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             failDualLayerSend(
               dualId,
               isInsufficientFundsError(err) ? 'INSUFFICIENT_FUNDS' : 'UNKNOWN',
-              err instanceof Error ? err.message : String(err),
+              errorText(err),
             )
           }
           if (isAlreadySpentInputError(err)) {
@@ -580,12 +581,12 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
           console.warn(
             '[brc29] send failed',
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
             err,
           )
           chart.send({
             type: 'FAIL',
-            error: err instanceof Error ? err.message : String(err),
+            error: errorText(err),
           })
           throw err
         }
@@ -596,7 +597,7 @@ export async function sendBrc29ToIdentityKey(opts: {
         ) {
           chart.send({
             type: 'FAIL',
-            error: err instanceof Error ? err.message : String(err),
+            error: errorText(err),
           })
         }
         throw err
@@ -620,7 +621,7 @@ export async function sendBrc29ToIdentityKey(opts: {
     clearPendingSend(pending.id)
     failOutboundSendPending({
       pendingId: pending.id,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     })
     throw err
   }
@@ -695,7 +696,7 @@ async function settleBrc29Send(
       } catch (err) {
         console.warn(
           '[brc29] self inbox notify failed',
-          err instanceof Error ? err.message : String(err),
+          errorText(err),
         )
       }
       const claimed = await internalizeBrc29Payment({
@@ -745,7 +746,7 @@ async function settleBrc29Send(
         await markPaymentNoticeDelivered(active, txid, remittance.outputIndex ?? 0).catch((err) => {
           console.warn(
             `[brc29] notice ${txid.slice(0, 12)}… delivered but not marked — a recovery may re-send it`,
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         })
       }
@@ -773,7 +774,7 @@ async function settleBrc29Send(
     } catch (err) {
       console.warn(
         '[brc29] peer notify failed',
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
       outcome.peerDelivered = false
       chart.send({ type: 'BOX_UNREACHABLE' })
@@ -788,7 +789,7 @@ async function settleBrc29Send(
   } catch (err) {
     console.warn(
       `[brc29] settle ${settlePath.settle} failed ${txid.slice(0, 12)}…`,
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
     return outcome
   } finally {
@@ -1071,7 +1072,7 @@ async function internalizeBrc29PaymentOnce(opts: {
         reason: 'already-imported',
       }
     }
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorText(err)
     console.warn('[brc29] internalize failed', id, msg)
     markInboundPaymentStatus(id, 'Verifying on chain…')
     setSyncHealth({

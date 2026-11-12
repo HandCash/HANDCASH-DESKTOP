@@ -1,4 +1,5 @@
 import { Beef } from '@bsv/sdk'
+import { errorText } from './errorText'
 
 export const EMPTY_INPUT_BEEF: number[] = Array.from(new Beef().toBinary())
 
@@ -60,7 +61,7 @@ export function framedInputBeef(binary: number[], tag: string, keep: string[] = 
 
 /** The Toolbox's whole-package verify refused (structure or a proof root). */
 export function isInputBeefRefusal(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err ?? '')
+  const message = errorText(err)
   return /inputBEEF/i.test(message) && /factoring options\.trustSelf/i.test(message)
 }
 

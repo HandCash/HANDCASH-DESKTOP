@@ -19,6 +19,7 @@
  * merges a complete document (newer rows win; nothing is replaced) and
  * acknowledges the parts only after the merge succeeded.
  */
+import { errorText } from './errorText'
 import type { StorageProvider } from '@handcash/wallet-engine'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
@@ -214,7 +215,7 @@ export async function flushPendingHandovers(master: VaultMaster, io?: HandoverIo
     const done = await handOver(master, entry, resolved).catch((error: unknown) => {
       appendAppLog(
         'warn',
-        `[account-holding] handover a${entry.index} deferred: ${error instanceof Error ? error.message : String(error)}`,
+        `[account-holding] handover a${entry.index} deferred: ${errorText(error)}`,
       )
       return false
     })
@@ -472,7 +473,7 @@ export async function receiveHandovers(args: {
     } catch (error) {
       appendAppLog(
         'warn',
-        `[account-holding] handover ${handoverId} merge failed: ${error instanceof Error ? error.message : String(error)}`,
+        `[account-holding] handover ${handoverId} merge failed: ${errorText(error)}`,
       )
     }
   }

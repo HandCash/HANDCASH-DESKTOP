@@ -13,6 +13,7 @@
  * itself failed. After `STALL_ATTEMPTS` the row is reported as stalled so the
  * payment's details can ask for attention.
  */
+import { errorText } from './errorText'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   accountKeyScopeFor,
@@ -223,7 +224,7 @@ async function markDelivered(
   } catch (err) {
     console.warn(
       `[brc29-outbox] notice ${row.txid.slice(0, 12)}… delivered but not marked — a recovery may re-send it`,
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
 }
@@ -294,7 +295,7 @@ export async function deliverOwedBrc29Notices(runtime: WalletRuntime): Promise<v
     if ((await reopenOwedBrc29Notices(runtime)) === 0) return
     await flushPendingBrc29Outbox({ rootKeyHex: runtime.instance.rootKeyHex, runtime })
   } catch (err) {
-    console.warn('[brc29-outbox] owed notices deferred', err instanceof Error ? err.message : String(err))
+    console.warn('[brc29-outbox] owed notices deferred', errorText(err))
   }
 }
 
@@ -345,7 +346,7 @@ async function reconcileIfStale(runtime: WalletRuntime, key: string): Promise<vo
   try {
     await reopenOwedBrc29Notices(runtime)
   } catch (err) {
-    console.warn('[brc29-outbox] reconcile deferred', err instanceof Error ? err.message : String(err))
+    console.warn('[brc29-outbox] reconcile deferred', errorText(err))
   }
 }
 
@@ -422,7 +423,7 @@ async function flushOnce(
           console.warn(
             '[brc29-outbox] no BEEF for retry',
             row.txid,
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         }
       }
@@ -460,7 +461,7 @@ async function flushOnce(
         return [row.txid, { kind: 'delivered' }]
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err)
+      error = errorText(err)
       console.warn('[brc29-outbox] retry failed', row.txid, error)
     }
     return [row.txid, { kind: 'retry', row: failedAttempt(row, error) }]

@@ -1,6 +1,7 @@
 // Every wallet resolved here is pinned to the current runtime: its storage
 // throws AbortError once that runtime is disposed, so no repair that spans an
 // account switch can write into the next account's toolbox (see pinnedWallet).
+import { errorText } from './errorText'
 import { pinnedActiveWallet as getActiveWallet } from './pinnedWallet'
 import { isAssetFilingBasket } from './assetBaskets'
 
@@ -126,7 +127,7 @@ const RESTORE_MAX = 200;
 
 /** The toolbox rejects `undefined` partial filters on some storage backends. */
 export function isUndefinedPartialFilterError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorText(err);
   return (
     message.includes("must be not undefined") ||
     message.includes("Passing undefined as a filter value is not supported")
@@ -140,7 +141,7 @@ export function isUndefinedPartialFilterError(err: unknown): boolean {
  */
 export function isNoLongerSpendableError(err: unknown): boolean {
   const message = (
-    err instanceof Error ? err.message : String(err)
+    errorText(err)
   ).toLowerCase();
   return (
     message.includes("no longer spendable") ||
@@ -3225,7 +3226,7 @@ async function rebuildScriptsFromChain(
           console.warn(
             "[stale-output] restore script fetch skipped",
             txid.slice(0, 12),
-            err instanceof Error ? err.message : String(err)
+            errorText(err)
           );
         }
         if (!rawTx?.length) return;
@@ -3445,7 +3446,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
           console.warn(
             "[stale-output] restore skipped",
             outputId,
-            err instanceof Error ? err.message : String(err)
+            errorText(err)
           );
         }
       }
@@ -3514,7 +3515,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
           console.warn(
             "[stale-output] restore skipped",
             outputId,
-            err instanceof Error ? err.message : String(err)
+            errorText(err)
           );
         }
       }

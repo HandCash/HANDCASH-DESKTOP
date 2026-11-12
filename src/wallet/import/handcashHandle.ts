@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { appendAppLog } from '../appLog'
 import type { KeyDeriver } from './importSource'
 
@@ -71,6 +72,6 @@ export async function probeHandCashHandle(
     appendAppLog('info', `[import] handle probe $${handle} match=${match ?? 'none'}`)
     return { ...base, pubkey, match }
   } catch (err) {
-    return { ...base, error: err instanceof Error ? err.message : String(err) }
+    return { ...base, error: errorText(err) }
   }
 }

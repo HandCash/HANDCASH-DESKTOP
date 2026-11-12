@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { Beef, P2PKH, Transaction, Utils } from '@bsv/sdk'
 import type { KeyMaterial as PrivateKey } from '../primitives/coinCrypto'
 import { fromHex, ltcTxid, parseLtcTx, toHex, type Bytes, type LtcTx } from '../ltc/litecoin'
@@ -97,7 +98,7 @@ export async function coinLegChain(chain: Exclude<SwapAsset, 'bsv' | 'arc-usd'>)
       try {
         return judgeSpend(chain, await wallet.spenderOf(outpoint, lock.address), outpoint, hash)
       } catch (err) {
-        return { kind: 'unknown', detail: err instanceof Error ? err.message : String(err) }
+        return { kind: 'unknown', detail: errorText(err) }
       }
     },
     async spendLock({ coins, key, path, label }) {
@@ -233,7 +234,7 @@ export const bsvLegChain: SwapLegChain = {
     try {
       tx = bsvLockTx(beef, outpoint.txid)
     } catch (err) {
-      return { kind: 'refused', reason: 'malformed', detail: err instanceof Error ? err.message : String(err) }
+      return { kind: 'refused', reason: 'malformed', detail: errorText(err) }
     }
     const out = tx.outputs[outpoint.vout]
     if (!out || out.lockingScript.toHex() !== toHex(lock.scriptPubKey)) return { kind: 'refused', reason: 'wrong-script', detail: 'the output is not the agreed lock' }
@@ -267,7 +268,7 @@ export const bsvLegChain: SwapLegChain = {
       if (ltcTxid(tx) !== spender) return { kind: 'unknown', detail: 'the spender body does not hash to its txid' }
       return judgeSpend('bsv', tx, outpoint, hash)
     } catch (err) {
-      return { kind: 'unknown', detail: err instanceof Error ? err.message : String(err) }
+      return { kind: 'unknown', detail: errorText(err) }
     }
   },
   async spendLock({ coins, key, path, fixed, sourceBeef, label }) {
@@ -378,7 +379,7 @@ export async function abortBsvLock(txid: string): Promise<void> {
   const { requireActiveWallet } = await import('./settlePorts')
   await requireActiveWallet()
     .wallet.abortAction({ reference: txid })
-    .catch((err: unknown) => console.warn(`[swap-settle] abort ${txid.slice(0, 12)} — ${err instanceof Error ? err.message : String(err)}`))
+    .catch((err: unknown) => console.warn(`[swap-settle] abort ${txid.slice(0, 12)} — ${errorText(err)}`))
 }
 
 export async function legChainOf(chain: SwapAsset): Promise<SwapLegChain> {

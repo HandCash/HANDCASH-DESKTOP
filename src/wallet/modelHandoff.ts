@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { collectableModelExtension } from './collectableMedia'
 import { filenameForCollectable } from './imageHandoff'
 import { playWalletSound } from './soundService'
@@ -42,7 +43,7 @@ export async function saveCollectableModel(args: {
     return true
   } catch (error) {
     playWalletSound('error')
-    toastError('Couldn’t save 3D model', error instanceof Error ? error.message : String(error))
+    toastError('Couldn’t save 3D model', errorText(error))
     return false
   }
 }

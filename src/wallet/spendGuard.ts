@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -171,7 +172,7 @@ async function promoteSpendableChangeBody(
     }
   } catch (err) {
     logDiag('spend-guard', 'warn', 'promote-skipped', {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText(err),
     })
   }
   if (restored > 0 || localHealed > 0) {
@@ -210,7 +211,7 @@ async function reviewAfterAbandonedSpend(): Promise<void> {
   } catch (err) {
     console.warn(
       '[spend-guard] post-abandon review skipped',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
 }
@@ -468,7 +469,7 @@ export async function assertSendableBalanceForReview(
     confirming = await unconfirmedChangeSats()
   } catch (err) {
     logDiag('spend-guard', 'warn', 'unconfirmed-credit-skipped', {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText(err),
     })
   }
 
@@ -522,7 +523,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
     confirming = await unconfirmedChangeSats()
   } catch (err) {
     logDiag('spend-guard', 'warn', 'unconfirmed-credit-skipped', {
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText(err),
     })
   }
 

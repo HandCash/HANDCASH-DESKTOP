@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type {
   ComputeInput,
   ComputeOp,
@@ -41,7 +42,7 @@ export function handleComputeRequest(request: ComputeRequest): {
     return { reply: { id: request.id, ok: true, output }, transfer: transferablesOf(output) }
   } catch (err) {
     return {
-      reply: { id: request.id, ok: false, error: err instanceof Error ? err.message : String(err) },
+      reply: { id: request.id, ok: false, error: errorText(err) },
       transfer: [],
     }
   }

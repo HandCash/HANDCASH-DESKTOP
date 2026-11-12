@@ -10,6 +10,7 @@
  *   npm run test:live-tx
  *   HANDCASH_LIVE_ROUNDS=10 HANDCASH_LIVE_PINGPONG=1 npm run test:live-tx
  */
+import { errorText } from './errorText'
 import {
   formatFundBanner,
   loadOrCreateLiveWallets,
@@ -77,7 +78,7 @@ async function phase<T>(
     return result
   } catch (err) {
     const ms = nowMs() - t0
-    const detail = err instanceof Error ? err.message : String(err)
+    const detail = errorText(err)
     phases.push({ name, ms, detail })
     liveLog(originMs, log, `FAIL  ${name}  ${ms}ms  ${detail}`)
     throw err
@@ -351,7 +352,7 @@ export async function runLiveSendReceive(opts?: {
       liveLog(
         originMs,
         log,
-        `save live wallet db failed: ${err instanceof Error ? err.message : String(err)}`,
+        `save live wallet db failed: ${errorText(err)}`,
       )
     }
     if (alice) stopWallet(alice)

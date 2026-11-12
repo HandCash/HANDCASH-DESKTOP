@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -111,7 +112,7 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
           ? rerunOnReplacement(opts, runtime, result)
           : result,
       (err: unknown) =>
-        disposedMidFlight(err instanceof Error ? err.message : String(err))
+        disposedMidFlight(errorText(err))
           ? rerunOnReplacement(opts, runtime, err)
           : Promise.reject(err),
     )
@@ -308,7 +309,7 @@ async function recomposeHistory(
           historyError = sync.skipReason
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = errorText(err)
         if (
           err instanceof Error &&
           err.name === 'HistoryDeferredForSpendError'
@@ -371,7 +372,7 @@ async function recomposeChain(
     }
     return { spendableSats, chainError: null }
   } catch (err) {
-    const chainError = err instanceof Error ? err.message : String(err)
+    const chainError = errorText(err)
     try {
       const { appendAppLog } = await import('./appLog')
       appendAppLog('warn', `[recompose] chain failed (${reason}): ${chainError}`)

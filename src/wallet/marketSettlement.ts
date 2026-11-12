@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 import { type WalletRuntime } from './walletRuntime'
@@ -175,7 +176,7 @@ async function sellerHandoffOutcome(
   } catch (err) {
     return {
       handoff: 'boxUnreachable',
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
 }
@@ -326,7 +327,7 @@ export async function hydrateMarketListingForPurchase(
   } catch (err) {
     console.warn(
       '[market-buy] listing detail skipped',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
     return listing
   } finally {
@@ -1115,7 +1116,7 @@ export async function executeMarketPurchase(
         // the durable Activity row must not be rolled back for a paint error.
         console.warn(
           '[market-buy] buyer collectable paint deferred',
-          err instanceof Error ? err.message : String(err),
+          errorText(err),
         )
       }
       const receiptWire = {
@@ -1159,7 +1160,7 @@ export async function executeMarketPurchase(
           void recoverPendingMarketPurchases().catch((err) => {
             console.warn(
               '[market-buy] seller reconciliation failed',
-              err instanceof Error ? err.message : String(err),
+              errorText(err),
             )
           })
         }, 0)
@@ -1216,7 +1217,7 @@ export async function executeMarketPurchase(
       }
     } catch (err) {
       const snapshot = chart.getSnapshot()
-      const reason = err instanceof Error ? err.message : String(err)
+      const reason = errorText(err)
       const code =
         err && typeof err === 'object' && 'code' in err
           ? String((err as { code?: unknown }).code ?? '')
@@ -1313,7 +1314,7 @@ async function recoverPendingPurchasesFor(active: ActiveWallet): Promise<void> {
         console.warn(
           '[market] pending purchase rebroadcast skipped',
           record.saleId,
-          err instanceof Error ? err.message : String(err),
+          errorText(err),
         )
         if (isGhostTxSuppressed(record.txid)) {
           await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
@@ -1557,7 +1558,7 @@ async function internalizeMarketProceeds(
     })
     return { success: true }
   } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) }
+    return { success: false, error: errorText(err) }
   }
 }
 
@@ -1571,7 +1572,7 @@ async function retireSoldListingInputs(active: ActiveWallet, listing: MarketList
     try {
       await active.wallet.relinquishOutput(spend)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       if (!/not found|already|missing|must exist/i.test(msg)) {
         retireErrors.push(msg)
       }
@@ -1819,7 +1820,7 @@ export async function handleInboundMarketSettlementWire(args: {
       if (!found) throw new Error('settlement tx missing from receipt beef')
       finalTx = found
     } catch (err) {
-      return refuse(err instanceof Error ? err.message : String(err))
+      return refuse(errorText(err))
     }
     if (finalTx.id('hex').toLowerCase() !== args.wire.txid.toLowerCase()) {
       return discard('settlement txid does not match the receipt')
@@ -2063,13 +2064,13 @@ export async function handleInboundMarketSettlementWire(args: {
   } catch (err) {
     chart.send({
       type: 'FAIL',
-      error: err instanceof Error ? err.message : String(err),
+      error: errorText(err),
     })
     response = {
       type: 'sign-response',
       saleId: args.wire.saleId,
       accepted: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
   const delivered = await deliverMarketSettlementWire({

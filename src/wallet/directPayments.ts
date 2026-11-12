@@ -5,6 +5,7 @@
  * does not accept is acked `rejected`, so the payer keeps the token and
  * delivers it again.
  */
+import { errorText } from './errorText'
 import { SIGNALS_MESSAGEBOX, type PaymentDecision } from '@bsv/webrtpay'
 import { receiveDirectPayments } from './directSession/payments'
 
@@ -50,7 +51,7 @@ export async function startDirectPayments(account: { rootKeyHex: string; chain: 
     if (mine !== generation) await stopNext()
     else stop = stopNext
   } catch (err) {
-    console.info(`[direct-pay] receiver did not start — ${err instanceof Error ? err.message : String(err)}`)
+    console.info(`[direct-pay] receiver did not start — ${errorText(err)}`)
   }
 }
 

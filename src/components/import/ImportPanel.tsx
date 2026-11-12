@@ -1,3 +1,4 @@
+import { errorText } from '../../wallet/errorText'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -43,10 +44,6 @@ import { ImportSourceView, type SourceFace } from './ImportSourceView'
 import { SettingsNavRow } from '../settings/SettingsNavRow'
 import { SettingsSection } from '../settings/SettingsSection'
 import { ImportSourceIcon } from './importSourceIcons'
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
-}
 
 /**
  * What a key-recovery request from the migrate page does in each state:

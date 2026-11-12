@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { looksLikeBnt } from './bnt/script'
 import { storageRegistry } from '../storage/registry'
@@ -1221,7 +1222,7 @@ async function abortUnsentMarketAction(args: {
   } catch (err) {
     console.warn(
       '[market] tip restore after unsent abort skipped',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
   return 'not-checked'
@@ -1771,7 +1772,7 @@ async function createMarketListingAdvertExclusive(
     } catch (err) {
       console.warn(
         '[market] list-time settlement pre-sign failed',
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     }
     // Authorization is written only after signAction produced the processed result.
@@ -1848,7 +1849,7 @@ async function createMarketListingAdvertExclusive(
       },
     }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorText(err)
     const snap = chart.getSnapshot()
     const broadcastedTxid =
       typeof snap.context.txid === 'string' && /^[0-9a-f]{64}$/i.test(snap.context.txid)
@@ -1899,7 +1900,7 @@ async function createMarketListingAdvertExclusive(
             )
           : err
     const failureReason =
-      failure instanceof Error ? failure.message : String(failure)
+      errorText(failure)
     recordWalletEvent({
       method: 'market-list',
       note: 'Listing failed',
@@ -1938,7 +1939,7 @@ export async function verifyMarketListingProvenance(args: {
   } catch (err) {
     return fail(
       `INVALID_LISTED_OUTPUT: ${
-        err instanceof Error ? err.message : String(err)
+        errorText(err)
       }`
     )
   }
@@ -2436,7 +2437,7 @@ async function repaintReturnedItem(
   } catch (err) {
     console.warn(
       '[market] returned item repaint deferred',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
 }
@@ -2667,7 +2668,7 @@ async function createCancelMarketListingAdvertExclusive(args: {
       beef: beefBytes,
     }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorText(err)
     const snap = chart.getSnapshot()
     const broadcastedTxid =
       typeof snap.context.txid === 'string' && /^[0-9a-f]{64}$/i.test(snap.context.txid)

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { playWalletSound } from './soundService'
 import { toastCopied, toastError, toastSuccess } from './toast'
 import { bytesToBase64 } from './base64Binary'
@@ -211,7 +212,7 @@ export async function copyCollectableImage(args: {
     return false
   } catch (err) {
     playWalletSound('error')
-    toastError('Couldn’t copy image', err instanceof Error ? err.message : String(err))
+    toastError('Couldn’t copy image', errorText(err))
     return false
   }
 }
@@ -262,7 +263,7 @@ export async function saveCollectableImage(args: {
     return true
   } catch (err) {
     playWalletSound('error')
-    toastError('Couldn’t save image', err instanceof Error ? err.message : String(err))
+    toastError('Couldn’t save image', errorText(err))
     return false
   }
 }

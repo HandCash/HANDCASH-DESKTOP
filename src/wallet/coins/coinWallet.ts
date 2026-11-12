@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { CoinPrivateKey as PrivateKey, coinPublicKey, deriveCoinPrivateKey, deriveCoinPublicKey, type KeyMaterial } from '../primitives/coinCrypto'
 import { createActor } from 'xstate'
 import { coinMachine } from '../../machines/coinMachine'
@@ -461,7 +462,7 @@ export function createCoinWallet(binding: CoinBinding) {
           item: activityItem(sighting.litoshi),
         })
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err)
+        const error = errorText(err)
         chart.send({ type: 'FAIL', error })
         console.warn(`[${tag}] read ${key} failed — ${error}`)
       } finally {
@@ -500,7 +501,7 @@ export function createCoinWallet(binding: CoinBinding) {
       try {
         located = await locateLtcDeposit(src(), outpoint.txid)
       } catch (err) {
-        console.warn(`[${tag}] locate ${outpoint.txid.slice(0, 12)} failed — ${err instanceof Error ? err.message : String(err)}`)
+        console.warn(`[${tag}] locate ${outpoint.txid.slice(0, 12)} failed — ${errorText(err)}`)
         return { phase: uncheckedSince(coin, now) }
       }
       if (located.kind === 'gone') {
@@ -547,7 +548,7 @@ export function createCoinWallet(binding: CoinBinding) {
         writeState(next)
         chart.send({ type: judged.buried ? 'PROVEN' : judged.phase.kind === 'abandoned' ? 'VOIDED' : 'PENDING' })
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err)
+        const error = errorText(err)
         chart.send({ type: 'FAIL', error })
         console.warn(`[${tag}] proof ${key} deferred — ${error}`)
       } finally {
@@ -580,7 +581,7 @@ export function createCoinWallet(binding: CoinBinding) {
       await src().broadcast(p.hex)
       console.info(`[${tag}] payment ${txid} was not on the network — re-broadcast`)
     } catch (err) {
-      console.warn(`[${tag}] payment ${txid} re-broadcast failed — ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[${tag}] payment ${txid} re-broadcast failed — ${errorText(err)}`)
     }
   }
 
@@ -599,7 +600,7 @@ export function createCoinWallet(binding: CoinBinding) {
       }
       return true
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorText(err)
       const next = readState()
       const current = next.payments[txid]
       if (current) {
@@ -639,7 +640,7 @@ export function createCoinWallet(binding: CoinBinding) {
     try {
       script = binding.outputScript(address)
     } catch (err) {
-      return refuse('bad-args', `address is not a ${label} mainnet address (${err instanceof Error ? err.message : String(err)}).`)
+      return refuse('bad-args', `address is not a ${label} mainnet address (${errorText(err)}).`)
     }
     if (sameBytes(script, keyOf(active).script)) refuse('own-address', `That is this wallet's own ${label} address; sending to it only spends the network fee.`)
     return { address, script }
@@ -810,7 +811,7 @@ export function createCoinWallet(binding: CoinBinding) {
         if (ms > 250) console.info(`[${tag}] send done ${ms}ms`)
         return { ltcTxid: txid, litoshi: units.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued' }
       } catch (err) {
-        chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+        chart.send({ type: 'FAIL', error: errorText(err) })
         throw err
       } finally {
         chart.stop()
@@ -883,7 +884,7 @@ export function createCoinWallet(binding: CoinBinding) {
         if (ms > 250) console.info(`[${tag}] lock done ${ms}ms`)
         return { ltcTxid: txid, litoshi: total.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued' }
       } catch (err) {
-        chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+        chart.send({ type: 'FAIL', error: errorText(err) })
         throw err
       } finally {
         chart.stop()
@@ -900,7 +901,7 @@ export function createCoinWallet(binding: CoinBinding) {
     try {
       located = await locateLtcDeposit(src(), outpoint.txid)
     } catch (err) {
-      return { kind: 'unchecked', detail: err instanceof Error ? err.message : String(err) }
+      return { kind: 'unchecked', detail: errorText(err) }
     }
     if (located.kind === 'gone') return { kind: 'gone' }
     if (located.kind === 'unconfirmed') {
@@ -1009,7 +1010,7 @@ export function createCoinWallet(binding: CoinBinding) {
         const { sendSealedToPeerBox } = await import('../messageTransport')
         await sendSealedToPeerBox(active.rootKeyHex, p.to.identityKey, COIN_PAYMENT_BOX, JSON.stringify(notice))
       } catch (err) {
-        error = err instanceof Error ? err.message : String(err)
+        error = errorText(err)
       }
       const next = readState()
       const to = next.payments[txid]?.to
@@ -1078,7 +1079,7 @@ export function createCoinWallet(binding: CoinBinding) {
         chart.send({ type: 'SEEN' })
         return 'recorded'
       } catch (err) {
-        chart.send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+        chart.send({ type: 'FAIL', error: errorText(err) })
         throw err
       } finally {
         chart.stop()
@@ -1117,7 +1118,7 @@ export function createCoinWallet(binding: CoinBinding) {
         writeState(next)
         console.info(`[${tag}] restored ${key} paid by ${r.sender.slice(0, 12)}… from the custody journal`)
       } catch (err) {
-        console.warn(`[${tag}] restore ${key} deferred — ${err instanceof Error ? err.message : String(err)}`)
+        console.warn(`[${tag}] restore ${key} deferred — ${errorText(err)}`)
       }
     }
   }
@@ -1233,7 +1234,7 @@ export function createCoinWallet(binding: CoinBinding) {
     const tick = () => {
       if (typeof document !== 'undefined' && document.hidden) return
       void watch().catch((err: unknown) => {
-        console.warn(`[${tag}] watch pass failed — ${err instanceof Error ? err.message : String(err)}`)
+        console.warn(`[${tag}] watch pass failed — ${errorText(err)}`)
       })
     }
     watchTimer = setInterval(tick, WATCH_MS)

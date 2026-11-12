@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { probeRemoteBrc39 } from './historyRemoteProbe'
 import { getActiveWallet } from './session'
 
@@ -132,7 +133,7 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
       return setHealth({ phase: 'error', label: 'Backup failed', message: msg })
     }
   } catch (err) {
-    const msg = `Backup host unreachable: ${err instanceof Error ? err.message : String(err)}`
+    const msg = `Backup host unreachable: ${errorText(err)}`
     appendAppLog('warn', `[cloud-backup] ${msg}`)
     setHistoryBackupPrefs({ lastError: msg })
     return setHealth({ phase: 'error', label: 'Backup failed', message: msg })
@@ -228,7 +229,7 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
       remoteActionCount: head.actionCount,
     })
   } catch (err) {
-    const msg = `Remote backup check failed: ${err instanceof Error ? err.message : String(err)}`
+    const msg = `Remote backup check failed: ${errorText(err)}`
     appendAppLog('warn', `[cloud-backup] ${msg}`)
     setHistoryBackupPrefs({ lastError: msg })
     return setHealth({ phase: 'error', label: 'Backup failed', message: msg })

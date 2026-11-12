@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { issuerMetadataFromScript } from './issuerMetadata'
 import {
   retainedIssuerMetadata,
@@ -2288,7 +2289,7 @@ async function proveHeldGenesis(
       } catch (err) {
         outcome = {
           kind: 'unavailable',
-          reason: err instanceof Error ? err.message : String(err),
+          reason: errorText(err),
           hops: 0,
         }
       }
@@ -3041,7 +3042,7 @@ export async function verifyItemAuthenticity(
     return {
       tier: 'unproven',
       proven: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
 }
@@ -4242,7 +4243,7 @@ async function relinquishSpentOutputs(
         output: op,
       })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       if (/must exist and be unique/i.test(msg)) continue
       // Already marked spent by createAction — nothing left to release.
       console.warn(
@@ -5080,7 +5081,7 @@ export async function sendCollectable(args: {
                 } catch (err) {
                   console.warn(
                     '[collectables] peer notify failed',
-                    err instanceof Error ? err.message : String(err),
+                    errorText(err),
                   )
                   enqueuePendingItemRemit({
                     payeeIdentityKey: settlePath.recipientIdentityKey,
@@ -5113,7 +5114,7 @@ export async function sendCollectable(args: {
           } catch (err) {
             itemChart.send({
               type: 'FAIL',
-              error: err instanceof Error ? err.message : String(err),
+              error: errorText(err),
             })
             itemChart.stop()
             return failSend(err)
@@ -5180,7 +5181,7 @@ export async function sendCollectable(args: {
     forgetItemsSent([outpoint])
     failOutboundSendPending({
       pendingId: outboundPending.id,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     })
     throw err
   } finally {
@@ -5287,7 +5288,7 @@ export async function sendCollectables(
   )
 
   const failPending = (reason: unknown) => {
-    const message = reason instanceof Error ? reason.message : String(reason)
+    const message = errorText(reason)
     batchActivityWrites(() => {
       for (const send of pending) {
         clearPendingSend(send.id)

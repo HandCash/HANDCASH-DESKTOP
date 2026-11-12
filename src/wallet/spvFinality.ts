@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import type { ChainTracker, MerklePath } from '@bsv/sdk'
 import { getActiveWallet } from './session'
 
@@ -53,7 +54,7 @@ export async function verifyBumpFinality(txid: string): Promise<SpvFinalityResul
     return {
       ok: false,
       reason: 'error',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: errorText(err),
     }
   }
 }

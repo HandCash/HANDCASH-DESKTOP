@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -131,7 +132,7 @@ export function LogViewerPanel() {
       else await navigator.clipboard.writeText(text)
       toastSuccess('Logs copied')
     } catch (err) {
-      toastError('Copy failed', err instanceof Error ? err.message : String(err))
+      toastError('Copy failed', errorText(err))
     }
   }
 

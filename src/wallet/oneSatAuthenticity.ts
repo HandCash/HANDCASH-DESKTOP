@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -108,7 +109,7 @@ export async function verifyOriginScriptCommitment(args: {
   } catch (err) {
     return {
       proven: false,
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
   return { proven: true, reason: null, originScriptHash: expected }

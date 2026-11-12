@@ -10,6 +10,7 @@
  * answers the other's dials.
  */
 
+import { errorText } from '../errorText'
 import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import {
   DEFAULTS,
@@ -138,7 +139,7 @@ export function createSessionTable(tag = 'direct-session') {
   }
 
   function log(what: string, err?: unknown): void {
-    console.info(`[${tag}] ${what}${err === undefined ? '' : ` — ${err instanceof Error ? err.message : String(err)}`}`)
+    console.info(`[${tag}] ${what}${err === undefined ? '' : ` — ${errorText(err)}`}`)
   }
 
   async function post(

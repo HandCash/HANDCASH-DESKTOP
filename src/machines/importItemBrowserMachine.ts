@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { assign, enqueueActions, fromCallback, fromPromise, setup, type SnapshotFrom } from 'xstate'
 import type {
   ImportItem,
@@ -109,7 +110,7 @@ export type ImportItemBrowserEvent =
   | { type: 'DISMISS' }
 
 function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return errorText(err)
 }
 
 /** Chosen items per shelf. Pure. */

@@ -24,6 +24,7 @@
  * Crediting before any miner sees the body means no miner's finality gate
  * runs first, so a non-final package is refused here ({@link assertIncomingFinal}).
  */
+import { errorText } from './errorText'
 import { Transaction } from '@bsv/sdk'
 import type { Services, Wallet } from '@handcash/wallet-engine'
 import { assertIncomingFinal } from './incomingFinality'
@@ -135,7 +136,7 @@ export function installInternalizeMinerDeferral(
     void propagate(subject.txid, subject.atomic).catch((err) => {
       console.warn(
         `[internalize] ${subject.txid.slice(0, 12)}… background miner submit failed`,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     })
     return result

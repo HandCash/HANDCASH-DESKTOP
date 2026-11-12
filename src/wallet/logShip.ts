@@ -7,6 +7,7 @@
  *
  * Upload is manual only: nothing here runs unless the user presses Send logs.
  */
+import { errorText } from './errorText'
 import {
   formatAppLogs,
   redactAppLogMessage,
@@ -141,7 +142,7 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
     }
     return { ok: true, bytes: new TextEncoder().encode(redactedBody).byteLength }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: errorText(err) }
   }
 }
 

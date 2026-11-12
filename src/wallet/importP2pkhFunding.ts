@@ -5,6 +5,7 @@
  * not walk merkle ancestry. After signing we post the deposit body plus the
  * sweep to ARC — a local-only sweep is not a receive.
  */
+import { errorText } from './errorText'
 import { Beef, PrivateKey, type BEEF, type WalletInterface } from '@bsv/sdk'
 import { SetupClient } from '@handcash/wallet-engine'
 
@@ -212,7 +213,7 @@ export async function sweepVisibleP2pkhOutpoints(
         if (!keyHexOf(outpoint)) throw new Error('no key holds this coin')
         coins.push(resolveCoin(depositBeef, outpoint))
       } catch (err) {
-        results.push({ outpoint, success: false, error: err instanceof Error ? err.message : String(err) })
+        results.push({ outpoint, success: false, error: errorText(err) })
       }
     }
     let pending = coins
@@ -230,7 +231,7 @@ export async function sweepVisibleP2pkhOutpoints(
         pending = pending.slice(group.length)
         perTx = MAX_P2PKH_SWEEP_INPUTS
       } catch (err) {
-        const error = err instanceof Error ? err.message : String(err)
+        const error = errorText(err)
         if (unit.kind === 'bundle') {
           perTx = Math.max(1, Math.ceil(group.length / 2))
           console.warn(`[legacy] sweep bundle of ${group.length} refused — retrying ${perTx} (${error})`)

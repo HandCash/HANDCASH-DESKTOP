@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { appendAppLog } from './appLog'
 import { ifMatchEtag } from './httpEtag'
 import { signedIdentityFetch } from './identityRequestAuth'
@@ -109,7 +110,7 @@ async function headOnce(rootKeyHex: string, url: string, accept: string, now: nu
       headers: { Accept: accept },
     })
   } catch (err) {
-    return holdHistoryHost(url, null, null, err instanceof Error ? err.message : String(err), now)
+    return holdHistoryHost(url, null, null, errorText(err), now)
   }
   if (hostUnavailable(res.status)) {
     return holdHistoryHost(url, res.status, res.headers.get('Retry-After'), await reasonOf(res), now)

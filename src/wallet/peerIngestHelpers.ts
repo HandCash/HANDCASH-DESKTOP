@@ -1,7 +1,8 @@
+import { errorText } from './errorText'
 /** Shared helpers for peer settle / remittance ingest paths. */
 
 export function alreadyInternalizedError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
+  const msg = errorText(err)
   return /already (?:spent|imported|internalized|in (?:the )?wallet|ours)/i.test(
     msg,
   )
@@ -9,7 +10,7 @@ export function alreadyInternalizedError(err: unknown): boolean {
 
 /** Toolbox refuses to merge into a local row that is `failed` / `unmined` / etc. */
 export function invalidInternalizeStatusError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
+  const msg = errorText(err)
   return /internalizeAction has invalid status/i.test(msg)
 }
 

@@ -11,6 +11,7 @@
  * by it; hard-rejected, minerSubmit releases the seal and the tips are built
  * again. Anything undecided waits for the next run instead of being refused.
  */
+import { errorText } from '../errorText'
 import { Beef, Transaction } from '@bsv/sdk'
 import { normalizeOutpointKey } from '../txLifecycle'
 
@@ -95,7 +96,7 @@ async function sealerFate<T extends { outpoint: string; txid: string }>(
   } catch (err) {
     const stillSealed = tips.some((t) => ports.sealedSpenderOf(t.outpoint) === sealer)
     if (!stillSealed) return { kind: 'released' }
-    return { kind: 'held', reason: err instanceof Error ? err.message : String(err) }
+    return { kind: 'held', reason: errorText(err) }
   }
 }
 

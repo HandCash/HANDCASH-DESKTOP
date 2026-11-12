@@ -6,6 +6,7 @@
  * and chain raw-tx lookups belong on Refresh (`chainMaintenance`) or the last-resort
  * gate (`chainingScriptHeal`), not on every `runExclusiveSpend` entry.
  */
+import { errorText } from './errorText'
 import { sweepChangeScripts } from './changeScriptFate'
 import { logDiag } from './diagnosticLog'
 import { bumpBalanceAfterHeal } from './session'
@@ -156,7 +157,7 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
         stats.unscripted = gateRestore.unscripted
       } catch (err) {
         logDiag('change-heal', 'warn', 'spend-gate-skipped', {
-          error: err instanceof Error ? err.message : String(err),
+          error: errorText(err),
         })
       }
       if (
@@ -221,7 +222,7 @@ export function scheduleHealAfterSendCleanup(): void {
     } catch (err) {
       console.warn(
         '[change-heal] post-cleanup heal skipped',
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     }
   })()

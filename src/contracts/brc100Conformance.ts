@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { BigNumber, ECDSA, Hash, PublicKey, Signature, Utils, type WalletInterface } from '@bsv/sdk'
 import {
   ANYONE_PRIVATE_KEY_HEX,
@@ -604,7 +605,7 @@ export async function runConformanceCheck(check: ConformanceCheck, ctx: Conforma
     await check.run(ctx)
     return { id: check.id, brc: check.brc, title: check.title, ok: true, ms: Date.now() - started }
   } catch (err) {
-    const reason = err instanceof ConformanceFailure ? err.message : `threw: ${err instanceof Error ? err.message : String(err)}`
+    const reason = err instanceof ConformanceFailure ? err.message : `threw: ${errorText(err)}`
     return { id: check.id, brc: check.brc, title: check.title, ok: false, reason, ms: Date.now() - started }
   }
 }

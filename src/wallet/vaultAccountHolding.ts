@@ -7,6 +7,7 @@
  * (`holdingFreshness.ts`). Otherwise the spend guard asks
  * {@link activeAccountSpendRefusal}, which reads local storage only.
  */
+import { errorText } from './errorText'
 import {
   UNKNOWN_ELSEWHERE,
   decideHoldingStep,
@@ -587,7 +588,7 @@ export function activeAccountTakenElsewhere(active: ActiveAccount | null): boole
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 /** Everything another install restores an account from, pushed now. */

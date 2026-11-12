@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { PrivateKey } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
@@ -107,7 +108,7 @@ export async function publishWalletProtocols(wallet: ActiveWallet): Promise<'pub
     })
     if (!res.ok) throw new Error(`protocols publish ${res.status}`)
   } catch (err) {
-    console.warn(`[protocols] publish deferred — ${err instanceof Error ? err.message : String(err)}`)
+    console.warn(`[protocols] publish deferred — ${errorText(err)}`)
     return 'failed'
   }
   durableSetItem(publishedKey(wallet), fingerprint)
@@ -137,7 +138,7 @@ export async function readPeerProtocols(identityKey: string): Promise<PeerProtoc
       read = record ? { kind: 'record', protocols: parseWalletProtocols(record.protocols) } : { kind: 'unreachable', reason: 'protocols record failed verification' }
     }
   } catch (err) {
-    read = { kind: 'unreachable', reason: err instanceof Error ? err.message : String(err) }
+    read = { kind: 'unreachable', reason: errorText(err) }
   }
   if (read.kind !== 'unreachable') cache.set(key, { at: Date.now(), read })
   return read

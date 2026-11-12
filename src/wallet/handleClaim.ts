@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -178,7 +179,7 @@ async function syncHeldHandleCertificate(current: WalletHandleCertificate | null
   } catch (err) {
     console.warn(
       '[handle-claim] certificate sync skipped',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
 }

@@ -8,6 +8,7 @@
  * Mint / burn / payout / verify are injectable so unit tests prove the
  * orchestration without a live wallet or Arc RPC.
  */
+import { errorText } from '../errorText'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { storageRegistry } from '../../storage/registry'
 import { accountLocalKey } from '../accountLocalKeys'
@@ -427,7 +428,7 @@ export async function executeFractionalize(
     })
   } catch (err) {
     if (err instanceof ArcWrapRefusalError) throw err
-    refuse('mint-failed', err instanceof Error ? err.message : String(err))
+    refuse('mint-failed', errorText(err))
   }
 
   const claim: WrapClaim = {
@@ -479,7 +480,7 @@ export async function executeRedeem(
     burned = await burn({ assetId: store.assetId, atoms: plan.atoms })
   } catch (err) {
     if (err instanceof ArcWrapRefusalError) throw err
-    refuse('burn-failed', err instanceof Error ? err.message : String(err))
+    refuse('burn-failed', errorText(err))
   }
 
   // Persist burn before payout — BNT units are already gone (BRC-212 redeem order).
@@ -507,7 +508,7 @@ export async function executeRedeem(
     paid = await payout({ network: plan.network, atoms: plan.atoms, to: plan.to })
   } catch (err) {
     if (err instanceof ArcWrapRefusalError) throw err
-    refuse('payout-failed', err instanceof Error ? err.message : String(err))
+    refuse('payout-failed', errorText(err))
   }
   if (typeof paid.txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(paid.txHash)) {
     refuse('payout-failed', 'ARC_USDC_PAYOUT: payout must return 0x + 64 hex tx hash')

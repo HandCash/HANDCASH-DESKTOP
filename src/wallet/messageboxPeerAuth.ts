@@ -20,6 +20,7 @@
  * The account key is lent to the session wallet only while one of its
  * requests runs, so cached sessions never hold it.
  */
+import { errorText } from './errorText'
 import {
   AuthFetch,
   Peer,
@@ -95,7 +96,7 @@ const probes = new Map<string, Promise<BoxMode>>()
 const globalFetch: typeof fetch = (input, init) => fetch(input, init)
 
 function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 function accountFor(rootKeyHex: string): Account {

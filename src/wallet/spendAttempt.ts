@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -908,7 +909,7 @@ export async function rebroadcastAllFailedSpends(): Promise<{
       rebroadcasted += 1;
     } catch (err) {
       failed += 1;
-      errors.push(err instanceof Error ? err.message : String(err));
+      errors.push(errorText(err));
     }
   }
 
@@ -979,7 +980,7 @@ export async function publishUnresolvedPeerTransfers(): Promise<{
       published += 1;
     } catch (err) {
       failed += 1;
-      errors.push(err instanceof Error ? err.message : String(err));
+      errors.push(errorText(err));
     }
   }
   return { published, confirmed, failed, errors };

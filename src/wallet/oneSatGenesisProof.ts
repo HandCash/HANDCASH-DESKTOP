@@ -17,6 +17,7 @@
  * BEEF is thrown away (it runs to hundreds of kilobytes — see
  * `INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX`), and the next send can go hardened.
  */
+import { errorText } from './errorText'
 import { Beef } from '@bsv/sdk'
 import {
   deriveOneSatPathFromBeef,
@@ -97,7 +98,7 @@ function toPoint(outpoint: string): string {
 }
 
 function errText(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err)
+  const message = errorText(err)
   return message.slice(0, 140)
 }
 

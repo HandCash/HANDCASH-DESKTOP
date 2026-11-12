@@ -20,6 +20,7 @@
  * Unlock replays every pinned cheque that never landed, oldest first, so a
  * night of sends Arcade could not land is repaired on the next launch.
  */
+import { errorText } from './errorText'
 import type { Services } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
 import type { BoundAccountKeyScope } from './accountLocalKeys'
@@ -282,7 +283,7 @@ async function repostWithAncestry(
     } catch (err) {
       console.info(
         `[landing] ${txid.slice(0, 12)} re-post via ${entry.name} failed`,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     }
   }

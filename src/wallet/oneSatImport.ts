@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -1501,7 +1502,7 @@ export async function importOneSatOrdinals(
     } catch (err) {
       markOneSatImportFailed(groupOps)
       part.failed = group.length
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       for (const item of group) {
         part.errors.push(`${item.outpoint}: ${msg}`)
       }

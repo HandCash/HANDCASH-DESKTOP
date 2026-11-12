@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
 import {
   appBrowserSurfaceLabel,
@@ -35,7 +36,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
         window.open(safeUrl, '_blank', 'noopener,noreferrer')
       }
     } catch (err) {
-      toastError('Could not open app', err instanceof Error ? err.message : String(err))
+      toastError('Could not open app', errorText(err))
     }
   }
 

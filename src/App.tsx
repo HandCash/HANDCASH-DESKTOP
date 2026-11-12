@@ -1,3 +1,4 @@
+import { errorText } from './wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useCallback, useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
@@ -168,7 +169,7 @@ export function App() {
           send({ type: 'BRIDGE', online: Boolean(window.handcash) })
         }
       } catch (err) {
-        send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+        send({ type: 'FAIL', error: errorText(err) })
       }
     })()
     return () => {
@@ -211,7 +212,7 @@ export function App() {
             body: result.body,
           })
         } catch (err) {
-          const description = err instanceof Error ? err.message : String(err)
+          const description = errorText(err)
           window.handcash?.respondHttp({
             request_id: event.request_id,
             status: 500,
@@ -253,7 +254,7 @@ export function App() {
             body: result.body,
           })
         } catch (err) {
-          const description = err instanceof Error ? err.message : String(err)
+          const description = errorText(err)
           respond({
             request_id: event.request_id,
             status: 500,
@@ -381,7 +382,7 @@ export function App() {
       if (sats != null) handleBalanceRefresh(sats)
       void refreshCloudBackupHealth()
     } catch (err) {
-      toastError('Refresh failed', err instanceof Error ? err.message : String(err))
+      toastError('Refresh failed', errorText(err))
     }
   }, [handleBalanceRefresh, walletUnlocked])
 

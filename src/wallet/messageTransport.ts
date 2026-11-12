@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
@@ -977,7 +978,7 @@ export async function deliverOutbound(
     } catch (err) {
       console.warn(
         '[messagebox] seal failed',
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
       return { delivered: 'local', messagebox: box }
     }
@@ -1048,7 +1049,7 @@ export async function deliverOutbound(
     console.warn(
       '[messagebox] sendMessage error',
       box,
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
   return { delivered: 'local', messagebox: box }
@@ -1067,7 +1068,7 @@ function ingestIdentityCard(senderKey: string, inner: string): Promise<void> {
   return import('./identityCardShare')
     .then(({ ingestIdentityCardBody }) => ingestIdentityCardBody(senderKey, inner))
     .catch((err) => {
-      console.warn('[identity-card] ingest failed', err instanceof Error ? err.message : String(err))
+      console.warn('[identity-card] ingest failed', errorText(err))
     })
 }
 
@@ -1393,13 +1394,13 @@ export async function pollInboundTipHints(args: {
     scheduleMarketRecovery()
     void import('./bnt/wallet')
       .then(({ serveBntBox }) => serveBntBox())
-      .catch((err) => console.warn('[bnt] box serve failed', err instanceof Error ? err.message : String(err)))
+      .catch((err) => console.warn('[bnt] box serve failed', errorText(err)))
     void import('./coins/coinPaymentBox')
       .then(({ serveCoinPaymentBox }) => serveCoinPaymentBox())
-      .catch((err) => console.warn('[coin-payment] box serve failed', err instanceof Error ? err.message : String(err)))
+      .catch((err) => console.warn('[coin-payment] box serve failed', errorText(err)))
     void import('./swap/settleRunner')
       .then(({ serveSwapSettle }) => serveSwapSettle())
-      .catch((err) => console.warn('[swap-settle] serve failed', err instanceof Error ? err.message : String(err)))
+      .catch((err) => console.warn('[swap-settle] serve failed', errorText(err)))
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0
@@ -1448,7 +1449,7 @@ export async function pollInboundTipHints(args: {
         } catch (err) {
           console.warn(
             '[market] inbound settlement message failed',
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         }
         continue

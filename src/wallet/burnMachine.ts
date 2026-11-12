@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { assign, createActor, setup, type SnapshotFrom } from 'xstate'
 import type { BurnPlan } from './burnPlan'
 
@@ -151,7 +152,7 @@ export async function executeBurnLifecycle(
   } catch (error) {
     chart.send({
       type: 'FAIL',
-      error: error instanceof Error ? error.message : String(error),
+      error: errorText(error),
     })
     // Only an unsigned action is safe to abort. Once a transaction is signed it
     // may already be propagating; releasing its inputs would permit a competing

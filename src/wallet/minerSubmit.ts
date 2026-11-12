@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -618,7 +619,7 @@ async function submitAtomicBeefToMinersOnce(
     rawResults = results as PostBeefServiceResult[];
     summary = summarizePostBeef(rawResults);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorText(err);
     console.warn(
       "[minerSubmit] postBeef transport failed — signed cheque queued",
       id.slice(0, 12),

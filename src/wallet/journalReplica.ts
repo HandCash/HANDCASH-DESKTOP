@@ -11,6 +11,7 @@
  * Each journal has its own object and HKDF label, so one key never opens
  * another journal's object.
  */
+import { errorText } from './errorText'
 import { PrivateKey } from '@bsv/sdk'
 import { pinAccountKeyScope, type BoundAccountKeyScope } from './accountLocalKeys'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
@@ -156,7 +157,7 @@ export function journalReplica(journal: GrowOnlyJournal): JournalReplica {
     } catch (err) {
       // Only this identity can sign a write, and the host keeps every version.
       console.error(
-        `[${journal.tag}] remote object unreadable (${err instanceof Error ? err.message : String(err)}) — replacing with local set`,
+        `[${journal.tag}] remote object unreadable (${errorText(err)}) — replacing with local set`,
       )
       return { remote: { etag, root: null }, pulled: 0 }
     }
@@ -223,7 +224,7 @@ export function journalReplica(journal: GrowOnlyJournal): JournalReplica {
       }
       return { kind: 'synced', pulled, pushed, root }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       console.warn(`[${journal.tag}] backup ${reason} failed: ${msg}`)
       return { kind: 'failed', reason: msg }
     }

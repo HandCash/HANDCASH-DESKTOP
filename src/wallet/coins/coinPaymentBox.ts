@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { coinWalletOf } from '../coinMethods'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { getWalletRuntime } from '../walletRuntime'
@@ -60,7 +61,7 @@ export async function serveCoinPaymentBox(opts?: { force?: boolean }): Promise<v
       } catch (err) {
         const since = failingSince.get(m.messageId) ?? now
         failingSince.set(m.messageId, since)
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorText(err)
         if (now - since >= GIVE_UP_MS) {
           console.warn(`[coin-payment] notice ${notice.txid.slice(0, 12)} dropped after a day unread — ${message}`)
           failingSince.delete(m.messageId)

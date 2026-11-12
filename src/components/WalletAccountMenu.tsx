@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
@@ -60,7 +61,7 @@ function masterIdentityKeyFromActive(): string | null {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 function fallbackLabel(account: VaultAccount): string {

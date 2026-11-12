@@ -8,6 +8,7 @@
  * local-network path carries, so the HMAC proofs and the 6-digit code apply
  * unchanged.
  */
+import { errorText } from '../errorText'
 import type { PrivateKey } from '@bsv/sdk'
 import { signedIdentityHeaders } from '../identityRequestAuth'
 import { randomHex } from '../deviceTransfer'
@@ -136,7 +137,7 @@ export function runScanLoginRelay(args: RelayOptions & { pollMs?: number } = {})
         }
         await relayAck(session.key, handled, args).catch(() => undefined)
       } catch (error) {
-        console.warn('[scan-login] relay poll failed', error instanceof Error ? error.message : String(error))
+        console.warn('[scan-login] relay poll failed', errorText(error))
       }
       await sleep(args.pollMs ?? RELAY_POLL_MS)
     }

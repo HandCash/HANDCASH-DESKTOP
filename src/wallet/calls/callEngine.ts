@@ -12,6 +12,7 @@
  * here touches keys that spend, and nothing here moves funds.
  */
 
+import { errorText } from '../errorText'
 import { createActor, type SnapshotFrom } from 'xstate'
 import { callMachine, type CallContext } from '../../machines/callMachine'
 import type { CallRecord } from './callHistory'
@@ -121,7 +122,7 @@ function signalOf(frame: Extract<CallFrame, { t: 'sdp' | 'ice' }>): MediaSignal 
 }
 
 export function createCallEngine(deps: CallEngineDeps) {
-  const log = deps.log ?? ((what: string, err?: unknown) => console.info(`[calls] ${what}${err === undefined ? '' : ` — ${err instanceof Error ? err.message : String(err)}`}`))
+  const log = deps.log ?? ((what: string, err?: unknown) => console.info(`[calls] ${what}${err === undefined ? '' : ` — ${errorText(err)}`}`))
   const actor = createActor(callMachine)
   const listeners = new Set<() => void>()
   const legs = new Map<string, Leg>()

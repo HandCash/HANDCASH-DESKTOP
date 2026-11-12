@@ -11,6 +11,7 @@
  * only; a deposit whose parents are also unmined waits for the next block and
  * stays retryable.
  */
+import { errorText } from './errorText'
 import { Beef, Transaction, type BEEF } from '@bsv/sdk'
 import type { Services } from '@handcash/wallet-engine'
 
@@ -287,7 +288,7 @@ export async function buildLegacyInputBeef(
           `[legacy-beef] ${txid.slice(0, 12)}… via=${tx.merklePath ? 'proof' : 'parents'} fetches=${ctx.fetches} ${Date.now() - t0}ms`,
         )
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
+        const reason = errorText(err)
         for (const outpoint of group) failures.push({ outpoint, reason })
         console.info(
           `[legacy-beef] ${txid.slice(0, 12)}… via=tip FAIL ${Date.now() - t0}ms ${reason}`,

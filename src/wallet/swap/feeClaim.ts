@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { CoinPrivateKey as PrivateKey } from '../primitives/coinCrypto'
 import * as Utils from '../primitives/base58check'
 import { BCH_FULCRUM_SERVERS, electrumBchChain, failoverBchChain } from '../bch/chain'
@@ -223,7 +224,7 @@ export function coinFeeReader(chain: Exclude<SwapAsset, 'bsv' | 'arc-usd'>): Fee
       try {
         return await src.txHex(txid)
       } catch (err) {
-        if (/not found|no transaction|404/i.test(err instanceof Error ? err.message : String(err))) return null
+        if (/not found|no transaction|404/i.test(errorText(err))) return null
         throw err
       }
     },

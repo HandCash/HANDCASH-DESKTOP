@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor } from './accountLocalKeys'
@@ -214,7 +215,7 @@ export async function shareIdentityCardAfterDelivery(env: OutboundEnvelope): Pro
     if (sender !== runtime.instance.identityKey.toLowerCase()) return
     await sendCard(runtime, { identityKey: env.recipientIdentityKey, messagebox: env.messagebox }, { force: false })
   } catch (err) {
-    console.warn('[identity-card] share failed', err instanceof Error ? err.message : String(err))
+    console.warn('[identity-card] share failed', errorText(err))
   }
 }
 
@@ -245,7 +246,7 @@ export async function exchangeIdentityCards(friend: Pick<Friend, 'identityKey' |
     await sendCard(runtime, friend, { force: false })
     await requestIdentityCard(friend)
   } catch (err) {
-    console.warn('[identity-card] exchange failed', err instanceof Error ? err.message : String(err))
+    console.warn('[identity-card] exchange failed', errorText(err))
   }
 }
 

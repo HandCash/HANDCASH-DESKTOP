@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { isAssetFilingBasket } from './assetBaskets'
 
@@ -266,7 +267,7 @@ async function runSelfConsolidation(): Promise<string> {
       }
       console.warn(
         '[consolidate] createAction poison — repairing and retrying once',
-        firstErr instanceof Error ? firstErr.message : String(firstErr),
+        errorText(firstErr),
       )
       await recoverFromReviewActions({ err: firstErr, active })
       result = await active.wallet.createAction(createActionArgs)
@@ -444,7 +445,7 @@ export async function maybeConsolidateChange(): Promise<ConsolidationOutcome> {
   } catch (err) {
     console.warn(
       '[consolidate] pass failed — pool left as-is',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
     try {
       const { reclaimSealedInputsNeverSpent } = await import('./staleOutputRelease')

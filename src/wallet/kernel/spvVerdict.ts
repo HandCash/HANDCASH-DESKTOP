@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 /**
  * SPV of a signed package before it is posted.
  *
@@ -26,7 +27,7 @@ export const SPV_SCRIPT_FAILED: SpvVerdict = {
 
 /** `Transaction.verify` threw. Only a named defect of the tx itself is invalid. */
 export function classifySpvThrow(err: unknown): SpvVerdict {
-  const message = (err instanceof Error ? err.message : String(err)).slice(0, 240)
+  const message = errorText(err).slice(0, 240)
   return INVALID_RE.test(message)
     ? { kind: 'invalid', reason: message }
     : { kind: 'incomplete', reason: message }

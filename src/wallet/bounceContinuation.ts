@@ -6,6 +6,7 @@
  * back. The wallet already holds the signed deposit, so it finishes the
  * round trip itself and the page's later call is a cache hit.
  */
+import { errorText } from './errorText'
 import { isMarketListingOrigin } from './marketListing'
 import { alreadyInternalizedError } from './peerIngestHelpers'
 
@@ -142,7 +143,7 @@ export async function continueTxBounceRefund(args: {
   } catch (err) {
     console.warn(
       '[brc100] bounce refund did not finish; the page retries when its tab resumes',
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
   }
 }

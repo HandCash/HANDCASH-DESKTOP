@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type { LtcChain } from './chain'
 import { getLtcAnchor, type LtcAnchor } from './headers'
 import {
@@ -130,7 +131,7 @@ export async function checkLtcBurial(
     root = merkleRootFromProof(outpoint.txid, proof.path, proof.pos)
   } catch (err) {
     if (err instanceof LtcFormatError) return refused('merkle', err.message)
-    return refused('malformed', err instanceof Error ? err.message : String(err))
+    return refused('malformed', errorText(err))
   }
   if (!sameBytes(header.merkleRoot, root)) return refused('merkle', "the path does not reach the block's merkle root")
   const anchored = await (anchor ?? rules.anchor()).check(proof.height, header.hash, rules.depth)

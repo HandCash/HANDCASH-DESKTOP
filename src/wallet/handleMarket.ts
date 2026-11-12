@@ -12,6 +12,7 @@
  * owes its refund, so a reply lost after payment is resumed with the same
  * order, never paid again.
  */
+import { errorText } from './errorText'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -162,7 +163,7 @@ function quoteFailure(err: unknown): HandleMarketError {
     default:
       return new HandleMarketError(
         'HANDLE_MARKET_UNAVAILABLE',
-        `The handles market did not answer: ${err instanceof Error ? err.message : String(err)}. Nothing was paid.`,
+        `The handles market did not answer: ${errorText(err)}. Nothing was paid.`,
       )
   }
 }
@@ -237,7 +238,7 @@ export async function completeHandlePurchase(
     try {
       answer = await deps.fulfil(purchase)
     } catch (err) {
-      lastProblem = err instanceof Error ? err.message : String(err)
+      lastProblem = errorText(err)
       if (isFinalServerRefusal(err)) break
       continue
     }
@@ -267,7 +268,7 @@ export async function completeHandlePurchase(
         await deps.issue(origin, { handle: purchase.handle, identityKey: purchase.identityKey, claimTicket: answer.claimTicket }),
       )
     } catch (err) {
-      lastProblem = err instanceof Error ? err.message : String(err)
+      lastProblem = errorText(err)
       if (err instanceof HandleIssueError && !ISSUE_RETRYABLE.has(err.code)) break
     }
   }
@@ -336,7 +337,7 @@ export async function buyHandle(origin: string, raw: unknown, deps: HandleMarket
     deps.store.remove(order.id)
     throw new HandleMarketError(
       'HANDLE_MARKET_PAYMENT_FAILED',
-      `The payment did not go through, so no handle was issued: ${err instanceof Error ? err.message : String(err)}`,
+      `The payment did not go through, so no handle was issued: ${errorText(err)}`,
     )
   }
   if (!TXID_PATTERN.test(txid)) {

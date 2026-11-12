@@ -19,6 +19,7 @@
  *
  * Propagation and delivering the notices run afterwards and never hold a payment.
  */
+import { errorText } from './errorText'
 import { accountKeyScopeFor, type BoundAccountKeyScope } from './accountLocalKeys'
 import type { ActivityStatus } from './appActivity'
 import { journalNoticeDone, noticeJournalBeef, syncNoticeJournal } from './noticeJournal'
@@ -100,7 +101,7 @@ async function reconcileLostPayments(runtime: WalletRuntime, resumed: Resumed[])
     const fate = await reconcileLostPayment(runtime, owner, row).catch((err: unknown): LostPayment => {
       console.warn(
         `[payment-reconcile] payment ${row.txid.slice(0, 12)}… not resumed`,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
       return { kind: 'unproven', onChain: false }
     })
@@ -136,7 +137,7 @@ async function propagateResumed(owner: BoundAccountKeyScope, resumed: Resumed[])
         .catch((reason: unknown) => {
           console.warn(
             `[payment-reconcile] resumed payment ${row.txid.slice(0, 12)}… rejected — void, notice settled`,
-            reason instanceof Error ? reason.message : String(reason),
+            errorText(reason),
           )
           journalNoticeDone(owner, row.txid, row.remittance.outputIndex ?? 0)
         })
@@ -166,7 +167,7 @@ export function reconcilePaymentsAfterRestore(runtime: WalletRuntime): Promise<v
     } catch (err) {
       console.warn(
         `[payment-reconcile] restore incomplete after ${Date.now() - started}ms`,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     }
   })()
@@ -178,7 +179,7 @@ export function reconcilePaymentsAfterRestore(runtime: WalletRuntime): Promise<v
       await propagateResumed(owner, resumed)
       await flushPendingBrc29Outbox({ rootKeyHex: runtime.instance.rootKeyHex, runtime })
     } catch (err) {
-      console.warn('[payment-reconcile] notices deferred', err instanceof Error ? err.message : String(err))
+      console.warn('[payment-reconcile] notices deferred', errorText(err))
     }
   })
   return done

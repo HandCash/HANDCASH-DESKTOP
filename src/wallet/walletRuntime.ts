@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import type { ActiveWallet } from './session'
 
 export type WalletRuntimeId = string & { readonly __walletRuntimeId: unique symbol }
@@ -91,7 +92,7 @@ export function disposeWalletRuntime(reason: WalletRuntimeDisposeReason): void {
       } catch (error) {
         console.warn(
           `[wallet-runtime] ${hook.name} dispose failed`,
-          error instanceof Error ? error.message : String(error),
+          errorText(error),
         )
       }
     }

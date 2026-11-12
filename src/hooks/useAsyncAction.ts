@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { useCallback, useMemo, useRef } from 'react'
 import { useActorRef, useSelector } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -49,7 +50,7 @@ export type AsyncActionHandle<Kind extends string = string> = {
 
 /** Failure message as the chart stores it. */
 export function asyncActionError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return errorText(err)
 }
 
 /**

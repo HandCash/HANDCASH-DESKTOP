@@ -22,6 +22,7 @@
  * re-claimed, and a seal alone never closes an entry.
  * Mutations run only while every wallet region is idle.
  */
+import { errorText } from './errorText'
 import { ITEM_STORAGE_BASKET, TOKEN_BASKET } from './assetBaskets'
 import { Transaction } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
@@ -497,7 +498,7 @@ async function reconcileDue(): Promise<void> {
           })
           .catch((err: unknown) =>
             console.warn(
-              `[holdings] ${describe(current)} relinquish failed — ${err instanceof Error ? err.message : String(err)}`,
+              `[holdings] ${describe(current)} relinquish failed — ${errorText(err)}`,
             ),
           )
         ledger.entries.delete(current.outpoint)
@@ -520,7 +521,7 @@ async function reconcileDue(): Promise<void> {
         }).catch((err: unknown) => ({
           kind: 'refused' as const,
           reason: 'no-storage' as const,
-          detail: err instanceof Error ? err.message : String(err),
+          detail: errorText(err),
         }))
         // A row restored last time that still does not list has lost its
         // basket, not its spendability — only a claim files it again.
@@ -590,7 +591,7 @@ async function reconcileDue(): Promise<void> {
       )
     } catch (err) {
       console.warn(
-        `[holdings] claim ${txid.slice(0, 12)} failed — ${err instanceof Error ? err.message : String(err)}`,
+        `[holdings] claim ${txid.slice(0, 12)} failed — ${errorText(err)}`,
       )
     }
   }

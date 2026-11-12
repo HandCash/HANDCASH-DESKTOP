@@ -4,6 +4,7 @@
  * so the source never changes what is trusted: the bytes are sealed to the
  * root key and a peer of another identity is never asked.
  */
+import { errorText } from './errorText'
 import { appendAppLog } from './appLog'
 import { fetchDevicePeerHistory } from './devicePeer'
 import { listDeviceWallets, type DeviceWallet } from './deviceWallets'
@@ -40,7 +41,7 @@ export async function pullHistoryPeerFirst(
       } catch (err) {
         appendAppLog(
           'info',
-          `[history] paired device ${peer.label} unavailable (${err instanceof Error ? err.message : String(err)}) — next source`,
+          `[history] paired device ${peer.label} unavailable (${errorText(err)}) — next source`,
         )
       }
     }

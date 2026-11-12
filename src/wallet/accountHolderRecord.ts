@@ -1,6 +1,7 @@
 /**
  * The holder record on the backup host (`accountHolding.ts` decides what it means).
  */
+import { errorText } from './errorText'
 import {
   parseHolderRecord,
   signHolderRecord,
@@ -27,7 +28,7 @@ function timeoutSignal(): AbortSignal | undefined {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 export async function readHolderRecord(account: AccountKeys): Promise<HolderRead> {

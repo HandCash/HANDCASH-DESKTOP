@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
 
@@ -501,7 +502,7 @@ export async function previewPhraseSweep(
       appendAppLog(
         'warn',
         `[phrase-sweep] scan failed ${candidate.scheme} ${candidate.address}: ${
-          e instanceof Error ? e.message : String(e)
+          errorText(e)
         }`,
       )
       return
@@ -853,7 +854,7 @@ async function loadItemParents(services: ActiveWallet['services'], outpoints: re
         shelf.add(Beef.fromBinary(built.beef))
         bytes += built.beef.length
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err)
+        const reason = errorText(err)
         for (const outpoint of group) failures.set(outpoint, reason)
       }
     }
@@ -1260,7 +1261,7 @@ function paintMigratedItems(receipts: ReadonlyArray<MigratedItemReceipt>, active
       requestCollectablesRelist()
     })
     .catch((err: unknown) => {
-      appendAppLog('warn', `[phrase-sweep] collect paint skipped: ${err instanceof Error ? err.message : String(err)}`)
+      appendAppLog('warn', `[phrase-sweep] collect paint skipped: ${errorText(err)}`)
     })
 }
 
@@ -1338,7 +1339,7 @@ async function migrateOrdinalUnit(args: {
       perTx = args.itemsPerTx
       fundingRetries = 0
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
+      const reason = errorText(err)
       if (isInsufficientFundsError(err)) {
         out.stopped = 'funds'
         out.lastError = reason
@@ -1558,7 +1559,7 @@ async function postForeignInputs(
         appendAppLog(
           'warn',
           `[phrase-sweep] could not abort failed migrate of ${inputs.length} input(s): ${
-            abortErr instanceof Error ? abortErr.message : String(abortErr)
+            errorText(abortErr)
           }`,
         )
       }

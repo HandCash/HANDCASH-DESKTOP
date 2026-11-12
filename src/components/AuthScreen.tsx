@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button, Field } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -219,7 +220,7 @@ export function AuthScreen({
         await finishUnlock(unlocked, null)
       } catch (err) {
         if (!unlockScreenLive()) return
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorText(err)
         const cancelled = message === 'cancelled'
         if (err instanceof HoldingBlockedError) {
           send({ type: 'FAIL', error: message, blocked: true })
@@ -249,7 +250,7 @@ export function AuthScreen({
       })
       .catch((err) => {
         if (!unlockScreenLive()) return
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorText(err)
         if (err instanceof HoldingBlockedError) {
           // The vault opened; the chart shows the choices, not a dead-end line.
           send({ type: 'FAIL', error: message, blocked: true })
@@ -655,7 +656,7 @@ export function AuthScreen({
         })
       }
     } catch (err) {
-      onFail(err instanceof Error ? err.message : String(err))
+      onFail(errorText(err))
     } finally {
       if (shareFileRef.current) shareFileRef.current.value = ''
     }
@@ -806,7 +807,7 @@ export function AuthScreen({
     } catch (restoreError) {
       if ('fail' in recovered) recovered.fail()
       const message =
-        restoreError instanceof Error ? restoreError.message : String(restoreError)
+        errorText(restoreError)
       console.warn(`[sign-in] install failed (${joined ? 'joined' : 'restore'}): ${message}`)
       send({ type: 'FAIL', error: message })
       onFail(message)

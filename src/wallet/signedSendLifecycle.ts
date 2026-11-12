@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import {
   requireWalletRuntime,
   retainWalletRuntime,
@@ -191,7 +192,7 @@ export async function propagateSignedSend(
       failDualLayerSend(
         handle.lifecycleId,
         'ARC_REJECTED',
-        reason instanceof Error ? reason.message : String(reason),
+        errorText(reason),
       )
       const { reportLateMinerSubmitFailure } = await import('./minerSubmit')
       const pendingIds = opts?.pendingIds?.length

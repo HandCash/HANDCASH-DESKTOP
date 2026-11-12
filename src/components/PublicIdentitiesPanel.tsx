@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { copyText } from '../wallet/clipboard'
 import { useEffect, useId, useMemo, useRef, useSyncExternalStore } from 'react'
 import { useMachine } from '@xstate/react'
@@ -142,7 +143,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
         selected: profile.identityKey,
         presented: null,
         signs: true,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       }
     }
   }, [generation, profiles, packages, profile.identityKey, runtime])

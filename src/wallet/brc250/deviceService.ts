@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import {
   challengeDeviceLogin,
   listPendingDeviceApprovals,
@@ -43,7 +44,7 @@ async function tick(): Promise<void> {
   } catch (error) {
     console.warn(
       '[brc250] device service deferred',
-      error instanceof Error ? error.message : String(error),
+      errorText(error),
     )
   } finally {
     running = false

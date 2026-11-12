@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { useEffect, useState } from 'react'
 import { useActorRef, useSelector } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
@@ -59,7 +60,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
         if (cancelled) return
         actor.send({
           type: 'UNREACHABLE',
-          message: err instanceof Error ? err.message : String(err),
+          message: errorText(err),
         })
       }
     })()
@@ -95,7 +96,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
       playWalletSound('success')
       onDone(balanceSats)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorText(err)
       playWalletSound('error')
       if (LEGACY_PASSWORD_HINT.test(message)) {
         actor.send({

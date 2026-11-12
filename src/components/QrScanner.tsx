@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
@@ -220,7 +221,7 @@ export function QrScanner({
         await startWithZxing(stream)
       } catch (err) {
         if (cancelled) return
-        const msg = err instanceof Error ? err.message : String(err)
+        const msg = errorText(err)
         if (/NotAllowed|Permission|denied/i.test(msg)) {
           send({ type: 'FAIL', error: 'Camera access was denied. Paste the code instead.' })
         } else if (/NotFound|DevicesNotFound/i.test(msg)) {

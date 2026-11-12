@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { Utils, type PrivateKey } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
@@ -166,7 +167,7 @@ async function requestPage(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
   } catch (err) {
-    return { kind: 'refused', reason: 'unavailable', detail: err instanceof Error ? err.message : String(err) }
+    return { kind: 'refused', reason: 'unavailable', detail: errorText(err) }
   }
   let answer: unknown
   try {
@@ -188,7 +189,7 @@ async function requestPage(
     const next = typeof opened.next === 'string' && /^[0-9a-f]{24}$/.test(opened.next) ? opened.next : null
     return { kind: 'page', utxos, next }
   } catch (err) {
-    return { kind: 'refused', reason: 'bad-response', detail: err instanceof Error ? err.message : String(err) }
+    return { kind: 'refused', reason: 'bad-response', detail: errorText(err) }
   }
 }
 

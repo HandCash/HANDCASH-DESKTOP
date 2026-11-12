@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { AssetPicker, NETWORK_OPTIONS, swapCoinOption, useNetworkOptions } from './NetworkPicker'
@@ -331,7 +332,7 @@ export function SendPanel({
       } catch (err) {
         send({ type: 'REFUSE' })
         playWalletSound('error')
-        onFail(err instanceof Error ? err.message : String(err))
+        onFail(errorText(err))
       }
       return
     }
@@ -355,7 +356,7 @@ export function SendPanel({
     } catch (err) {
       send({ type: 'REFUSE' })
       playWalletSound('error')
-      onFail(err instanceof Error ? err.message : String(err))
+      onFail(errorText(err))
       try {
         const available = await refreshSpendableBalance()
         onSent(available)
@@ -420,7 +421,7 @@ export function SendPanel({
           }
           onFail(result.reason || 'Could not claim BRC-29 payment')
         } catch (err) {
-          onFail(err instanceof Error ? err.message : String(err))
+          onFail(errorText(err))
         }
       })()
       return
@@ -512,7 +513,7 @@ export function SendPanel({
               : `${sent} to ${label} is signed; ${networkLabel} did not take it yet, so the wallet keeps broadcasting it.`,
           )
         } catch (err) {
-          onFail(err instanceof Error ? err.message : String(err))
+          onFail(errorText(err))
         }
         try {
           onSent(await refreshSpendableBalance())
@@ -567,7 +568,7 @@ export function SendPanel({
         )
         onSent(balanceSats)
       } catch (err) {
-        onFail(err instanceof Error ? err.message : String(err))
+        onFail(errorText(err))
         try {
           onSent(await refreshSpendableBalance())
         } catch {

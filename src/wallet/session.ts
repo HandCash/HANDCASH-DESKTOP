@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
@@ -360,7 +361,7 @@ function startDurablePropagationRecovery(runtime: WalletRuntime): void {
   void flushDurablePropagation(runtime).catch((error) => {
     console.warn(
       '[propagation] boot flush deferred',
-      error instanceof Error ? error.message : String(error),
+      errorText(error),
     )
   })
   if (propagationRecoveryStarted || typeof window === 'undefined') return
@@ -369,7 +370,7 @@ function startDurablePropagationRecovery(runtime: WalletRuntime): void {
     void flushDurablePropagation().catch((error) => {
       console.warn(
         '[propagation] retry deferred',
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
       )
     })
   }
@@ -604,7 +605,7 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
       const { discoverVaultAccounts, probeAccountUse } = await import('./vaultAccountDiscovery')
       await discoverVaultAccounts({ master: vaultMaster, probe: probeAccountUse })
     } catch (error) {
-      console.warn('[vault-accounts] discovery failed', error instanceof Error ? error.message : String(error))
+      console.warn('[vault-accounts] discovery failed', errorText(error))
     }
     try {
       const { checkVaultAccountHoldings, watchActiveAccountHolding } = await import('./vaultAccountHolding')
@@ -614,7 +615,7 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
         active && active.vaultMaster === vaultMaster ? active.accountIndex : null,
       )
     } catch (error) {
-      console.warn('[account-holding] check failed', error instanceof Error ? error.message : String(error))
+      console.warn('[account-holding] check failed', errorText(error))
     }
     for (const account of readVaultAccounts(masterIdentityKey).accounts) {
       if (warmPoolGeneration() !== generation) return
@@ -641,7 +642,7 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
       } catch (error) {
         console.warn(
           `[vault-account] prewarm a${account.index} skipped`,
-          error instanceof Error ? error.message : String(error),
+          errorText(error),
         )
       }
     }

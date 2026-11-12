@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
@@ -78,7 +79,7 @@ export function ConfirmPasswordGate({
       try {
         await unlockVaultWithDevice('Confirm it’s you')
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorText(err)
         if (message !== 'cancelled') throw err
         dismissed = true
         return

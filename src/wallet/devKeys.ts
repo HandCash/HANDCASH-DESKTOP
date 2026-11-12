@@ -14,6 +14,7 @@
  *
  * Derived keys are BRC-42 `self` children under `[2, 'handcash server wallet']`.
  */
+import { errorText } from './errorText'
 import {
   CachedKeyDeriver,
   createNonce,
@@ -636,7 +637,7 @@ export function refreshDevWallet(runtime: WalletRuntime, n: number): Promise<Dev
       summaries.set(key, { summary, error: null })
       return summary
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
+      const reason = errorText(error)
       summaries.set(key, { summary: summaries.get(key)?.summary ?? null, error: reason })
       console.warn(`[dev-key] refresh failed — ${reason}`)
       throw error
@@ -733,7 +734,7 @@ export async function fundDevWallet(n: number, satoshis: number): Promise<{ txid
   } catch (error) {
     console.warn(
       `[dev-key] fund ${fund.txid.slice(0, 12)} internalize deferred — ${
-        error instanceof Error ? error.message : String(error)
+        errorText(error)
       }`,
     )
   }
@@ -818,7 +819,7 @@ async function spendRecover(
 export function feeShortfall(error: unknown): number | null {
   const more = (error as { moreSatoshisNeeded?: unknown } | null)?.moreSatoshisNeeded
   if (typeof more === 'number' && more > 0) return more
-  const m = /(\d+) more satoshis are needed/.exec(error instanceof Error ? error.message : String(error))
+  const m = /(\d+) more satoshis are needed/.exec(errorText(error))
   return m ? Number(m[1]) : null
 }
 
@@ -893,7 +894,7 @@ async function recoverExclusive(
     void refreshDevWallet(runtime, n).catch(() => {})
     return { txid: pending.txid, satoshis: pending.satoshis }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error)
+    const reason = errorText(error)
     chart.send({ type: 'FAIL', error: reason })
     console.warn(`[dev-key] recover failed — ${reason}`)
     throw error

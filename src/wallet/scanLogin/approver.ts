@@ -3,6 +3,7 @@
  * local network, show the shared code, then send the vault sealed to the key
  * from the QR. No HandCash server is in the path.
  */
+import { errorText } from '../errorText'
 import { PrivateKey } from '@bsv/sdk'
 import { randomHex, sealVaultTransfer, type VaultTransfer } from '../deviceTransfer'
 import { relayRequest } from './relay'
@@ -117,7 +118,7 @@ export async function helloScanLogin(
           settle()
         })
         .catch((error) => {
-          failures.push(`${route.url}: ${error instanceof Error ? error.message : String(error)}`)
+          failures.push(`${route.url}: ${errorText(error)}`)
           settle()
         })
     }

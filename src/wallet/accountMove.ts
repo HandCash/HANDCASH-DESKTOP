@@ -16,6 +16,7 @@
  * - **Move here.** {@link moveAccountHere} runs `accountMoveMachine`: ask the
  *   holder, take on release, force the take when it does not answer.
  */
+import { errorText } from './errorText'
 import { createActor, fromCallback, fromPromise, toPromise } from 'xstate'
 import type { AccountKeys } from './accountHolding'
 import {
@@ -56,7 +57,7 @@ export const HOLDING_SERVE_MS = 5_000
 const MOVE_POLL_MS = 1_000
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 /** The box operations a move needs; `messageTransport.ts` in the app. */

@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
 import { chooseLegacySweepPath } from '../legacySweepPath'
@@ -132,7 +133,7 @@ export async function inspectAddressHoldings(
     out.itemCount = items.count
     out.itemCountCapped = items.capped
   } catch (err) {
-    errors.push(err instanceof Error ? err.message : String(err))
+    errors.push(errorText(err))
   }
   out.error = errors.length > 0 ? errors.join('; ') : null
   return out

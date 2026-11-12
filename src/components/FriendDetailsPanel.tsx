@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button, Field } from '@aeon-ui/react'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import type { Chain } from '../wallet/vault'
@@ -72,7 +73,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
       toastSuccess('Friend saved')
     } catch (err) {
       playWalletSound('error')
-      const message = err instanceof Error ? err.message : String(err)
+      const message = errorText(err)
       setError(message)
       toastError('Couldn’t save friend', message)
     }

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 /**
  * Shared device-unlock factor: seals a vault DEK behind OS biometrics /
  * device credential (Mobile) or OS keychain + optional Touch ID (Desktop).
@@ -47,7 +48,7 @@ export async function deviceAuthEnroll(
   try {
     return await api(secretB64)
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, error: errorText(err) }
   }
 }
 
@@ -78,7 +79,7 @@ export async function deviceAuthUnlock(
     } catch (err) {
       return {
         ok: false as const,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorText(err),
       }
     }
   })()

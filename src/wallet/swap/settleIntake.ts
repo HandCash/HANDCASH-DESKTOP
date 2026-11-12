@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { fromHex } from '../ltc/litecoin'
 import type { HtlcCoin } from './htlc'
 import { bsvCosignValid, cosignBsvRefund } from './legChains'
@@ -62,7 +63,7 @@ async function intakeTake(active: ActiveWallet, sender: string, raw: SwapTerms):
   await sendSettle(active, sender, { t: 'accept', swapId: terms.swapId, makerPub })
   log(terms.swapId, `take accepted${left > 0n && !usedUp ? ` (${left} of the offer left)` : ''}`)
   void updateListing(active, published!.offer, usedUp, BigInt(published!.offer.maxGet) - left).catch((err: unknown) =>
-    warn(terms.swapId, `listing update deferred — ${err instanceof Error ? err.message : String(err)}`),
+    warn(terms.swapId, `listing update deferred — ${errorText(err)}`),
   )
 }
 
@@ -184,7 +185,7 @@ export async function serveBox(active: ActiveWallet, onMessage: (swapId: string 
       }
       acks.push(messageId)
     } catch (err) {
-      console.warn(`[swap-settle] message from ${sender.slice(0, 12)}… deferred — ${err instanceof Error ? err.message : String(err)}`)
+      console.warn(`[swap-settle] message from ${sender.slice(0, 12)}… deferred — ${errorText(err)}`)
     }
   }
   await ackSettleBox(active, acks).catch(() => {})

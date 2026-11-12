@@ -11,6 +11,7 @@
  * is logged and swallowed. Never gate a purchase on it.
  */
 
+import { errorText } from './errorText'
 import { PUBLIC_BRC_CLOUD_ORIGIN } from './walletConfig'
 import {
   chooseMarketSoldAnnouncePath,
@@ -155,7 +156,7 @@ async function submitSoldAnnounce(
     console.info(`[market-sold] listing de-listed from overlay (${kind ?? 'ok'})`)
     return { announced: true, kind }
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
+    const reason = errorText(err)
     console.warn(`[market-sold] overlay announce failed — ${reason}`)
     return { announced: false, reason }
   }

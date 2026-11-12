@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { Transaction, type WalletInterface } from '@bsv/sdk'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { alreadyInternalizedError } from './peerIngestHelpers'
@@ -88,7 +89,7 @@ export async function internalizeActionWithBroadcast(
     .catch((err) => {
       console.warn(
         `[internalize] ${txid.slice(0, 12)}… Arcade double-check failed`,
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     })
   return result

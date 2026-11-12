@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 import {
@@ -96,9 +97,9 @@ async function formatBurnFailureReason(
   active: ActiveWallet | null,
 ): Promise<string> {
   if (!isInsufficientFundsError(error)) {
-    return error instanceof Error ? error.message : String(error)
+    return errorText(error)
   }
-  const raw = error instanceof Error ? error.message : String(error)
+  const raw = errorText(error)
   const totalMatch = raw.match(/for a total of (\d+)/i)
   const needed = totalMatch ? Math.max(1, Number(totalMatch[1])) : MIN_BURN_FEE_SATS
   if (active) {
@@ -606,7 +607,7 @@ export async function burnOneSat(
               outpoint,
               satoshis: 0,
               lockingScript: undefined,
-              loadError: error instanceof Error ? error.message : String(error),
+              loadError: errorText(error),
             }
           }
         })

@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button, Field, StatusBanner } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
 import { useEffect, useState } from 'react'
@@ -49,7 +50,7 @@ export function WipeWalletPanel() {
       playWalletSound("soft");
       window.location.reload();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorText(err);
       send({ type: "FAIL", error: message });
       playWalletSound("error");
     }

@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { getActiveWallet } from '../wallet/session'
 
 import { useEffect, useRef, useState } from 'react'
@@ -159,7 +160,7 @@ export function PairDevicePanel() {
       setPairText(text)
       setQrUrl(dataUrl)
     })().catch((err) => {
-      if (!cancelled) toastError('QR failed', err instanceof Error ? err.message : String(err))
+      if (!cancelled) toastError('QR failed', errorText(err))
     })
     return () => {
       cancelled = true
@@ -186,8 +187,8 @@ export function PairDevicePanel() {
         playWalletSound('success')
       } catch (err) {
         playWalletSound('error')
-        send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
-        toastError('Import failed', err instanceof Error ? err.message : String(err))
+        send({ type: 'FAIL', error: errorText(err) })
+        toastError('Import failed', errorText(err))
       }
       return
     }
@@ -235,8 +236,8 @@ export function PairDevicePanel() {
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
-      send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
-      toastError('Could not add', err instanceof Error ? err.message : String(err))
+      send({ type: 'FAIL', error: errorText(err) })
+      toastError('Could not add', errorText(err))
     }
   }
 
@@ -282,7 +283,7 @@ export function PairDevicePanel() {
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
-      send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      send({ type: 'FAIL', error: errorText(err) })
     }
   }
 
@@ -299,7 +300,7 @@ export function PairDevicePanel() {
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
-      send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      send({ type: 'FAIL', error: errorText(err) })
     }
   }
 
@@ -317,7 +318,7 @@ export function PairDevicePanel() {
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
-      send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      send({ type: 'FAIL', error: errorText(err) })
     }
   }
 

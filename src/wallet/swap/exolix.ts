@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { decimalToUnits, SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from './assets'
 
 /**
@@ -62,7 +63,7 @@ export async function fetchExolixQuote(
     body = (await res.json().catch(() => ({}))) as RateBody
     if (!res.ok && res.status !== 422) return { ok: false, refusal: { kind: 'unavailable', detail: `Exolix ${res.status}` } }
   } catch (err) {
-    return { ok: false, refusal: { kind: 'unavailable', detail: err instanceof Error ? err.message : String(err) } }
+    return { ok: false, refusal: { kind: 'unavailable', detail: errorText(err) } }
   } finally {
     clearTimeout(timer)
   }

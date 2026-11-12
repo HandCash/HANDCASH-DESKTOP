@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { fromHex, toHex } from '../ltc/litecoin'
 import { SWAP_ASSET_INFO, unitsToDecimal } from './assets'
 import type { HtlcCoin } from './htlc'
@@ -125,7 +126,7 @@ async function fund(active: ActiveWallet, r: SettleRecord): Promise<void> {
   log(r.terms.swapId, `locked ${unitsToDecimal(leg.chain, leg.amount + leg.fee)} ${SWAP_ASSET_INFO[leg.chain].ticker} in ${funding.txid.slice(0, 12)}`)
   // The lock stands; the notice is retried while the swap waits on the peer.
   await announceFunded(active, { ...r, own: { ...r.own, funding } }, beef).catch((err: unknown) => {
-    warn(r.terms.swapId, `funded notice deferred — ${err instanceof Error ? err.message : String(err)}`)
+    warn(r.terms.swapId, `funded notice deferred — ${errorText(err)}`)
   })
 }
 
@@ -232,7 +233,7 @@ export async function armClaimTower(active: ActiveWallet, r: SettleRecord): Prom
     try {
       template = await chain.presignClaim({ coin: { txid: funding.txid, vout: funding.main, amount: peerOuts.main.amount, script: peerOuts.main.script }, key: keyOf(active, r) })
     } catch (err) {
-      const skipped = err instanceof Error ? err.message : String(err)
+      const skipped = errorText(err)
       updateSwap(r.terms.swapId, (x) => ({ ...x, peer: { ...x.peer, tower: { triedAt: Date.now(), held, done: true, skipped } } }))
       warn(r.terms.swapId, `no claim watchtower: ${skipped}`)
       return
@@ -288,7 +289,7 @@ export async function claim(active: ActiveWallet, r: SettleRecord): Promise<void
   log(r.terms.swapId, `claimed ${unitsToDecimal(leg.chain, spend.value)} ${SWAP_ASSET_INFO[leg.chain].ticker} in ${spend.txid.slice(0, 12)}`)
   if (r.role === 'taker') {
     await sendSettle(active, r.counterparty, { t: 'secret', swapId: r.terms.swapId, secret: toHex(secret) }).catch((err: unknown) => {
-      warn(r.terms.swapId, `courtesy secret deferred — ${err instanceof Error ? err.message : String(err)}`)
+      warn(r.terms.swapId, `courtesy secret deferred — ${errorText(err)}`)
     })
   }
 }

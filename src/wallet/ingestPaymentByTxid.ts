@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -191,7 +192,7 @@ export async function ingestPaymentByTxid(
       reason: result.errors[0] || 'sweep-failed',
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorText(err)
     console.warn('[payment-spv] ingest failed', id, msg)
     markInboundPaymentStatus(id, 'Verifying on chain…')
     setSyncHealth({

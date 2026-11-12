@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
 import { buildLegacyInputBeef } from '../legacyBeef'
@@ -79,7 +80,7 @@ export async function forgetImportItems(sourceId: string): Promise<void> {
   try {
     await forgetImportItemStore(sourceId)
   } catch (err) {
-    appendAppLog('warn', `[import] saved item list not cleared: ${err instanceof Error ? err.message : String(err)}`)
+    appendAppLog('warn', `[import] saved item list not cleared: ${errorText(err)}`)
   }
 }
 
@@ -88,7 +89,7 @@ export async function clearImportItems(sourceId: string): Promise<void> {
   try {
     await clearImportListing(sourceId)
   } catch (err) {
-    appendAppLog('warn', `[import] saved item list not cleared: ${err instanceof Error ? err.message : String(err)}`)
+    appendAppLog('warn', `[import] saved item list not cleared: ${errorText(err)}`)
   }
 }
 
@@ -485,7 +486,7 @@ export async function prefetchImportItems(args: { sourceId: string; outpoints: r
       appendAppLog('info', `[import] prefetch done ${ms}ms items=${outpoints.length} unread=${built.failures.length}`)
     }
   } catch (err) {
-    appendAppLog('warn', `[import] prefetch skipped: ${err instanceof Error ? err.message : String(err)}`)
+    appendAppLog('warn', `[import] prefetch skipped: ${errorText(err)}`)
   }
 }
 
@@ -626,7 +627,7 @@ export async function importItems(args: {
 
   if (leftList.length > 0) {
     await markImportOutpointsGone(source.id, leftList).catch((err: unknown) => {
-      appendAppLog('warn', `[import] saved item list not updated: ${err instanceof Error ? err.message : String(err)}`)
+      appendAppLog('warn', `[import] saved item list not updated: ${errorText(err)}`)
     })
   }
   if (movedPerAddress.size > 0 && source.scan) {

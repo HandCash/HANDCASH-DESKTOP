@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -27,7 +28,7 @@ export type SendWithRow = {
 };
 
 export function isReservedActionBatchError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const msg = errorText(err).toLowerCase();
   return (
     msg.includes("not reserved by an active action batch") ||
     msg.includes("reserved by an active action batch")
@@ -524,7 +525,7 @@ export async function repairFailedSpendState(
 }
 
 export function isIteratorCrashError(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const msg = errorText(err).toLowerCase();
   return msg.includes("is not iterable");
 }
 
@@ -577,7 +578,7 @@ export function formatReviewActionsError(err: unknown): string {
     ...reviews.map((r) => r.status).filter(Boolean),
     ...sends.map((r) => r.status).filter(Boolean),
   ].map((s) => String(s).toLowerCase());
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const msg = errorText(err).toLowerCase();
 
   // Not a double-spend: a change output reached createAction with no locking
   // script (`asString(undefined)`). Reporting it as a conflict hid the real

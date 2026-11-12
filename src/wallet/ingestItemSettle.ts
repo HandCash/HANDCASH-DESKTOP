@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -216,7 +217,7 @@ export async function internalizePeerItemSettle(opts: {
         purpose: opts.beefPurpose,
       })
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
+      const msg = errorText(err)
       if (!/AtomicBEEF backoff/i.test(msg)) {
         console.warn('[item-settle] AtomicBEEF fetch failed', id.slice(0, 12), err)
       }
@@ -289,7 +290,7 @@ export async function internalizePeerItemSettle(opts: {
     return {
       accepted: false,
       outpoints: [],
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
 
@@ -463,7 +464,7 @@ export async function internalizePeerItemSettle(opts: {
     return {
       accepted: false,
       outpoints: [],
-      reason: err instanceof Error ? err.message : String(err),
+      reason: errorText(err),
     }
   }
 }

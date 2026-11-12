@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet, type ActiveWallet } from './session'
 
 /**
@@ -128,7 +129,7 @@ async function answerFor(
         value: { identityKey: active.identityKey, exportedAt: Date.now(), brc39B64: btoa(bin) },
       }
     } catch (err) {
-      return { error: errorResponse(500, 'HISTORY_UNAVAILABLE', err instanceof Error ? err.message : String(err)) }
+      return { error: errorResponse(500, 'HISTORY_UNAVAILABLE', errorText(err)) }
     }
   }
 
@@ -173,7 +174,7 @@ async function answerFor(
       }),
     }
   } catch (err) {
-    return { error: errorResponse(400, 'PAIR_INFO_FAILED', err instanceof Error ? err.message : String(err)) }
+    return { error: errorResponse(400, 'PAIR_INFO_FAILED', errorText(err)) }
   }
 }
 

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
@@ -228,7 +229,7 @@ function brcSpendErrorCode(err: unknown): {
   code: string
   description: string
 } {
-  const description = err instanceof Error ? err.message : String(err)
+  const description = errorText(err)
   const code =
     err && typeof err === 'object' ? (err as { code?: unknown }).code : undefined
   if (code === 'WALLET_BALANCE_TIMEOUT') {
@@ -841,7 +842,7 @@ export async function handleBrc100Request(
       event.request_id,
       method,
       false,
-      err instanceof Error ? err.message : String(err),
+      errorText(err),
     )
     // The caller turns a throw into a 500 and never sees this frame, so a
     // failure logged only on the return path leaves no trace at all.
@@ -853,7 +854,7 @@ export async function handleBrc100Request(
           status: 500,
           body: JSON.stringify({
             code: 'WALLET_HANDLER_ERROR',
-            description: err instanceof Error ? err.message : String(err),
+            description: errorText(err),
           }),
         },
         Date.now() - t0,
@@ -1011,7 +1012,7 @@ function safeLogBrc100(
   } catch (err) {
     appendAppLog(
       'warn',
-      `[brc100] diagnostic log skipped: ${err instanceof Error ? err.message : String(err)}`,
+      `[brc100] diagnostic log skipped: ${errorText(err)}`,
     )
   }
 }
@@ -1291,7 +1292,7 @@ async function handleBrc100RequestInner(
             body: JSON.stringify({
               status: 'error',
               code,
-              description: err instanceof Error ? err.message : String(err),
+              description: errorText(err),
             }),
           }
         }

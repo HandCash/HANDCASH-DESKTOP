@@ -1,4 +1,5 @@
 /** Scanned sign-in codes on the approving device, as Activity rows. */
+import { errorText } from '../errorText'
 import { recordAddedDevice, type AddedDevice } from '../addedDevices'
 import { getEmailRecoveryEnrollment } from '../brc250/store'
 import { confirmPresence } from '../deviceSignin/approver'
@@ -80,7 +81,7 @@ export async function startScanLoginApproval(payload: ScanLoginPayload): Promise
   } catch (error) {
     console.warn('[scan-login] not connected', error instanceof Error ? `${error.name}: ${error.message}` : String(error))
     if (error instanceof ScanLoginUnreachable) update(key, { face: 'unreachable' })
-    else update(key, { face: 'refused', error: error instanceof Error ? error.message : String(error) })
+    else update(key, { face: 'refused', error: errorText(error) })
   }
 }
 

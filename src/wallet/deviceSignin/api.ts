@@ -1,4 +1,5 @@
 /** BRC-CLOUD sign-in relay: `/v1/signin/*`. */
+import { errorText } from '../errorText'
 import { signedIdentityFetch } from '../identityRequestAuth'
 import { DEFAULT_BRC_CLOUD_BASE_URL } from '../walletConfig'
 
@@ -189,7 +190,7 @@ export function refuseSignin(walletKeyHex: string, binding: string): Promise<{ o
 export function signinErrorText(error: unknown): string {
   if (error instanceof TypeError) return 'No connection to HandCash. Still trying…'
   if (!(error instanceof SigninError)) {
-    return error instanceof Error ? error.message : String(error)
+    return errorText(error)
   }
   switch (error.code) {
     case 'invalid-code':

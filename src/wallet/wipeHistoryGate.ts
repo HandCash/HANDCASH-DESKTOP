@@ -7,6 +7,7 @@
  * payments) exist only in localState — Refresh cannot rebuild them — so a wipe
  * ahead of the upload destroys them.
  */
+import { errorText } from './errorText'
 import { hasDeviceLinkBackupUrl } from './deviceSync'
 import { fetchRemoteBrc39Meta, HistoryThinOverwriteError, uploadBrc39Backup } from './historyBackup'
 import { inspectLocalToolboxState } from './layers'
@@ -77,7 +78,7 @@ export async function syncHistoryBeforeWipe(): Promise<WipeHistoryCheck> {
   try {
     uploadedAt = (await uploadBrc39Backup(credential, { passwordAlreadyVerified: true })).exportedAt
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err)
+    const detail = errorText(err)
     return refuse(
       err instanceof HistoryThinOverwriteError
         ? { kind: 'cloud-richer', detail }

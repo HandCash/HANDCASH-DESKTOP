@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import {
   createContext,
   useCallback,
@@ -154,7 +155,7 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
           currentVersion: ctx.currentVersion,
           availableVersion: null,
           percent: null,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorText(err),
           canInstall: false,
         },
       })

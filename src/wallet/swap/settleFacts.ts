@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type { LockSighting } from '../coins/coinWallet'
 import { fromHex, toHex } from '../ltc/litecoin'
 import { legChainOf, type LegSpend } from './legChains'
@@ -152,7 +153,7 @@ export async function findPeerLock(r: SettleRecord): Promise<SettleRecord> {
   const outs = legOutputs(agreed, peerLegId(r))
   const chain = await legChainOf(swapLegs(r.terms)[peerLegId(r)].chain)
   const found = await chain.findLock(outs.main, outs.fee).catch((err: unknown) => {
-    warn(r.terms.swapId, `lock search deferred — ${err instanceof Error ? err.message : String(err)}`)
+    warn(r.terms.swapId, `lock search deferred — ${errorText(err)}`)
     return null
   })
   if (!found) return r

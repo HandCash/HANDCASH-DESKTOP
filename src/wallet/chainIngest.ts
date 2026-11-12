@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { getWalletRuntime, runtimeIsCurrent } from './walletRuntime'
 /**
@@ -225,7 +226,7 @@ export async function auditSpendableOutputs(force = false): Promise<SpendableRev
     }
     return { suspect, skipped: false }
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
+    const message = errorText(err)
     console.warn('[chain-ingest] spendable audit failed', err)
     return { suspect: 0, skipped: false, error: message }
   }

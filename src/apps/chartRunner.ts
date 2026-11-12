@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { assign, fromPromise, setup, type SnapshotFrom, type StateValue } from 'xstate'
 import {
   type BoxMessage,
@@ -142,7 +143,7 @@ export function machineFromChart(
             const effect = resolveEffect(chart, effectId, context.values, options.network)
             return { pending: { effect, approval: needsApproval ? approvalFor(effect, app) : null }, error: null }
           } catch (err) {
-            return { pending: null, error: err instanceof Error ? err.message : String(err) }
+            return { pending: null, error: errorText(err) }
           }
         }),
         always: { guard: ({ context }: { context: ChartRunnerContext }) => context.pending === null, target: ref(state.onError!) },
@@ -165,7 +166,7 @@ export function machineFromChart(
               onError: {
                 target: ref(state.onError!),
                 actions: assign(({ event }: { event: { error: unknown } }) => ({
-                  error: event.error instanceof Error ? event.error.message : String(event.error),
+                  error: errorText(event.error),
                 })),
               },
             },

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -37,7 +38,7 @@ export async function archiveBrc39Locally(args: {
     )
     return result.meta
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorText(err)
     appendAppLog('warn', `[utxo-archive] write failed: ${msg}`)
     return null
   }

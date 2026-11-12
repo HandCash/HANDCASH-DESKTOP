@@ -3,6 +3,7 @@
  * Overlaps that the machine forbids still wait on acquire; distinct regions no
  * longer share one FIFO (so a queued backup does not delay a waiting spend).
  */
+import { errorText } from './errorText'
 import { createActor, type Actor } from 'xstate'
 import { setStallContextProvider } from './appLog'
 import { describeUiPhase } from './uiPhase'
@@ -660,7 +661,7 @@ function runSpendBody<T>(
       if (!abandoned) return
       console.warn(
         '[coordinator] abandoned spend failed late',
-        err instanceof Error ? err.message : String(err),
+        errorText(err),
       )
     },
   )

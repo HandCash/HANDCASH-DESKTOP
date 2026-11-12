@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { Transaction, Utils } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
@@ -238,7 +239,7 @@ export function createHistoryReader(args: { chain: Chain; txids: readonly string
           failed += chunk.length
           appendAppLog(
             'warn',
-            `[import] hinted tx read failed for ${chunk.length} tx(s): ${err instanceof Error ? err.message : String(err)}`,
+            `[import] hinted tx read failed for ${chunk.length} tx(s): ${errorText(err)}`,
           )
           continue
         }

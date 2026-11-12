@@ -1,6 +1,7 @@
 /// <reference lib="webworker" />
 // Argon2id in a dedicated worker: the 7-pass 128 MiB derivation no longer
 // freezes the UI thread. Same parameters and output as the main-thread path.
+import { errorText } from './errorText'
 import argon2Api from 'hash-wasm/dist/argon2.umd.min.js'
 
 type Req = {
@@ -33,6 +34,6 @@ scope.onmessage = async (event: MessageEvent<Req | { id: number; ping: true }>) 
     })) as Uint8Array
     scope.postMessage({ id: msg.id, ok: true, out }, [out.buffer])
   } catch (error) {
-    scope.postMessage({ id: msg.id, ok: false, error: error instanceof Error ? error.message : String(error) })
+    scope.postMessage({ id: msg.id, ok: false, error: errorText(error) })
   }
 }

@@ -8,6 +8,7 @@
  * Unsigned, mis-signed or older-than-seen lists are refused, so a removed
  * entry cannot be replayed. Without a valid list nobody gets a checkmark.
  */
+import { errorText } from './errorText'
 import { ProtoWallet, Utils } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -155,7 +156,7 @@ export async function refreshVerifiedIssuers(
       throw new Error(`list ${list.updatedAt} is older than ${current.list.updatedAt}`)
     adopt({ list, fetchedAt: Date.now() }, true)
   } catch (err) {
-    console.warn('[verified-issuers] refresh refused', err instanceof Error ? err.message : String(err))
+    console.warn('[verified-issuers] refresh refused', errorText(err))
   } finally {
     const ms = Math.round(performance.now() - started)
     if (ms > 250) console.info(`[verified-issuers] refresh done ${ms}ms`)

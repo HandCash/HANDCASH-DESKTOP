@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { assign, fromPromise, setup } from 'xstate'
 import type { IssuerIdentityFields, IssuerIdentityImage } from '../wallet/issuerIdentity'
 import type { IdentityPublishPlan, IdentityPublishRequest } from '../wallet/identityPublish'
@@ -32,7 +33,7 @@ const blank = (): Draft => ({
 
 const idle = { request: null, plan: null, error: null }
 
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
+const message = (error: unknown) => errorText(error)
 
 /**
  * Chart: publicIdentities

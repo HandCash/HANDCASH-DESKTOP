@@ -12,6 +12,7 @@
  * the account it captured (hc-a580a, 2026-09-27: a manual heal begun on one
  * vault account finished on the next and rehid/reclaimed its coins).
  */
+import { errorText } from "./errorText"
 import {
   collectActivityTxids,
   recordWalletEvent,
@@ -798,7 +799,7 @@ export async function runUtxoHealPass(
         job?.stop("Stopped — the wallet account changed");
         throw err;
       }
-      const reason = err instanceof Error ? err.message : String(err);
+      const reason = errorText(err);
       if (opts.source === "manual") {
         recordWalletEvent({
           origin: WALLET_ACTIVITY_ORIGIN,
@@ -819,7 +820,7 @@ export async function runUtxoHealPass(
     }
   }).catch((err: unknown) => {
     // The coordinator refused before the pass began; the job must not spin on.
-    job?.fail(err instanceof Error ? err.message : String(err));
+    job?.fail(errorText(err));
     throw err;
   });
 }

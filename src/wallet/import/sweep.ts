@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import type { ActiveWallet } from '../session'
 import { getWalletRuntime } from '../walletRuntime'
 import { appendAppLog } from '../appLog'
@@ -92,7 +93,7 @@ export async function sweepImportedSource(args: {
     )
     return summary
   } catch (err) {
-    job.fail(err instanceof Error ? err.message : String(err))
+    job.fail(errorText(err))
     throw err
   }
 }

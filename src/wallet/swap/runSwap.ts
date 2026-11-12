@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { isEthAddress } from '../arcUsdc/address'
 import { SWAP_ASSET_INFO, unitsToDecimal, type SwapAsset } from './assets'
 import { createExolixExchange, isBsvAddress, SwapRefusal, writeSwapRecord, type AddressCheck, type SwapRecord } from './exolixSwap'
@@ -76,7 +77,7 @@ async function runExolix(route: Extract<SwapRoute, { kind: 'exolix' }>, wallet: 
     console.info(`[swap] exolix ${exchange.id} deposit ${paid.status} ${paid.txid}`)
     return done
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
+    const error = errorText(err)
     writeSwapRecord({ ...record, stage: 'pay-failed', error, updatedAt: now() })
     console.warn(`[swap] exolix ${exchange.id} deposit failed — ${error}`)
     throw err

@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { assign, enqueueActions, fromPromise, setup, type ActorRefFrom, type SnapshotFrom } from 'xstate'
 import type { ImportItemResult, ImportItemsResult } from '../wallet/import'
 
@@ -94,7 +95,7 @@ export type ImportQueueEmitted = {
 }
 
 function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return errorText(err)
 }
 
 function itemTitle(name: string | null | undefined): string {

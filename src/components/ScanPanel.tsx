@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useRef, useState } from 'react'
 import {
@@ -226,7 +227,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
                 playWalletSound('error')
                 toastError(
                   'Claim failed',
-                  err instanceof Error ? err.message : String(err),
+                  errorText(err),
                 )
               }
             })()

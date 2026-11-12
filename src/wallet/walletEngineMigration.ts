@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import {
   SetupClient,
   exportBRC38Json,
@@ -230,7 +231,7 @@ export async function resolveWalletEngineDatabase(args: MigrationArgs): Promise<
       recordSource(base, selected, legacy, ownCount)
       console.warn(
         `[wallet-engine] source merge deferred ${Date.now() - started}ms — a${accountIndex} ${selected} → ${legacy} (retried when ${selected} holds more than ${ownCount} txs):`,
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
       )
       return legacy
     }
@@ -399,7 +400,7 @@ export function scheduleWalletEngineSettlement(args: MigrationArgs): void {
     void settleWalletEngineStorage(args).catch((error) => {
       console.warn(
         '[wallet-engine] settlement skipped',
-        error instanceof Error ? error.message : String(error),
+        errorText(error),
       )
     })
   }

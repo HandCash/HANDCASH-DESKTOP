@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -492,7 +493,7 @@ export function Dashboard({
           } catch (err) {
             console.warn(
               '[dashboard] SPV payment ingest failed',
-              err instanceof Error ? err.message : String(err),
+              errorText(err),
             )
             await chasePaymentIngest(chaseable)
             scheduleNext()
@@ -537,7 +538,7 @@ export function Dashboard({
         } catch (err) {
           console.warn(
             '[dashboard] chase SPV ingest failed',
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         }
       }

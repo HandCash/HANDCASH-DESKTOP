@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { stateToAttr } from '@aeon-ui/core'
 import { Button, StatusBanner } from '@aeon-ui/react'
 import { useMachine } from '@xstate/react'
@@ -298,5 +299,5 @@ export function GoogleLoginPanel({ onRecovered, onCancel }: Props) {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }

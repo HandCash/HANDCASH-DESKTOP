@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { Hash, Utils, type PrivateKey } from '@bsv/sdk'
 import type { Chain } from '../vault'
 import { appendAppLog } from '../appLog'
@@ -90,7 +91,7 @@ export async function discoverAddresses(args: {
         appendAppLog(
           'warn',
           `[import] history lookup failed for ${chunk.length} address(es): ${
-            err instanceof Error ? err.message : String(err)
+            errorText(err)
           }`,
         )
       }
@@ -248,7 +249,7 @@ export async function wocBulkPost(
       lastError = `WhatsOnChain ${res.status}`
       if (res.status !== 429 && res.status < 500) break
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err)
+      lastError = errorText(err)
     }
     const delay = RETRY_DELAYS_MS[attempt]
     if (delay == null) break

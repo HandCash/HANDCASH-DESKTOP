@@ -12,6 +12,7 @@
  * layouts, and the Mobile build ships an exports map that seals deep paths off.
  * The root entry is the only specifier that resolves in both.
  */
+import { errorText } from './errorText'
 import { encryptBRC39, type BRC38WalletData } from '@handcash/wallet-engine'
 import { Brc39LeanUnsupportedError, decryptBrc39Lean, encryptBrc39Lean } from './brc39Lean'
 import { peerSnapshotFromBrc38, type PeerSnapshot } from './peerSnapshot'
@@ -75,7 +76,7 @@ ctx.onmessage = (event: MessageEvent<Brc39WorkerRequest>) => {
       ctx.postMessage({
         id,
         ok: false,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorText(err),
       })
     }
   })()

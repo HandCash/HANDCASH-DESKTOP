@@ -6,6 +6,7 @@
  * sibling's signal) stays unacknowledged.
  */
 
+import { errorText } from '../errorText'
 import { DEFAULTS } from '@bsv/webrtpay'
 
 export type PolledMessage = { messageId: string; body: string; sender: string }
@@ -65,7 +66,7 @@ export function createBoxPoller(o: {
         try {
           decision = await o.handle(m)
         } catch (err) {
-          console.info(`[${o.tag}] signal failed — ${err instanceof Error ? err.message : String(err)}`)
+          console.info(`[${o.tag}] signal failed — ${errorText(err)}`)
           decision = 'ack'
         }
         remember(m.messageId, decision)
@@ -79,7 +80,7 @@ export function createBoxPoller(o: {
     inFlight ??= read()
       .catch((err: unknown) => {
         failures += 1
-        console.info(`[${o.tag}] poll failed — ${err instanceof Error ? err.message : String(err)}`)
+        console.info(`[${o.tag}] poll failed — ${errorText(err)}`)
       })
       .finally(() => {
         inFlight = null

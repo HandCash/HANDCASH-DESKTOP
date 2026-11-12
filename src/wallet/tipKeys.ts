@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import {
@@ -75,7 +76,7 @@ export async function primeTipKeys(active: ActiveWallet): Promise<void> {
       const page = await active.wallet.listOutputs({ basket, include: 'locking scripts', includeCustomInstructions: true, limit: 1000 })
       for (const o of page.outputs ?? []) tipKeyFromInstructions(active, o.customInstructions)
     } catch (err) {
-      console.warn(`[tipKeys] ${basket} unread`, err instanceof Error ? err.message : String(err))
+      console.warn(`[tipKeys] ${basket} unread`, errorText(err))
     }
   }
   const ms = Date.now() - startedAt
@@ -117,7 +118,7 @@ export async function primeItemTipKeys(active: ActiveWallet): Promise<void> {
       if (outputs.length < ITEM_PAGE) break
     }
   } catch (err) {
-    console.warn('[tipKeys] 1sat unread', err instanceof Error ? err.message : String(err))
+    console.warn('[tipKeys] 1sat unread', errorText(err))
   }
   const ms = Date.now() - startedAt
   if (ms >= 250) console.info(`[tipKeys] item prime done ${ms}ms`)

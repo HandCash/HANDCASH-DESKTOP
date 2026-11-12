@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
@@ -424,7 +425,7 @@ function BurnCollectablesPanel({ outpoints }: { outpoints: string[] }) {
       })
       .catch((err) => {
         playWalletSound('error')
-        toastError('Batch burn failed', err instanceof Error ? err.message : String(err))
+        toastError('Batch burn failed', errorText(err))
       })
   }
 
@@ -563,7 +564,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
         playWalletSound('error')
         toastError(
           'Burn failed',
-          err instanceof Error ? err.message : String(err)
+          errorText(err)
         )
       })
   }
@@ -586,7 +587,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
       .catch((err) => {
         event({
           type: 'FAIL',
-          error: err instanceof Error ? err.message : String(err),
+          error: errorText(err),
         })
       })
   }

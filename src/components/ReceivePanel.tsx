@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
@@ -62,7 +63,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
       try {
         setCoinAddress({ chain: coin, address: COIN_WALLETS[coin].getAddress() })
       } catch (err) {
-        toastError(`${COIN_INFO[coin].label} address unavailable`, err instanceof Error ? err.message : String(err))
+        toastError(`${COIN_INFO[coin].label} address unavailable`, errorText(err))
       }
       return
     }
@@ -71,7 +72,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
         setCoinAddress({ chain: 'arc-usd', address: arcUsdWallet.getAddress() })
         void arcUsdWallet.refresh().catch(() => {})
       } catch (err) {
-        toastError('USDC address unavailable', err instanceof Error ? err.message : String(err))
+        toastError('USDC address unavailable', errorText(err))
       }
     }
   }, [coin, isArcUsd])
@@ -140,7 +141,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
       })
       .catch((err: unknown) => {
         if (!cancelled) {
-          toastError('QR failed', err instanceof Error ? err.message : String(err))
+          toastError('QR failed', errorText(err))
         }
       })
     return () => {

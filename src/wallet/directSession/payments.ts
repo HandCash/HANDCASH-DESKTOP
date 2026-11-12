@@ -5,6 +5,7 @@
  * through the wallet's own internalize, as a messagebox payment does.
  */
 
+import { errorText } from '../errorText'
 import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import {
   DirectPayClient,
@@ -116,7 +117,7 @@ export async function receiveDirectPayments(args: {
   })
   await client.startReceiving({
     onPayment: (payment, ctx) => args.take(payment, ctx.txid),
-    onError: (err) => console.info(`[direct-pay] ${err instanceof Error ? err.message : String(err)}`),
+    onError: (err) => console.info(`[direct-pay] ${errorText(err)}`),
   })
   return async () => {
     await client.close()

@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
 /**
@@ -279,7 +280,7 @@ export async function deliverSignedTxBestEffort(args: {
     const results = await postBeef(Beef.fromBinary(args.atomic), [id])
     summary = summarizePostBeef(results as never)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = errorText(err)
     console.warn(`${prefix} postBeef transport failed`, id.slice(0, 12), msg)
     if (isInvalidBeefTransport(msg)) {
       return { outcome: 'conflict_real', detail: msg }

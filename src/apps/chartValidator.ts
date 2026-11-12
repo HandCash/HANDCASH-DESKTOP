@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import {
   CHART_APP_FORMAT,
   COIN_NAMES,
@@ -106,7 +107,7 @@ export function validateChart(raw: unknown): ChartValidation {
       return { ok: false, errors: [`Chart is over ${CHART_MAX_BYTES} bytes`] }
     }
   } catch (err) {
-    return { ok: false, errors: [err instanceof Error ? err.message : String(err)] }
+    return { ok: false, errors: [errorText(err)] }
   }
 
   exactKeys(

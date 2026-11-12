@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import type { Chain } from '../wallet/vault'
 import { getActiveWallet } from '../wallet/session'
 import { getFriendById, getFriendByIdentityKey, type Friend } from '../wallet/friends'
@@ -130,7 +131,7 @@ export const desktopEffectPorts: ChartEffectPorts = {
               status: 'complete',
             })
           } catch (err) {
-            const reason = err instanceof Error ? err.message : String(err)
+            const reason = errorText(err)
             failures.push(`${r.label}: ${reason}`)
             recordAppActivity({
               origin: WALLET_ACTIVITY_ORIGIN,

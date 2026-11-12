@@ -1,3 +1,4 @@
+import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { PublicIdentitiesPanel } from './PublicIdentitiesPanel'
 import { IdentityCards } from './IdentityCards'
@@ -65,7 +66,7 @@ export function IdentityPanel({ profile }: Props) {
         if (!cancelled) {
           toastError(
             'QR failed',
-            err instanceof Error ? err.message : String(err),
+            errorText(err),
           )
         }
       })

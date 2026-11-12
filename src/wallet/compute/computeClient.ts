@@ -6,6 +6,7 @@
  * cannot start or dies hands its requests to the same ops in process: slower
  * frames, never a missing result.
  */
+import { errorText } from '../errorText'
 import { fromPromise } from 'xstate'
 import type {
   ComputeInput,
@@ -104,7 +105,7 @@ export function createWorkerComputePort(
       try {
         target = ensure()
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
+        const message = errorText(err)
         fail(message)
         reject(new WorkerFailed(message))
         return
