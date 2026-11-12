@@ -251,7 +251,7 @@ describe('open BNT wallet', () => {
       [{ kind: 'token', supply: '5' }, 'bad-asset-args'],
       [{ kind: 'item', name: 'Two', supply: '2' }, 'bad-asset-args'],
       [{ kind: 'token', sym: 'X', supply: '0' }, 'bad-asset-args'],
-      [{ kind: 'token', sym: 'X', supply: '5', mode: 'countersign' }, 'unsupported-mode'],
+      [{ kind: 'token', sym: 'X', supply: '5', mode: 'countersign' }, 'bad-asset-args'],
       [{ kind: 'token', sym: 'X', supply: '5', content: { mediaType: 'text/plain', base64: 'aGk=' } }, 'bad-asset-args'],
       [{ kind: 'item', name: 'Lost', collection: 'ab'.repeat(20) }, 'not-held'],
     ]

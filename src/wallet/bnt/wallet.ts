@@ -32,6 +32,8 @@ import {
   bntSupplyPolicy,
   type BntBacking,
   type BntDeployFields,
+  outpointBytes,
+  BNT_MIN_SILENCE_SECONDS,
 } from './payload'
 import { buildBntPackage, bntAncestry, BNT_PACKAGE_BUDGET, readBntPackage, type BntPackage } from './proof'
 import {
@@ -43,10 +45,15 @@ import {
   bntDeployLock,
   bntHeldLock,
   bntOpenUnlock,
+  bntBeaconLock,
+  type BntMode,
+  multisigLock,
   isBntAssetId,
   p2pkLock,
   readBnt,
   type BntIssued,
+  type BntRules,
+  type BntClause,
   type BntOutput,
 } from './script'
 import {
@@ -84,10 +91,13 @@ import {
 
 /** Store-and-forward box for transfer packages and history requests. */
 export const BNT_BOX = 'bnt'
-/** Open BNT filings (§11). Countersigned assets file in `iptft` / `iptnft`. */
+/** Open BNT filings (§11). Countersigned (IPT) assets file in `iptft` / `iptnft`. */
 export const BNT_TOKEN_BASKET = 'bntft'
+export const IPT_TOKEN_BASKET = 'iptft'
+export const IPT_ITEM_BASKET = 'iptnft'
 export const BNT_ITEM_BASKET = 'bntnft'
 export const BNT_TAG = 'bnt'
+export const IPT_TAG = 'ipt'
 /** One-satoshi P2PK coins locked to this identity's issuer key; a deploy spends one. */
 const ISSUER_BASKET = 'bnt issuer'
 const LABEL = 'bnt'
@@ -172,7 +182,10 @@ async function holdsUnder(active: ActiveWallet, remittance: BntRemittance, holde
 const selfOf = (active: ActiveWallet) => active.identityKey.toLowerCase()
 const idOf = (tx: Transaction) => String(tx.id('hex')).toLowerCase()
 
-export function bntFilingOf(kind: 'token' | 'item'): string {
+export function bntFilingOf(kind: 'token' | 'item', mode: 'open' | 'countersign' = 'open'): string {
+  if (mode === 'countersign') {
+    return kind === 'item' ? IPT_ITEM_BASKET : IPT_TOKEN_BASKET
+  }
   return kind === 'item' ? BNT_ITEM_BASKET : BNT_TOKEN_BASKET
 }
 
@@ -329,7 +342,7 @@ function rowTags(assetId: string, deploy: Pick<BntDeploy, 'fields'>, form: 'held
   const { fields } = deploy
   return stampBrc164Id([
     BNT_TAG,
-    `${bntFilingOf(fields.kind)}:${assetId}`,
+    `${bntFilingOf(fields.kind, fields.mode)}:${assetId}`,
     form === 'authority' ? 'bnt-authority' : `amt:${amount}`,
     ...displayTag('sym', fields.sym),
     ...displayTag('name', fields.name),
@@ -552,14 +565,14 @@ function supplySummary(deploy: BntDeploy, rows: BntRow[]): BntSupplySummary {
 export async function listBntAssets(): Promise<{ assets: BntAssetSummary[] }> {
   const active = requireActive()
   const startedAt = Date.now()
-  const rows = [...(await heldRows(active, BNT_TOKEN_BASKET)), ...(await heldRows(active, BNT_ITEM_BASKET))]
+  const rows = [...(await heldRows(active, BNT_TOKEN_BASKET)), ...(await heldRows(active, BNT_ITEM_BASKET)), ...(await heldRows(active, IPT_TOKEN_BASKET)), ...(await heldRows(active, IPT_ITEM_BASKET))]
   const byAsset = new Map<string, BntRow[]>()
   for (const row of rows) byAsset.set(row.assetId, [...(byAsset.get(row.assetId) ?? []), row])
   const assets: BntAssetSummary[] = []
   for (const [assetId, list] of byAsset) {
     const deploy = await deployOf(active, assetId)
     if (!deploy) continue
-    if (list.some((r) => r.basket !== bntFilingOf(deploy.fields.kind))) continue
+    if (list.some((r) => r.basket !== bntFilingOf(deploy.fields.kind, deploy.fields.mode))) continue
     const image = bntDeployArt(assetId, deploy.fields)
     const locked = list.reduce((sum, r) => sum + (r.locked && r.read.form !== 'authority' ? r.amount : 0n), 0n)
     assets.push({
@@ -809,6 +822,20 @@ export type IssueBntArgs = {
   /** An item's collection: a token asset whose authority this wallet holds. */
   collection?: unknown
   mode?: unknown
+  /** Countersigned: issuer identity keys (compressed public keys). */
+  iss?: unknown
+  /** Countersigned: m-of-n threshold for issuer signatures. */
+  m?: unknown
+  /** Countersigned: the beacon's first outpoint, `txid_vout`. */
+  bcn?: unknown
+  /** Countersigned: seconds between mined beacons before the asset has lapsed (min 604800). */
+  sil?: unknown
+  /** Countersigned: HASH160 of the release secret (20 bytes hex). */
+  rel?: unknown
+  /** Countersigned: release keys (compressed public keys). */
+  relk?: unknown
+  /** Countersigned: k-of-n threshold for release keys. */
+  k?: unknown
 }
 
 /** Wallet-internal options; the BRC-100 dispatcher never passes them, so an app cannot set them. */
@@ -826,8 +853,9 @@ export type IssueBntResult = { assetId: string; txid: string; kind: 'token' | 'i
 
 /** Plain checks of issue arguments, before anything is staged. */
 export function bntIssueFields(args: IssueBntArgs, identityKey: string): { fields: BntDeployFields; supply: bigint } {
-  if (args.mode != null && args.mode !== 'open') {
-    refuse('unsupported-mode', 'This wallet issues open assets only; countersigned assets are not supported yet.')
+  const mode: BntMode = args.mode == null ? 'open' : args.mode === 'countersign' ? 'countersign' : 'open'
+  if (args.mode != null && args.mode !== 'open' && args.mode !== 'countersign') {
+    refuse('unsupported-mode', 'Mode is "open" or "countersign".')
   }
   const kind = args.kind === 'item' ? 'item' : args.kind === 'token' || args.kind == null ? 'token' : null
   if (!kind) refuse('bad-asset-args', 'kind must be "token" or "item".')
@@ -865,11 +893,76 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
   }
   if (max != null && BigInt(supplyRaw) > max) refuse('bad-asset-args', `supply ${supplyRaw} is over max ${max}.`)
   const auth = args.auth === true || max != null || size != null
+
+  // Countersigned (IPT) validation: beacon, silence, release, issuer set.
+  let issuerKeys: string[]
+  let sil: number | undefined
+  let rel: string | undefined
+  let relk: string[] | undefined
+  let k: number | undefined
+  let m: number | undefined
+  if (mode === 'countersign') {
+    issuerKeys = []
+    const rawIss = Array.isArray(args.iss) ? args.iss : args.iss != null ? [args.iss] : [identityKey]
+    for (const key of rawIss) {
+      if (typeof key !== 'string' || !KEY_RE.test(key)) {
+        refuse('bad-asset-args', 'Issuer keys are compressed public keys.')
+      }
+      issuerKeys.push(key.toLowerCase())
+    }
+    const n = issuerKeys.length
+    const mRaw = args.m == null ? 1 : Number(args.m)
+    if (!Number.isInteger(mRaw) || mRaw < 1 || mRaw > n || (n > 1 && 2 * mRaw <= n)) {
+      refuse('bad-asset-args', 'm is a majority of iss (2m > n).')
+    }
+    m = mRaw
+    if (!args.bcn || typeof args.bcn !== 'string') {
+      refuse('bad-asset-args', 'A countersigned asset names its beacon (bcn) as txid_vout.')
+    }
+    outpointBytes(args.bcn)
+    const silRaw = args.sil == null ? undefined : Number(args.sil)
+    if (silRaw == null || !Number.isSafeInteger(silRaw) || silRaw < BNT_MIN_SILENCE_SECONDS) {
+      refuse('bad-asset-args', `sil is at least ${BNT_MIN_SILENCE_SECONDS} seconds.`)
+    }
+    sil = silRaw
+    const relRaw = args.rel
+    const relkRaw = Array.isArray(args.relk) ? args.relk : args.relk != null ? [args.relk] : undefined
+    const kRaw = args.k == null ? undefined : Number(args.k)
+    const hashRelease = typeof relRaw === 'string'
+    const keysRelease = relkRaw != null
+    if (hashRelease === keysRelease) {
+      refuse('bad-asset-args', 'A countersigned asset has exactly one release: rel, or relk with k.')
+    }
+    if (hashRelease && !/^[0-9a-f]{40}$/.test(relRaw)) {
+      refuse('bad-asset-args', 'rel is 20 bytes.')
+    } else if (hashRelease) {
+      rel = relRaw
+    }
+    if (keysRelease) {
+      if (relkRaw!.some((r) => typeof r !== 'string' || !KEY_RE.test(r))) {
+        refuse('bad-asset-args', 'relk keys are compressed public keys.')
+      }
+      relk = relkRaw!.map((r) => r.toLowerCase())
+      if (relk.length < 1 || relk.length > 5 || new Set(relk).size !== relk.length) {
+        refuse('bad-asset-args', 'relk names 1 to 5 distinct keys.')
+      }
+      if (!Number.isInteger(kRaw!) || kRaw! < 1 || kRaw! > relk.length) {
+        refuse('bad-asset-args', 'k is 1 to the number of release keys.')
+      }
+      k = kRaw
+      if (relk!.some((rk) => issuerKeys.includes(rk))) {
+        refuse('bad-asset-args', 'A release key may not also be an issuer key.')
+      }
+    }
+  } else {
+    issuerKeys = [identityKey.toLowerCase()]
+  }
+
   const fields: BntDeployFields = {
-    mode: 'open',
+    mode,
     kind,
-    iss: [identityKey.toLowerCase()],
-    m: 1,
+    iss: issuerKeys,
+    m: mode === 'countersign' ? m! : 1,
     ...(auth ? { auth: true } : {}),
     ...(max != null ? { max } : {}),
     ...(size != null ? { size } : {}),
@@ -879,6 +972,14 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
     ...(icon ? { icon } : {}),
     ...(content ? { ctype: content.mediaType, c: content.bytes } : {}),
     ...(collection ? { col: collection } : {}),
+    ...(mode === 'countersign'
+      ? {
+          bcn: args.bcn as string,
+          sil: sil!,
+          ...(rel != null ? { rel } : {}),
+          ...(relk != null ? { relk, k: k! } : {}),
+        }
+      : {}),
   }
   try {
     encodeBntPayload(fields)
@@ -901,7 +1002,7 @@ async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, p
       lockingScript: bntHeldLock({ assetId: row.assetId, amount: row.amount, clause: { mode: 'open', holder } }).toHex(),
       satoshis: 1,
       outputDescription: 'BNT units back to the holder',
-      basket: bntFilingOf(deploy.fields.kind),
+      basket: bntFilingOf(deploy.fields.kind, deploy.fields.mode),
       tags: rowTags(row.assetId, deploy, 'held', row.amount),
       customInstructions: rowInstructions(row.assetId, deploy.fields, 'held', row.amount, remittance),
     })
@@ -912,7 +1013,7 @@ async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, p
       lockingScript: bntAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder }, ...(issued ? { issued } : {}) }).toHex(),
       satoshis: 1,
       outputDescription: 'BNT authority',
-      basket: bntFilingOf(deploy.fields.kind),
+      basket: bntFilingOf(deploy.fields.kind, deploy.fields.mode),
       tags: rowTags(row.assetId, deploy, 'authority', 0n),
       customInstructions: rowInstructions(row.assetId, deploy.fields, 'authority', 0n, remittance),
     })
@@ -945,18 +1046,42 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       }
       const prefix = freshDerivationString()
       const first = await freshHolder(active, selfOf(active), prefix)
-      const basket = bntFilingOf(fields.kind)
+      const basket = bntFilingOf(fields.kind, fields.mode)
       const inputs: Array<{ outpoint: string; description: string; signer: WalletSigner; scope: number }> = []
+      // Build clause with proper types for countersign mode
+      const deployClause: BntClause = fields.mode === 'countersign'
+        ? {
+            mode: 'countersign',
+            holder: first.holder,
+            issuer: { m: fields.m, keys: fields.iss },
+            release: fields.rel ? { kind: 'hash', rel: fields.rel } : { kind: 'keys', k: fields.k!, keys: fields.relk! },
+          }
+        : { mode: 'open', holder: first.holder }
       const outputs: PlannedOutput[] = [
         {
-          lockingScript: bntDeployLock({ supply, payload: encodeBntPayload(fields), clause: { mode: 'open', holder: first.holder } }).toHex(),
+          lockingScript: bntDeployLock({ supply, payload: encodeBntPayload(fields), clause: deployClause }).toHex(),
           satoshis: 1,
-          outputDescription: `BNT ${fields.kind} deploy`,
+          outputDescription: `${fields.mode === 'countersign' ? 'IPT' : 'BNT'} ${fields.kind} deploy`,
           basket,
           tags: rowTags('deploy', { fields }, 'deploy', supply),
           customInstructions: rowInstructions(null, fields, 'deploy', supply, first.remittance),
         },
       ]
+      // Countersigned beacon output
+      if (fields.mode === 'countersign') {
+        const beaconRules: BntRules = {
+          mode: 'countersign',
+          issuer: { m: fields.m, keys: fields.iss },
+          release: fields.rel ? { kind: 'hash', rel: fields.rel } : { kind: 'keys', k: fields.k!, keys: fields.relk! },
+        }
+        outputs.push({
+          lockingScript: bntBeaconLock(beaconRules).toHex(),
+          satoshis: 1,
+          outputDescription: 'IPT beacon',
+          basket: ISSUER_BASKET,
+          tags: ['ipt-beacon'],
+        })
+      }
       let collection: { row: BntRow; deploy: BntDeploy } | null = null
       if (fields.col) {
         const authority = (await heldRows(active, BNT_TOKEN_BASKET, fields.col)).find((r) => r.authority)
@@ -974,10 +1099,16 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       if (fields.bk) {
         outputs.push({ lockingScript: bntBackingScript(opts.backing!.deposit, null), satoshis: 0, outputDescription: 'BNT backing deposit' })
       }
-      const issuerPub = bntIssuerKeyOf(active.identityKey)
-      inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
-      // The next deploy's issuer coin rides this one; the issuer key is public by design (§3).
-      outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'BNT issuer coin', basket: ISSUER_BASKET, tags: ['bnt-issuer'] })
+      // Issuer input/output: handle multiple issuers for countersigned
+      if (fields.mode === 'countersign' && fields.iss.length > 1) {
+        const issuerLock = multisigLock(fields.m, fields.iss)
+        inputs.unshift({ outpoint: await issuerCoin(active, fields.iss[0]), description: 'IPT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
+        outputs.push({ lockingScript: issuerLock.toHex(), satoshis: 1, outputDescription: 'IPT issuer coin', basket: ISSUER_BASKET, tags: ['ipt-issuer'] })
+      } else {
+        const issuerPub = bntIssuerKeyOf(active.identityKey)
+        inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
+        outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'BNT issuer coin', basket: ISSUER_BASKET, tags: ['bnt-issuer'] })
+      }
       chart.send({ type: 'BUILT' })
       const label = fields.kind === 'item' ? fields.name! : `${formatTokenAmount(String(supply ?? 0), fields.dec ?? 0)} ${fields.sym}`
       let deploy: BntDeploy | null = null
@@ -1065,7 +1196,7 @@ async function mintChecks(active: ActiveWallet, args: { assetId?: unknown; amoun
   const amount = BigInt(amountRaw)
   const deploy = await deployOf(active, assetId)
   if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-  if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'This wallet mints open BNT assets only.')
+  if (deploy.fields.mode !== 'open' && deploy.fields.mode !== 'countersign') refuse('unsupported-mode', 'This wallet mints open or countersigned BNT assets only.')
   const policy = bntSupplyPolicy(deploy.fields)
   if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
   const authority = (await heldRows(active, BNT_TOKEN_BASKET, assetId)).find((r) => r.authority)
@@ -1111,10 +1242,19 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
       }
       const prefix = freshDerivationString()
       const minted = await freshHolder(active, selfOf(active), prefix)
-      const basket = bntFilingOf(deploy.fields.kind)
+      const basket = bntFilingOf(deploy.fields.kind, deploy.fields.mode)
+      // Build clause with proper types for countersign mode
+      const mintClause: BntClause = deploy.fields.mode === 'countersign'
+        ? {
+            mode: 'countersign',
+            holder: minted.holder,
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+          }
+        : { mode: 'open', holder: minted.holder }
       const outputs: PlannedOutput[] = [
         {
-          lockingScript: bntHeldLock({ assetId, amount, clause: { mode: 'open', holder: minted.holder } }).toHex(),
+          lockingScript: bntHeldLock({ assetId, amount, clause: mintClause }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT minted units',
           basket,
@@ -1194,7 +1334,7 @@ async function transferChecks(active: ActiveWallet, args: TransferArgs) {
   if (!KEY_RE.test(recipient)) refuse('bad-asset-args', 'recipient is an identity key.')
   const deploy = await deployOf(active, assetId)
   if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-  if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets are not supported yet.')
+  if (deploy.fields.mode !== 'open' && deploy.fields.mode !== 'countersign') refuse('unsupported-mode', 'This wallet transfers open or countersigned BNT assets only.')
   // Anyone but the issuer holding a backed token would hold a claim only the
   // issuer's reserve key can pay: custody. It only ever returns to its issuer.
   if (deploy.fields.bk && !deploy.fields.iss.some((k) => k.toLowerCase() === recipient)) {
@@ -1206,7 +1346,7 @@ async function transferChecks(active: ActiveWallet, args: TransferArgs) {
   }
   const amount = BigInt(amountRaw)
   if (deploy.fields.kind === 'item' && amount !== 1n) refuse('bad-asset-args', 'An item moves whole: amount is 1.')
-  const basket = bntFilingOf(deploy.fields.kind)
+  const basket = bntFilingOf(deploy.fields.kind, deploy.fields.mode)
   const chosen = pickRows(await heldRows(active, basket, assetId), amount)
   if (!chosen) refuse('insufficient', `This wallet can move less than ${amount} of that asset in at most ${MAX_INPUTS} outputs.`)
   return { assetId, recipient, deploy, amount, basket, chosen }
@@ -1230,9 +1370,18 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       const prefix = freshDerivationString()
       const pay = await freshHolder(active, recipient, prefix)
       const toSelf = recipient === self
+      // Build clause with proper types for countersign mode
+      const transferClause: BntClause = deploy.fields.mode === 'countersign'
+        ? {
+            mode: 'countersign',
+            holder: pay.holder,
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+          }
+        : { mode: 'open', holder: pay.holder }
       const outputs: PlannedOutput[] = [
         {
-          lockingScript: bntHeldLock({ assetId, amount, clause: { mode: 'open', holder: pay.holder } }).toHex(),
+          lockingScript: bntHeldLock({ assetId, amount, clause: transferClause }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT units',
           ...(toSelf
@@ -1242,8 +1391,16 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       ]
       if (total > amount) {
         const change = await freshHolder(active, self, prefix)
+        const changeClause: BntClause = deploy.fields.mode === 'countersign'
+          ? {
+              mode: 'countersign',
+              holder: change.holder,
+              issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+              release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+            }
+          : { mode: 'open', holder: change.holder }
         outputs.push({
-          lockingScript: bntHeldLock({ assetId, amount: total - amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
+          lockingScript: bntHeldLock({ assetId, amount: total - amount, clause: changeClause }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT change',
           basket,
@@ -1356,9 +1513,9 @@ export async function burnBntUnits(
       if (args.amount <= 0n || args.amount > BNT_MAX_AMOUNT) refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
       const deploy = await deployOf(active, assetId)
       if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-      if (deploy.fields.mode !== 'open') refuse('unsupported-mode', 'Countersigned assets are not supported yet.')
+      if (deploy.fields.mode !== 'open' && deploy.fields.mode !== 'countersign') refuse('unsupported-mode', 'This wallet burns open or countersigned BNT assets only.')
       if (deploy.fields.kind === 'item' && args.amount !== 1n) refuse('bad-asset-args', 'An item burns whole: amount is 1.')
-      const basket = bntFilingOf(deploy.fields.kind)
+      const basket = bntFilingOf(deploy.fields.kind, deploy.fields.mode)
       const rows = await heldRows(active, basket, assetId)
       const chosen = pickRows(rows, args.amount)
       if (!chosen) refuse('insufficient', `This wallet holds less than ${args.amount} of that asset in at most ${MAX_INPUTS} outputs.`)
@@ -1366,9 +1523,18 @@ export async function burnBntUnits(
       const prefix = freshDerivationString()
       const memo = Utils.toArray(args.memo, 'utf8')
       if (memo.length === 0 || memo.length > 75) refuse('bad-asset-args', 'The burn memo is 1 to 75 bytes.')
+      // Build clause with proper types for countersign mode
+      const burnClause: BntClause = deploy.fields.mode === 'countersign'
+        ? {
+            mode: 'countersign',
+            holder: args.holder,
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+          }
+        : { mode: 'open', holder: args.holder }
       const outputs: PlannedOutput[] = [
         {
-          lockingScript: bntHeldLock({ assetId, amount: args.amount, clause: { mode: 'open', holder: args.holder } }).toHex(),
+          lockingScript: bntHeldLock({ assetId, amount: args.amount, clause: burnClause }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT burned units',
         },
@@ -1376,8 +1542,16 @@ export async function burnBntUnits(
       ]
       if (total > args.amount) {
         const change = await freshHolder(active, selfOf(active), prefix)
+        const changeClause: BntClause = deploy.fields.mode === 'countersign'
+          ? {
+              mode: 'countersign',
+              holder: change.holder,
+              issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+              release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+            }
+          : { mode: 'open', holder: change.holder }
         outputs.push({
-          lockingScript: bntHeldLock({ assetId, amount: total - args.amount, clause: { mode: 'open', holder: change.holder } }).toHex(),
+          lockingScript: bntHeldLock({ assetId, amount: total - args.amount, clause: changeClause }).toHex(),
           satoshis: 1,
           outputDescription: 'BNT change',
           basket,
@@ -1570,7 +1744,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
     return 'retry'
   }
   if (deploy.fields.mode !== 'open') return 'retry'
-  const basket = bntFilingOf(deploy.fields.kind)
+  const basket = bntFilingOf(deploy.fields.kind, deploy.fields.mode)
   const filed = await active.wallet.listOutputs({ basket, includeTags: true, limit: 10_000 })
   if ((filed.outputs ?? []).some((o) => o.outpoint.replace('_', '.').startsWith(`${txid}.`))) return 'filed'
   for (const tx of [...pkg.txs.values(), ...pkg.deploys.values()]) await putBntTx(tx).catch(() => {})

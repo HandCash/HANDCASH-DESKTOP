@@ -91,7 +91,7 @@ export function bntSupplyPolicy(fields: Pick<BntDeployFields, 'auth' | 'max' | '
   }
 }
 
-function outpointBytes(outpoint: string): number[] {
+export function outpointBytes(outpoint: string): number[] {
   const [txid, vout] = outpoint.split('_')
   const n = Number(vout)
   if (!/^[0-9a-f]{64}$/.test(txid ?? '') || !Number.isInteger(n) || n < 0 || n > 0xffffffff) {
