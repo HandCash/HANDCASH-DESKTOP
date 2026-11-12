@@ -18,6 +18,12 @@ export type BuiltinApp = {
   verification: ChartVerification
 }
 
+/** The shipped name of a built-in chart, for paths and titles; never a verification verdict. */
+export function builtinChartName(id: string): string {
+  const raw = BUILTIN_CHARTS.find((c) => (c as { id?: unknown }).id === id) as { name?: unknown } | undefined
+  return typeof raw?.name === 'string' ? raw.name : 'App'
+}
+
 /** Every built-in chart, verified against the hash pinned for its id. */
 export function builtinApps(support: ChartWalletSupport): BuiltinApp[] {
   return BUILTIN_CHARTS.map((raw) => {

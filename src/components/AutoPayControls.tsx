@@ -165,7 +165,7 @@ export function connectPermissionNote(
   autoPayEnabled: boolean,
 ): string {
   const receive =
-    'Incoming plain BSV is accepted automatically. Disconnect anytime in Peer apps.'
+    'Incoming plain BSV is accepted automatically. Disconnect anytime in Apps.'
   if (spendingAuthorization) {
     const cap = formatSpendingAuthorizationLabel(spendingAuthorization)
     const pay = autoPayEnabled

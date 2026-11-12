@@ -34,6 +34,8 @@ import { importItemBrowserMachine } from './importItemBrowserMachine'
 import { importQueueMachine } from './importQueueMachine'
 import { walletJobMachine } from './walletJobMachine'
 import { chartAppsMachine } from './chartAppsMachine'
+import { notesMachine } from './notesMachine'
+import { appLauncherMachine } from './appLauncherMachine'
 import { walletStatusMachine } from './walletStatusMachine'
 import { collectableSendMachine } from '../wallet/collectableSendMachine'
 import { collectableSendRunMachine } from '../wallet/collectableSendRunMachine'
@@ -98,6 +100,8 @@ export const machineManifest = Object.freeze({
   importQueue: importQueueMachine,
   walletJob: walletJobMachine,
   chartApps: chartAppsMachine,
+  notes: notesMachine,
+  appLauncher: appLauncherMachine,
   walletStatus: walletStatusMachine,
   collectableSend: collectableSendMachine,
   collectableSendRun: collectableSendRunMachine,

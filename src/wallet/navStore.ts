@@ -36,6 +36,10 @@ export type NavChild =
   | { type: 'app-browser'; origin: string; url: string }
   | { type: 'permission'; origin: string; scopeId: string }
   | { type: 'dev-keys' }
+  /** A native app from the Apps launcher (`apps/launcherTiles.ts`). */
+  | { type: 'native-app'; appId: 'notes' }
+  /** One built-in chart app from the Apps launcher, reviewed before it runs. */
+  | { type: 'chart-app'; appId: string }
   /** `opened` counts Send opens: each open is a fresh form, never the last one's network or draft. */
   | { type: 'send'; prefill?: string; opened: number }
   | { type: 'scan' }
@@ -254,6 +258,14 @@ export function openAppLaunch(origin: string, url: string) {
 
 export function openDevKeys() {
   openNavChild('apps', { type: 'dev-keys' })
+}
+
+export function openNativeApp(appId: 'notes') {
+  openNavChild('apps', { type: 'native-app', appId })
+}
+
+export function openChartApp(appId: string) {
+  openNavChild('apps', { type: 'chart-app', appId })
 }
 
 export function openEmbeddedAppBrowser(origin: string, url: string) {

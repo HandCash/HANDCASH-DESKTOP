@@ -91,6 +91,8 @@ import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { setTickerCoin } from '../wallet/tickerCoin'
 import { RecoverFromTxPanel } from './RecoverFromTxPanel'
 import { ChartAppsPanel } from './ChartAppsPanel'
+import { NotesPanel } from './NotesPanel'
+import { builtinChartName as chartAppName } from '../apps/builtin'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb, NavBreadcrumbTrail, navBreadcrumbBack } from './NavBreadcrumb'
 import {
@@ -449,6 +451,8 @@ export const WalletNav = memo(function WalletNav({
     if (stageChild.type === 'swap-offers') return [root, { label: 'Swap', onClick: openSwapFlow }, { label: 'Offers' }]
     if (stageChild.type === 'swap-detail') return [root, { label: 'Swap' }]
     if (stageChild.type === 'dev-keys') return [root, { label: 'Developer keys' }]
+    if (stageChild.type === 'native-app') return [root, { label: 'Notes' }]
+    if (stageChild.type === 'chart-app') return [root, { label: chartAppName(stageChild.appId) }]
     if (stageChild.type === 'ticker-coins') return [root, { label: 'Coins' }]
     if (stageChild.type === 'fiat-currency') return [root, { label: 'Currency' }]
     if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
@@ -754,6 +758,10 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'scan' && <ScanPanel placement="nav" />}
               {stageChild.type === 'dev-keys' && <DevKeysPanel />}
+              {stageChild.type === 'native-app' && <NotesPanel />}
+              {stageChild.type === 'chart-app' && (
+                <ChartAppsPanel key={stageChild.appId} appId={stageChild.appId} onClose={clearNavChild} />
+              )}
               {stageChild.type === 'ticker-coins' && (
                 <div className="nav-child-panel">
                   <NavTickerCoins

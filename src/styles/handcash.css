@@ -20384,3 +20384,100 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:active,
 html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   background: color-mix(in srgb, var(--hc-text) 8%, #ffffff) !important;
 }
+
+/* Apps launcher: square cells; a focused tile spans itself plus two for its label. */
+[data-aeon-scope='app-launcher'] {
+  --launcher-cell: 72px;
+  list-style: none;
+  margin: 0;
+  padding: var(--hc-space-3);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, var(--launcher-cell));
+  grid-auto-rows: var(--launcher-cell);
+  grid-auto-flow: row dense;
+  gap: 6px;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='cell'] {
+  min-width: 0;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='cell'][data-aeon-state='focused'] {
+  grid-column: span 3;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='tile'] {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 12px;
+  border: var(--hc-border-w) solid var(--hc-border);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='tile']:hover {
+  background: var(--hc-hover);
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='tile']:focus-visible {
+  outline: 2px solid var(--hc-accent);
+  outline-offset: 2px;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='tile'] {
+  justify-content: flex-start;
+  border-color: var(--hc-accent);
+}
+
+.app-launcher-glyph {
+  display: inline-flex;
+  flex: none;
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='label'] {
+  min-width: 0;
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--hc-text-sm);
+  font-weight: 600;
+  transition: opacity 120ms ease;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='label'] {
+  max-width: 100%;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-aeon-scope='app-launcher'] [data-aeon-part='tile'],
+  [data-aeon-scope='app-launcher'] [data-aeon-part='label'] {
+    transition: none;
+  }
+}
+
+[data-aeon-scope='notes'] [data-aeon-part='head'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hc-space-3);
+}
+
+[data-aeon-scope='notes'] .notes-editor {
+  width: 100%;
+  min-height: 40vh;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}

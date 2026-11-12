@@ -215,6 +215,28 @@ const ACCOUNT_MOVE = `stateDiagram-v2
   end note
 `
 
+const APP_LAUNCHER = `stateDiagram-v2
+    [*] --> idle
+    idle --> focused : TAP (tile grows two cells, label shows)
+    focused --> focused : TAP another tile
+    focused --> idle : TAP same tile / launch
+    focused --> idle : DISMISS`
+
+const NOTES = `stateDiagram-v2
+    [*] --> opening
+    opening --> list : unsealed in memory
+    opening --> failed
+    failed --> opening : RETRY
+    list --> editing : NEW / OPEN
+    editing --> saving : DONE (changed)
+    editing --> list : DONE (unchanged)
+    editing --> deleting : DELETE (saved note)
+    editing --> list : DELETE (new note)
+    saving --> list : sealed
+    saving --> editing : failed (draft kept)
+    deleting --> list
+    deleting --> editing : failed`
+
 const WALLET_NAV = `stateDiagram-v2
   direction TB
   [*] --> section
@@ -1753,6 +1775,18 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Nav',
     caption: 'walletNav — sections and child panels',
     source: WALLET_NAV,
+  },
+  {
+    id: 'appLauncher',
+    label: 'Launcher',
+    caption: 'appLauncherMachine — Apps grid: first tap shows the label, second opens',
+    source: APP_LAUNCHER,
+  },
+  {
+    id: 'notes',
+    label: 'Notes',
+    caption: 'notesMachine — private notes, sealed per note on this device',
+    source: NOTES,
   },
   {
     id: 'sendPayment',

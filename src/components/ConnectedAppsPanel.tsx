@@ -2,7 +2,12 @@ import { Button } from '@aeon-ui/react'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { CollectionViewToggle } from './CollectionViewToggle'
-import { SkeletonAppCard, SkeletonAppRow } from './Skeleton'
+import { SkeletonAppRow } from './Skeleton'
+import { AppLauncherGrid } from './AppLauncherGrid'
+import { builtinApps } from '../apps/builtin'
+import { desktopChartSupport } from '../apps/desktopEffectPorts'
+import { launcherTiles } from '../apps/launcherTiles'
+import { getActiveWallet } from '../wallet/session'
 import { appDisplayName, appHomepage } from '../wallet/appIdentity'
 import type { ConnectedApp } from '../wallet/permissions'
 import {
@@ -171,23 +176,6 @@ function AppListItem(props: AppCardProps) {
   )
 }
 
-function AppGridItem(props: AppCardProps) {
-  const [ready, setReady] = useState(false)
-  const name = props.app.name || appDisplayName(props.app.origin)
-  return (
-    <li className="collection-grid-card" data-ready={ready ? true : undefined}>
-      {!ready ? <SkeletonAppCard /> : null}
-      <div className={ready ? 'collection-grid-live' : 'media-preload'}>
-        <div className="collection-grid-main">
-          <AppCardMain app={props.app} name={name} ready={ready} size="md" onReady={() => setReady(true)} />
-          <AppCardStats {...props} />
-          <AppCardActions app={props.app} name={name} />
-        </div>
-      </div>
-    </li>
-  )
-}
-
 export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
@@ -222,6 +210,12 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       return name.includes(q) || origin.includes(q) || home.includes(q)
     })
   }, [orderedApps, query])
+  const chain = getActiveWallet()?.chain ?? 'main'
+  const charts = useMemo(() => builtinApps(desktopChartSupport(chain)), [chain])
+  const tiles = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return launcherTiles(charts, filteredApps).filter((t) => t.kind === 'peer' || !q || t.label.toLowerCase().includes(q))
+  }, [charts, filteredApps, query])
   const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
   const canOpen = canOpenAppAddresses(compact)
   const address = appsSearchAddress(query, canOpen)
@@ -233,7 +227,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Peer apps</h2>
+        <h2>Apps</h2>
         <TitlebarActions section="apps" className="connected-panel-head-actions">
           {apps.length > 0 || canOpen ? (
             <AppsSearchBar
@@ -269,10 +263,23 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           >
             <CodeIcon size={16} />
           </Button.Root>
-          <CollectionViewToggle label="Peer apps view" scope="apps" />
+          <CollectionViewToggle label="Apps view" scope="apps" />
         </TitlebarActions>
       </div>
-      {apps.length === 0 ? (
+      {view === 'grid' ? (
+        <div className="nav-section-scroll-body">
+          {tiles.length === 0 ? (
+            address ? null : (
+            <div className="friends-empty">
+              <strong>No apps found</strong>
+              <span>Try another name or origin.</span>
+            </div>
+            )
+          ) : (
+            <AppLauncherGrid tiles={tiles} />
+          )}
+        </div>
+      ) : apps.length === 0 ? (
         <EmptyState icon={<AppsIcon size={28} />} title="No apps connected" />
       ) : (
         <>
@@ -284,17 +291,6 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
               <span>Try another name or origin.</span>
             </div>
             )
-          ) : view === 'grid' ? (
-            <ul className="collection-grid">
-              {filteredApps.map((app) => (
-                <AppGridItem
-                  key={app.origin}
-                  app={app}
-                  currency={currency}
-                  usdPerBsv={usdPerBsv}
-                />
-              ))}
-            </ul>
           ) : (
             <ul className="connected-app-list">
               {filteredApps.map((app) => (

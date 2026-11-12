@@ -1,7 +1,7 @@
 import { Button } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { chartAppsMachine } from '../machines/chartAppsMachine'
 import { builtinApps, type BuiltinApp } from '../apps/builtin'
 import { describeEffect, effectNeedsApproval } from '../apps/chartEffects'
@@ -80,13 +80,22 @@ function AppReview({ app, onRun, onBack }: { app: BuiltinApp; onRun: () => void;
   )
 }
 
-/** Settings → Apps: the built-in chart apps, what each can do, and the app itself in place. */
-export function ChartAppsPanel() {
+/**
+ * Settings → Apps: the built-in chart apps, what each can do, and the app itself in place.
+ * With `appId` (from the Apps launcher) it opens that one app, and `onClose` fires on Back.
+ */
+export function ChartAppsPanel({ appId, onClose }: { appId?: string; onClose?: () => void } = {}) {
   const chain = getActiveWallet()?.chain ?? 'main'
   const apps = useMemo(() => builtinApps(desktopChartSupport(chain)), [chain])
-  const [snapshot, send] = useMachine(chartAppsMachine)
+  const [snapshot, send] = useMachine(chartAppsMachine, {
+    input: appId ? { appId, verified: apps.find((a) => a.id === appId)?.verification.ok ?? false } : undefined,
+  })
   const open = apps.find((a) => a.id === snapshot.context.appId) ?? null
   const { icon } = settingIconFor('chart-apps')
+  const closed = snapshot.status === 'done'
+  useEffect(() => {
+    if (closed) onClose?.()
+  }, [closed, onClose])
 
   return (
     <div

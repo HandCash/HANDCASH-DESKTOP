@@ -67,6 +67,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Private notes, sealed per note (`notes/noteCrypto.ts`); never held in the clear. */
+  privateNotes: defineStorage({
+    key: 'handcash.notes.v1',
+    owner: 'notes',
+    scope: 'wallet',
+    version: 1,
+  }),
   connectedApps: defineStorage({
     key: 'handcash.brc100.connectedApps',
     owner: 'permissions',
