@@ -355,6 +355,33 @@ describe('handing over and receiving', () => {
     expect(acked).toEqual([])
   }, 60_000)
 
+  it('opens each waiting box message once, and again only when its body differs', async () => {
+    const opens: string[] = []
+    const box: HandoverInbox = {
+      open: (body) => {
+        opens.push(body)
+        return body
+      },
+      merge: null,
+      acknowledge: async () => {},
+    }
+    const messages: ListedMessage[] = [
+      { messageId: 'own', body: part('{}', 0, 1, { deviceId: 'device-B', handoverId: 'cache-own' }), createdAt: Date.now() },
+      { messageId: 'waiting', body: part('{}', 0, 1, { handoverId: 'cache-wait' }), createdAt: Date.now() },
+      { messageId: 'release', body: '{"v":1,"type":"release-request"}', createdAt: Date.now() },
+    ]
+    const serve = (listing: ListedMessage[]) =>
+      receiveHandovers({ identityKey: IDENTITY, deviceId: 'device-B', messages: listing, inbox: box })
+
+    expect([...(await serve(messages))].sort()).toEqual(['own', 'waiting'])
+    expect([...(await serve(messages))].sort()).toEqual(['own', 'waiting'])
+    expect(opens).toHaveLength(3)
+
+    const changed = { ...messages[1]!, body: part('{}', 0, 1, { handoverId: 'cache-other' }) }
+    expect([...(await serve([messages[0]!, changed]))].sort()).toEqual(['own', 'waiting'])
+    expect(opens).toHaveLength(4)
+  }, 60_000)
+
   it('ignores its own parts and other accounts, and drops incomplete parts older than a week', async () => {
     const holder = await openStorage()
     const { box, acked } = inbox(holder)

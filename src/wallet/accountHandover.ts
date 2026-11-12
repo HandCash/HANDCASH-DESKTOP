@@ -29,6 +29,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import type { ListedMessage } from './messageTransport'
 import { identityKeyForAccount, rootKeyHexForAccount } from './vaultAccounts'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
+import { uiBudgetExpired, yieldToUi } from './yieldToUi'
 
 const PENDING_KEY = storageRegistry.accountHandoverPending.key
 /** Plaintext per part; sealed and base64'd it stays under the box body cap. */
@@ -398,6 +399,16 @@ export type HandoverInbox = {
   acknowledge: (messageIds: string[]) => Promise<void>
 }
 
+type OpenedPart = { body: string; part: HandoverPart | null }
+
+/**
+ * Box messages already opened, per account, as of its last listing. Parts are
+ * up to {@link HANDOVER_PART_CHARS} of BRC-78 ciphertext opened in JS, and the
+ * holder serve lists the box every few seconds; messages wait there (own parts,
+ * handovers for an account not open here) for as long as they are not ACKed.
+ */
+const openedParts = new Map<string, Map<string, OpenedPart>>()
+
 /**
  * Merge every complete handover among `messages` (the account's
  * `account-holding` box). Returns the ids of messages that were handover parts,
@@ -418,10 +429,17 @@ export async function receiveHandovers(args: {
     { parts: Map<number, string>; total: number; ids: string[]; newest: number; kind?: 'custody' }
   >()
   const stale: string[] = []
+  const known = openedParts.get(identityKey)
+  const opened = new Map<string, OpenedPart>()
   for (const m of messages) {
-    const plaintext = inbox.open(m.body)
-    if (plaintext == null) continue
-    const part = parseHandoverPart(plaintext, identityKey)
+    let entry = known?.get(m.messageId)
+    if (entry?.body !== m.body) {
+      if (uiBudgetExpired()) await yieldToUi()
+      const plaintext = inbox.open(m.body)
+      entry = { body: m.body, part: plaintext == null ? null : parseHandoverPart(plaintext, identityKey) }
+    }
+    opened.set(m.messageId, entry)
+    const { part } = entry
     if (!part) continue
     seen.add(m.messageId)
     if (part.deviceId === deviceId) continue
@@ -438,6 +456,7 @@ export async function receiveHandovers(args: {
     group.newest = Math.max(group.newest, Number(m.createdAt) || 0)
     groups.set(part.handoverId, group)
   }
+  openedParts.set(identityKey, opened)
   for (const [handoverId, group] of groups) {
     if (group.parts.size < group.total) {
       if (group.newest && now - group.newest > PART_MAX_AGE_MS) stale.push(...group.ids)
