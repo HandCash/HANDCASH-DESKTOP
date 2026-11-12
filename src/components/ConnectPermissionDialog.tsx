@@ -13,6 +13,7 @@ import {
 } from './AutoPayControls'
 import { AppAvatar } from './AppAvatar'
 import { ConnectScopesList } from './ConnectScopesList'
+import { GrantDurationPicker } from './GrantDurationPicker'
 import { WalletActionBar } from './WalletActionBar'
 
 type Props = {
@@ -115,6 +116,8 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
 
                 <ConnectScopesList />
 
+                <GrantDurationPicker pending={pending} />
+
                 <AutoPayControls
                   appName={name}
                   enabled={autoPay.enabled}
@@ -137,7 +140,6 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   primary={{
                     label: 'Approve',
                     onClick: allow,
-                    autoFocus: true,
                     disabled: allowDisabled,
                     tone: 'primary',
                   }}

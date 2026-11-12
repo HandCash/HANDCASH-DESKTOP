@@ -23,6 +23,7 @@ import {
   useAutoPayForm,
 } from './AutoPayControls'
 import { ConnectScopesList } from './ConnectScopesList'
+import { GrantDurationPicker } from './GrantDurationPicker'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
 import { CheckIcon, CloseIcon } from './icons'
@@ -120,7 +121,6 @@ export function PermissionRequestPanel({
       label: committing ? 'Approving…' : 'Approve',
       onClick: runAllow,
       disabled: allowDisabled,
-      autoFocus: true,
       icon: <CheckIcon size={18} />,
       tone: 'primary',
     },
@@ -176,6 +176,8 @@ export function PermissionRequestPanel({
         </p>
 
         <ConnectScopesList />
+
+        <GrantDurationPicker pending={pending} />
 
         <AutoPayControls
           appName={name}

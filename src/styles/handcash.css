@@ -20201,6 +20201,12 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 [data-aeon-scope='call-dock'] [data-aeon-part='problem'] { color: var(--hc-danger); }
 [data-aeon-scope='call-dock'] [data-aeon-part='actions'] { display: flex; flex-wrap: wrap; gap: 8px; }
 
+[data-aeon-scope='grant-duration'] { display: grid; gap: 6px; margin: 4px 0; }
+[data-aeon-scope='grant-duration'] .grant-duration-label { font-size: var(--hc-text-xs); color: var(--hc-muted); }
+[data-aeon-scope='grant-expiry'] { margin: 2px 0 0; font-size: var(--hc-text-xs); color: var(--hc-muted); }
+[data-aeon-scope='grant-expiry'][data-aeon-state='expiring'],
+[data-aeon-scope='grant-expiry'][data-aeon-state='expired'] { color: var(--hc-danger); }
+
 /* Top bar balance + handle: always primary text (white dark / black light), never coin tint or dimmed. */
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance-primary,

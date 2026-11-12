@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
 import { AppLaunchMenu } from './AppLaunchMenu'
+import { GrantExpiryLine } from './GrantExpiryLine'
 import {
   acceptsIncomingFunds,
   getItemAccess,
@@ -114,6 +115,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
           <div className="app-details-head-text">
             <h3 id="app-details-title">{name}</h3>
             <span className="mono app-details-host">{app.origin}</span>
+            <GrantExpiryLine expiresAt={app.expiresAt} />
           </div>
         </div>
         <dl className="app-activity-stats" aria-label="Activity">

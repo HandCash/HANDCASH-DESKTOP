@@ -77,12 +77,34 @@ export type ConnectedApp = {
   expiresAt?: number
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** How long a Connect lasts (BRC-73 grant lapse). `open` keeps it until the user disconnects. */
+export const GRANT_DURATIONS = [
+  { id: '1d', label: '1 day', ms: DAY_MS },
+  { id: '7d', label: '7 days', ms: 7 * DAY_MS },
+  { id: '30d', label: '30 days', ms: 30 * DAY_MS },
+  { id: 'open', label: 'Until I disconnect', ms: null },
+] as const
+
+export type GrantDuration = (typeof GRANT_DURATIONS)[number]['id']
+
+export const DEFAULT_GRANT_DURATION: GrantDuration = '30d'
+
+/** When a grant chosen now lapses; null never. */
+export function grantExpiryFor(duration: GrantDuration, now: number): number | null {
+  const ms = GRANT_DURATIONS.find((d) => d.id === duration)?.ms ?? null
+  return ms == null ? null : now + ms
+}
+
 export type PendingPermission = {
   id: number
   kind: 'connect'
   origin: string
   method: string
   createdAt: number
+  /** How long this Connect will last once approved. */
+  grantDuration: GrantDuration
   /** BRC spendingAuthorization from the app's manifest.json (if any). */
   spendingAuthorization?: {
     amountSats: number
@@ -186,6 +208,16 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
     // ignore
   }
   return []
+}
+
+/**
+ * A lapsed grant takes its Auto-pay and spending grant with it, as Disconnect
+ * does (grantExpiry chart: expired), so connecting again starts clean.
+ */
+export function retireLapsedGrants(now = Date.now()): void {
+  for (const app of readConnectedRaw()) {
+    if (app.expiresAt != null && app.expiresAt <= now) revokeOrigin(app.origin, 'lapsed')
+  }
 }
 
 /** Drops grants whose `expiresAt` has passed (grantExpiry chart: expired). */
@@ -552,7 +584,7 @@ export function setGrantExpiry(origin: string, expiresAt: number | null): void {
   writeConnected(copy)
 }
 
-export function revokeOrigin(origin: string): void {
+export function revokeOrigin(origin: string, reason: 'disconnect' | 'lapsed' = 'disconnect'): void {
   const key = normalizeOrigin(origin)
   const name = appDisplayName(key)
   writeConnected(readConnected().filter((a) => a.origin !== key))
@@ -566,7 +598,7 @@ export function revokeOrigin(origin: string): void {
     recordWalletEvent({
       origin: key,
       method: 'disconnect',
-      note: `Disconnected ${name}`,
+      note: reason === 'lapsed' ? `Connection to ${name} lapsed` : `Disconnected ${name}`,
     })
   })
 }
@@ -635,6 +667,17 @@ export function subscribeAllowedOrigins(cb: (origins: string[]) => void): () => 
   return subscribeConnectedApps((apps) => cb(apps.map((a) => a.origin)))
 }
 
+/** Lapse times chosen on approved Connect prompts, applied when the grant is written. */
+const grantChoices = new Map<string, number | null>()
+
+/** Sets how long the open Connect prompt will last once approved. */
+export function setPendingGrantDuration(id: number, duration: GrantDuration): void {
+  if (!current || current.request.id !== id || current.request.kind !== 'connect') return
+  if (!GRANT_DURATIONS.some((d) => d.id === duration)) return
+  current = { ...current, request: { ...current.request, grantDuration: duration } }
+  notify()
+}
+
 export function resolvePermission(id: number, decision: PermissionDecision): boolean {
   // Atomic decision edge. UI removal happens on React's next render, so a
   // second tap can still call here with the stale prompt. Returning false lets
@@ -644,6 +687,9 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
   const prompt = current.request
   const { resolve } = current
   current = null
+  if (prompt.kind === 'connect' && decision === 'allow') {
+    grantChoices.set(prompt.origin, grantExpiryFor(prompt.grantDuration, Date.now()))
+  }
   syncPermissionSpendPriority()
   void import('./appActivity').then(({ recordWalletEvent }) => {
     const name = appDisplayName(prompt.origin)
@@ -793,6 +839,7 @@ export async function requestOriginPermission(
     origin: key,
     method,
     createdAt: Date.now(),
+    grantDuration: DEFAULT_GRANT_DURATION,
   })
 
   void (async () => {
@@ -1889,6 +1936,8 @@ export async function gateOriginAccess(
 ): Promise<'allow' | 'deny' | 'unauthenticated'> {
   if (isPublicMethod(method)) return 'allow'
 
+  retireLapsedGrants()
+
   if (isSilentAuthMethod(method)) {
     return isOriginAllowed(origin) ? 'allow' : 'unauthenticated'
   }
@@ -1898,6 +1947,11 @@ export async function gateOriginAccess(
   const decision = await requestOriginPermission(origin, method)
   if (decision === 'allow') {
     allowOrigin(origin, channel)
+    const key = normalizeOrigin(origin)
+    if (grantChoices.has(key)) {
+      setGrantExpiry(key, grantChoices.get(key) ?? null)
+      grantChoices.delete(key)
+    }
     return 'allow'
   }
   return isConnectMethod(method) ? 'unauthenticated' : 'deny'
