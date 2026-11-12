@@ -2,6 +2,8 @@
 
 Superseded as the primary path: the user authorized incremental replacement of restricted components. Keep this unsent draft only as a fallback; no contact or publication is authorized.
 
+**12 November 2026:** BSVA relicensed current TS Stack first-party code to Apache-2.0 with a patent non-assert (`docs/bsva-apache-relicense.md`). The SDK, message box client, Verifast and Webrtpay no longer need a grant once installed from Apache-published releases. Upstream keeps pre-2026 Wallet Toolbox source (snapshot `d215223a`) under Open BSV v4, so if this request is ever sent, narrow its schedule to that snapshot and the code of it in `packages/wallet-engine`.
+
 ## Verified routing and authority (6 November 2026)
 
 - **Primary:** [BSV Association official contact form](https://bsvassociation.org/contact/). Ask for the legal/IP licensing team and an authorized signatory. No dedicated public SDK/Toolbox licensing-request inbox or published multichain commercial-license offer was verified. This is a verified official routing channel, not a promise they offer an exception.
