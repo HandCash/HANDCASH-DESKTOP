@@ -112,8 +112,6 @@ export function MessagesPanel({
               actions={{
                 onConfirmPay: composer.requestPayConfirm,
                 onCancelPay: composer.cancelPay,
-                onEscrowAccept: composer.acceptEscrow,
-                onEscrowDecline: composer.declineEscrow,
                 onBindReply: composer.bindReply,
               }}
               listRef={threadListRef}

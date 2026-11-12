@@ -14,30 +14,11 @@ export type Brc218Command =
   | { verb: 'request'; recipient?: string; amount?: ParsedAmount; memo?: string }
   | { verb: 'tip'; amount?: ParsedAmount }
   | { verb: 'whois'; recipient?: string }
-  | { verb: 'escrow'; amount?: ParsedAmount; asset?: string; agent?: string; memo?: string }
-  | { verb: 'sign'; text?: string }
-  | { verb: 'receipt'; text?: string }
-  | { verb: 'attest'; recipient?: string }
-  | { verb: 'scope'; value?: string }
-  | { verb: 'trolltoll'; amount?: ParsedAmount }
   | { verb: 'unsupported'; name: string; raw: string }
   | { verb: 'help' }
 
-/** Verbs we parse and surface in-UI (cards / local system replies). */
-const IMPLEMENTED = new Set([
-  'pay',
-  'message',
-  'request',
-  'tip',
-  'whois',
-  'help',
-  'escrow',
-  'sign',
-  'receipt',
-  'attest',
-  'scope',
-  'trolltoll',
-])
+/** Verbs this client runs. Every other verb reads as unsupported, never as a card. */
+const IMPLEMENTED = new Set(['pay', 'message', 'request', 'tip', 'whois', 'help'])
 
 export const COMMAND_PALETTE: Array<{ verb: string; hint: string }> = [
   { verb: 'pay', hint: '<amount> [memo] — pay in this thread' },
@@ -45,12 +26,6 @@ export const COMMAND_PALETTE: Array<{ verb: string; hint: string }> = [
   { verb: 'tip', hint: '<amount> — tip (bound when replying)' },
   { verb: 'whois', hint: '[@handle] — resolve identity' },
   { verb: 'message', hint: '<text> — send as message' },
-  { verb: 'escrow', hint: '<amount> — escrow card (agent hold)' },
-  { verb: 'sign', hint: '[text] — request a signature' },
-  { verb: 'receipt', hint: '[text] — request a signed ack' },
-  { verb: 'attest', hint: '[@handle] — peer attestation' },
-  { verb: 'scope', hint: '<everyone|contacts|toll|…> — reachability' },
-  { verb: 'trolltoll', hint: '<amount> — per-message toll' },
   { verb: 'help', hint: '— list commands' },
 ]
 
@@ -161,43 +136,6 @@ export function parseLocalCommand(line: string): Brc218Command | null {
     const recipient = args[0]
     const text = args.slice(1).join(' ')
     return { verb: 'message', recipient, text }
-  }
-
-  if (verb === 'sign' || verb === 'receipt') {
-    return { verb, text: args.join(' ') || undefined }
-  }
-
-  if (verb === 'attest') {
-    return { verb: 'attest', recipient: args[0] }
-  }
-
-  if (verb === 'scope') {
-    return { verb: 'scope', value: args[0] }
-  }
-
-  if (verb === 'trolltoll') {
-    const parsed = args.length ? parseAmountToken(args, 0) : null
-    return { verb: 'trolltoll', amount: parsed?.amount }
-  }
-
-  if (verb === 'escrow') {
-    let i = 0
-    let agent: string | undefined
-    let asset: string | undefined
-    if (args[0]?.startsWith('@') || args[0]?.startsWith('#')) {
-      if (args[0].startsWith('#')) asset = args[0]
-      else agent = args[0]
-      i = 1
-    }
-    const parsed = parseAmountToken(args, i)
-    const memo = parsed ? args.slice(parsed.next).join(' ') : args.slice(i).join(' ')
-    return {
-      verb: 'escrow',
-      amount: parsed?.amount,
-      asset,
-      agent,
-      memo: memo || undefined,
-    }
   }
 
   if (verb === 'pay' || verb === 'request') {

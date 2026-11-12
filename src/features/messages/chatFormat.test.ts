@@ -123,14 +123,10 @@ describe('composer', () => {
     expect(composerStateFor('/help')).toBe('lookup')
   })
 
-  it('writes notes for recognised but unwired commands', () => {
-    const cmd = parseLocalCommand('/scope read')
-    expect(isUnwiredCommand(cmd)).toBe(true)
-    if (!isUnwiredCommand(cmd)) return
-    expect(unwiredCommandNote(cmd)).toBe(
-      'Only you — not sent\n/scope is recognized (BRC-218) but not fully wired yet.\nRequested scope: read',
-    )
-    expect(isUnwiredCommand(parseLocalCommand('/help'))).toBe(false)
+  it('reads verbs this client does not run as unsupported, never as cards', () => {
+    for (const verb of ['escrow', 'sign', 'receipt', 'attest', 'scope', 'trolltoll']) {
+      expect(parseLocalCommand(`/${verb} 1 sat`)).toMatchObject({ verb: 'unsupported', name: verb })
+    }
   })
 })
 
@@ -183,11 +179,6 @@ describe('message cards', () => {
       amountLabel: 'Tip',
       satsLabel: '1 sat',
     })
-    expect(payConfirmRequest(message({ kind: 'escrow', meta: { amountLabel: '$1' } }))).toMatchObject({
-      verb: 'escrow',
-      amountLabel: '$1',
-      satsLabel: null,
-    })
   })
 
   it('labels pay status, falling back to SPV receiving for incoming payments', () => {
@@ -210,7 +201,7 @@ describe('message cards', () => {
       'theirs payment-card failed',
     )
     expect(messageItemState(message({}))).toBe('mine')
-    expect(isCardMessage(message({ kind: 'escrow' }))).toBe(true)
+    expect(isCardMessage(message({ kind: 'pay-request' }))).toBe(true)
     expect(isCardMessage(message({ kind: 'file' }))).toBe(false)
     expect(isSystemMessage(message({ kind: 'whois' }))).toBe(true)
     expect(paymentBadge('tip', false)).toBe('Tip claimed')

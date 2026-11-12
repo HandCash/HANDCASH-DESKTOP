@@ -161,7 +161,7 @@ Minimum price 20 sats. Fee 5% (`MARKET_FEE_BASIS_POINTS`).
 | Many recipients (airdrop) for BSV, tokens or items | Missing; every send takes one recipient | Bulk run machinery |
 | BNT market listings | Missing; the market lists 1Sat items only | BRC-254 on BNT outputs (`bnt-tokens.md` phase 5) |
 | Countersigned assets, issuer freeze, transfer limits | Missing (section 8) | BRC-255 countersigned mode |
-| On-chain escrow | Chat card only, local stub | BRC-218 parser |
+| On-chain escrow | Missing; the local chat card was removed in 1.3.709 | BRC-218 §5.21 custody |
 | Subscriptions | Missing | Spending authorization, auto-pay |
 | BRC-73 protocol, basket, certificate and counterparty grants | Missing; those calls prompt each time | `ConnectedApp` grant rows |
 | Grant expiry | Grants never expire | Auto-pay window timestamps |

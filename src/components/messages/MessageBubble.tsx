@@ -5,7 +5,6 @@ import {
   formatFileSize,
   formatTime,
   isCardMessage,
-  isPaymentCard,
   isSystemMessage,
   messageAmounts,
   messageItemState,
@@ -27,8 +26,6 @@ import { PeerAvatar } from '../PeerIdentity'
 export type MessageActions = {
   onConfirmPay?: (id: string) => void
   onCancelPay?: (id: string) => void
-  onEscrowAccept?: (id: string) => void
-  onEscrowDecline?: (id: string) => void
   onBindReply?: (id: string) => void
 }
 
@@ -126,35 +123,6 @@ function PaymentCard({ msg, mine, amounts, paymentProgress, actions }: CardProps
   )
 }
 
-function EscrowCard({ msg, amounts, paymentProgress, actions }: CardProps) {
-  const payStatus = msg.meta?.payStatus
-  return (
-    <>
-      <Thread.CardTitle className="chat-card-head">
-        <span className="chat-card-badge">Escrow</span>
-        {payStatus ? (
-          <span className="chat-card-status" data-status={payStatus}>
-            {payStatusLabel(msg, paymentProgress)}
-          </span>
-        ) : null}
-      </Thread.CardTitle>
-      <Thread.CardBody>
-        <p className="chat-card-amount">{amounts.amountLabel}</p>
-        <SatsLine satsLine={amounts.satsLine} />
-        <p className="chat-card-meta">
-          {msg.meta?.memo || 'Both sides in, awaiting the agent. Nothing moves until accept.'}
-        </p>
-      </Thread.CardBody>
-      {payStatus === 'pending' ? (
-        <CardButtons
-          cancel={{ label: 'Decline', onClick: () => actions.onEscrowDecline?.(msg.id) }}
-          confirm={{ label: 'Accept and hold', onClick: () => actions.onEscrowAccept?.(msg.id) }}
-        />
-      ) : null}
-    </>
-  )
-}
-
 function ValueCard(props: CardProps) {
   const { msg, mine } = props
   return (
@@ -166,18 +134,11 @@ function ValueCard(props: CardProps) {
         msg.kind === 'pay-sent' && 'is-pay',
         msg.kind === 'tip' && 'is-tip',
         msg.kind === 'pay-request' && 'is-request',
-        msg.kind === 'escrow' && 'is-escrow',
       )}
       data-kind={msg.kind}
       data-pay-status={msg.meta?.payStatus || undefined}
     >
-      {msg.kind === 'pay-request' ? (
-        <RequestCard {...props} />
-      ) : isPaymentCard(msg) ? (
-        <PaymentCard {...props} />
-      ) : (
-        <EscrowCard {...props} />
-      )}
+      {msg.kind === 'pay-request' ? <RequestCard {...props} /> : <PaymentCard {...props} />}
       {mine ? <BubbleTime at={msg.createdAt} /> : null}
     </Thread.Card>
   )

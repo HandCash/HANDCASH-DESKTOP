@@ -46,13 +46,11 @@ import {
   compactLines,
   composerStateFor,
   isCommandDraft,
-  isUnwiredCommand,
   localNote,
   payConfirmRequest,
   paymentTimeline,
   peerActivityOutsideChat,
   resolveAmountSats,
-  unwiredCommandNote,
   type ChatPeer,
   type PayConfirmRequest,
 } from './chatFormat'
@@ -303,21 +301,6 @@ export function useChatComposer(args: {
     playWalletSound('soft')
   }
 
-  const acceptEscrow = (messageId: string) => {
-    updateMessage(messageId, {
-      meta: {
-        payStatus: 'accepted',
-        status: 'Accepted — agent hold (local stub until BRC-218 §5.21 custody)',
-      },
-    })
-    playWalletSound('soft')
-  }
-
-  const declineEscrow = (messageId: string) => {
-    updateMessage(messageId, { meta: { payStatus: 'declined', status: 'Declined' } })
-    playWalletSound('soft')
-  }
-
   const requestPayConfirm = (messageId: string) => {
     const msg = findMessage(messageId)
     if (!msg) return
@@ -507,30 +490,6 @@ export function useChatComposer(args: {
       playWalletSound('soft')
       return true
     }
-    if (cmd?.verb === 'escrow') {
-      if (!cmd.amount) {
-        setHint('Add an amount, e.g. /escrow 1000 sats')
-        playWalletSound('error')
-        return false
-      }
-      const resolved = resolveAmountSats(cmd.amount, getCachedUsdPerBsv())
-      appendMessage(friend.id, {
-        direction: 'out',
-        kind: 'escrow',
-        text: `Escrow ${resolved.amountLabel ?? cmd.amount.label}`,
-        meta: {
-          amountLabel: resolved.amountLabel ?? cmd.amount.label,
-          sats: resolved.sats,
-          memo: cmd.memo,
-          escrowAsset: cmd.asset,
-          payStatus: 'pending',
-          status: 'Awaiting accept',
-          commandRaw: line,
-        },
-      })
-      playWalletSound('soft')
-      return true
-    }
     if (cmd?.verb === 'whois') {
       void whois(cmd.recipient)
       return true
@@ -542,11 +501,6 @@ export function useChatComposer(args: {
     }
     if (cmd?.verb === 'message' && cmd.text.trim()) {
       sendPlain(peerId, friend, cmd.text.trim())
-      return true
-    }
-    if (isUnwiredCommand(cmd)) {
-      addSystemNote(peerId, unwiredCommandNote(cmd), 'system', { commandRaw: line })
-      playWalletSound('soft')
       return true
     }
     if (cmd?.verb === 'unsupported') {
@@ -591,8 +545,6 @@ export function useChatComposer(args: {
     inputRef,
     fileInputRef,
     cancelPay,
-    acceptEscrow,
-    declineEscrow,
     requestPayConfirm,
     cancelPayConfirm,
     confirmPayConfirm,

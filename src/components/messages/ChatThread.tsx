@@ -88,9 +88,6 @@ export function ChatThreadTabs({
           {tab.label}
         </button>
       ))}
-      <button type="button" className="chat-thread-tab" disabled title="Coming soon">
-        Notes
-      </button>
     </nav>
   )
 }

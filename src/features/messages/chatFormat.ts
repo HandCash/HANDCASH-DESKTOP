@@ -2,7 +2,6 @@ import {
   formatFiatLabel,
   formatSatsLabel,
   parseLocalCommand,
-  type Brc218Command,
   type ParsedAmount,
 } from '../../wallet/brc218'
 import type { DisplayCurrency } from '../../wallet/displayCurrency'
@@ -183,7 +182,7 @@ export type PayConfirmRequest = {
 export function payConfirmRequest(msg: ChatMessage): PayConfirmRequest {
   return {
     id: msg.id,
-    verb: msg.kind === 'escrow' ? 'escrow' : msg.kind === 'tip' ? 'tip' : 'pay',
+    verb: msg.kind === 'tip' ? 'tip' : 'pay',
     amountLabel: msg.meta?.amountLabel ?? msg.text,
     satsLabel: msg.meta?.sats && msg.meta.sats > 0 ? formatSatsLabel(msg.meta.sats) : null,
   }
@@ -243,14 +242,14 @@ export function isPaymentCard(msg: ChatMessage): boolean {
 }
 
 export function isCardMessage(msg: ChatMessage): boolean {
-  return isPaymentCard(msg) || msg.kind === 'pay-request' || msg.kind === 'escrow'
+  return isPaymentCard(msg) || msg.kind === 'pay-request'
 }
 
 export function messageItemState(msg: ChatMessage): string {
   const face =
     msg.kind === 'pay-request'
       ? 'request-card'
-      : isPaymentCard(msg) || msg.kind === 'escrow'
+      : isPaymentCard(msg)
         ? 'payment-card'
         : undefined
   return [
@@ -303,27 +302,3 @@ export function chatShellClass(nestedInNav: boolean, fullscreen: boolean): strin
   )
 }
 
-type UnwiredCommand = Extract<
-  Brc218Command,
-  { verb: 'sign' | 'receipt' | 'attest' | 'scope' | 'trolltoll' }
->
-
-export function isUnwiredCommand(cmd: Brc218Command | null): cmd is UnwiredCommand {
-  return (
-    cmd?.verb === 'sign' ||
-    cmd?.verb === 'receipt' ||
-    cmd?.verb === 'attest' ||
-    cmd?.verb === 'scope' ||
-    cmd?.verb === 'trolltoll'
-  )
-}
-
-export function unwiredCommandNote(cmd: UnwiredCommand): string {
-  return localNote(
-    ...compactLines([
-      `/${cmd.verb} is recognized (BRC-218) but not fully wired yet.`,
-      cmd.verb === 'scope' && cmd.value ? `Requested scope: ${cmd.value}` : null,
-      cmd.verb === 'trolltoll' && cmd.amount ? `Requested toll: ${cmd.amount.label}` : null,
-    ]),
-  )
-}

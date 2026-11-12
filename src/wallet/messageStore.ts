@@ -32,7 +32,6 @@ export type MessageKind =
   | 'pay-sent'
   | 'tip'
   | 'file'
-  | 'escrow'
   | 'whois'
 
 export type ChatAttachment = {
@@ -93,7 +92,6 @@ export type ChatMessage = {
     handleDisplay?: string
     identityKey?: string
     messagebox?: string | null
-    escrowAsset?: string
     origin?: string
     attachment?: ChatAttachment
     /** BRC-29 remittance for peer tip/pay-sent (prefix/suffix + output index). */
@@ -126,10 +124,10 @@ export type ChatMessage = {
   }
 }
 
-const PAYMENT_KINDS = new Set<MessageKind>(['pay-sent', 'tip', 'pay-request', 'escrow'])
+const PAYMENT_KINDS = new Set<MessageKind>(['pay-sent', 'tip', 'pay-request'])
 
 /** Settled / in-flight money cards — not pay-request prompts. */
-const PAYMENTS_TAB_KINDS = new Set<MessageKind>(['pay-sent', 'tip', 'escrow'])
+const PAYMENTS_TAB_KINDS = new Set<MessageKind>(['pay-sent', 'tip'])
 
 export function isPaymentMessageKind(kind: MessageKind): boolean {
   return PAYMENT_KINDS.has(kind)
@@ -153,7 +151,6 @@ export function messageBelongsInThreadSection(
   if (section === 'files') return msg.kind === 'file'
   if (section === 'payments') return isPaymentsTabMessageKind(msg.kind)
   if (msg.kind === 'pay-sent' || msg.kind === 'tip') return isChatReferencedPayment(msg)
-  if (msg.kind === 'escrow') return false
   return true
 }
 
@@ -280,6 +277,15 @@ function migrateLegacy(): ChatState | null {
 let readCache: { key: string; raw: string | null; state: ChatState } | null =
   null
 
+/** Kinds older builds stored that no longer exist. `escrow` was a local card that never held funds. */
+const RETIRED_KINDS = new Set(['escrow'])
+
+function dropRetiredKinds(messages: ChatMessage[]): ChatMessage[] {
+  return messages.some((m) => RETIRED_KINDS.has(m.kind))
+    ? messages.filter((m) => !RETIRED_KINDS.has(m.kind))
+    : messages
+}
+
 function readState(): ChatState {
   const key = messagesStorageKey()
   const raw = durableGetItem(key)
@@ -309,15 +315,16 @@ function parseState(key: string, raw: string | null): ChatState {
         ? (record.data as ChatState)
         : (decoded as ChatState)
     if (!parsed || !Array.isArray(parsed.messages)) return { messages: [] }
+    const messages = dropRetiredKinds(parsed.messages)
     // The stored blob is its own size check, so history that is already in
     // budget needs no re-encode to prove it.
     if (
       raw.length <= MESSAGES_DURABLE_MAX_BYTES &&
-      parsed.messages.length <= MESSAGES_DURABLE_MAX_ENTRIES
+      messages.length <= MESSAGES_DURABLE_MAX_ENTRIES
     ) {
-      return { messages: parsed.messages }
+      return { messages }
     }
-    const compacted = compactMessages({ messages: parsed.messages })
+    const compacted = compactMessages({ messages })
     if (compacted.dropped > 0) {
       durableSetItem(key, compacted.body)
       console.info(
