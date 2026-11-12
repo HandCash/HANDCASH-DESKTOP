@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import { aeonUiOptimizeDeps, aeonUiViteAliases } from 'aeon-ui-engine/vite'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Agent } from 'node:https'
 
 const pkg = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
@@ -16,6 +17,15 @@ const assetFileNames = (asset: Rollup.PreRenderedAsset): string =>
   asset.names.includes('bdk-core.wasm')
     ? 'assets/[name][extname]'
     : 'assets/[name]-[hash][extname]'
+
+// Cloudflare resolves to several IPv4/IPv6 addresses. Node's short default
+// address-attempt window can exhaust them on a slow connection (ETIMEDOUT).
+// Keep dual-stack fallback, allow each attempt 2s, and reuse live connections.
+const cloudProxyAgent = new Agent({
+  keepAlive: true,
+  autoSelectFamily: true,
+  autoSelectFamilyAttemptTimeout: 2000,
+})
 
 export default defineConfig({
   plugins: [react()],
@@ -76,11 +86,13 @@ export default defineConfig({
       // otherwise 502 Arcade GET /tx during list/buy.
       '/v1': {
         target: 'https://brc-cloud.bcryderman.workers.dev',
+        agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
       },
       '/.well-known': {
         target: 'https://brc-cloud.bcryderman.workers.dev',
+        agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
       },
