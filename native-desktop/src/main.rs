@@ -10,6 +10,8 @@ mod device_auth;
 mod durable;
 #[cfg(target_os = "linux")]
 mod file_chooser;
+#[cfg(target_os = "linux")]
+mod media;
 mod seal;
 mod sidecar;
 
@@ -141,6 +143,7 @@ fn main() -> wry::Result<()> {
         let webview = builder.build_gtk(vbox)?;
         // wry leaves WebKitGTK file chooser unwired — ambient <input type=file> is dead without this.
         file_chooser::attach(&webview);
+        media::attach(&webview, &ui_origin);
         webview
     };
 

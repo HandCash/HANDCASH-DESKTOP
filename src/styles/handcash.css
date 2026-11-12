@@ -15362,10 +15362,6 @@ body > div.statechart-mermaid-host {
   opacity: 0.65;
 }
 
-.chat-bubble.is-escrow {
-  border-color: color-mix(in srgb, #e8c547 45%, transparent);
-}
-
 .chat-card-amount {
   margin: 0;
   font-size: var(--hc-text-xl);
@@ -20180,10 +20176,30 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
   overflow: hidden;
 }
 
-.call-dock { position: fixed; right: 16px; bottom: 16px; z-index: 50; display: grid; gap: 8px; padding: 12px; min-width: 240px; border-radius: 12px; background: var(--panel, #111); color: inherit; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+[data-aeon-scope='call-dock'] {
+  position: fixed;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 1180;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  min-width: min(15rem, calc(100vw - 2rem));
+  max-width: min(22rem, calc(100vw - 2rem));
+  border: var(--hc-border-w) solid hsl(var(--border));
+  border-radius: var(--hc-radius, 12px);
+  background: color-mix(in srgb, var(--hc-surface-2) 92%, var(--hc-bg));
+  color: var(--hc-text);
+  box-shadow: var(--hc-shadow);
+}
+[data-aeon-scope='call-dock'][data-aeon-state='incoming'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 35%, hsl(var(--border)));
+}
 .call-dock-video { width: 100%; max-height: 180px; border-radius: 8px; background: #000; }
-.call-dock-info { display: grid; gap: 2px; font-size: 13px; }
-.call-dock-actions { display: flex; gap: 8px; }
+[data-aeon-scope='call-dock'] [data-aeon-part='info'] { display: grid; gap: 2px; font-size: var(--hc-text-sm, 13px); }
+[data-aeon-scope='call-dock'] [data-aeon-part='info'] span { color: var(--hc-muted); }
+[data-aeon-scope='call-dock'] [data-aeon-part='problem'] { color: var(--hc-danger); }
+[data-aeon-scope='call-dock'] [data-aeon-part='actions'] { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* Top bar balance + handle: always primary text (white dark / black light), never coin tint or dimmed. */
 .wallet-hero .wallet-nav-actions-pill .wallet-balance .balance,

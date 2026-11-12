@@ -29,16 +29,18 @@ export function CallDock() {
   const ended = snapshot.matches('ended')
   const live = snapshot.matches('active')
   const incomingVideo = context.video
+  const cameraProblem = ended ? null : engine.cameraProblem()
   return (
-    <aside className="call-dock" role="region" aria-label="Call" data-aeon-state={view.state}>
+    <aside className="call-dock" role="region" aria-label="Call" data-aeon-scope="call-dock" data-aeon-state={view.state}>
       <Media stream={view.remote} video={context.remoteCamera || context.remoteSharing} />
       <Media stream={view.local} muted video={context.camera || context.sharing} />
-      <div className="call-dock-info">
+      <div className="call-dock-info" data-aeon-part="info">
         <strong>{view.peerLabel}</strong>
         <span>{callStatus(snapshot)}{live ? ` · ${clock(elapsed)}` : ''}</span>
         {live && engine.encrypted() ? <span title="Media is end-to-end encrypted">Encrypted</span> : null}
+        {cameraProblem ? <span role="status" data-aeon-part="problem">{cameraProblem}</span> : null}
       </div>
-      <div className="call-dock-actions">
+      <div className="call-dock-actions" data-aeon-part="actions">
         {incoming ? (
           <>
             <Button.Root className="btn" onClick={() => void engine.accept({ video: incomingVideo })}><Button.Label>Answer</Button.Label></Button.Root>
@@ -49,9 +51,14 @@ export function CallDock() {
         ) : (
           <>
             {live ? (
-              <Button.Root className="btn btn-ghost" aria-pressed={context.muted} onClick={() => engine.toggleMute()}>
-                <Button.Label>{context.muted ? 'Unmute' : 'Mute'}</Button.Label>
-              </Button.Root>
+              <>
+                <Button.Root className="btn btn-ghost" aria-pressed={context.muted} onClick={() => engine.toggleMute()}>
+                  <Button.Label>{context.muted ? 'Unmute' : 'Mute'}</Button.Label>
+                </Button.Root>
+                <Button.Root className="btn btn-ghost" aria-pressed={context.camera} onClick={() => void engine.setCamera(!context.camera)}>
+                  <Button.Label>{context.camera ? 'Camera off' : 'Camera on'}</Button.Label>
+                </Button.Root>
+              </>
             ) : null}
             <Button.Root className="btn" onClick={() => engine.hangUp()}><Button.Label>{live ? 'Hang up' : 'Cancel'}</Button.Label></Button.Root>
           </>
