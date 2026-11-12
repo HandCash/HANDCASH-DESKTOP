@@ -505,6 +505,7 @@ async function serveContext() {
 async function serveTick(): Promise<void> {
   if (serving) return
   serving = true
+  const started = Date.now()
   try {
     await inSerial(async () => {
       noteHoldingServed()
@@ -520,6 +521,8 @@ async function serveTick(): Promise<void> {
       const { flushPendingHandovers } = await import('./accountHandover')
       await flushPendingHandovers(ctx.master)
     })
+    const ms = Date.now() - started
+    if (ms > 250) appendAppLog('info', `[account-holding] serve done ${ms}ms`)
   } catch (error) {
     appendAppLog('warn', `[account-holding] serve failed: ${messageOf(error)}`)
   } finally {
