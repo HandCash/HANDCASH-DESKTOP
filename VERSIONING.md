@@ -25,15 +25,17 @@ npm run package:mac
 # Upload DMG/zip (+ latest-mac.yml while Mac auto-update is live)
 ```
 
-### Mobile is built locally
+### Mobile is pinned from here, signed by its own CI
 
 Mobile (`HANDCASH-MOBILE`) is a shell over this repo's `src/` and ships under its own `0.1.x` version. It pins the Desktop it builds in its `ui-core-source.json` (`{ gitSha, version }`); the pinned `version` must equal Desktop's `package.json` version.
 
-There is no Mobile CI (Codemagic later). While devving, commit Desktop to `main` without a tag, then:
+Desktop no longer dispatches a Mobile release. While devving, commit Desktop to `master` without a tag, then:
 
-1. `npm run mobile:release` (sibling `../HANDCASH-MOBILE`): sets Mobile's pin to Desktop's version and commit, bumps Mobile's patch version and commits locally.
-2. `bash ../HANDCASH-MOBILE/scripts/build-apk.sh` and install the APK on the device.
+1. `npm run mobile:release` (sibling `../HANDCASH-MOBILE`; `--mobile-dir` and `--sha` from a worktree): sets Mobile's pin to Desktop's version and commit, bumps Mobile's patch version, commits and tags locally.
+2. Push Mobile master and its `v0.1.x` tag. Mobile's `release-apk.yml` signs the APK with the release key (local builds lack it) and publishes it with its `.sha256`.
 3. `npm run mobile:check`: fails unless the pin matches Desktop's version and source commit. A same-version/different-commit pin fails rather than silently skipping delivery; bump Desktop for new source.
+
+`build-apk.sh` reads the Desktop at `../HANDCASH-DESKTOP` and refuses unless that checkout sits on the pinned commit.
 
 `src/contracts/mobileReleaseSync.test.ts` guards the script and that `package.json`, `src/version.ts` and `@handcash/wallet-ui` agree.
 

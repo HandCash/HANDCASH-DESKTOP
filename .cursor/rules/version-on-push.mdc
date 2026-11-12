@@ -10,7 +10,7 @@ alwaysApply: true
 Commit to `master` and push. No tag, no CI release. Then install locally:
 
 - Desktop: `npm run launch:mac` / local `package:*` on the dev machine.
-- Mobile: `npm run mobile:release` (pins `../HANDCASH-MOBILE` to this commit and bumps it locally), `bash ../HANDCASH-MOBILE/scripts/build-apk.sh`, install the APK on the device, `npm run mobile:check`.
+- Mobile: `npm run mobile:release` (pins `../HANDCASH-MOBILE` to this commit, bumps and tags it locally), push Mobile master + its `v0.1.x` tag, install the APK its `release-apk.yml` signs and publishes, `npm run mobile:check`. A local `build-apk.sh` has no release key, so its APK cannot upgrade a phone's install.
 
 `scripts/require-version-bump.mjs` and `.githooks/pre-push` enforce `package.json` version > latest remote `v*` tag, so bump `package.json` + `src/version.ts` + `docs/releases/X.Y.Z.md` on each push.
 
@@ -24,4 +24,4 @@ git push origin vX.Y.Z
 
 Workflows on `v*` tags: `release-mac.yml`, `release-windows.yml`, `release-linux.yml`. Do not wait on local `package:*` for a release.
 
-Mobile has **no** CI (Codemagic later). For a public Mobile release, tag `v0.1.x` in `HANDCASH-MOBILE` and `gh release create` with the APK + `.sha256` (publish, not draft).
+Desktop no longer dispatches Mobile. A `v0.1.x` tag pushed in `HANDCASH-MOBILE` runs its `release-apk.yml`, which signs and publishes the APK + `.sha256` (not a draft).
