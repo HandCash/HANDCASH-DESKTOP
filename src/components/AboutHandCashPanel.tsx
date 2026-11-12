@@ -16,6 +16,11 @@ export function AboutHandCashPanel() {
         <p>
           HandCash cannot recover your funds if you lose this device without a backup.
         </p>
+        <p>
+          This BETA is for a small group of testers. It uses BSV Association code under the Open BSV
+          License, which BSVA is moving to Apache 2.0. Litecoin, Bitcoin, Bitcoin Cash, Dogecoin and
+          swaps assume that move; public release waits for BSVA's Apache 2.0 packages.
+        </p>
       </div>
 
       <SettingsSection title="This app" part="app">

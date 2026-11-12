@@ -27,6 +27,10 @@ xattr -cr /Applications/HandCash.app
 codesign --force --deep --sign - /Applications/HandCash.app
 ```
 
+## Licensing assumption
+
+This BETA is shared with a small group of testers. It uses BSV Association code under the Open BSV License, which BSVA is moving to Apache 2.0 ([ts-stack 4760b26d](https://github.com/bsv-blockchain/ts-stack/commit/4760b26d)). The other-coin features (Litecoin, Bitcoin, Bitcoin Cash, Dogecoin, swaps) assume that move. No public release until we run on BSVA's Apache 2.0 npm packages; see [`docs/bsva-apache-relicense.md`](docs/bsva-apache-relicense.md).
+
 ## What you get
 
 - Self-custodial vault (AES-GCM + PBKDF2) stored on device
