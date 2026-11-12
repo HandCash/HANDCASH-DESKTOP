@@ -300,11 +300,11 @@ async function recomposeHistory(
         )
         if (runtime) assertRuntimeCurrent(runtime)
         localStateWasReplaced = sync.pulled
-        if (sync.pulled || !sync.skipReason) {
-          history = 'synced'
-        } else if (sync.pullError) {
+        if (sync.pullError) {
           history = 'failed'
           historyError = sync.pullError
+        } else if (sync.pulled || !sync.skipReason) {
+          history = 'synced'
         } else {
           history = 'skipped'
           historyError = sync.skipReason

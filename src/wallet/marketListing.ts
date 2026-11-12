@@ -811,6 +811,29 @@ export function updateMarketListingAuthorization(args: {
   return next
 }
 
+export function releaseMarketListingReservation(args: {
+  outpoint: string
+  nonce: string
+  saleId: string
+}): void {
+  const current =
+    getMarketListingAuthorization(args) ??
+    getMarketListingAuthorization({ outpoint: args.outpoint })
+  if (!current || current.state !== 'reserved') return
+  if (current.reservationSaleId !== args.saleId) return
+  saveAuthorization({
+    ...current,
+    state: 'active',
+    updatedAt: Date.now(),
+    reason: 'reservation-released',
+    reservationSaleId: undefined,
+    reservationBuyer: undefined,
+    reservationUntil: undefined,
+    reservationTxCommitment: undefined,
+    reservationIntent: undefined,
+  })
+}
+
 export function reserveMarketListingAuthorization(args: {
   outpoint: string
   nonce: string
@@ -820,7 +843,9 @@ export function reserveMarketListingAuthorization(args: {
   txCommitment: string
   intent: MarketPurchaseIntent
 }): MarketListingAuthorization {
-  let current = getMarketListingAuthorization(args)
+  let current =
+    getMarketListingAuthorization(args) ??
+    getMarketListingAuthorization({ outpoint: args.outpoint })
   if (
     current?.state === 'reserved' &&
     typeof current.reservationUntil === 'number' &&
@@ -838,6 +863,55 @@ export function reserveMarketListingAuthorization(args: {
       reservationIntent: undefined,
     }
     saveAuthorization(current)
+  }
+  if (current?.state === 'reserved') {
+    if (current.reservationSaleId === args.saleId) return current
+    const sameBuyer =
+      current.reservationBuyer === args.buyerIdentityKey.toLowerCase()
+    if (sameBuyer) {
+      current = {
+        ...current,
+        state: 'active',
+        updatedAt: Date.now(),
+        reason: 'reservation-superseded',
+        reservationSaleId: undefined,
+        reservationBuyer: undefined,
+        reservationUntil: undefined,
+        reservationTxCommitment: undefined,
+        reservationIntent: undefined,
+      }
+      saveAuthorization(current)
+    }
+  }
+  if (!current || current.state !== 'active') {
+    const selfBuy =
+      args.buyerIdentityKey.toLowerCase() === args.intent.seller.toLowerCase()
+    if (selfBuy) {
+      const sellerAuth =
+        listMarketListingAuthorizations()
+          .filter(
+            (row) =>
+              normalizeOutpoint(row.outpoint) ===
+                normalizeOutpoint(args.outpoint) &&
+              row.seller.toLowerCase() === args.buyerIdentityKey.toLowerCase(),
+          )
+          .sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null
+      if (
+        sellerAuth &&
+        sellerAuth.state === 'cancelled' &&
+        sellerAuth.reason === 'tip-spent'
+      ) {
+        current = {
+          ...sellerAuth,
+          state: 'active',
+          updatedAt: Date.now(),
+          reason: undefined,
+        }
+        saveAuthorization(current)
+      } else if (sellerAuth?.state === 'active') {
+        current = sellerAuth
+      }
+    }
   }
   if (!current || current.state !== 'active') {
     const competing =

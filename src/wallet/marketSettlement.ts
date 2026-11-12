@@ -38,6 +38,7 @@ import {
   markMarketSettlementProgress,
   marketListingKey,
   MarketListingError,
+  releaseMarketListingReservation,
   reserveMarketListingAuthorization,
   updateMarketListingAuthorization,
   verifyMarketPurchaseIntent,
@@ -1235,6 +1236,11 @@ export async function executeMarketPurchase(
           !pending.atomicBeef?.length ||
           arcadeHardReject)
       if (mayAbort) {
+        releaseMarketListingReservation({
+          outpoint: listing.outpoint,
+          nonce: listing.nonce,
+          saleId,
+        })
         await active.wallet
           .abortAction({ reference: signable.reference })
           .catch(() => {})

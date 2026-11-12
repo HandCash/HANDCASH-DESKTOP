@@ -76,6 +76,15 @@ describe('walletStatusMachine', () => {
     expect(start({ health: health({ phase: 'idle' }) }).getSnapshot().value).toBe('ready')
   })
 
+  it('keeps history restore visible even when chain health already says synced', () => {
+    const actor = start()
+    actor.send({ type: 'COORDINATOR', coordinator: { ...coordinatorIdle, recompose: 'active' } })
+    expect(actor.getSnapshot().value).toBe('catchingUp')
+    actor.send({ type: 'COORDINATOR', coordinator: coordinatorIdle })
+    expect(actor.getSnapshot().value).toBe('synced')
+    actor.stop()
+  })
+
   it('follows each store event', () => {
     const actor = start()
     actor.send({ type: 'SYNC_HEALTH', health: health({ phase: 'syncing' }) })

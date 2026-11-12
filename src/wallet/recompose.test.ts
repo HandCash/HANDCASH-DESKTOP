@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./walletRuntime', () => ({
   assertRuntimeCurrent: () => {},
   getWalletRuntime: () => mocks.runtime,
+  // Background derived passes from a prior test must not use a later runtime.
+  runtimeIsCurrent: () => false,
 }))
 
 vi.mock('./paymentReconcile', () => ({
@@ -206,6 +208,17 @@ describe('recomposeWallet', () => {
     expect(mocks.autoPush).not.toHaveBeenCalled()
     expect(mocks.refresh).toHaveBeenCalledWith(FUNDING_PASS)
     expect(mocks.relist).toHaveBeenCalledOnce()
+  })
+
+  it('does not call a failed history download synced when the chain pass succeeds', async () => {
+    mocks.hasBackupUrl.mockReturnValue(true)
+    mocks.autoPush.mockResolvedValue({ pulled: false, skipReason: null, pullError: 'Download failed (503)' })
+    const { recomposeWallet } = await import('./recompose')
+    const result = await recomposeWallet({ password: 'test-password', reason: 'unlock' })
+    expect(result.history).toBe('failed')
+    expect(result.historyError).toBe('Download failed (503)')
+    expect(result.chainError).toBeNull()
+    expect(mocks.refreshShared).toHaveBeenCalledWith(FUNDING_PASS)
   })
 
   it('reports a failed arrival merge and still reconciles from the chain', async () => {

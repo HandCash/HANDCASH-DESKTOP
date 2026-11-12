@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.711] - 2026-11-12
+
+### Fixed
+
+- Import status stays on **Importing wallet** while history recompose runs; a failed BRC-39 pull is no longer reported as synced before skip.
+- Market listing reservations release on aborted settlement; reservation lookup tolerates missing nonce; same-buyer re-reserve clears a stale hold.
+
+### Changed
+
+- Displaced-account menu events no longer auto-switch wallets; the chart stays viewable while another device holds it.
+
 ## [1.3.710] - 2026-11-12
 
 ### Changed

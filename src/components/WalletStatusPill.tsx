@@ -72,6 +72,9 @@ function statusView(state: WalletStatusState, c: WalletStatusContext): StatusVie
         detail: 'Refreshing funds and history against the network',
       }
     case 'catchingUp':
+      if (coordinator.recompose === 'active') {
+        return { label: 'Importing wallet', tone: 'busy', detail: 'Restoring wallet history and checking funds. The local view may still be incomplete.' }
+      }
       if (isWalletProgressBusy(c.progress)) {
         return {
           label: walletProgressLabel(c.progress),

@@ -81,6 +81,17 @@ describe('pairingCode chart', () => {
     expect(s.context.error).toBe('Could not reach Mac')
   })
 
+  it('stays sending until runtime-ready verification finishes, not merely code acceptance', async () => {
+    let ready!: () => void
+    const approve = vi.fn(() => new Promise<void>((resolve) => { ready = resolve }))
+    const { actor, typeAll } = start(async () => ({ ok: true }), approve)
+    typeAll('123456')
+    await waitFor(actor, (s) => s.matches('sending'))
+    expect(actor.getSnapshot().status).toBe('active')
+    ready()
+    await waitFor(actor, (s) => s.matches('approved'))
+  })
+
   it('input is ignored while checking', async () => {
     let release!: (o: PairingOutcome) => void
     const confirm = vi.fn(() => new Promise<PairingOutcome>((r) => (release = r)))

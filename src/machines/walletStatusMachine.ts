@@ -82,7 +82,7 @@ export function walletStatusFor(c: WalletStatusContext): WalletStatusState {
   if (c.refreshing && !chainBusy(c)) return 'refreshing'
   // Progress stays honest after a soft Syncing clear: never Synced while
   // Refresh, 1sat or phrase import is still running.
-  if (isWalletProgressBusy(c.progress)) return 'catchingUp'
+  if (isWalletProgressBusy(c.progress) || c.coordinator.recompose === 'active') return 'catchingUp'
   if (c.health.phase === 'error') return 'syncFailed'
   if (c.cloud.phase === 'error') return 'backupFailed'
   if (c.cloud.phase === 'delayed') return 'backupDelayed'

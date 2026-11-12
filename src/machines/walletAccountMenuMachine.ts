@@ -12,9 +12,9 @@ type AfterSwitch = 'stay' | 'profile'
  * Choosing an account another install holds moves it here (`moving`, driven
  * by `accountMoveMachine`; no step asks the user) and then switches to it.
  * `DISPLACED` arrives when this install stops holding the active account:
- * another install took it, or asked for it and this one released it. An idle
- * menu leaves the account at once; a busy one records it and asks for a fresh
- * check (`recheckDisplacement`) the moment it settles, so it is never dropped.
+ * another install took it, or asked for it and this one released it. Keep
+ * its local view open; holding guards refuse signing and backup writes. A busy
+ * menu records it and checks again when it settles, without switching away.
  */
 export const walletAccountMenuMachine = setup({
   types: {
@@ -82,10 +82,7 @@ export const walletAccountMenuMachine = setup({
       entry: 'settleDisplacement',
       on: {
         TOGGLE: 'open',
-        DISPLACED: [
-          { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
-          { target: 'creating', actions: 'clearError' },
-        ],
+        DISPLACED: { actions: 'clearError' },
       },
     },
     open: {
@@ -93,10 +90,7 @@ export const walletAccountMenuMachine = setup({
       on: {
         TOGGLE: 'closed',
         CLOSE: 'closed',
-        DISPLACED: [
-          { guard: 'hasNextAccount', target: 'switching', actions: 'targetNextAccount' },
-          { target: 'creating', actions: 'clearError' },
-        ],
+        DISPLACED: { actions: 'clearError' },
         CHOOSE: {
           target: 'switching',
           actions: assign({

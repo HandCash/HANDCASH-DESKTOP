@@ -72,20 +72,19 @@ describe('wallet account menu', () => {
     }
   })
 
-  it('a displaced account is left from an idle menu; mid-switch it is recorded, not acted on', () => {
-    const { actor, recheckDisplacement } = start()
-    actor.send({ type: 'TOGGLE' })
-    actor.send({ type: 'DISPLACED', nextAccountIndex: 2 })
-    expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context.targetAccountIndex).toBe(2)
-    actor.send({ type: 'DISPLACED', nextAccountIndex: 4 })
-    expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 2, displacedWhileBusy: true })
-    expect(recheckDisplacement).not.toHaveBeenCalled()
-
-    const none = start().actor
-    none.send({ type: 'DISPLACED', nextAccountIndex: null })
-    expect(none.getSnapshot().value).toBe('creating')
+  it('keeps a displaced wallet visible, whether another local wallet exists or not', () => {
+    for (const nextAccountIndex of [2, null]) {
+      const { actor, recheckDisplacement } = start()
+      actor.send({ type: 'DISPLACED', nextAccountIndex })
+      expect(actor.getSnapshot().value).toBe('open')
+      expect(actor.getSnapshot().context.targetAccountIndex).toBeNull()
+      actor.send({ type: 'TOGGLE' })
+      actor.send({ type: 'DISPLACED', nextAccountIndex })
+      expect(actor.getSnapshot().value).toBe('closed')
+      expect(actor.getSnapshot().context.targetAccountIndex).toBeNull()
+      expect(recheckDisplacement).not.toHaveBeenCalled()
+      actor.stop()
+    }
   })
 
   it('a displacement during switching is checked again once the switch lands or fails', () => {
