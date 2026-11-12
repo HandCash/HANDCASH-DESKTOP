@@ -21,6 +21,7 @@
  * row the chain shows landed is restored, and its change comes back
  * (hc-a580a 0.1.539: ~2.5M sats of phantom coins hidden, change not restored).
  */
+import { sleep } from './timing'
 import { isAssetFilingBasket } from './assetBaskets'
 import type { Chain } from './vault'
 import type { ActiveWallet } from './session'
@@ -97,7 +98,6 @@ const pendingSpenders = new Set<string>()
 let adoptFlight: Promise<void> | null = null
 const unlockedRuntimes = new Set<string>()
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 export function resetDeadCoinSweepForTests(): void {
   nextSweepAt = 0
@@ -141,7 +141,7 @@ function startSweep(
   if (!opts.force && Date.now() < nextSweepAt) return null
   nextSweepAt = Date.now() + SWEEP_COOLDOWN_MS
   flight = (async () => {
-    await delay(START_DELAY_MS)
+    await sleep(START_DELAY_MS)
     return sweepDeadCoins(runtime)
   })()
     .then((result) => {
@@ -232,7 +232,7 @@ async function waitForSpendRegion(): Promise<boolean> {
   const deadline = Date.now() + SPEND_WAIT_MAX_MS
   while (shouldYieldChainIngestToSpend()) {
     if (Date.now() > deadline) return false
-    await delay(SPEND_POLL_MS)
+    await sleep(SPEND_POLL_MS)
   }
   return true
 }
@@ -245,7 +245,7 @@ export function adoptSpendersLater(runtime: WalletRuntime, spenders: Iterable<st
   }
   if (adoptFlight || pendingSpenders.size === 0) return
   adoptFlight = (async () => {
-    await delay(START_DELAY_MS)
+    await sleep(START_DELAY_MS)
     await drainSpenders(runtime)
   })()
     .catch((err) => {
@@ -300,11 +300,11 @@ export function scheduleUnlockDeadCoinPass(runtime: WalletRuntime): void {
   if (unlockedRuntimes.has(runtime.runtimeId)) return
   unlockedRuntimes.add(runtime.runtimeId)
   void (async () => {
-    await delay(UNLOCK_SWEEP_DELAY_MS)
+    await sleep(UNLOCK_SWEEP_DELAY_MS)
     const { isRecomposeInFlight } = await import('./recompose')
     while (isRecomposeInFlight()) {
       if (!runtimeIsCurrent(runtime)) return
-      await delay(SPEND_POLL_MS * 4)
+      await sleep(SPEND_POLL_MS * 4)
     }
     if (!runtimeIsCurrent(runtime)) return
     await startSweep(runtime, { force: true })
@@ -360,11 +360,11 @@ export async function sweepDeadCoins(runtime: WalletRuntime): Promise<DeadCoinSw
   let pending = outpoints
   let hidden = 0
   for (let pass = 0; pending.length > 0 && pass <= RETRY_DELAYS_MS.length; pass += 1) {
-    if (pass > 0) await delay(RETRY_DELAYS_MS[pass - 1]!)
+    if (pass > 0) await sleep(RETRY_DELAYS_MS[pass - 1]!)
     const spentBy = new Map<string, string[]>()
     const unanswered: string[] = []
     for (let i = 0; i < pending.length; i += SPENT_PROBE_BATCH) {
-      if (i > 0) await delay(CHUNK_GAP_MS)
+      if (i > 0) await sleep(CHUNK_GAP_MS)
       if (!(await waitForSpendRegion())) return { ran: false, reason: 'spendBusy' }
       if (!runtimeIsCurrent(runtime)) return { ran: false, reason: 'accountChanged' }
       const chunk = pending.slice(i, i + SPENT_PROBE_BATCH)

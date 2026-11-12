@@ -8,6 +8,7 @@
  * local-network path carries, so the HMAC proofs and the 6-digit code apply
  * unchanged.
  */
+import { sleep } from '../timing'
 import { errorText } from '../errorText'
 import type { PrivateKey } from '@bsv/sdk'
 import { signedIdentityHeaders } from '../identityRequestAuth'
@@ -62,7 +63,6 @@ export async function relayAck(key: PrivateKey, ids: string[], opts: RelayOption
   if (ids.length) await call(key, 'acknowledgeMessage', 'acknowledgeMessage', { messageIds: ids }, opts)
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * Approver side: one request to the new device's mailbox, then wait for its

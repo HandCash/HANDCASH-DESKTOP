@@ -11,6 +11,7 @@
  * only; a deposit whose parents are also unmined waits for the next block and
  * stays retryable.
  */
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { Beef, Transaction, type BEEF } from '@bsv/sdk'
 import type { Services } from '@handcash/wallet-engine'
@@ -58,7 +59,6 @@ function providerAnswered(): void {
   requestGapMs = Math.max(MIN_REQUEST_GAP_MS, Math.round(requestGapMs * 0.9))
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 function remember<V>(cache: Map<string, V>, key: string, value: V): void {
   cache.set(key, value)

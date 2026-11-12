@@ -1,3 +1,4 @@
+import { timeoutSignal } from '../timing'
 import { CoinPrivateKey as PrivateKey } from '../primitives/coinCrypto'
 import { encodeHex } from '../../meridian/encoding'
 import { DEFAULT_BRC_CLOUD_BASE_URL, PUBLIC_BRC_CLOUD_ORIGIN } from '../walletConfig'
@@ -75,10 +76,6 @@ export type OfferBookDeps = {
   now?: () => number
 }
 
-function timeoutSignal(): AbortSignal | undefined {
-  return typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : undefined
-}
-
 async function failure(res: Response): Promise<string> {
   const body = (await res.json().catch(() => null)) as { error?: unknown } | null
   return typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`
@@ -112,7 +109,7 @@ export async function publishSwapOffer(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ offer: signed }),
-    signal: timeoutSignal(),
+    signal: timeoutSignal(REQUEST_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`offer book refused the offer: ${await failure(res)}`)
   console.info(`[swap] published offer ${signed.nonce.slice(0, 12)} ${draft.give}→${draft.get}`)
@@ -149,7 +146,7 @@ export async function browseSwapOfferBook(
 ): Promise<OfferBookPage> {
   const query = new URLSearchParams({ limit: '100' })
   for (const [k, v] of Object.entries(filter)) if (v) query.set(k, v)
-  const res = await (deps.fetch ?? fetch)(swapOfferBookUrl(`?${query}`), { headers: { Accept: 'application/json' }, cache: 'no-store', signal: timeoutSignal() })
+  const res = await (deps.fetch ?? fetch)(swapOfferBookUrl(`?${query}`), { headers: { Accept: 'application/json' }, cache: 'no-store', signal: timeoutSignal(REQUEST_TIMEOUT_MS) })
   if (!res.ok) throw new Error(`offer book unavailable: ${await failure(res)}`)
   const body = (await res.json().catch(() => null)) as { offers?: unknown; filled?: unknown } | null
   const now = (deps.now ?? Date.now)()
@@ -177,7 +174,7 @@ export async function reportSwapOfferFilled(nonce: string, filled: bigint, maker
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filled: filled.toString(), sig }),
-    signal: timeoutSignal(),
+    signal: timeoutSignal(REQUEST_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`offer book refused the fill report: ${await failure(res)}`)
 }
@@ -189,7 +186,7 @@ export async function cancelSwapOffer(nonce: string, maker: { rootKeyHex: string
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sig }),
-    signal: timeoutSignal(),
+    signal: timeoutSignal(REQUEST_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`offer book refused the cancel: ${await failure(res)}`)
   console.info(`[swap] cancelled offer ${nonce.slice(0, 12)}`)

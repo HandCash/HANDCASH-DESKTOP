@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
@@ -408,7 +409,7 @@ function scheduleDerivedChangePass(runtime: WalletRuntime, localStateWasReplaced
       const waitOut = async (busy: () => boolean): Promise<boolean> => {
         while (busy() || isRecomposeInFlight()) {
           if (!runtimeIsCurrent(runtime)) return false
-          await new Promise((resolve) => setTimeout(resolve, DERIVED_PASS_YIELD_MS))
+          await sleep(DERIVED_PASS_YIELD_MS)
         }
         return runtimeIsCurrent(runtime)
       }

@@ -1,3 +1,4 @@
+import { sleep, withTimeout } from './timing'
 import { errorText } from './errorText'
 import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
@@ -148,19 +149,6 @@ function installHeaderFailover(services: Services, chain: Chain): void {
       | undefined
     if (typeof chaintracks?.findHeaderForHeight !== 'function') return
     const original = chaintracks.findHeaderForHeight.bind(chaintracks)
-    const withTimeout = async <T,>(work: Promise<T>, ms: number): Promise<T> => {
-      let timer: ReturnType<typeof setTimeout> | undefined
-      try {
-        return await Promise.race([
-          work,
-          new Promise<T>((_, reject) => {
-            timer = setTimeout(() => reject(new Error('timeout')), ms)
-          }),
-        ])
-      } finally {
-        if (timer != null) clearTimeout(timer)
-      }
-    }
     chaintracks.findHeaderForHeight = async (height: number) => {
       const publicHeader = await fetchBlockHeaderForHeight(chain, height)
       if (publicHeader != null) return publicHeader
@@ -581,7 +569,7 @@ async function prewarmQuietWindow(generation: number): Promise<boolean> {
     if (warmPoolGeneration() !== generation) return false
     if (!(await waitForWalletRegionsIdle(60_000))) continue
     const since = walletRegionsGeneration()
-    await new Promise((resolve) => setTimeout(resolve, quietMs))
+    await sleep(quietMs)
     if (warmPoolGeneration() !== generation) return false
     if (walletRegionsIdleSince(since)) return true
   }
@@ -660,7 +648,7 @@ export async function bootWallet(args: WalletBootArgs): Promise<ActiveWallet> {
   disposeWalletRuntime('replaced')
   active = null
   // Let "Almost ready" paint before the engine module evaluates.
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await sleep(0)
   const started = Date.now()
   const { migrateWalletEngineStorage, scheduleWalletEngineSettlement } = await import(
     './walletEngineMigration'

@@ -1,3 +1,4 @@
+import { sleep } from '../wallet/timing'
 import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
@@ -546,11 +547,11 @@ export function Dashboard({
       for (let attempt = 0; attempt < 3; attempt++) {
         if (cancelled) return
         if (hasPendingPermissionPrompt() || shouldYieldChainIngestToSpend()) {
-          await new Promise((r) => window.setTimeout(r, 750))
+          await sleep(750)
           continue
         }
         while (tickInFlight && !cancelled) {
-          await new Promise((r) => window.setTimeout(r, 200))
+          await sleep(200)
         }
         if (cancelled) return
         tickInFlight = true
@@ -575,7 +576,7 @@ export function Dashboard({
         }
         if (after > before) return
         if (attempt < 2) {
-          await new Promise((r) => window.setTimeout(r, 1_500))
+          await sleep(1_500)
         }
       }
     }

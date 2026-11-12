@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
 
 /**
@@ -22,7 +23,7 @@ function spendWaiting(): boolean {
 async function letSpendPass(): Promise<number> {
   const started = Date.now()
   while (spendWaiting() && Date.now() - started < SPEND_WAIT_MAX_MS) {
-    await new Promise((resolve) => setTimeout(resolve, SPEND_WAIT_POLL_MS))
+    await sleep(SPEND_WAIT_POLL_MS)
   }
   return Date.now() - started
 }
@@ -59,7 +60,7 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
   while (outputs.length < limit) {
     // A macrotask, not a microtask: the tap that starts a send is a task, and
     // it has to run before this loop takes the lock again.
-    await new Promise((resolve) => setTimeout(resolve, 0))
+    await sleep(0)
     if (!opts.inSpend && spendWaiting()) yieldedMs += await letSpendPass()
     const want = Math.min(subRows, limit - outputs.length)
     const at = skip + outputs.length

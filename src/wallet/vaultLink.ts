@@ -17,6 +17,7 @@ import { createSessionTable, type RtcConstructor, type SessionTable } from './di
 import type { ListedMessage } from './messageTransport'
 import { rootKeyHexForAccount } from './vaultAccounts'
 import { vaultIdentityKey, type VaultMaster } from './vaultMaster'
+import { sleep } from './timing'
 
 export const VAULT_LINK_BOX = 'vault-link'
 /** How long a move waits for a link to the holding device before it asks through the box. */
@@ -136,7 +137,7 @@ export async function dialVaultLink(device: string, waitMs = LINK_DIAL_MS, pollM
   if (await current.table.request(current.identityKey, device)) current.poller.nudge()
   const deadline = Date.now() + waitMs
   while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, Math.max(0, deadline - Date.now()))))
+    await sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())))
     if (link !== current) return false
     await current.poller.poll()
     if (current.table.hasSession(current.identityKey, device)) return true

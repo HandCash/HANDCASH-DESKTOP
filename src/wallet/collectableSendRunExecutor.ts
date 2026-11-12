@@ -6,6 +6,7 @@
  * `collectableSendRunMachine` makes the legal transitions reviewable without
  * adding another orchestration branch to the wallet's largest domain module.
  */
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { createActor } from 'xstate'
 import {
@@ -38,7 +39,7 @@ async function awaitLegPin(txid: string): Promise<void> {
   const deadline = Date.now() + LEG_PIN_TIMEOUT_MS
   while (Date.now() < deadline) {
     if (await pinBroadcastLocalTx(txid).catch(() => false)) return
-    await new Promise((resolve) => setTimeout(resolve, 250))
+    await sleep(250)
   }
   throw new Error(
     `The first transaction is signed but its change is not ready after ${LEG_PIN_TIMEOUT_MS / 1000}s. The remaining collectables were left untouched.`,

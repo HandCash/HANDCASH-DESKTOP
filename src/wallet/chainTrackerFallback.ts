@@ -21,6 +21,7 @@
  * unverified. When no source can answer we throw rather than deny, because a
  * denial is permanent and wrong while a throw is retried on the next sync.
  */
+import { withTimeout } from './timing'
 import type { ChainTracker } from '@bsv/sdk'
 
 import { appendAppLog } from './appLog'
@@ -51,20 +52,6 @@ const TIP_CACHE_MS = 30_000
 const SOURCE_COOLDOWN_MS = 60_000
 /** Roots are immutable per height, so verdicts are cached — but bounded. */
 const VERDICT_CACHE_MAX = 500
-
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), ms)
-      }),
-    ])
-  } finally {
-    if (timer != null) clearTimeout(timer)
-  }
-}
 
 async function fetchJson(url: string): Promise<unknown | null> {
   const controller = new AbortController()

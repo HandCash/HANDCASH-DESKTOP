@@ -20,6 +20,7 @@
  * Unlock replays every pinned cheque that never landed, oldest first, so a
  * night of sends Arcade could not land is repaired on the next launch.
  */
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import type { Services } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
@@ -67,7 +68,6 @@ const reposted = new Set<string>()
 /** Parents a re-post got a miner to take; cheques built on the same chain skip them. */
 const relayed = new Set<string>()
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 export function resetArcadeLandingForTests(): void {
   resetLandedTxForTests()
@@ -148,7 +148,7 @@ async function waitForSpendRegion(): Promise<boolean> {
   const deadline = Date.now() + SPEND_WAIT_MAX_MS
   while (shouldYieldChainIngestToSpend()) {
     if (Date.now() > deadline) return false
-    await delay(SPEND_POLL_MS)
+    await sleep(SPEND_POLL_MS)
   }
   return true
 }
@@ -368,7 +368,7 @@ export function watchArcadeLanding(
   void (async () => {
     const { txIsArcadeRejected } = await import('./arcadeSubmitGuard')
     for (const wait of WATCH_DELAYS_MS) {
-      await delay(wait)
+      await sleep(wait)
       if (!runtimeIsCurrent(runtime) || txIsArcadeRejected(id)) return
       const round = await checkLanding({
         txid: id,
@@ -414,11 +414,11 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
   if (unlockedRuntimes.has(runtime.runtimeId)) return
   unlockedRuntimes.add(runtime.runtimeId)
   void (async () => {
-    await delay(UNLOCK_DELAY_MS)
+    await sleep(UNLOCK_DELAY_MS)
     const { isRecomposeInFlight } = await import('./recompose')
     while (isRecomposeInFlight()) {
       if (!runtimeIsCurrent(runtime)) return
-      await delay(SPEND_POLL_MS * 4)
+      await sleep(SPEND_POLL_MS * 4)
     }
     if (!runtimeIsCurrent(runtime)) return
     const started = Date.now()
@@ -437,7 +437,7 @@ export function scheduleUnlockLandingPass(runtime: WalletRuntime): void {
     const owner = accountKeyScopeFor(runtime.instance)
     const tally = { landed: 0, dead: 0, waiting: 0 }
     for (const [i, pin] of pins.entries()) {
-      if (i > 0) await delay(UNLOCK_GAP_MS)
+      if (i > 0) await sleep(UNLOCK_GAP_MS)
       if (!runtimeIsCurrent(runtime)) return
       const atomic = (await chequeBody(pin.txid, owner)) ?? undefined
       const round = await checkLanding({

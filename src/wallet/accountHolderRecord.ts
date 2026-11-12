@@ -1,6 +1,7 @@
 /**
  * The holder record on the backup host (`accountHolding.ts` decides what it means).
  */
+import { timeoutSignal } from './timing'
 import { errorText } from './errorText'
 import {
   parseHolderRecord,
@@ -21,12 +22,6 @@ export function holderObjectUrl(identityKey: string): string | null {
   return base ? `${base}/v1/wallets/${encodeURIComponent(identityKey.trim())}/holder.json` : null
 }
 
-function timeoutSignal(): AbortSignal | undefined {
-  return typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
-    ? AbortSignal.timeout(REQUEST_TIMEOUT_MS)
-    : undefined
-}
-
 function messageOf(error: unknown): string {
   return errorText(error)
 }
@@ -40,7 +35,7 @@ export async function readHolderRecord(account: AccountKeys): Promise<HolderRead
       method: 'GET',
       headers: { Accept: 'application/json' },
       cache: 'no-store',
-      signal: timeoutSignal(),
+      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
     })
   } catch (error) {
     return { kind: 'unreachable', reason: messageOf(error) }
@@ -85,7 +80,7 @@ export async function writeHolderRecord(
       method: 'PUT',
       headers,
       body: JSON.stringify(record),
-      signal: timeoutSignal(),
+      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
     })
   } catch (error) {
     return { kind: 'unreachable', reason: messageOf(error) }

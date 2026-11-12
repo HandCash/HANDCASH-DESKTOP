@@ -1,3 +1,4 @@
+import { timeoutSignal } from './timing'
 import { errorText } from './errorText'
 import { PrivateKey } from '@bsv/sdk'
 import { storageRegistry } from '../storage/registry'
@@ -78,10 +79,6 @@ export function walletProtocolsUrl(identityKey: string): string {
   return `${base}/v1/identities/${encodeURIComponent(identityKey.trim().toLowerCase())}/protocols.json`
 }
 
-function timeoutSignal(): AbortSignal | undefined {
-  return typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal ? AbortSignal.timeout(REQUEST_TIMEOUT_MS) : undefined
-}
-
 const publishedKey = (wallet: ActiveWallet) =>
   accountLocalKeyFor(storageRegistry.walletProtocols.key, {
     identityKey: wallet.identityKey,
@@ -104,7 +101,7 @@ export async function publishWalletProtocols(wallet: ActiveWallet): Promise<'pub
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(record),
-      signal: timeoutSignal(),
+      signal: timeoutSignal(REQUEST_TIMEOUT_MS),
     })
     if (!res.ok) throw new Error(`protocols publish ${res.status}`)
   } catch (err) {
@@ -130,7 +127,7 @@ export async function readPeerProtocols(identityKey: string): Promise<PeerProtoc
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.read
   let read: PeerProtocols
   try {
-    const res = await fetch(walletProtocolsUrl(key), { headers: { Accept: 'application/json' }, cache: 'no-store', signal: timeoutSignal() })
+    const res = await fetch(walletProtocolsUrl(key), { headers: { Accept: 'application/json' }, cache: 'no-store', signal: timeoutSignal(REQUEST_TIMEOUT_MS) })
     if (res.status === 404) read = { kind: 'absent' }
     else if (!res.ok) read = { kind: 'unreachable', reason: `protocols read ${res.status}` }
     else {

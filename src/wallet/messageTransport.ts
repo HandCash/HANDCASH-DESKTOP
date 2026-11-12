@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
@@ -1700,7 +1701,7 @@ export async function notifyPeerItemIncoming(args: {
       }
       return result
     }
-    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
+    await sleep(400 * 2 ** attempt)
   }
   return none
 }
@@ -1793,7 +1794,7 @@ export async function notifyPeerBrc29Payment(args: {
         provenanceInBox: false,
       }
     }
-    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
+    await sleep(400 * 2 ** attempt)
   }
   return { delivered: 'local', beefInBox: false, provenanceInBox: false }
 }

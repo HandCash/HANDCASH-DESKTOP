@@ -5,6 +5,7 @@
  * may ring, Activity for the outcome.
  */
 
+import { sleep } from '../timing'
 import { PrivateKey, ProtoWallet } from '@bsv/sdk'
 import { hasDirectSession, tryDirectDeliver } from '../directSession/session'
 import { isSenderBlocked } from '../blockedSenders'
@@ -50,7 +51,7 @@ async function connect(peer: string): Promise<boolean> {
   while (Date.now() < deadline) {
     if (hasDirectSession(peer)) return true
     if (getActiveWallet() !== wallet) return false
-    await new Promise((resolve) => setTimeout(resolve, CONNECT_POLL_MS))
+    await sleep(CONNECT_POLL_MS)
   }
   return hasDirectSession(peer)
 }

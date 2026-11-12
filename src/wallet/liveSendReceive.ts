@@ -10,6 +10,7 @@
  *   npm run test:live-tx
  *   HANDCASH_LIVE_ROUNDS=10 HANDCASH_LIVE_PINGPONG=1 npm run test:live-tx
  */
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import {
   formatFundBanner,
@@ -83,10 +84,6 @@ async function phase<T>(
     liveLog(originMs, log, `FAIL  ${name}  ${ms}ms  ${detail}`)
     throw err
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function stopWallet(wallet: ActiveWallet): void {

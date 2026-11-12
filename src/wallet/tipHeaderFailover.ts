@@ -5,6 +5,7 @@
  * monitor only needs a header object; a last-known tip is "no new block",
  * which is the truth until a provider answers again.
  */
+import { withTimeout } from './timing'
 import { fetchBlockHeaderForHeight, peekHighestCachedHeader } from './blockHeaders'
 import { appendAppLog } from './appLog'
 import type { Chain } from './vault'
@@ -12,20 +13,6 @@ import type { Chain } from './vault'
 const ORIGINAL_TIMEOUT_MS = 3_000
 const BITAILS_TIMEOUT_MS = 8_000
 const STALE_LOG_MS = 60_000
-
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), ms)
-      }),
-    ])
-  } finally {
-    if (timer != null) clearTimeout(timer)
-  }
-}
 
 function headerHeight(value: unknown): number | undefined {
   if (value == null || typeof value !== 'object') return undefined

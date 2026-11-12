@@ -1,3 +1,4 @@
+import { sleep } from '../timing'
 import { errorText } from '../errorText'
 import { Hash, Utils, type PrivateKey } from '@bsv/sdk'
 import type { Chain } from '../vault'
@@ -218,7 +219,7 @@ async function wocSlot(): Promise<void> {
   const now = Date.now()
   const wait = Math.max(0, wocNextSlot - now)
   wocNextSlot = Math.max(now, wocNextSlot) + WOC_INTERVAL_MS
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+  if (wait > 0) await sleep(wait)
 }
 
 /** Test-only. */
@@ -253,7 +254,7 @@ export async function wocBulkPost(
     }
     const delay = RETRY_DELAYS_MS[attempt]
     if (delay == null) break
-    await new Promise((resolve) => setTimeout(resolve, delay))
+    await sleep(delay)
   }
   throw new Error(lastError)
 }

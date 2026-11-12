@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { pinnedActiveWallet } from './pinnedWallet'
@@ -1632,7 +1633,7 @@ export async function ingestPaymentsFromTipHints(
         lastReason = result.reason ?? lastReason
         missingParents = result.missingParents ?? missingParents
         if (attempt < ingestAttempts - 1) {
-          await new Promise((r) => setTimeout(r, ingestDelayMs))
+          await sleep(ingestDelayMs)
         }
       }
       if (!accepted) {
@@ -1697,7 +1698,7 @@ export async function ingestPaymentsFromTipHints(
           break
         }
         if (attempt < ingestAttempts - 1) {
-          await new Promise((r) => setTimeout(r, ingestDelayMs))
+          await sleep(ingestDelayMs)
         }
       }
       if (!accepted) {
@@ -1720,7 +1721,7 @@ export async function ingestPaymentsFromTipHints(
         break
       }
       if (attempt < ingestAttempts - 1) {
-        await new Promise((r) => setTimeout(r, ingestDelayMs))
+        await sleep(ingestDelayMs)
       }
     }
     if (!accepted) {

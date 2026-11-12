@@ -3,6 +3,7 @@
  * Overlaps that the machine forbids still wait on acquire; distinct regions no
  * longer share one FIFO (so a queued backup does not delay a waiting spend).
  */
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { createActor, type Actor } from 'xstate'
 import { setStallContextProvider } from './appLog'
@@ -372,7 +373,7 @@ export async function waitForWalletRegionsIdle(maxWaitMs: number): Promise<boole
         left,
       )
     } else {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(500, left)))
+      await sleep(Math.min(500, left))
     }
   }
   return true

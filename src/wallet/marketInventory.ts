@@ -1,3 +1,4 @@
+import { withTimeout } from './timing'
 import type { WalletInterface } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { authenticityFromProvenCache, getProvenVerdict } from './provenCache'
@@ -116,7 +117,7 @@ export async function listMarketBasketOutputs(
   live.catch(() => {})
 
   try {
-    return await raceTimeout(live, MARKET_LIST_TIMEOUT_MS)
+    return await withTimeout(live, MARKET_LIST_TIMEOUT_MS, 'listOutputs timed out')
   } catch (err) {
     const fallback = fromProjection ? cachedMarketListOutputs(basket) : null
     if (fallback && fallback.outputs.length > 0) {
@@ -133,7 +134,7 @@ export async function listMarketBasketOutputs(
     console.info(
       `[market-inventory] ${String(basket ?? 'basket')} cold and slow — waiting out the live read`,
     )
-    return await raceTimeout(live, MARKET_LIST_COLD_CEILING_MS)
+    return await withTimeout(live, MARKET_LIST_COLD_CEILING_MS, 'listOutputs timed out')
   }
 }
 
@@ -145,16 +146,6 @@ function isListTimeout(err: unknown): boolean {
  * Race without abandoning the work. The timer is always cleared, so a slow
  * basket cannot leave a pending timeout alive for the rest of the session.
  */
-function raceTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const expiry = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('listOutputs timed out')), ms)
-  })
-  return Promise.race([work, expiry]).finally(() => {
-    if (timer !== undefined) clearTimeout(timer)
-  }) as Promise<T>
-}
-
 /**
  * Market-only extension to BRC-100 listOutputs rows.
  *

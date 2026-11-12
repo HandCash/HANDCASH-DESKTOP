@@ -12,6 +12,7 @@
  * delayed broadcast is not yet in the indexer, and toolbox storage may not
  * expose `getBeefForTransaction` until proven.
  */
+import { withTimeout } from './timing'
 import { errorText } from './errorText'
 import { Beef, Transaction, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
@@ -152,39 +153,6 @@ function readDurableBeef(txid: string): Beef | null {
     return beef
   } catch {
     return null
-  }
-}
-
-async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let settled = false
-  // If we time out first, swallow a later settle so it is not an unhandled rejection.
-  void work.then(
-    () => undefined,
-    () => undefined,
-  )
-  try {
-    return await new Promise<T>((resolve, reject) => {
-      timer = setTimeout(() => {
-        if (settled) return
-        settled = true
-        reject(new Error(`${label} timed out after ${ms}ms`))
-      }, ms)
-      work.then(
-        (value) => {
-          if (settled) return
-          settled = true
-          resolve(value)
-        },
-        (err) => {
-          if (settled) return
-          settled = true
-          reject(err)
-        },
-      )
-    })
-  } finally {
-    if (timer) clearTimeout(timer)
   }
 }
 
@@ -525,7 +493,7 @@ async function readToolboxRawTx(
         return Array.isArray(bytes) && bytes.length > 0 ? bytes : null
       }),
       BEEF_FETCH_TIMEOUT_MS,
-      `storage rawTx ${key.slice(0, 8)}`,
+      `storage rawTx ${key.slice(0, 8)} timed out after ${BEEF_FETCH_TIMEOUT_MS}ms`,
     )
     if (!rawTx) return null
     const tx = Transaction.fromBinary(rawTx)
@@ -565,7 +533,7 @@ async function getBeefFromLocalStorage(
         return beef.findTxid(keyOf(txid))?.tx ? beef : null
       }),
       BEEF_FETCH_TIMEOUT_MS,
-      `storage BEEF ${txid.slice(0, 8)}`,
+      `storage BEEF ${txid.slice(0, 8)} timed out after ${BEEF_FETCH_TIMEOUT_MS}ms`,
     )
   } catch {
     return null
@@ -579,7 +547,7 @@ async function fetchBitailsRawTx(txid: string): Promise<number[] | null> {
         headers: { Accept: 'text/plain' },
       }),
       12_000,
-      `bitails hex ${txid.slice(0, 8)}`,
+      `bitails hex ${txid.slice(0, 8)} timed out after 12000ms`,
     )
     if (!res.ok) return null
     const hex = (await res.text()).trim()
@@ -616,7 +584,7 @@ async function fetchWocProvenBeef(
     const res = await withTimeout(
       fetch(`${base}/tx/${key}/beef`, { headers: { Accept: 'text/plain' } }),
       BEEF_FETCH_TIMEOUT_MS,
-      `woc beef ${key.slice(0, 8)}`,
+      `woc beef ${key.slice(0, 8)} timed out after ${BEEF_FETCH_TIMEOUT_MS}ms`,
     )
     if (!res.ok) return null
     const body = (await res.text()).trim()
@@ -704,7 +672,7 @@ async function getBeefFromRawTx(
       const result = await withTimeout(
         getRawTx(key),
         12_000,
-        `rawTx ${key.slice(0, 8)}`,
+        `rawTx ${key.slice(0, 8)} timed out after 12000ms`,
       )
       if (result?.rawTx?.length) raw = Array.from(result.rawTx)
     }
@@ -812,7 +780,7 @@ export async function getBeefForTxidCached(
           const beef = await withTimeout(
             getIndexerBeef(txid),
             BEEF_FETCH_TIMEOUT_MS,
-            `indexer BEEF ${txid.slice(0, 8)}`,
+            `indexer BEEF ${txid.slice(0, 8)} timed out after ${BEEF_FETCH_TIMEOUT_MS}ms`,
           )
           return beefHasSubjectTx(beef, key) ? beef : null
         } catch (err) {

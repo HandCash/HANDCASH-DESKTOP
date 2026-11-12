@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 import { storageRegistry } from '../storage/registry'
@@ -814,7 +815,6 @@ const PARENT_LANES = 8
  */
 const UNREADABLE_RETRY_PAUSE_MS = 10_000
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 type ItemParents = {
   shelf: BeefShelf

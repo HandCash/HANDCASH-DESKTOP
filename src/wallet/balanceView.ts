@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { getActiveWallet } from './session'
 import { yieldToUi } from './yieldToUi'
 import { foregroundSpendWaiting } from './walletCoordinator'
@@ -232,7 +233,7 @@ export async function unconfirmedChangeSats(opts?: {
       if (getActiveWallet() !== active) return 0
       // Spend preflight can call this reader itself; only display work waits.
       while (opts?.background && foregroundSpendWaiting()) {
-        await new Promise(resolve => setTimeout(resolve, 25))
+        await sleep(25)
         if (getActiveWallet() !== active) return 0
       }
       const done = await withStorageLockLabel('balanceView(change)', () =>

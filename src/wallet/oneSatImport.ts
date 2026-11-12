@@ -1,3 +1,4 @@
+import { withTimeout } from './timing'
 import { errorText } from './errorText'
 import { getActiveWallet } from './session'
 
@@ -657,27 +658,13 @@ export async function fetchRawTxHex(
  */
 const PROVIDER_TIMEOUT_MS = 20_000
 
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('provider request timed out')), ms)
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
-}
-
 async function fetchRawTxHexUncached(txid: string, chain: Chain): Promise<string | null> {
   // Prefer the toolbox provider: it has raw-transaction failover installed and
   // verifies the body hashes to the txid.
   const services = getActiveWallet()?.services
   if (services) {
     try {
-      const raw = await withTimeout(services.getRawTx(txid), PROVIDER_TIMEOUT_MS)
+      const raw = await withTimeout(services.getRawTx(txid), PROVIDER_TIMEOUT_MS, 'provider request timed out')
       const bytes = raw?.rawTx
       if (bytes && bytes.length > 0) {
         return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')

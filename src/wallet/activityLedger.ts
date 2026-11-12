@@ -8,6 +8,7 @@
  * never with an invented time. The last read is kept so a launch paints that
  * projection before a live read.
  */
+import { sleep } from './timing'
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { itemMigrateTxDescription, jobOfTxid } from './activityJobIndex'
 import { loadLedgerSnapshot, saveLedgerRows, type SavedLedger, type SavedLedgerTxs } from './activityLedgerStore'
@@ -642,7 +643,7 @@ const SEND_WAIT_MS = 30_000
 async function yieldToWaitingSends(runtime: WalletRuntime): Promise<void> {
   const until = Date.now() + SEND_WAIT_MS
   while (sendIsWaiting() && Date.now() < until) {
-    await new Promise((resolve) => setTimeout(resolve, SPEND_YIELD_MS))
+    await sleep(SPEND_YIELD_MS)
     assertCurrent(runtime)
   }
 }

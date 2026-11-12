@@ -1,3 +1,4 @@
+import { sleep } from './timing'
 import { getActiveWallet } from './session'
 
 import { Beef, P2PKH, type BEEF } from '@bsv/sdk'
@@ -172,7 +173,7 @@ async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
   const wait = Math.max(0, wocNextSlotAt - now)
   if (wait > SCAN_TIMEOUT_MS) return null
   wocNextSlotAt = Math.max(now, wocNextSlotAt) + WOC_MIN_INTERVAL_MS
-  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+  if (wait > 0) await sleep(wait)
   try {
     const res = await fetchWithDeadline(url)
     if (res.status === 429) {

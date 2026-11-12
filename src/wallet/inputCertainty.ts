@@ -18,6 +18,7 @@
  * refuse with a named reason, and the fresh signature is failed locally — it
  * never left this device.
  */
+import { sleep } from './timing'
 import { Beef, Transaction } from '@bsv/sdk'
 import type { Wallet } from '@handcash/wallet-engine'
 import type { Chain } from './vault'
@@ -56,7 +57,6 @@ const MAX_FUNDING_REBUILDS = 5
  */
 const PEER_WAIT_MS = 8_000
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 export type RefusalReason = UncertainReason | 'still-dead' | 'input-spent'
 
@@ -122,7 +122,7 @@ async function parentStanding(parent: string, chain: Chain): Promise<ParentStand
     const left = deadline - Date.now()
     const fate = await Promise.race([
       fetchArcadeTxFate(chain, parent),
-      delay(Math.max(left, 250)).then(() => ({ kind: 'unknown' as const })),
+      sleep(Math.max(left, 250)).then(() => ({ kind: 'unknown' as const })),
     ])
     if (fate.kind === 'accepted' && arcadeStatusLanded(fate.status)) {
       noteTxLanded(parent)
@@ -137,7 +137,7 @@ async function parentStanding(parent: string, chain: Chain): Promise<ParentStand
       }
     }
     if (Date.now() + PARENT_POLL_MS >= deadline) return 'unlanded'
-    await delay(PARENT_POLL_MS)
+    await sleep(PARENT_POLL_MS)
   }
 }
 
@@ -280,7 +280,7 @@ export async function signWithCertainInputs<T>(
   let signed = await sign()
   const firstTxid = extractTxid(signed)?.toLowerCase()
   if (!firstTxid || txCertified(firstTxid)) return signed
-  await Promise.race([peerRead, delay(PEER_WAIT_MS)])
+  await Promise.race([peerRead, sleep(PEER_WAIT_MS)])
   for (let attempt = 1; ; attempt += 1) {
     const judged = await judgeSignedInputs(signed, chain)
     if (!judged) return signed
@@ -332,7 +332,7 @@ export async function certifyBeforeSigning(
   } catch {
     subject = ''
   }
-  await Promise.race([refreshPeerDeviceSpends(), delay(PEER_WAIT_MS)])
+  await Promise.race([refreshPeerDeviceSpends(), sleep(PEER_WAIT_MS)])
   const judged = subject ? await judgeSignedInputs({ txid: subject, tx: unsigned }, chain) : null
   const verdict: InputCertainty = judged?.verdict ?? {
     kind: 'uncertain',

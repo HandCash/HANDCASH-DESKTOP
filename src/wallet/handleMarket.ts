@@ -17,6 +17,7 @@ import { storageRegistry } from '../storage/registry'
 import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
+import { sleep } from './timing'
 import {
   HandleIssueError,
   parseHandleIssueScope,
@@ -405,7 +406,7 @@ async function marketPost<T>(path: string, scope: HandleIssueScope, body: unknow
 export function walletHandleMarketDeps(activeIdentityKey: () => string | null): HandleMarketDeps {
   return {
     enabled: HANDLE_MARKET_ENABLED,
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    sleep,
     activeIdentityKey,
     holderOf: async (handle) => {
       const { HandleNotFoundError, resolveHandle } = await import('./handleResolve')

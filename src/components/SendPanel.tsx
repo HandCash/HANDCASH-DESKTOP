@@ -1,3 +1,4 @@
+import { withTimeout } from '../wallet/timing'
 import { errorText } from '../wallet/errorText'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
@@ -107,22 +108,6 @@ function trimAmountInput(raw: number): string {
 }
 
 const REVIEW_BALANCE_TIMEOUT_MS = 10_000
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const id = window.setTimeout(() => reject(new Error(message)), ms)
-    promise.then(
-      (value) => {
-        window.clearTimeout(id)
-        resolve(value)
-      },
-      (err) => {
-        window.clearTimeout(id)
-        reject(err)
-      },
-    )
-  })
-}
 
 /** Keep the satoshi value when the send form swaps fiat <-> coin. */
 function amountInputFromSats(
