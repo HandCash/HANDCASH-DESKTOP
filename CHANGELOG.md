@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.710] - 2026-11-12
+
+### Changed
+
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
+
 ## [1.3.672] - 2026-11-09
 
 ### Fixed
@@ -179,13 +185,13 @@ Two-device read-only viewing and signing-only ownership moves are deferred.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.641] - 2026-11-06
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.640] - 2026-11-01
 
@@ -603,7 +609,7 @@ Two-device read-only viewing and signing-only ownership moves are deferred.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.601] - 2026-10-18
 
@@ -1530,7 +1536,7 @@ Two-device read-only viewing and signing-only ownership moves are deferred.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.478] - 2026-10-07
 
@@ -3560,7 +3566,7 @@ BSV-21 conformance pass against BRC-162 / BRC-163 / BRC-176 (Jev audit, 22 claus
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.323] - 2026-09-24
 
@@ -3648,7 +3654,7 @@ BSV-21 conformance pass against BRC-162 / BRC-163 / BRC-176 (Jev audit, 22 claus
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.317] - 2026-09-24
 
@@ -4188,13 +4194,13 @@ BSV-21 conformance pass against BRC-162 / BRC-163 / BRC-176 (Jev audit, 22 claus
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.279] - 2026-09-22
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.278] - 2026-09-22
 
@@ -4956,7 +4962,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.222] - 2026-09-17
 
@@ -5035,7 +5041,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.217] - 2026-09-17
 
@@ -5496,7 +5502,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.180] - 2026-09-15
 
@@ -5509,7 +5515,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.178] - 2026-09-15
 
@@ -6028,7 +6034,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.111] - 2026-09-07
 
@@ -6245,7 +6251,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.84] - 2026-09-02
 
@@ -6326,7 +6332,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.73] - 2026-09-02
 
@@ -6390,7 +6396,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.66] - 2026-09-01
 
@@ -6414,13 +6420,13 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.63] - 2026-09-01
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.62] - 2026-09-01
 
@@ -6522,7 +6528,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.51] - 2026-09-01
 
@@ -6715,25 +6721,25 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.23] - 2026-08-29
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.22] - 2026-08-29
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.21] - 2026-08-29
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.20] - 2026-08-29
 
@@ -6794,13 +6800,13 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.12] - 2026-08-29
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.3.11] - 2026-08-28
 
@@ -7126,7 +7132,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.2.287] - 2026-08-22
 
@@ -7298,7 +7304,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.2.273] - 2026-08-21
 
@@ -7792,7 +7798,7 @@ undoing that window's work.
 - **Failed sends vanished from Activity.** Sending… rows were deleted on error. They now stay as failed rows with the reason (also when the 90s stuck watchdog fires).
 
 ### Changed
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.2.219] - 2026-08-12
 
@@ -9723,7 +9729,7 @@ undoing that window's work.
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Apps grid scales to five columns on wide layouts; Apps head and card action rows stay on one line.
 
 ## [1.2.37] - 2026-08-05
 
