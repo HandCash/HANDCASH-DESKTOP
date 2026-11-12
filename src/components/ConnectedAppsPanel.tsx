@@ -253,7 +253,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           </Button.Root>
           <Button.Root
             variant="ghost"
-            className="wallet-nav-chrome-btn connected-app-tabs-button"
+            className="wallet-nav-chrome-btn"
             aria-label="Developer keys"
             title="Developer keys"
             onClick={() => {
@@ -262,7 +262,6 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
             }}
           >
             <CodeIcon size={16} />
-            <span>Dev</span>
           </Button.Root>
           <CollectionViewToggle label="Apps view" scope="apps" />
         </TitlebarActions>
