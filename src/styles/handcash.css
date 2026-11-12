@@ -6738,6 +6738,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-actions-pill:not(.wallet-
 
 .connected-panel-head-actions {
   display: inline-flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   justify-content: flex-end;
@@ -7765,21 +7766,34 @@ html[data-aeon-mode='light'] .history-batch-count {
 }
 
 @container connected-apps (max-width: 439px) {
-  .collection-grid {
+  [data-aeon-scope='connected-apps'] .collection-grid {
     grid-template-columns: 1fr;
   }
 }
 
-@container connected-apps (min-width: 560px) {
-  .collection-grid {
+@container connected-apps (min-width: 440px) {
+  [data-aeon-scope='connected-apps'] .collection-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
-/* Desktop wide: force 3-up even if the panel container reports shy of cqi. */
-@media (min-width: 900px) {
+@container connected-apps (min-width: 640px) {
   [data-aeon-scope='connected-apps'] .collection-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@container connected-apps (min-width: 820px) {
+  [data-aeon-scope='connected-apps'] .collection-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  html:not(.platform-mobile):not(.layout-compact)
+    [data-aeon-scope='connected-apps']
+    .collection-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
@@ -8500,6 +8514,14 @@ html[data-aeon-mode='light']
 .connected-app-row .connected-app-card-actions .connected-app-icon-action {
   justify-content: center;
   align-items: center;
+}
+
+.collection-grid-card .connected-app-card-actions {
+  flex-wrap: nowrap;
+}
+
+.collection-grid-card .connected-app-card-actions > * {
+  flex-shrink: 0;
 }
 
 .collection-grid-card .connected-app-card-actions > .connected-app-icon-action {
