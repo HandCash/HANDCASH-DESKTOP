@@ -2,7 +2,7 @@ import { sleep } from '../wallet/timing'
 import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
 import { getActiveWallet } from '../wallet/session'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { useTickerCoin } from '../features/tickerCoin'
 import { refreshFromChain } from '../wallet/chainIngest'
@@ -223,6 +223,7 @@ export function Dashboard({
   const [claimedHandle, setClaimedHandle] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
+  const activeFlow = useSyncExternalStore(subscribeNav, () => getNavState().child?.type ?? null)
   const compact = useCompactShell()
   const fiatCode = useFiatCurrency()
   const fiatOption = getFiatOption(fiatCode)
@@ -830,6 +831,7 @@ export function Dashboard({
             <div className="actions wallet-actions">
               <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
+                aria-pressed={activeFlow === 'send'}
                 onClick={() => {
                   playWalletSound('soft')
                   openSendFlow()
@@ -841,6 +843,7 @@ export function Dashboard({
               {shownChains.length > 0 ? (
                 <Button.Root variant="ghost"
                   className="btn btn-ghost btn-icon wallet-action--swap"
+                  aria-pressed={activeFlow === 'swap'}
                   onClick={() => {
                     playWalletSound('soft')
                     openSwapFlow()
@@ -852,6 +855,7 @@ export function Dashboard({
               ) : null}
               <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
+                aria-pressed={activeFlow === 'receive'}
                 onClick={() => {
                   playWalletSound('soft')
                   openReceiveFlow()

@@ -20489,6 +20489,21 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   }
 }
 
+/* Selected/open chrome uses the page color with a raised bevel, not gray.
+   No transforms: the fiat/account dropdowns must keep their existing anchors. */
+.wallet-nav-titlebar-label,
+.wallet-nav-titlebar-crumbs,
+.wallet-hero .wallet-actions .btn:is(:hover, :active, :focus-visible, [aria-pressed='true']),
+html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn:is(:hover, :active, :focus-visible, [aria-pressed='true']),
+.wallet-nav-actions-pill.wallet-hero-metric:has(.fiat-currency-trigger:is(:active, :focus-visible, [aria-expanded='true'])),
+.wallet-nav-actions-pill.wallet-hero-identity-chrome:has(.wallet-hero-identity:is(:active, :focus-visible, [aria-expanded='true'])) {
+  background: var(--hc-bg);
+  border-radius: var(--wallet-nav-pill-radius, var(--hc-radius));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-text) 20%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--hc-text) 8%, transparent),
+    0 3px 5px color-mix(in srgb, var(--hc-text) 18%, transparent);
+}
+
 /* The chart still owns selection; depth is presentation only. */
 .wallet-nav-titlebar-pill,
 .wallet-nav-actions-pill,
