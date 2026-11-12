@@ -97,14 +97,18 @@ export default defineConfig({
         secure: false,
       },
       // Toolbox Arcade client sends xdeployment-id; browser CORS blocks it direct.
+      // Cloudflare resolves to several IPv4/IPv6 addresses; Node's short default
+      // address-attempt window exhausts them on a slow connection (ETIMEDOUT).
       '/arcade-v2': {
         target: 'https://arcade-v2-us-1.bsvblockchain.tech',
+        agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/arcade-v2/, ''),
       },
       '/arcade-v2-testnet': {
         target: 'https://arcade-v2-testnet-us-1.bsvblockchain.tech',
+        agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/arcade-v2-testnet/, ''),
