@@ -38,12 +38,11 @@ import {
 } from "../wallet/walletRuntime";
 import { AsyncActionPrompt } from "./AsyncActionPrompt";
 import { EmptyState } from "./EmptyState";
-import { AppsIcon, KeyIcon, WalletScopeIcon } from "./icons";
+import { CodeIcon, KeyIcon, WalletScopeIcon } from "./icons";
 import { launchConnectedApp } from "../wallet/openAppInWalletBrowser";
 
 const BRC_WORKER_ORIGIN = "https://brc-cloud.bcryderman.workers.dev";
 import { Skeleton } from "./Skeleton";
-import { SettingsNavRow } from "./settings";
 
 type DevKeyAction =
   | "create"
@@ -618,17 +617,17 @@ export function DevKeysPanel() {
       data-aeon-scope="dev-keys"
       data-aeon-state={stateToAttr(snapshot.value)}
     >
-      <ul className="settings-list" data-aeon-part="portal">
-        <SettingsNavRow
-          label="BRC Wørker"
-          description="HandCash apps on BRC-CLOUD"
-          icon={<AppsIcon size={20} />}
-          trailingEnd={<span data-aeon-part="portal-go">Open</span>}
+      <div data-aeon-part="portal">
+        <Button.Root
+          variant="outline"
           onClick={() =>
             launchConnectedApp(BRC_WORKER_ORIGIN, `${BRC_WORKER_ORIGIN}/`, "in-app")
           }
-        />
-      </ul>
+        >
+          <CodeIcon size={16} />
+          Dev portal
+        </Button.Root>
+      </div>
       <p className="settings-hint">
         Keys you give your own server. Each one is a wallet your server
         spends, funded from here. None of them can reveal your wallet keys or

@@ -262,6 +262,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
             }}
           >
             <CodeIcon size={16} />
+            <span>Dev</span>
           </Button.Root>
           <CollectionViewToggle label="Apps view" scope="apps" />
         </TitlebarActions>
