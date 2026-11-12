@@ -20491,8 +20491,6 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
 
 /* Selected/open chrome uses the page color with a raised bevel, not gray.
    No transforms: the fiat/account dropdowns must keep their existing anchors. */
-.wallet-nav-titlebar-label,
-.wallet-nav-titlebar-crumbs,
 .wallet-hero .wallet-actions .btn:is(:hover, :active, :focus-visible, [aria-pressed='true']),
 html[data-aeon-mode='light'] .wallet-hero .wallet-actions .btn:is(:hover, :active, :focus-visible, [aria-pressed='true']),
 .wallet-nav-actions-pill.wallet-hero-metric:has(.fiat-currency-trigger:is(:active, :focus-visible, [aria-expanded='true'])),
@@ -20514,19 +20512,15 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
     0 3px 5px color-mix(in srgb, var(--hc-text) 12%, transparent);
 }
 
-.wallet-nav-titlebar-pill .wallet-nav-tab {
-  background: var(--hc-bg);
+/* Label/path and selected tab expose one continuous raised surface.
+   The original unselected plates retain their inset-track silhouette. */
+.wallet-nav-titlebar-pill .wallet-nav-titlebar-label,
+.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
 }
 
-.wallet-nav-titlebar-pill .wallet-nav-tab:is([data-selected], [aria-selected='true']),
-html[data-aeon-mode='light'] .wallet-nav-titlebar-pill .wallet-nav-tab:is([data-selected], [aria-selected='true']) {
-  color: var(--hc-accent);
-  background: var(--hc-bg);
-  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
-  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
-}
-
-.wallet-nav-titlebar-pill .wallet-nav-tab:active,
 .wallet-nav-actions-pill .wallet-nav-chrome-btn:active {
   box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
 }
