@@ -20,7 +20,8 @@ import {
   ERC20_TRANSFER_TOPIC,
   type ArcReceiptProof,
 } from './backing'
-import { assertEthAddress, bytesToHex } from './address'
+import { bytesToHex } from '../hexBinary'
+import { assertEthAddress } from './address'
 import { ARC_USDC_ERC20, type ArcNetwork } from './chain'
 import { decodeUint256 } from './erc20'
 import {

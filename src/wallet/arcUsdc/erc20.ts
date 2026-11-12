@@ -3,7 +3,7 @@
  * wei): 1 atom = 10^12 wei.
  */
 import { ARC_USDC_DECIMALS, ARC_USDC_ERC20 } from './chain'
-import { assertEthAddress, bytesToHex, hexToBytes } from './address'
+import { assertEthAddress, ethHexToBytes } from './address'
 import { ethCall, type ArcRpc } from './rpc'
 
 /** ERC-20 `transfer(address,uint256)` selector. */
@@ -55,7 +55,7 @@ function padUint(value: bigint): string {
 }
 
 export function transferDataBytes(to: string, atoms: bigint): Uint8Array {
-  return hexToBytes(encodeTransfer(to, atoms))
+  return ethHexToBytes(encodeTransfer(to, atoms))
 }
 
 export function formatUsdcAtoms(atoms: bigint): string {
@@ -73,5 +73,3 @@ export function parseUsdcAtoms(text: string): bigint {
   const fracPad = frac.padEnd(ARC_USDC_DECIMALS, '0')
   return BigInt(whole!) * 10n ** BigInt(ARC_USDC_DECIMALS) + BigInt(fracPad || '0')
 }
-
-export { bytesToHex }

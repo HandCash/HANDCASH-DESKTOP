@@ -14,7 +14,8 @@ export type DecodedBProtocol = {
   filename?: string
 }
 
-function hexToBytes(hex: string): number[] | null {
+/** Script hex to bytes, or null when it is not even-length hex. */
+function parseScriptHex(hex: string): number[] | null {
   const n = hex.trim().toLowerCase()
   if (!n || n.length % 2 !== 0 || !/^[0-9a-f]+$/.test(n)) return null
   const out: number[] = []
@@ -65,7 +66,7 @@ function readPush(bytes: number[], at: number): { data: number[]; next: number }
 
 export function decodeBProtocol(scriptHex: string | undefined): DecodedBProtocol | null {
   if (!scriptHex) return null
-  const bytes = hexToBytes(scriptHex)
+  const bytes = parseScriptHex(scriptHex)
   if (!bytes || bytes.length < 4) return null
   if (bytes[0] !== 0x00 || bytes[1] !== 0x6a) return null
   const pushes: Uint8Array[] = []

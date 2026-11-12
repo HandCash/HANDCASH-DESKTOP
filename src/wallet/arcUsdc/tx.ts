@@ -3,7 +3,8 @@
  */
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { signAsync } from '@noble/secp256k1'
-import { bytesToHex, hexToBytes } from './address'
+import { bytesToHex } from '../hexBinary'
+import { ethHexToBytes } from './address'
 import { rlpEncode, rlpUint } from './rlp'
 
 export type LegacyTx = {
@@ -22,7 +23,7 @@ export async function signLegacyTx(tx: LegacyTx, privateKeyHex: string): Promise
     rlpUint(tx.nonce),
     rlpUint(tx.gasPrice),
     rlpUint(tx.gasLimit),
-    hexToBytes(tx.to),
+    ethHexToBytes(tx.to),
     rlpUint(tx.value),
     tx.data,
     rlpUint(tx.chainId),
@@ -40,7 +41,7 @@ export async function signLegacyTx(tx: LegacyTx, privateKeyHex: string): Promise
     rlpUint(tx.nonce),
     rlpUint(tx.gasPrice),
     rlpUint(tx.gasLimit),
-    hexToBytes(tx.to),
+    ethHexToBytes(tx.to),
     rlpUint(tx.value),
     tx.data,
     rlpUint(v),
@@ -53,5 +54,5 @@ export async function signLegacyTx(tx: LegacyTx, privateKeyHex: string): Promise
 function normalizeKey(hex: string): Uint8Array {
   const body = hex.startsWith('0x') ? hex.slice(2) : hex
   if (!/^[0-9a-fA-F]{64}$/.test(body)) throw new Error('ARC_USD_KEY: need 32-byte hex private key')
-  return hexToBytes(body)
+  return ethHexToBytes(body)
 }

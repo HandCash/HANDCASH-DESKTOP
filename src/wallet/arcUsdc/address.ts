@@ -2,6 +2,7 @@
  * Arc / EVM address from a secp256k1 key (same curve as BSV).
  * Address = last 20 bytes of keccak256(uncompressed pubkey without 0x04).
  */
+import { bytesToHex } from '../hexBinary'
 import { coinPublicKey, type KeyMaterial } from '../primitives/coinCrypto'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 
@@ -37,13 +38,8 @@ export function assertEthAddress(value: unknown): string {
   return toChecksumAddress(value)
 }
 
-export function bytesToHex(bytes: Uint8Array): string {
-  let out = ''
-  for (const b of bytes) out += b.toString(16).padStart(2, '0')
-  return out
-}
-
-export function hexToBytes(hex: string): Uint8Array {
+/** Strict Ethereum hex: optional 0x, even length, throws otherwise. */
+export function ethHexToBytes(hex: string): Uint8Array {
   const body = hex.startsWith('0x') || hex.startsWith('0X') ? hex.slice(2) : hex
   if (body.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(body)) {
     throw new Error('ARC_USD_HEX: expected even-length hex')

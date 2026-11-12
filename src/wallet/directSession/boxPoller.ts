@@ -88,13 +88,13 @@ export function createBoxPoller(o: {
     return inFlight
   }
 
-  function delay(): number {
+  function nextDelayMs(): number {
     if (failures > 0) return Math.min(MAX_BACKOFF_MS, receiveMs * 2 ** failures)
     if (o.dialing()) return dialMs
     return hidden() ? HIDDEN_MS : receiveMs
   }
 
-  function schedule(ms = delay()): void {
+  function schedule(ms = nextDelayMs()): void {
     if (!running) return
     clearTimeout(timer)
     dueAt = Date.now() + ms
