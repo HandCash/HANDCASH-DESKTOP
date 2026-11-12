@@ -20573,14 +20573,21 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   display: flex;
   align-items: center;
   flex: none;
-  gap: 2px;
-  padding-right: 4px;
+  gap: 4px;
+  padding-right: 8px;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn {
-  width: 30px;
-  min-width: 30px;
-  padding: 4px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 999px;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn-icon svg {
+  width: 18px;
+  height: 18px;
 }
 
 [data-aeon-scope='notes'] [data-aeon-part='head'] {
