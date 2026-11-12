@@ -225,12 +225,13 @@ export const storageRegistry = Object.freeze({
     scope: 'device',
     version: 1,
   }),
-  /** Prior cloud HandCash login on this device (upgrade / migrate remember). */
-  cloudPriorSession: defineStorage({
+  /** Retired prior-cloud-login flag; only reclaimed. Migration is the `cloudMigrationIntent` checkpoint. */
+  retiredCloudPriorSession: defineStorage({
     key: 'handcash.cloud.priorSession.v1',
     owner: 'onboard',
     scope: 'device',
     version: 1,
+    retention: 'rebuildable',
   }),
   cloudMigrationIntent: defineStorage({
     key: 'handcash.cloud.migrationIntent.v1',

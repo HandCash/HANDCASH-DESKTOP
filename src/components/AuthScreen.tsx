@@ -86,7 +86,6 @@ import {
 } from './auth/authModes'
 import { armCloudMigrationIntent, cancelCloudMigrationIntent } from '../wallet/cloudMigrationIntent'
 import { toastError } from '../wallet/toast'
-import { readCloudPriorSession } from '../wallet/cloudPriorSession'
 import { setEmailRecoveryEnrollment } from '../wallet/brc250/store'
 import { setSigninEmail } from '../wallet/deviceSignin'
 import {
@@ -900,7 +899,6 @@ export function AuthScreen({
   if (formMode === 'entry' && !preparing) {
     return (
       <OnboardEntryPanel
-        session={readCloudPriorSession()}
         onSignIn={() => { cancelCloudMigrationIntent(); setFormMode(EXISTING_WALLET_MODE) }}
         onCreate={() => { cancelCloudMigrationIntent(); setFormMode('create') }}
         onMigrate={() => {
