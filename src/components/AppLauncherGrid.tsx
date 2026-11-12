@@ -1,3 +1,4 @@
+import { Button } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { useMachine } from '@xstate/react'
 import { useLayoutEffect, useMemo, useRef } from 'react'
@@ -6,7 +7,7 @@ import type { LauncherTile } from '../apps/launcherTiles'
 import { openAppDetails, openAppLaunch, openChartApp, openNativeApp } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { AppAvatar } from './AppAvatar'
-import { FileIcon } from './icons'
+import { FileIcon, LaunchIcon, SettingsIcon } from './icons'
 import { settingIconFor } from './settings'
 
 function launch(tile: LauncherTile): void {
@@ -80,6 +81,30 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                 {tile.label}
               </span>
             </button>
+            {open ? (
+              <div data-aeon-part="actions">
+                {tile.kind === 'peer' ? (
+                  <Button.Root
+                    variant="ghost"
+                    className="btn btn-ghost btn-icon"
+                    aria-label={`Manage ${tile.label}`}
+                    title={`Manage ${tile.label}`}
+                    onClick={() => openAppDetails(tile.app)}
+                  >
+                    <SettingsIcon size={17} />
+                  </Button.Root>
+                ) : null}
+                <Button.Root
+                  variant="ghost"
+                  className="btn btn-ghost btn-icon"
+                  aria-label={`Launch ${tile.label}`}
+                  title={`Launch ${tile.label}`}
+                  onClick={() => send({ type: 'TAP', id: tile.id })}
+                >
+                  <LaunchIcon size={17} />
+                </Button.Root>
+              </div>
+            ) : null}
           </li>
         )
       })}

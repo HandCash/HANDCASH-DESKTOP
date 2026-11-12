@@ -20489,6 +20489,61 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   }
 }
 
+/* The chart still owns selection; depth is presentation only. */
+.wallet-nav-titlebar-pill,
+.wallet-nav-actions-pill,
+html[data-aeon-mode='light'] .wallet-nav-titlebar-pill,
+html[data-aeon-mode='light'] .wallet-nav-actions-pill {
+  background: var(--hc-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-text) 14%, transparent),
+    0 3px 5px color-mix(in srgb, var(--hc-text) 12%, transparent);
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab {
+  background: var(--hc-bg);
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab:is([data-selected], [aria-selected='true']),
+html[data-aeon-mode='light'] .wallet-nav-titlebar-pill .wallet-nav-tab:is([data-selected], [aria-selected='true']) {
+  color: var(--hc-accent);
+  background: var(--hc-bg);
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
+}
+
+.wallet-nav-titlebar-pill .wallet-nav-tab:active,
+.wallet-nav-actions-pill .wallet-nav-chrome-btn:active {
+  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='cell'][data-aeon-state='focused'] {
+  display: flex;
+  align-items: stretch;
+  border: var(--hc-border-w) solid var(--hc-accent);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-surface);
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='tile'] {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn {
+  width: 30px;
+  min-width: 30px;
+  padding: 4px;
+}
+
 [data-aeon-scope='notes'] [data-aeon-part='head'] {
   display: flex;
   align-items: center;
