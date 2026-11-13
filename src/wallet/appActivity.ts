@@ -1018,12 +1018,17 @@ function findActivityTxMatchIndex(
         .toLowerCase()
         .replace("_", ".");
       if (existingOp && existingOp !== outpoint) return false;
-        }
-        // BNT rows carry no outpoint; two assets on one txid are distinct rows.
-        if (wantItem) {
-          const a = (args.item?.tokenId ?? args.item?.origin)?.trim().toLowerCase();
-          const b = (e.item?.tokenId ?? e.item?.origin)?.trim().toLowerCase();
-          if (a && b && a !== b) return false;
+    }
+    // BNT rows carry no outpoint; two different assets on one txid are distinct
+    // rows. A pending placeholder origin (`${txid}_pending`) names no asset yet.
+    if (wantItem) {
+      const assetKey = (item?: ActivityItem): string | undefined => {
+        const id = (item?.tokenId ?? item?.origin)?.trim().toLowerCase();
+        return id && !id.endsWith("_pending") ? id : undefined;
+      };
+      const a = assetKey(args.item);
+      const b = assetKey(e.item);
+      if (a && b && a !== b) return false;
     }
     return true;
   });
