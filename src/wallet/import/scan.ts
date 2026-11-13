@@ -18,7 +18,6 @@ import {
   hintedLookups,
   judgeHintedScan,
   readItemOwners,
-  recoveryHintsFor,
   type HandCashRecoveryHints,
   type HintVerdict,
 } from './recoveryHints'
@@ -56,21 +55,24 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   if (!source) throw new Error('That saved wallet is gone')
 
   const deriver = keyDeriverFor(source.secret)
-  const hints = args.gap == null ? recoveryHintsFor(source) : null
   const cache = new Map<string, AddressHoldings>()
-  const scan =
-    (args.gap == null && source.secret.kind === 'handcash'
-      ? await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
-      : null) ??
-    (hints ? await hintedScan(deriver, active.chain, hints, args, cache) : null) ??
-    (await walkScan(
+  let scan: SourceScan
+  if (args.gap == null && source.secret.kind === 'handcash') {
+    // HandCash keys read the account's UTXO set from the BRC-CLOUD worker only.
+    // No address walk: a refusal is reported, not scanned around.
+    const direct = await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
+    if (!direct) throw new Error('HandCash did not return this account’s UTXO set. Try the import again.')
+    scan = direct
+  } else {
+    scan = await walkScan(
       deriver,
       active.chain,
       args,
       { history: wocHistoryLookup(active.chain), items: gorillaItemsLookup(active.chain) },
       undefined,
       cache,
-    ))
+    )
+  }
   const saved = await updateImportedSource(source.id, { scan })
   if (!saved) throw new Error('That saved wallet was removed during the scan')
   return saved
