@@ -34,7 +34,6 @@ function memoryStore() {
 
 function fakeMarket(overrides: Partial<HandleMarketDeps> = {}) {
   let orders = 0
-  let tickets = 0
   const order = (handle: string, identityKey: string): HandleMarketOrder => ({
     id: `order-${++orders}`,
     handle,
@@ -54,7 +53,6 @@ function fakeMarket(overrides: Partial<HandleMarketDeps> = {}) {
     pay: vi.fn(async () => ({ txid: txidFor(1) })),
     fulfil: vi.fn(async (p: HandlePurchase) => ({
       order: { ...order(p.handle, p.identityKey), id: p.orderId, state: 'paid' as const },
-      claimTicket: `ticket${++tickets}.sig`,
     })),
     issue: vi.fn(async (_origin: string, req: HandleIssueRequest) => ({
       handle: req.handle,
@@ -100,7 +98,7 @@ describe('handles market purchase', () => {
     }
   })
 
-  it('checks, shows the price, pays, then issues with the ticket, and keeps nothing once issued', async () => {
+  it('checks, shows the price, pays, then issues, and keeps nothing once issued', async () => {
     const deps = fakeMarket()
     const calls: string[] = []
     for (const name of ['holderOf', 'quote', 'confirm', 'pay', 'fulfil', 'issue'] as const) {
@@ -113,7 +111,7 @@ describe('handles market purchase', () => {
     const result = await buyHandle(ORIGIN, { handle: '$Alice', identityKey: KEY.toUpperCase() }, deps)
     expect(calls).toEqual(['holderOf', 'quote', 'confirm', 'pay', 'fulfil', 'issue'])
     expect(deps.pay).toHaveBeenCalledWith({ to: '1PayTo1', satoshis: 1000, description: expect.stringContaining('@alice@') })
-    expect(deps.issue).toHaveBeenCalledWith(ORIGIN, { handle: 'alice', identityKey: KEY, claimTicket: 'ticket1.sig' })
+    expect(deps.issue).toHaveBeenCalledWith(ORIGIN, { handle: 'alice', identityKey: KEY })
     expect(result).toMatchObject({ handle: 'alice', identityKey: KEY, txid: txidFor(1), issued: { handle: 'alice' } })
     expect(deps.store.load()).toEqual([])
   })
@@ -192,18 +190,18 @@ describe('handles market purchase', () => {
     expect(deps.store.load()).toEqual([])
   })
 
-  it('an issuance that fails on its ticket asks for a fresh ticket and pays once', async () => {
+  it('an issuance that fails on its challenge asks for a fresh one and pays once', async () => {
     const deps = fakeMarket()
     const issue = deps.issue
     deps.issue = vi
       .fn()
-      .mockRejectedValueOnce(new HandleIssueError('HANDLE_ISSUE_TICKET_REJECTED', 'expired', 'ticket-expired'))
+      .mockRejectedValueOnce(new HandleIssueError('HANDLE_ISSUE_CHALLENGE_REJECTED', 'expired', 'challenge-expired'))
       .mockRejectedValueOnce(new HandleIssueError('HANDLE_ISSUE_FAILED', 'reply lost'))
       .mockImplementation(issue)
     const result = await buyHandle(ORIGIN, { handle: 'abc', identityKey: KEY }, deps)
     expect(result.issued?.handle).toBe('abc')
     expect(deps.pay).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(deps.issue).mock.calls.map((c) => c[1].claimTicket)).toEqual(['ticket1.sig', 'ticket2.sig', 'ticket3.sig'])
+    expect(deps.issue).toHaveBeenCalledTimes(3)
     expect(deps.store.load()).toEqual([])
   })
 
@@ -314,7 +312,7 @@ describe('handles market purchase', () => {
         }),
     })
     await buyHandle(ORIGIN, { handle: 'abc', identityKey: KEY }, deps)
-    expect(claimed).toEqual([{ handle: 'abc', identityKey: KEY, claimTicket: 'ticket1.sig' }])
+    expect(claimed).toEqual([{ handle: 'abc', identityKey: KEY }])
     expect(listHandleIssueGrants()).toEqual([])
   })
 })

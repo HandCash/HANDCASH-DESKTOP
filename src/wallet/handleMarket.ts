@@ -55,7 +55,6 @@ export type HandleMarketOrder = {
 
 export type HandleMarketFulfilment = {
   order: HandleMarketOrder
-  claimTicket?: string
 }
 
 export type HandlePurchase = {
@@ -203,8 +202,8 @@ function isFinalServerRefusal(err: unknown): boolean {
   )
 }
 
-/** Issuance failures the next ticket request settles: a fresh ticket, `issued`, or `refund-owed`. */
-const ISSUE_RETRYABLE = new Set(['HANDLE_ISSUE_TICKET_REJECTED', 'HANDLE_ISSUE_TAKEN', 'HANDLE_ISSUE_FAILED'])
+/** Issuance failures the next fulfil request settles: a fresh challenge, `issued`, or `refund-owed`. */
+const ISSUE_RETRYABLE = new Set(['HANDLE_ISSUE_CHALLENGE_REJECTED', 'HANDLE_ISSUE_TAKEN', 'HANDLE_ISSUE_FAILED'])
 
 function pending(purchase: HandlePurchase, why: string): HandleMarketError {
   return new HandleMarketError(
@@ -259,15 +258,13 @@ export async function completeHandlePurchase(
         owed,
       )
     }
-    if (order.state !== 'paid' || !answer.claimTicket) {
+    if (order.state !== 'paid') {
       lastProblem = `the order is ${order.state}`
       continue
     }
 
     try {
-      return done(
-        await deps.issue(origin, { handle: purchase.handle, identityKey: purchase.identityKey, claimTicket: answer.claimTicket }),
-      )
+      return done(await deps.issue(origin, { handle: purchase.handle, identityKey: purchase.identityKey }))
     } catch (err) {
       lastProblem = errorText(err)
       if (err instanceof HandleIssueError && !ISSUE_RETRYABLE.has(err.code)) break

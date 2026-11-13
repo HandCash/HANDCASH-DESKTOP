@@ -30,7 +30,7 @@ describe('walletFailureFor (BRC-326)', () => {
       fault: 'none',
       retry: 'safe',
     })
-    expect(walletFailureFor('HANDLE_ISSUE_TICKET_REJECTED', 400, '/issueHandle').class).toBe('invalid-request')
+    expect(walletFailureFor('HANDLE_ISSUE_CHALLENGE_REJECTED', 400, '/issueHandle').class).toBe('invalid-request')
   })
 
   it('keeps a refusal by the user apart from one by a standing rule', () => {

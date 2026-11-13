@@ -113,7 +113,7 @@ const BY_CODE: Record<string, WalletFailure> = {
   // or is BRC-CLOUD's own refusal; only a lost or failed claim may have bound it.
   HANDLE_ISSUE_INVALID: INVALID,
   HANDLE_ISSUE_WRONG_KEY: INVALID,
-  HANDLE_ISSUE_TICKET_REJECTED: INVALID,
+  HANDLE_ISSUE_CHALLENGE_REJECTED: INVALID,
   HANDLE_ISSUE_REFUSED: DENIED,
   HANDLE_ISSUE_GRANT_REVOKED: DENIED,
   HANDLE_ISSUE_GRANT_EXPIRED: { class: 'permission-denied', fault: 'none', retry: 'safe' },

@@ -32,6 +32,7 @@ vi.mock('./durableStorage', () => ({
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     identityKey: walletState.identityKey,
+    rootKeyHex: '0'.repeat(62) + '0b',
     wallet: { acquireCertificate, listCertificates, relinquishCertificate },
   }),
 }))
@@ -124,7 +125,7 @@ describe('claimCloudHandlePayload', () => {
       walletCertificate,
     })
     const { claimCloudHandlePayload, readClaimedCloudHandle } = await import('./handleClaim')
-    const state = await claimCloudHandlePayload({ handle: 'alice', claimTicket: 'ticket' })
+    const state = await claimCloudHandlePayload({ handle: 'alice' })
 
     expect(state.certificate).toEqual(publicCertificate)
     expect(readClaimedCloudHandle()?.certificate?.type).toContain('XgCFd')
@@ -146,7 +147,7 @@ describe('claimCloudHandlePayload', () => {
       walletCertificate: foreign,
     })
     const { claimCloudHandlePayload } = await import('./handleClaim')
-    await claimCloudHandlePayload({ handle: 'alice', claimTicket: 'ticket' })
+    await claimCloudHandlePayload({ handle: 'alice' })
     expect(acquireCertificate).not.toHaveBeenCalled()
   })
 
@@ -173,12 +174,6 @@ describe('claimCloudHandlePayload', () => {
     expect(acquireCertificate).not.toHaveBeenCalled()
   })
 
-  it('refuses to claim without a ticket', async () => {
-    const { claimCloudHandlePayload } = await import('./handleClaim')
-    await expect(claimCloudHandlePayload({ handle: 'alice' })).rejects.toThrow(
-      /claim ticket/i,
-    )
-  })
 })
 
 describe('getClaimedCloudHandleVerified', () => {

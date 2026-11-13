@@ -6,7 +6,6 @@ import { claimCloudHandlePayload } from './handleClaim'
 import type { WalletRuntime } from './walletRuntime'
 
 const KEY = `02${'a'.repeat(64)}`
-const TICKET = 'eyJ2IjoxfQ.c2lnbmF0dXJl'
 
 vi.stubGlobal('window', {})
 vi.mock('./permissions', async (importOriginal) => ({
@@ -61,8 +60,8 @@ beforeEach(() => {
 })
 
 describe('issueHandle over the BRC-100 bridge', () => {
-  it('prompts with the scope, claims with the ticket and answers the certificate', async () => {
-    const res = await issue({ handle: 'alignity', identityKey: KEY, claimTicket: TICKET })
+  it('prompts with the scope, claims with a signed challenge and answers the certificate', async () => {
+    const res = await issue({ handle: 'alignity', identityKey: KEY })
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toMatchObject({ handle: 'alignity', identityKey: KEY, certificate: { signature: '3044' } })
     expect(vi.mocked(requestActionApproval).mock.calls[0]?.slice(0, 3)).toEqual([
@@ -70,19 +69,19 @@ describe('issueHandle over the BRC-100 bridge', () => {
       'issueHandle',
       { handle: 'alignity', identityKey: KEY },
     ])
-    expect(claimCloudHandlePayload).toHaveBeenCalledWith({ handle: 'alignity', claimTicket: TICKET })
+    expect(claimCloudHandlePayload).toHaveBeenCalledWith({ handle: 'alignity' })
   })
 
   it('answers a refusal as a coded error, without claiming', async () => {
     vi.mocked(requestActionApproval).mockResolvedValueOnce('deny')
-    const res = await issue({ handle: 'alignity', identityKey: KEY, claimTicket: TICKET })
+    const res = await issue({ handle: 'alignity', identityKey: KEY })
     expect(res.status).toBe(403)
     expect(JSON.parse(res.body)).toMatchObject({ status: 'error', code: 'HANDLE_ISSUE_REFUSED' })
     expect(claimCloudHandlePayload).not.toHaveBeenCalled()
   })
 
   it('answers a key the wallet does not sign with before prompting', async () => {
-    const res = await issue({ handle: 'alignity', identityKey: `03${'b'.repeat(64)}`, claimTicket: TICKET })
+    const res = await issue({ handle: 'alignity', identityKey: `03${'b'.repeat(64)}` })
     expect(JSON.parse(res.body).code).toBe('HANDLE_ISSUE_WRONG_KEY')
     expect(requestActionApproval).not.toHaveBeenCalled()
   })

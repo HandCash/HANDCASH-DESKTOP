@@ -744,7 +744,7 @@ export async function dispatchWalletMethod(
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
-          ? (args as { handle: string; claimTicket?: string })
+          ? (args as { handle: string })
           : { handle: '' },
       )
     case 'getClaimedCloudHandle':

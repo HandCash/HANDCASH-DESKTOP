@@ -19,8 +19,7 @@ import { summarizeAction } from './permissions'
 const APP = 'apps.alignity.test'
 const KEY = `02${'a'.repeat(64)}`
 const OTHER_KEY = `03${'b'.repeat(64)}`
-const TICKET = 'eyJ2IjoxLCJoYW5kbGUiOiJhbGlnbml0eSJ9.c2lnbmF0dXJl'
-const REQUEST = { handle: 'alignity', identityKey: KEY, claimTicket: TICKET }
+const REQUEST = { handle: 'alignity', identityKey: KEY }
 
 function harness(overrides: Partial<HandleIssueDeps> = {}) {
   const state = {
@@ -83,11 +82,10 @@ describe('issueHandleCertificate', () => {
     expect(issued.identityKey).toBe(OTHER_KEY)
   })
 
-  it('never shows or grants on the ticket: the prompt gets the scope alone', async () => {
+  it('the prompt gets the scope alone', async () => {
     const { state, deps } = harness()
     await issueHandleCertificate(APP, REQUEST, deps)
-    expect(JSON.stringify(state.approvals)).not.toContain(TICKET)
-    expect(JSON.stringify(summarizeAction('issueHandle', REQUEST))).not.toContain(TICKET)
+    expect(JSON.stringify(state.approvals)).not.toContain('claim')
     expect(summarizeAction('issueHandle', REQUEST).summary).toBe(`Bind @alignity@${HOME_HANDLE_DOMAIN} to your identity key`)
   })
 
@@ -99,7 +97,7 @@ describe('issueHandleCertificate', () => {
     expect(listHandleIssueGrants(state.clock)).toEqual([])
   })
 
-  it('expired: an approval older than its lifetime does not spend the ticket', async () => {
+  it('expired: an approval older than its lifetime is not spent', async () => {
     const { state, deps } = harness()
     deps.prepare = async () => {
       state.clock += HANDLE_ISSUE_GRANT_TTL_MS
@@ -150,8 +148,6 @@ describe('issueHandleCertificate', () => {
   })
 
   it.each([
-    ['no ticket', { handle: 'alignity', identityKey: KEY }],
-    ['a ticket that is not body.signature', { ...REQUEST, claimTicket: 'not a ticket' }],
     ['a bad handle', { ...REQUEST, handle: '-bad-' }],
     ['a key that is not a compressed public key', { ...REQUEST, identityKey: 'abc' }],
   ])('invalid: %s is refused before any prompt', async (_label, body) => {
@@ -161,9 +157,8 @@ describe('issueHandleCertificate', () => {
   })
 
   it.each([
-    ['ticket-used', 409, 'HANDLE_ISSUE_TICKET_REJECTED'],
-    ['ticket-expired', 401, 'HANDLE_ISSUE_TICKET_REJECTED'],
-    ['ticket-identity-mismatch', 401, 'HANDLE_ISSUE_TICKET_REJECTED'],
+    ['challenge-reused', 409, 'HANDLE_ISSUE_CHALLENGE_REJECTED'],
+    ['challenge-expired', 401, 'HANDLE_ISSUE_CHALLENGE_REJECTED'],
     ['handle-taken', 409, 'HANDLE_ISSUE_TAKEN'],
     ['wrong-identity', 403, 'HANDLE_ISSUE_WRONG_KEY'],
     ['certifier-unavailable', 503, 'HANDLE_ISSUE_FAILED'],

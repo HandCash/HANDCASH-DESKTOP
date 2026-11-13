@@ -191,15 +191,41 @@ describe('resolveHandleByIdentityKey', () => {
   })
 })
 
+const KEY_A_ROOT = '0'.repeat(62) + '0b'
+
+/** Answers the challenge route with a fresh challenge and the claim route with `claimBody`. */
+function answerClaim(claimBody: unknown) {
+  const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+    const body = url.endsWith('/v1/claim/challenge')
+      ? { handle: 'alice', identityKey: KEY_A, challenge: 'c'.repeat(64), expiresAt: Date.now() + 120_000 }
+      : claimBody
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
 describe('claimHandle', () => {
   it('returns the verified certificate and refuses one for another key', async () => {
-    answerWith({ ...(await row('alice', KEY_A)), display: '@alice@brc-cloud.bcryderman.workers.dev' })
-    const claimed = await claimHandle({ handle: 'alice', identityKey: KEY_A, claimTicket: 't' })
+    answerClaim({ ...(await row('alice', KEY_A)), display: '@alice@brc-cloud.bcryderman.workers.dev' })
+    const claimed = await claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: KEY_A_ROOT })
     expect(claimed.certificate.subject).toBe(KEY_A)
 
-    answerWith({ ...(await row('alice', KEY_B)) })
+    answerClaim({ ...(await row('alice', KEY_B)) })
     await expect(
-      claimHandle({ handle: 'alice', identityKey: KEY_A, claimTicket: 't' }),
+      claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: KEY_A_ROOT }),
     ).rejects.toThrow(/different identity key/)
+  })
+
+  it('fetches a fresh challenge per attempt and signs the claim without a ticket', async () => {
+    const fetchMock = answerClaim(await row('alice', KEY_A))
+    await claimHandle({ handle: 'alice', identityKey: KEY_A, rootKeyHex: KEY_A_ROOT })
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]))
+    expect(urls.filter((u) => u.endsWith('/v1/claim/challenge'))).toHaveLength(1)
+    const claim = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/v1/claim'))
+    const sent = JSON.parse(String((claim?.[1] as RequestInit).body))
+    expect(sent).toEqual({ handle: 'alice', identityKey: KEY_A, challenge: 'c'.repeat(64) })
+    expect(sent).not.toHaveProperty('claimTicket')
+    expect(new Headers((claim?.[1] as RequestInit).headers).get('X-HandCash-Request-Signature')).toBeTruthy()
   })
 })
