@@ -98,10 +98,9 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
             </button>
             {open ? (
               <div data-aeon-part="panel">
-                <span data-aeon-part="heading">
-                  <TileIcon tile={tile} />
-                  <span data-aeon-part="label">{tile.label}</span>
-                </span>
+                <TileIcon tile={tile} />
+                <div data-aeon-part="body">
+                <span data-aeon-part="label">{tile.label}</span>
                 <div data-aeon-part="actions">
                   {tile.kind === 'peer' ? (
                     <Button.Root
@@ -121,6 +120,7 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                     <LaunchIcon size={16} />
                     <span>Open</span>
                   </Button.Root>
+                </div>
                 </div>
               </div>
             ) : null}

@@ -20556,9 +20556,11 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 4px;
-  padding: 4px 6px 6px;
+  grid-template-columns: var(--launcher-cell) 1fr;
+  align-items: center;
+  gap: 0 4px;
+  padding: 0 6px 0 0;
+  overflow: hidden;
   border: var(--hc-border-w) solid var(--hc-accent);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-surface);
@@ -20568,27 +20570,34 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   display: none;
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+[data-aeon-scope='app-launcher'] [data-aeon-part='panel'] > :first-child {
+  justify-self: center;
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] > :first-child {
-  flex-shrink: 0;
+[data-aeon-scope='app-launcher'] [data-aeon-part='body'] {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='body'] > [data-aeon-part='label'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 3px;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn {
-  flex: 1;
   min-width: 0;
-  height: 100%;
-  padding: 0 10px;
+  height: 22px;
+  padding: 0 8px;
   display: inline-flex;
   flex-direction: row;
   align-items: center;
