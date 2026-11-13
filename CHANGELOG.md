@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.712] - 2026-11-12
+
+### Fixed
+
+- Activity keeps one row per issued token; two tokens issued in one transaction no longer overwrite each other.
+
 ## [1.3.711] - 2026-11-12
 
 ### Fixed
