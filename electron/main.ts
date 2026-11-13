@@ -164,6 +164,10 @@ if (process.platform === 'linux') {
     'enable-features',
     'WaylandWindowDecorations,WebRtcPipeWireCapturer,WebRtcPipeWireCamera',
   )
+  // Chromium picks the keyring from the desktop name; on Hyprland/Omarchy it can
+  // fall back to basic_text, which seals nothing. Ask for the Secret Service
+  // (gnome-keyring) explicitly so the vault seal uses it.
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret')
 }
 
 // Electron 43+ Chromium HTTPS-First upgrades http://localhost:5173 → https://.

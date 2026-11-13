@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.714] - 2026-11-13
+
+### Fixed
+
+- Linux: the app asks Chromium for the system keyring (gnome-libsecret) explicitly, so the wallet vault seal uses the keyring instead of the unsealed `basic_text` fallback on Hyprland/Omarchy.
+
 ## [1.3.713] - 2026-11-12
 
 ### Fixed
