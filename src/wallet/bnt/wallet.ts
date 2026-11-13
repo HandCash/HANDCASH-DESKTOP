@@ -774,8 +774,26 @@ export async function adoptSignedBntAction(txid: string): Promise<void> {
 async function issuerCoin(active: ActiveWallet, issuerPub: string): Promise<string> {
   const lock = p2pkLock(issuerPub).toHex()
   const page = await active.wallet.listOutputs({ basket: ISSUER_BASKET, include: 'locking scripts', limit: 100 })
-  const held = (page.outputs ?? []).find((o) => o.spendable !== false && (o.lockingScript ?? '').toLowerCase() === lock)
-  if (held) return held.outpoint.replace('_', '.')
+  const candidates = (page.outputs ?? []).filter((o) => o.spendable !== false && (o.lockingScript ?? '').toLowerCase() === lock)
+  // A held coin is only usable when its funding transaction can be put into the
+  // input BEEF. One whose parent neither this device nor the network can supply
+  // failed every issue with "input is not available"; skip it, and ask the
+  // toolbox's own storage for the transaction before giving up on it.
+  for (const o of candidates) {
+    const outpoint = o.outpoint.replace('_', '.')
+    const txid = outpoint.split('.')[0]!.toLowerCase()
+    if (await rawTx(active, txid)) return outpoint
+    try {
+      const own = await active.wallet.listOutputs({ basket: ISSUER_BASKET, include: 'entire transactions', limit: 100 })
+      if (own.BEEF?.length) {
+        rememberBeefTree(Array.from(own.BEEF), txid)
+        if (await rawTx(active, txid)) return outpoint
+      }
+    } catch {
+      // Fall through to a fresh coin.
+    }
+    console.warn(`[bnt] issuer coin ${outpoint.slice(0, 12)} has no reachable source transaction; making a new one`)
+  }
   const startedAt = Date.now()
   const created = await active.wallet.createAction({
     description: 'BNT issuer coin',
