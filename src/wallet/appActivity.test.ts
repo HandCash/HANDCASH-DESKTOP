@@ -29,6 +29,7 @@ import {
   isItemActivity,
   isPendingActivity,
   listRecentActivity,
+  recordAppActivity,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
   noteOutboundSendComplete,
@@ -1444,5 +1445,23 @@ describe("pending row deadlines", () => {
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(120_000);
     expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true);
+  });
+
+  it("keeps one row per BNT action instead of overwriting the top row", () => {
+    const tx = (n: number) => String(n).repeat(64).slice(0, 64);
+    const A = "a".repeat(64) + "_0";
+    const B = "b".repeat(64) + "_0";
+    const tok = (id: string, amt: string) => ({ name: "T", origin: id, tokenId: id, amt, dec: 0 });
+    const rec = (kind: "earned" | "spent", method: string, txid: string, item: ReturnType<typeof tok>) =>
+      recordAppActivity({ origin: "handcash", kind, sats: 0, method, note: method, txid, item });
+    rec("earned", "mint-token", tx(1), tok(A, "100"));
+    rec("earned", "mint-token", tx(2), tok(A, "50"));
+    rec("spent", "send-token", tx(3), tok(A, "10"));
+    rec("spent", "send-token", tx(4), tok(A, "10"));
+    rec("earned", "mint-token", tx(5), tok(B, "7"));
+    rec("spent", "burn-token", tx(6), tok(B, "7"));
+    recordAppActivity({ origin: "handcash", kind: "earned", sats: 0, method: "mint-collectable", note: "i", txid: tx(7), item: { name: "Item", origin: B } });
+    recordAppActivity({ origin: "handcash", kind: "earned", sats: 0, method: "mint-collectable", note: "i", txid: tx(8), item: { name: "Item", origin: B } });
+    expect(listRecentActivity(20)).toHaveLength(8);
   });
 });
