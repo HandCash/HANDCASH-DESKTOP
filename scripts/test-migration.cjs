@@ -208,6 +208,7 @@ test('real sweep distinguishes completion, failed items and fee pauses, invalida
   const sweep = load(path.join(root, 'src/wallet/import/sweep.ts'), {
     '../walletRuntime': { getWalletRuntime: () => ({ instance: active }) },
     '../appLog': { appendAppLog: () => {} },
+    '../errorText': load(path.join(root, 'src/wallet/errorText.ts')),
     '../walletJobs': { beginWalletJob: () => ({ id: 'synthetic-job', progress: () => {},
       finish: () => jobEvents.push('finish'), stop: () => jobEvents.push('stop'), fail: () => jobEvents.push('fail') }) },
     '../../machines/importQueueMachine': { IMPORT_CHUNK: 100 },
