@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.713] - 2026-11-12
+
+### Fixed
+
+- Linux: the native shell's file store answers the page's CORS preflight, so wallet data is kept on disk instead of in the WebView's ~5MB origin storage.
+- Activity no longer deletes stored history when storage is full; new rows are held for the session and saved with the rest on the next write that lands.
+
 ## [1.3.712] - 2026-11-12
 
 ### Fixed
