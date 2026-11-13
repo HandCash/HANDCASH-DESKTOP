@@ -106,6 +106,8 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                     <Button.Root
                       variant="ghost"
                       className="btn btn-ghost"
+                      aria-label={`Manage ${tile.label}`}
+                      title="Manage"
                       onClick={() => openAppDetails(tile.app)}
                     >
                       <SettingsIcon size={16} />
@@ -115,6 +117,8 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                   <Button.Root
                     variant="ghost"
                     className="btn btn-ghost"
+                    aria-label={`Open ${tile.label}`}
+                    title="Open"
                     onClick={() => send({ type: 'TAP', id: tile.id })}
                   >
                     <LaunchIcon size={16} />

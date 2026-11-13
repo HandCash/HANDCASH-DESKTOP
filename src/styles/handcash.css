@@ -20590,11 +20590,17 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 3px;
 }
 
+/* Icon-only buttons: the panel is too narrow for both words on one line. */
+[data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn span {
+  display: none;
+}
+
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn {
+  flex: 1 1 0;
   min-width: 0;
   height: 22px;
   padding: 0 8px;
