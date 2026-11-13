@@ -1008,6 +1008,12 @@ function findActivityTxMatchIndex(
         .toLowerCase()
         .replace("_", ".");
       if (existingOp && existingOp !== outpoint) return false;
+        }
+        // BNT rows carry no outpoint; two assets on one txid are distinct rows.
+        if (wantItem) {
+          const a = (args.item?.tokenId ?? args.item?.origin)?.trim().toLowerCase();
+          const b = (e.item?.tokenId ?? e.item?.origin)?.trim().toLowerCase();
+          if (a && b && a !== b) return false;
     }
     return true;
   });
