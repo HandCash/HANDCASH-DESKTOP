@@ -27,6 +27,28 @@ const cloudProxyAgent = new Agent({
   autoSelectFamilyAttemptTimeout: 2000,
 })
 
+// Offline or DNS down (EAI_AGAIN, ENOTFOUND): answer 503 and log once per
+// outage instead of one stack per messagebox poll.
+let cloudDown = false
+const quietCloudErrors = (proxy: {
+  on: (ev: string, fn: (...a: any[]) => void) => unknown
+}): void => {
+  proxy.on('proxyRes', () => {
+    if (cloudDown) console.log('[dev:proxy] cloud reachable again')
+    cloudDown = false
+  })
+  proxy.on('error', (err: Error, _req: unknown, res: any) => {
+    if (!cloudDown) {
+      cloudDown = true
+      console.warn(`[dev:proxy] cloud unreachable (${(err as NodeJS.ErrnoException).code ?? err.message}); answering 503 until it returns`)
+    }
+    if (res && typeof res.writeHead === 'function' && !res.headersSent) {
+      res.writeHead(503, { 'content-type': 'application/json' })
+      res.end('{"error":"cloud unreachable"}')
+    }
+  })
+}
+
 export default defineConfig({
   plugins: [react()],
   worker: {
@@ -89,12 +111,14 @@ export default defineConfig({
         agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
+        configure: quietCloudErrors,
       },
       '/.well-known': {
         target: 'https://brc-cloud.bcryderman.workers.dev',
         agent: cloudProxyAgent,
         changeOrigin: true,
         secure: false,
+        configure: quietCloudErrors,
       },
       // Toolbox Arcade client sends xdeployment-id; browser CORS blocks it direct.
       // Cloudflare resolves to several IPv4/IPv6 addresses; Node's short default
