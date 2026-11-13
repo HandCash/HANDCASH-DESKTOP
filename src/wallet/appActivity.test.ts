@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const store = new Map<string, string>();
 const announceSpendCompleted = vi.hoisted(() => vi.fn());
+/** When set, the store refuses writes larger than this many characters. */
+const quota = vi.hoisted(() => ({ max: Infinity }));
 
 vi.mock("./durableStorage", () => ({
   durableGetItem: (key: string) => store.get(key) ?? null,
   durableSetItem: (key: string, value: string) => {
+    if (value.length > quota.max) return false;
     store.set(key, value);
     return true;
   },
@@ -1463,5 +1466,67 @@ describe("pending row deadlines", () => {
     recordAppActivity({ origin: "handcash", kind: "earned", sats: 0, method: "mint-collectable", note: "i", txid: tx(7), item: { name: "Item", origin: B } });
     recordAppActivity({ origin: "handcash", kind: "earned", sats: 0, method: "mint-collectable", note: "i", txid: tx(8), item: { name: "Item", origin: B } });
     expect(listRecentActivity(20)).toHaveLength(8);
+  });
+
+  it("keeps the 10,000 DEMO issue row when 1,000 PAIR is issued next", async () => {
+    const { composeActivityRecords } = await import("./activityRecords");
+    const { mergeLiveActions } = await import("../features/activity/activityRowState");
+    const demoId = "1f".repeat(20);
+    const pairId = "2e".repeat(20);
+    const issue = (id: string, sym: string, amt: string, txid: string) =>
+      recordAppActivity({
+        origin: "handcash",
+        kind: "earned",
+        sats: 0,
+        method: "mint-token",
+        note: `Issued ${sym}`,
+        txid,
+        item: { name: sym, origin: id, tokenId: id, amt, dec: 0 },
+      });
+    issue(demoId, "DEMO", "10000", "d".repeat(64));
+    const live = [{ id: "act-pair", origin: "handcash", method: "issueBntAsset", face: "signing", startedAt: Date.now() }];
+    issue(pairId, "PAIR", "1000", "e".repeat(64));
+    const rows = listRecentActivity(20);
+    expect(rows.map((r) => r.note).sort()).toEqual(["Issued DEMO", "Issued PAIR"]);
+    const feed = mergeLiveActions(rows, live as never);
+    const records = composeActivityRecords(feed);
+    const told = records.map((r) => r.subject.note);
+    expect(told).toContain("Issued DEMO");
+    expect(told).toContain("Issued PAIR");
+    expect(new Set(records.map((r) => r.key)).size).toBe(records.length);
+  });
+
+  it("keeps DEMO stored when a full store refuses the write that adds PAIR", () => {
+    const issue = (sym: string, txid: string) =>
+      recordAppActivity({
+        origin: "handcash",
+        kind: "earned",
+        sats: 0,
+        method: "mint-token",
+        note: `Issued ${sym}`,
+        txid,
+        item: { name: sym, origin: txid.slice(0, 40), tokenId: txid.slice(0, 40), amt: "1", dec: 0 },
+      });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      issue("DEMO", "d".repeat(64));
+      const [key] = [...store.keys()];
+      const storedDemo = store.get(key)!;
+      // Full: the two-row body no longer fits, a one-row body still would.
+      quota.max = storedDemo.length + 10;
+      issue("PAIR", "e".repeat(64));
+      expect(store.get(key)).toBe(storedDemo);
+      expect(listRecentActivity(20).map((r) => r.note).sort()).toEqual(["Issued DEMO", "Issued PAIR"]);
+      quota.max = Infinity;
+      issue("NEXT", "f".repeat(64));
+      expect(JSON.parse(store.get(key)!).data.map((r: { note: string }) => r.note)).toEqual([
+        "Issued DEMO",
+        "Issued PAIR",
+        "Issued NEXT",
+      ]);
+    } finally {
+      quota.max = Infinity;
+      error.mockRestore();
+    }
   });
 });

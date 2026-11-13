@@ -302,6 +302,25 @@ pub fn start_sync_server(
                 );
                 continue;
             }
+            // The page's sync XHR is cross-origin (UI origin → loopback port) and
+            // carries JSON plus X-HandCash-Origin, so WebKit preflights it. A 404
+            // here failed every storeGet/storeSet, the renderer's probe fell back
+            // to the WebView's ~5MB origin storage, and this store stayed empty.
+            if *request.method() == tiny_http::Method::Options {
+                let mut response = tiny_http::Response::empty(tiny_http::StatusCode(204));
+                for (name, value) in [
+                    ("Access-Control-Allow-Origin", origin.as_str()),
+                    ("Access-Control-Allow-Methods", "POST"),
+                    ("Access-Control-Allow-Headers", "Content-Type, X-HandCash-Origin"),
+                    ("Access-Control-Max-Age", "600"),
+                ] {
+                    if let Ok(h) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
+                        response.add_header(h);
+                    }
+                }
+                let _ = request.respond(response);
+                continue;
+            }
             if request.url() != "/op" || *request.method() != tiny_http::Method::Post {
                 let _ = request.respond(
                     tiny_http::Response::from_string("{\"error\":\"not found\"}").with_status_code(404),
@@ -365,6 +384,60 @@ mod tests {
         assert_eq!(store.get("plain.key").as_deref(), Some("value"));
         assert!(store.remove("plain.key"));
         assert_eq!(store.get("plain.key"), None);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn raw_http(base: &str, request: &str) -> String {
+        use std::io::Write;
+        let addr = base.trim_start_matches("http://");
+        let mut stream = std::net::TcpStream::connect(addr).expect("connect");
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut out = String::new();
+        let _ = stream.read_to_string(&mut out);
+        out
+    }
+
+    #[test]
+    fn sync_server_answers_the_page_preflight_then_stores() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("hc-durable-cors-{stamp}"));
+        let store = DurableStore::open(dir.clone()).expect("open");
+        let ui = "http://localhost:5173";
+        let (base, _thread) = start_sync_server(Arc::clone(&store), ui.to_string()).expect("server");
+
+        let preflight = raw_http(
+            &base,
+            &format!(
+                "OPTIONS /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,x-handcash-origin\r\nConnection: close\r\n\r\n"
+            ),
+        );
+        let head = preflight.to_ascii_lowercase();
+        assert!(head.starts_with("http/1.1 204"), "{preflight}");
+        assert!(head.contains(&format!("access-control-allow-origin: {ui}")), "{preflight}");
+        assert!(head.contains("x-handcash-origin"), "{preflight}");
+
+        let body = r#"{"op":"set","key":"plain.key","value":"v"}"#;
+        let set = raw_http(
+            &base,
+            &format!(
+                "POST /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nX-HandCash-Origin: {ui}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        );
+        assert!(set.contains(r#"{"ok":true}"#), "{set}");
+        assert_eq!(store.get("plain.key").as_deref(), Some("v"));
+
+        let foreign = raw_http(
+            &base,
+            "OPTIONS /op HTTP/1.1\r\nHost: x\r\nOrigin: http://evil.example\r\nConnection: close\r\n\r\n",
+        );
+        assert!(foreign.starts_with("HTTP/1.1 403"), "{foreign}");
         let _ = fs::remove_dir_all(dir);
     }
 
