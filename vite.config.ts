@@ -140,7 +140,16 @@ export default defineConfig({
     },
     watch: {
       // packaging writes here — don't restart Vite while launch:mac runs
-      ignored: ['**/release/**', '**/dist/**', '**/dist-electron/**'],
+      // native-desktop/target holds thousands of cargo build files
+      ignored: [
+        '**/release/**',
+        '**/dist/**',
+        '**/dist-electron/**',
+        '**/dist-sidecar/**',
+        '**/native-desktop/target/**',
+        '**/.cursor/**',
+        '**/docs/**',
+      ],
     },
   },
 })
