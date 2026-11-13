@@ -1088,6 +1088,10 @@ async function handleBrc100RequestInner(
   const active = runtime?.instance ?? null
   if (!active) {
     requestUnlockForBridge()
+    // BRC-100: isAuthenticated is a probe; a locked wallet answers "no", not an error.
+    if (method === 'isAuthenticated') {
+      return { status: 200, body: JSON.stringify({ authenticated: false }) }
+    }
     return {
       status: 503,
       body: JSON.stringify({
