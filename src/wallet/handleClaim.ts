@@ -319,10 +319,7 @@ export function rebindHandleClaimForAccount(): void {
   notifyClaimListeners()
 }
 
-export async function claimCloudHandlePayload(args: {
-  handle: string
-  claimTicket?: string
-}): Promise<ClaimedHandleState> {
+export async function claimCloudHandlePayload(args: { handle: string }): Promise<ClaimedHandleState> {
   if (claimInFlight) return claimInFlight
   const bindingGeneration = claimBindingGeneration
   const pending = (async () => {
@@ -330,18 +327,10 @@ export async function claimCloudHandlePayload(args: {
     if (!active) throw new Error('Wallet locked')
 
     const handle = normalizeCloudHandle(args.handle)
-    const claimTicket =
-      typeof args.claimTicket === 'string' ? args.claimTicket.trim() : ''
-    if (!claimTicket) {
-      throw new Error(
-        'Handle claim requires a HandCash claim ticket. Open /claim-handle while signed in.',
-      )
-    }
-
     const result = await claimHandle({
       handle,
       identityKey: active.identityKey,
-      claimTicket,
+      rootKeyHex: active.rootKeyHex,
     })
 
     const state: ClaimedHandleState = {

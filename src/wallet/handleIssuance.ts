@@ -21,14 +21,10 @@ export const HANDLE_ISSUE_GRANT_TTL_MS = 120_000
 
 const HANDLE_PATTERN = /^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$/
 const IDENTITY_KEY_PATTERN = /^0[23][0-9a-f]{64}$/
-const TICKET_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
-const TICKET_MAX_LENGTH = 2048
-
 export type HandleIssueRequest = {
   handle: string
   /** The owner: an identity key this wallet signs with, not necessarily a fixed account. */
   identityKey: string
-  claimTicket: string
 }
 
 /** What the prompt and the grant name. The ticket is not part of it. */
@@ -56,7 +52,7 @@ export type HandleIssueErrorCode =
   | 'HANDLE_ISSUE_GRANT_EXPIRED'
   | 'HANDLE_ISSUE_GRANT_USED'
   | 'HANDLE_ISSUE_GRANT_REVOKED'
-  | 'HANDLE_ISSUE_TICKET_REJECTED'
+  | 'HANDLE_ISSUE_CHALLENGE_REJECTED'
   | 'HANDLE_ISSUE_TAKEN'
   | 'HANDLE_ISSUE_FAILED'
 
@@ -67,7 +63,7 @@ const ERROR_STATUS: Record<HandleIssueErrorCode, number> = {
   HANDLE_ISSUE_GRANT_EXPIRED: 403,
   HANDLE_ISSUE_GRANT_USED: 409,
   HANDLE_ISSUE_GRANT_REVOKED: 403,
-  HANDLE_ISSUE_TICKET_REJECTED: 400,
+  HANDLE_ISSUE_CHALLENGE_REJECTED: 403,
   HANDLE_ISSUE_TAKEN: 409,
   HANDLE_ISSUE_FAILED: 502,
 }
@@ -103,13 +99,7 @@ export function parseHandleIssueScope(raw: unknown): HandleIssueScope {
 }
 
 export function parseHandleIssueRequest(raw: unknown): HandleIssueRequest {
-  const scope = parseHandleIssueScope(raw)
-  const ticket = asRecord(raw).claimTicket
-  const claimTicket = typeof ticket === 'string' ? ticket.trim() : ''
-  if (!claimTicket || claimTicket.length > TICKET_MAX_LENGTH || !TICKET_PATTERN.test(claimTicket)) {
-    throw new HandleIssueError('HANDLE_ISSUE_INVALID', 'Pass the HandCash claim ticket for this handle and key.')
-  }
-  return { ...scope, claimTicket }
+  return parseHandleIssueScope(raw)
 }
 
 type GrantRecord = HandleIssueGrant & { state: 'live' | 'used' | 'revoked' }
@@ -214,28 +204,20 @@ export type HandleIssueDeps = {
   now: () => number
   /** The identity key the wallet signs with now, or null when locked. */
   activeIdentityKey: () => string | null
-  /** Shows the prompt. Gets the scope only: the ticket is never shown. */
+  /** Shows the prompt. Gets the scope only. */
   approve: (origin: string, scope: HandleIssueScope) => Promise<'allow' | 'deny'>
-  /** Loads the claim path and returns the call that spends the ticket. */
+  /** Loads the signed claim path and returns the call that makes the claim. */
   prepare: () => Promise<(request: HandleIssueRequest) => Promise<HandleIssueResult>>
 }
 
-const TICKET_REFUSALS = new Set([
-  'claim-ticket-required',
-  'malformed-ticket',
-  'invalid-ticket',
-  'ticket-expired',
-  'ticket-handle-mismatch',
-  'ticket-identity-mismatch',
-  'ticket-used',
-])
+const CHALLENGE_REFUSALS = new Set(['challenge-expired', 'challenge-reused'])
 
 function claimFailure(err: unknown): HandleIssueError {
   if (err instanceof HandleIssueError) return err
   const reason = (err as { code?: unknown } | null)?.code
   if (typeof reason === 'string') {
-    if (TICKET_REFUSALS.has(reason)) {
-      return new HandleIssueError('HANDLE_ISSUE_TICKET_REJECTED', `HandCash refused the claim ticket (${reason}). Get a new ticket for this handle and key.`, reason)
+    if (CHALLENGE_REFUSALS.has(reason)) {
+      return new HandleIssueError('HANDLE_ISSUE_CHALLENGE_REJECTED', `BRC-CLOUD refused the claim challenge (${reason}). Ask again to get a new one.`, reason)
     }
     if (reason === 'handle-taken') return new HandleIssueError('HANDLE_ISSUE_TAKEN', 'Another identity key already holds this handle.', reason)
     if (reason === 'wrong-identity') return new HandleIssueError('HANDLE_ISSUE_WRONG_KEY', 'The claim was not signed by the key it names.', reason)
@@ -302,7 +284,7 @@ export function walletHandleIssueDeps(activeIdentityKey: () => string | null, br
     prepare: async () => {
       const { claimCloudHandlePayload } = await import('./handleClaim')
       return async (request) => {
-        const claimed = await claimCloudHandlePayload({ handle: request.handle, claimTicket: request.claimTicket })
+        const claimed = await claimCloudHandlePayload({ handle: request.handle })
         if (!claimed.certificate) {
           throw new HandleIssueError('HANDLE_ISSUE_FAILED', 'HandCash bound the handle but returned no certificate. Resolve the handle to fetch it.')
         }

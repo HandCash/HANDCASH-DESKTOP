@@ -10,6 +10,7 @@ import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { HOME_HANDLE_DOMAIN } from './handleDomain'
 import { formatHandCashHandle } from './handleFormat'
 import { parseWalletProtocols } from './walletProtocols'
+import { signedIdentityFetch } from './identityRequestAuth'
 import {
   HandleCertificateError,
   verifyHandleCertificate,
@@ -267,21 +268,37 @@ export class HandleClaimError extends Error {
   }
 }
 
+/**
+ * Signed claim: BRC-CLOUD issues a single-use challenge (2 minutes), then the
+ * imported key signs the claim. A challenge is fetched per attempt, never cached.
+ */
 export async function claimHandle(args: {
   handle: string
   identityKey: string
-  /** Short-lived ticket from HandCash (items-market) — required in production. */
-  claimTicket?: string
+  /** The imported key that signs the claim; must match `identityKey`. */
+  rootKeyHex: string
   baseUrl?: string
 }): Promise<{ display: string; certificate: HandleCertificate; walletCertificate: unknown }> {
   const base = normalizeBase(args.baseUrl || DEFAULT_METANET_HANDLES_BASE_URL)
-  const res = await fetch(`${base}/v1/claim`, {
+  const challengeRes = await fetch(`${base}/v1/claim/challenge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ handle: args.handle, identityKey: args.identityKey }),
+  })
+  if (!challengeRes.ok) {
+    throw new HandleClaimError(`Handle claim challenge failed (${challengeRes.status})`, challengeRes.status)
+  }
+  const { challenge } = (await challengeRes.json()) as { challenge?: unknown }
+  if (typeof challenge !== 'string' || !challenge) {
+    throw new Error('Handle claim challenge was not returned')
+  }
+  const res = await signedIdentityFetch(args.rootKeyHex, 'handle-claim', `${base}/v1/claim`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
       handle: args.handle,
       identityKey: args.identityKey,
-      claimTicket: args.claimTicket,
+      challenge,
     }),
   })
   if (!res.ok) {
@@ -299,12 +316,7 @@ export async function claimHandle(args: {
         code = err
       } else if (err && typeof err === 'object') {
         if (typeof err.code === 'string') code = err.code
-        if (err.code === 'invalid-ticket') {
-          detail =
-            'invalid-ticket (market HANDLE_CLAIM_SECRET ≠ BRC-CLOUD — set the same value on Vercel Preview/preprod)'
-        } else {
-          detail = String(err.code || err.message || detail)
-        }
+        detail = String(err.code || err.message || detail)
       } else if (typeof body?.message === 'string') {
         detail = body.message
       }
