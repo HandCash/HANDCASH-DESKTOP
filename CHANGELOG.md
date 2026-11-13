@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.715] - 2026-11-13
+
+### Fixed
+
+- Migration import: legacy txids and HandCash handles are de-duplicated before they are stored or scanned, so repeated hints no longer repeat work.
+
 ## [1.3.714] - 2026-11-13
 
 ### Fixed
