@@ -50,10 +50,24 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
   )
   const [snapshot, send] = useMachine(machine)
   const { focused } = snapshot.context
+  const listRef = useRef<HTMLUListElement>(null)
+  // The open panel spans three cells on its own row. Near the right edge it
+  // grows leftward instead of wrapping. DOM attribute only; no component state.
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    for (const li of Array.from(list.children) as HTMLElement[]) {
+      const open = li.getAttribute('data-aeon-state') === 'focused'
+      const room = list.clientWidth - parseFloat(getComputedStyle(list).paddingRight)
+      const needs = li.offsetLeft + li.offsetWidth * 3 + 12
+      if (open && needs > room) li.setAttribute('data-aeon-edge', 'end')
+      else li.removeAttribute('data-aeon-edge')
+    }
+  }, [focused, tiles])
 
   return (
     <ul
-     
+      ref={listRef}
       data-aeon-scope="app-launcher"
       data-aeon-state={stateToAttr(snapshot.value)}
       onClick={(event) => {
@@ -77,32 +91,30 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
               onClick={() => send({ type: 'TAP', id: tile.id })}
             >
               <TileIcon tile={tile} />
-              <span data-aeon-part="label" aria-hidden={!open}>
-                {tile.label}
-              </span>
             </button>
             {open ? (
-              <div data-aeon-part="actions">
-                {tile.kind === 'peer' ? (
+              <div data-aeon-part="panel">
+                <span data-aeon-part="label">{tile.label}</span>
+                <div data-aeon-part="actions">
+                  {tile.kind === 'peer' ? (
+                    <Button.Root
+                      variant="ghost"
+                      className="btn btn-ghost"
+                      onClick={() => openAppDetails(tile.app)}
+                    >
+                      <SettingsIcon size={15} />
+                      Manage
+                    </Button.Root>
+                  ) : null}
                   <Button.Root
                     variant="ghost"
-                    className="btn btn-ghost btn-icon"
-                    aria-label={`Manage ${tile.label}`}
-                    title={`Manage ${tile.label}`}
-                    onClick={() => openAppDetails(tile.app)}
+                    className="btn btn-ghost"
+                    onClick={() => send({ type: 'TAP', id: tile.id })}
                   >
-                    <SettingsIcon size={17} />
+                    <LaunchIcon size={15} />
+                    Open
                   </Button.Root>
-                ) : null}
-                <Button.Root
-                  variant="ghost"
-                  className="btn btn-ghost btn-icon"
-                  aria-label={`Launch ${tile.label}`}
-                  title={`Launch ${tile.label}`}
-                  onClick={() => send({ type: 'TAP', id: tile.id })}
-                >
-                  <LaunchIcon size={17} />
-                </Button.Root>
+                </div>
               </div>
             ) : null}
           </li>

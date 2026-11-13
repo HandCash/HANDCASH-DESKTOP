@@ -20438,15 +20438,17 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   grid-template-columns: repeat(auto-fill, var(--launcher-cell));
   grid-auto-rows: var(--launcher-cell);
   grid-auto-flow: row dense;
+  justify-content: center;
   gap: 6px;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='cell'] {
   min-width: 0;
+  position: relative;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='cell'][data-aeon-state='focused'] {
-  grid-column: span 3;
+  z-index: 2;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='tile'] {
@@ -20455,8 +20457,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 0 12px;
+  gap: 0;
+  padding: 0;
   border: var(--hc-border-w) solid var(--hc-border);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-surface);
@@ -20476,7 +20478,6 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='tile'] {
-  justify-content: flex-start;
   border-color: var(--hc-accent);
 }
 
@@ -20488,19 +20489,12 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='label'] {
   min-width: 0;
-  max-width: 0;
-  opacity: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--hc-text-sm);
   font-weight: 600;
-  transition: opacity 120ms ease;
-}
-
-[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='label'] {
-  max-width: 100%;
-  opacity: 1;
+  text-align: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -20555,39 +20549,45 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-part='cell'][data-aeon-state='focused'] {
-  display: flex;
-  align-items: stretch;
+/* Open panel: label on top, two wide labelled buttons below. It floats over the
+   neighbouring cells (three wide) so the grid never reflows; near the right edge
+   it anchors to the cell's right side and grows left. */
+[data-aeon-scope='app-launcher'] [data-aeon-part='panel'] {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: calc(var(--launcher-cell) * 3 + 12px);
+  height: var(--launcher-cell);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 6px;
+  padding: 8px;
   border: var(--hc-border-w) solid var(--hc-accent);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-surface);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] [data-aeon-part='tile'] {
-  flex: 1;
-  min-width: 0;
-  border: 0;
+[data-aeon-scope='app-launcher'] [data-aeon-edge='end'] [data-aeon-part='panel'] {
+  left: auto;
+  right: 0;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
   display: flex;
-  align-items: center;
-  flex: none;
-  gap: 4px;
-  padding-right: 8px;
+  gap: 6px;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
-  padding: 0;
-  border-radius: 999px;
-}
-
-[data-aeon-scope='app-launcher'] [data-aeon-part='actions'] .btn-icon svg {
-  width: 18px;
-  height: 18px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  gap: 6px;
+  justify-content: center;
+  font-size: var(--hc-text-xs);
+  border: var(--hc-border-w) solid var(--hc-border);
 }
 
 [data-aeon-scope='notes'] [data-aeon-part='head'] {
