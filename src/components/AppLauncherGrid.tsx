@@ -99,7 +99,7 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
             {open ? (
               <div data-aeon-part="panel">
                 <span data-aeon-part="heading">
-                  <TileIcon tile={tile} size="sm" />
+                  <TileIcon tile={tile} />
                   <span data-aeon-part="label">{tile.label}</span>
                 </span>
                 <div data-aeon-part="actions">

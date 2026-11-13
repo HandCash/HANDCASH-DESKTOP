@@ -20575,9 +20575,8 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   min-width: 0;
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] .app-launcher-glyph svg {
-  width: 18px;
-  height: 18px;
+[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] > :first-child {
+  flex-shrink: 0;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
