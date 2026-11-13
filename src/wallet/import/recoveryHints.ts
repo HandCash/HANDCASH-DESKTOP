@@ -66,6 +66,10 @@ function txidOf(value: unknown): string | null {
   return TXID.test(head) ? head : null
 }
 
+function normalizeHandle(value: string): string {
+  return value.trim().replace(/^\$/, '').toLowerCase()
+}
+
 function wholeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
@@ -90,7 +94,7 @@ export function parseRecoveryHints(raw: unknown, now = Date.now()): HandCashReco
   }
   if (txids.size === 0 && origins.size === 0) return null
 
-  const handle = typeof body.handle === 'string' ? body.handle.trim().replace(/^\$/, '').toLowerCase() : ''
+  const handle = typeof body.handle === 'string' ? normalizeHandle(body.handle) : ''
   return {
     handle: handle || null,
     txids: [...txids],
@@ -121,7 +125,7 @@ export function recoveryHintsFor(
     current = null
     return null
   }
-  const probed = source.handle?.handle.trim().replace(/^\$/, '').toLowerCase()
+  const probed = source.handle ? normalizeHandle(source.handle.handle) : undefined
   if (probed && current.handle && probed !== current.handle) return null
   return current
 }
@@ -149,7 +153,7 @@ export function recoveryHintsOffer(
   if (source.kind !== 'handcash' || source.scan?.via === 'handcash-utxo-set') return { kind: 'none' }
   const hints = recoveryHintsFor(source, now)
   if (!hints) {
-    const saved = source.handle?.handle.trim().replace(/^\$/, '').toLowerCase()
+    const saved = source.handle ? normalizeHandle(source.handle.handle) : undefined
     if (current?.handle && saved && current.handle !== saved) {
       return { kind: 'mismatch', hinted: current.handle, saved }
     }

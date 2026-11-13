@@ -42731,7 +42731,7 @@ async function startHttpServer(windows2, opts) {
   app.use(import_express.default.text({ limit: "50mb", type: ["text/*", "application/octet-stream"] }));
   app.use(import_express.default.urlencoded({ extended: true, limit: "50mb" }));
   app.use((req, _res, next) => {
-    log.info(`[HTTP] ${req.method} ${req.url}`);
+    log.info(`[HTTP] ${req.method} ${req.path}`);
     next();
   });
   app.options("*", (_req, res) => {

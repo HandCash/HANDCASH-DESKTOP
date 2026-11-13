@@ -66,13 +66,17 @@ export function isMigrationMethod(method: string): boolean {
   return brc100Contract.isMigrationMethod(method)
 }
 
+function nonEmptyStrings(values: unknown[]): string[] {
+  return values.filter((t): t is string => typeof t === 'string' && t.length > 0)
+}
+
 function readTxidLog(): string[] {
   try {
     const raw = durableGetItem(accountLocalKey(TXID_STORAGE_KEY))
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed.filter((t): t is string => typeof t === 'string' && t.length > 0)
+    return nonEmptyStrings(parsed)
   } catch {
     return []
   }
@@ -115,9 +119,7 @@ function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
   txids: string[]
   items: MigrationItem[]
 } {
-  const txids = Array.isArray(args?.txids)
-    ? args.txids.filter((t): t is string => typeof t === 'string' && t.length > 0)
-    : []
+  const txids = Array.isArray(args?.txids) ? nonEmptyStrings(args.txids) : []
   const items = Array.isArray(args?.items)
     ? args.items.map(normalizeMigrationItem).filter((x): x is MigrationItem => x != null)
     : []
