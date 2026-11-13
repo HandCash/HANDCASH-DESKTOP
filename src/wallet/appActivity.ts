@@ -235,6 +235,18 @@ let batchDepth = 0;
 let batched: { key: string; entries: ActivityEntry[]; owner?: BoundAccountKeyScope } | null =
   null;
 
+/**
+ * Rows a full store refused, held for this session.
+ *
+ * A refused write used to retry with half the rows until one landed — and a
+ * one-row write always lands, because it replaces the larger stored value.
+ * On a full origin every new action therefore wiped the stored history down
+ * to itself: issuing PAIR right after DEMO left only PAIR. The stored copy
+ * now stays as it was, the feed reads the full list from here, and the next
+ * write that lands persists all of it.
+ */
+let unsaved: { key: string; entries: ActivityEntry[] } | null = null;
+
 /** Run synchronous Activity writes as one durable write. */
 export function batchActivityWrites<T>(fn: () => T): T {
   batchDepth += 1;
@@ -254,6 +266,7 @@ function flushBatchedActivity(): void {
 
 function readAll(owner?: BoundAccountKeyScope): ActivityEntry[] {
   if (batched && batched.key === activityStorageKey(owner)) return batched.entries;
+  if (unsaved && unsaved.key === activityStorageKey(owner)) return unsaved.entries;
   try {
     const raw = durableGetItem(activityStorageKey(owner));
     if (!raw) return [];
@@ -742,30 +755,27 @@ function writeDurable(
   // really happened left no trace, and a Sending… row marked failed reverted to
   // pending forever. Shed what the ledger still shows first, then the oldest:
   // losing the newest row is what makes the feed look broken.
-  let { body, kept, shed } = activityBodyWithinBudget(trimmed, current);
-  for (;;) {
-    if (durableSetItem(key, body)) {
-      if (shed > 0) {
-        console.info(
-          `[activity] shed ${shed} settled row(s) to fit durable storage — wallet history still shows them`
-        );
-      }
-      const lost = trimmed.length - kept.length - shed;
-      if (lost > 0) {
-        console.warn(
-          `[activity] dropped ${lost} oldest row(s) to fit durable storage`
-        );
-      }
-      break;
-    }
-    if (kept.length <= 1) {
-      console.error(
-        "[activity] durable write refused — storage is full; this row lives only until reload"
+  const { body, kept, shed } = activityBodyWithinBudget(trimmed, current);
+  if (durableSetItem(key, body)) {
+    if (unsaved?.key === key) unsaved = null;
+    if (shed > 0) {
+      console.info(
+        `[activity] shed ${shed} settled row(s) to fit durable storage — wallet history still shows them`
       );
-      break;
     }
-    kept = kept.slice(-Math.max(1, Math.floor(kept.length / 2)));
-    body = encodeActivity(kept);
+    const lost = trimmed.length - kept.length - shed;
+    if (lost > 0) {
+      console.warn(
+        `[activity] dropped ${lost} oldest row(s) to fit durable storage`
+      );
+    }
+  } else {
+    // Never trade stored history for room: a shorter write lands only by
+    // deleting rows the user already saw.
+    unsaved = { key, entries: kept };
+    console.error(
+      `[activity] durable write refused — storage is full; ${kept.length} row(s) held for this session, stored history left intact`
+    );
   }
   if (current) {
     for (const cb of listeners) cb();
