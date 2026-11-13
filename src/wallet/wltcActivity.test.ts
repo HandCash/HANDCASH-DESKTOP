@@ -53,6 +53,15 @@ describe("wLTC and BNT activity rows follow the token row standard", () => {
     clearAppActivity();
   });
 
+  it("keeps a BNT mint a mint when ingest announces its outputs as a receive", () => {
+    const item: ActivityItem = { name: "Gold", origin: ASSET, tokenId: ASSET, amt: "500", dec: 0 };
+    recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: "earned", sats: 0, method: "mint-token", note: "Minted 500", txid: TX, item });
+    recordAppActivity({ origin: WALLET_ACTIVITY_ORIGIN, kind: "earned", sats: 0, method: "receive-token", note: "Received 500", txid: TX, item });
+    const r = only();
+    expect(r.method).toBe("mint-token");
+    expect(r.note).toBe("Minted 500");
+  });
+
   it("names a deposit in Litecoin and signs its amount like a receive", () => {
     const deposit = row({ method: "wltc-credit", item: wltc("839066") });
     expect(isTokenActivity(deposit)).toBe(true);

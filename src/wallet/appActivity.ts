@@ -1130,9 +1130,14 @@ export function upsertAppActivity(args: {
       prev.method === "receive-token" ||
       prev.method === "send-token" ||
       prev.method === "mint-token";
+    // Ingest sees a mint's outputs land in the wallet and announces them as a
+    // receive on the same txid; the mint row keeps its method and note.
     const preserveCollectableMint =
-      prev.method === "mint-collectable" &&
-      args.method === "receive-collectable";
+      (prev.method === "mint-collectable" &&
+        args.method === "receive-collectable") ||
+      (prev.method === "mint-token" &&
+        (args.method === "receive-token" ||
+          args.method === "receive-collectable"));
     const nextItem =
       prevIsToken && args.method === "receive-collectable"
         ? prev.item
