@@ -4,10 +4,7 @@ import { AppAvatar } from './AppAvatar'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { SkeletonAppRow } from './Skeleton'
 import { AppLauncherGrid } from './AppLauncherGrid'
-import { builtinApps } from '../apps/builtin'
-import { desktopChartSupport } from '../apps/desktopEffectPorts'
 import { launcherTiles } from '../apps/launcherTiles'
-import { getActiveWallet } from '../wallet/session'
 import { appDisplayName, appHomepage } from '../wallet/appIdentity'
 import type { ConnectedApp } from '../wallet/permissions'
 import {
@@ -210,12 +207,10 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
       return name.includes(q) || origin.includes(q) || home.includes(q)
     })
   }, [orderedApps, query])
-  const chain = getActiveWallet()?.chain ?? 'main'
-  const charts = useMemo(() => builtinApps(desktopChartSupport(chain)), [chain])
   const tiles = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return launcherTiles(charts, filteredApps).filter((t) => t.kind === 'peer' || !q || t.label.toLowerCase().includes(q))
-  }, [charts, filteredApps, query])
+    return launcherTiles([], filteredApps).filter((t) => t.kind === 'peer' || !q || t.label.toLowerCase().includes(q))
+  }, [filteredApps, query])
   const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
   const canOpen = canOpenAppAddresses(compact)
   const address = appsSearchAddress(query, canOpen)
@@ -253,7 +248,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
           </Button.Root>
           <Button.Root
             variant="ghost"
-            className="wallet-nav-chrome-btn connected-app-tabs-button"
+            className="wallet-nav-chrome-btn"
             aria-label="Developer keys"
             title="Developer keys"
             onClick={() => {
@@ -262,7 +257,6 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
             }}
           >
             <CodeIcon size={16} />
-            <span>Dev</span>
           </Button.Root>
           <CollectionViewToggle label="Apps view" scope="apps" />
         </TitlebarActions>

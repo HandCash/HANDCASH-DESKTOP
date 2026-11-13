@@ -18,8 +18,8 @@ function launch(tile: LauncherTile): void {
   else openAppDetails(tile.app)
 }
 
-function TileIcon({ tile }: { tile: LauncherTile }) {
-  if (tile.kind === 'peer') return <AppAvatar origin={tile.origin} name={tile.label} size="md" />
+function TileIcon({ tile, size = 'md' }: { tile: LauncherTile; size?: 'sm' | 'md' }) {
+  if (tile.kind === 'peer') return <AppAvatar origin={tile.origin} name={tile.label} size={size} />
   return (
     <span className="app-launcher-glyph" aria-hidden="true">
       {tile.kind === 'native' ? <FileIcon size={22} /> : settingIconFor('chart-apps').icon}
@@ -56,13 +56,17 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
   useLayoutEffect(() => {
     const list = listRef.current
     if (!list) return
-    for (const li of Array.from(list.children) as HTMLElement[]) {
-      const open = li.getAttribute('data-aeon-state') === 'focused'
-      const room = list.clientWidth - parseFloat(getComputedStyle(list).paddingRight)
-      const needs = li.offsetLeft + li.offsetWidth * 3 + 12
-      if (open && needs > room) li.setAttribute('data-aeon-edge', 'end')
-      else li.removeAttribute('data-aeon-edge')
-    }
+    const cols = Math.max(1, getComputedStyle(list).gridTemplateColumns.split(' ').length)
+    const span = Math.min(3, cols)
+    ;(Array.from(list.children) as HTMLElement[]).forEach((li, index) => {
+      if (li.getAttribute('data-aeon-state') !== 'focused') {
+        li.style.gridColumn = ''
+        return
+      }
+      // Three cells wide on its own row position; neighbours reflow around it.
+      const start = Math.min(index % cols, cols - span) + 1
+      li.style.gridColumn = `${start} / span ${span}`
+    })
   }, [focused, tiles])
 
   return (
@@ -94,7 +98,10 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
             </button>
             {open ? (
               <div data-aeon-part="panel">
-                <span data-aeon-part="label">{tile.label}</span>
+                <span data-aeon-part="heading">
+                  <TileIcon tile={tile} size="sm" />
+                  <span data-aeon-part="label">{tile.label}</span>
+                </span>
                 <div data-aeon-part="actions">
                   {tile.kind === 'peer' ? (
                     <Button.Root
@@ -102,8 +109,8 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                       className="btn btn-ghost"
                       onClick={() => openAppDetails(tile.app)}
                     >
-                      <SettingsIcon size={15} />
-                      Manage
+                      <SettingsIcon size={16} />
+                      <span>Manage</span>
                     </Button.Root>
                   ) : null}
                   <Button.Root
@@ -111,8 +118,8 @@ export function AppLauncherGrid({ tiles }: { tiles: readonly LauncherTile[] }) {
                     className="btn btn-ghost"
                     onClick={() => send({ type: 'TAP', id: tile.id })}
                   >
-                    <LaunchIcon size={15} />
-                    Open
+                    <LaunchIcon size={16} />
+                    <span>Open</span>
                   </Button.Root>
                 </div>
               </div>

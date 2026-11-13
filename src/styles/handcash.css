@@ -20494,7 +20494,6 @@ html[data-aeon-mode='light'] .wallet-actions .btn.btn-icon:focus-visible {
   text-overflow: ellipsis;
   font-size: var(--hc-text-sm);
   font-weight: 600;
-  text-align: center;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -20553,25 +20552,32 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
    neighbouring cells (three wide) so the grid never reflows; near the right edge
    it anchors to the cell's right side and grows left. */
 [data-aeon-scope='app-launcher'] [data-aeon-part='panel'] {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: calc(var(--launcher-cell) * 3 + 12px);
-  height: var(--launcher-cell);
+  width: 100%;
+  height: 100%;
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 6px;
-  padding: 8px;
+  gap: 4px;
+  padding: 4px 6px 6px;
   border: var(--hc-border-w) solid var(--hc-accent);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-surface);
-  box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
 }
 
-[data-aeon-scope='app-launcher'] [data-aeon-edge='end'] [data-aeon-part='panel'] {
-  left: auto;
-  right: 0;
+[data-aeon-scope='app-launcher'] [data-aeon-state='focused'] > [data-aeon-part='tile'] {
+  display: none;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+[data-aeon-scope='app-launcher'] [data-aeon-part='heading'] .app-launcher-glyph svg {
+  width: 18px;
+  height: 18px;
 }
 
 [data-aeon-scope='app-launcher'] [data-aeon-part='actions'] {
@@ -20583,8 +20589,11 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
   flex: 1;
   min-width: 0;
   height: 100%;
-  padding: 0 8px;
-  gap: 6px;
+  padding: 0 10px;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   justify-content: center;
   font-size: var(--hc-text-xs);
   border: var(--hc-border-w) solid var(--hc-border);
@@ -20599,8 +20608,35 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
 
 [data-aeon-scope='notes'] .notes-editor {
   width: 100%;
-  min-height: 40vh;
-  resize: vertical;
+  min-height: 50vh;
+  resize: none;
   font: inherit;
-  line-height: 1.5;
+  font-size: var(--hc-text-md, 1rem);
+  line-height: 1.65;
+  padding: var(--hc-space-4, 16px);
+  border: var(--hc-border-w) solid transparent;
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+  box-shadow: none;
+}
+
+[data-aeon-scope='notes'] .notes-editor:focus {
+  outline: none;
+  border-color: var(--hc-accent);
+}
+
+[data-aeon-scope='notes'] [data-aeon-part='list'] {
+  display: grid;
+  gap: 6px;
+}
+
+[data-aeon-scope='notes'] [data-aeon-part='empty'] {
+  padding: var(--hc-space-6, 32px) 0;
+  text-align: center;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='notes'] [data-aeon-part='editor'] .actions {
+  display: flex;
+  justify-content: space-between;
 }
