@@ -23,6 +23,7 @@ import {
   recoveryHintsOffer,
   removeImportedSource,
   scanImportedSource,
+  AddressWalkAvailableError,
   subscribeImportIntent,
   subscribeImportedSources,
   subscribeRecoveryHints,
@@ -235,16 +236,17 @@ export function ImportPanel() {
     void window.handcash?.openExternal?.(MIGRATE_HINTS_URL)
   }
 
-  const runScan = async (sourceId: string) => {
+  const runScan = async (sourceId: string, addressWalk = false) => {
     try {
       await scanImportedSource({
         sourceId,
+        addressWalk,
         shouldStop: stopRequested,
         onProgress: (p) => send({ type: 'PROGRESS', ...scanProgressMessage(p) }),
       })
       send({ type: 'SCANNED' })
     } catch (err) {
-      send({ type: 'FAIL', error: errorText(err) })
+      send({ type: 'FAIL', error: errorText(err), addressWalkAvailable: err instanceof AddressWalkAvailableError })
       playWalletSound('error')
     }
   }
@@ -443,6 +445,17 @@ export function ImportPanel() {
           onSubmit={(fields) => void submit(fields)}
           onBack={() => send({ type: 'BACK' })}
         />
+      ) : null}
+
+      {face === 'viewing' && source && context.addressWalkAvailable ? (
+        <div className="actions">
+          <Button.Root variant="ghost" className="btn btn-ghost" onClick={() => {
+            send({ type: 'WALK_ADDRESSES' })
+            void runScan(source.id, true)
+          }}>
+            <Button.Label>Walk addresses</Button.Label>
+          </Button.Root>
+        </div>
       ) : null}
 
       {face && source ? (

@@ -39,7 +39,7 @@ export {
   type SourceScan,
   type SweepSummary,
 } from './store'
-export { scanImportedSource, type ScanProgress } from './scan'
+export { AddressWalkAvailableError, scanImportedSource, type ScanProgress } from './scan'
 export {
   IMPORT_ITEMS_PER_TX,
   planSweep,

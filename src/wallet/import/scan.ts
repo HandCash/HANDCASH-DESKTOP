@@ -35,6 +35,8 @@ type ScanArgs = {
   sourceId: string
   /** Overrides each template's gap — a quick look or a deeper walk. */
   gap?: number
+  /** Set only by the user's explicit address-walk action. */
+  addressWalk?: boolean
   onProgress?: (progress: ScanProgress) => void
   shouldStop?: () => boolean
 }
@@ -43,10 +45,16 @@ type ScanArgs = {
  * Walk a saved source's key set, then read what each used address holds.
  * Read-only: nothing is signed or broadcast. The result is saved on the source.
  *
- * A HandCash source with recovery hints from the migrate page is first walked
- * against the outputs of its own history. That pass stands only when the chain
- * shows everything HandCash reports; otherwise the full network walk runs.
+ * HandCash uses its verified UTXO set by default. Refusal or failure stops
+ * the scan; only an explicit addressWalk request runs network discovery.
  */
+export class AddressWalkAvailableError extends Error {
+  constructor() {
+    super('The HandCash UTXO service could not provide a verified scan. Retry, or tap Walk addresses to search the chain. This can take longer and may miss addresses beyond the discovery gap.')
+    this.name = 'AddressWalkAvailableError'
+  }
+}
+
 export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
@@ -57,12 +65,16 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   const deriver = keyDeriverFor(source.secret)
   const cache = new Map<string, AddressHoldings>()
   let scan: SourceScan
-  if (args.gap == null && source.secret.kind === 'handcash') {
+  if (!args.addressWalk && source.secret.kind === 'handcash') {
     // HandCash keys read the account's UTXO set from the BRC-CLOUD worker only.
     // No address walk: a refusal is reported, not scanned around.
-    const direct = await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
-    if (!direct) throw new Error('HandCash did not return this account’s UTXO set. Try the import again.')
-    scan = direct
+    try {
+      const direct = await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
+      if (!direct) throw new Error('UTXO set refused')
+      scan = direct
+    } catch {
+      throw new AddressWalkAvailableError()
+    }
   } else {
     scan = await walkScan(
       deriver,
@@ -112,7 +124,7 @@ async function walkScan(
 
 /**
  * The HandCash export read from its own account's UTXO set, or null when the
- * set cannot be had and the hinted pass or full walk must run instead.
+ * set cannot be verified. The caller stops and offers an explicit address walk.
  *
  * Rows count only when the keys derive their path to their address. Cash and
  * token addresses are read live; one-sat items are counted by outpoint where
@@ -133,7 +145,7 @@ export async function utxoSetScan(
   if (set.kind === 'refused') return null
   const verified = await verifyUtxoSet(deriver, set.utxos, known)
   if (verified.rejected > 0) {
-    appendAppLog('warn', `[import] utxo set refused reason=underived rejected=${verified.rejected} — falling back`)
+    appendAppLog('warn', `[import] utxo set refused reason=underived rejected=${verified.rejected} — scan stopped; explicit address walk available`)
     return null
   }
   const cash = await readUnspentOnChain({

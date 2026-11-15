@@ -25,6 +25,7 @@ export type LegacyImportEvent =
   | { type: 'IMPORTED'; sourceId: string }
   | { type: 'OPEN'; sourceId: string }
   | { type: 'RESCAN' }
+  | { type: 'WALK_ADDRESSES' }
   | { type: 'ASK_HINTS' }
   | { type: 'HINTS' }
   | { type: 'SCANNED' }
@@ -36,7 +37,7 @@ export type LegacyImportEvent =
   | { type: 'REMOVED' }
   | { type: 'PROGRESS'; message: string; percent: number | null }
   | { type: 'PAUSE' }
-  | { type: 'FAIL'; error: string }
+  | { type: 'FAIL'; error: string; addressWalkAvailable?: boolean }
   | { type: 'BACK' }
 
 export type LegacyImportContext = {
@@ -47,6 +48,7 @@ export type LegacyImportContext = {
   percent: number | null
   /** Long work polls this between batches; set by PAUSE. */
   stopRequested: boolean
+  addressWalkAvailable: boolean
   waitStartedAt: number
 }
 
@@ -58,6 +60,7 @@ const INITIAL: LegacyImportContext = {
   percent: null,
   stopRequested: false,
   waitStartedAt: 0,
+  addressWalkAvailable: false,
 }
 
 export const legacyImportMachine = setup({
@@ -66,21 +69,21 @@ export const legacyImportMachine = setup({
     events: {} as LegacyImportEvent,
   },
   actions: {
-    fail: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
+    fail: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error, addressWalkAvailable: event.addressWalkAvailable === true } : {})),
     clearError: assign({ error: null }),
     pick: assign(({ event }) => (event.type === 'PICK' ? { kind: event.kind, error: null } : {})),
     select: assign(({ event }) =>
       event.type === 'SAVED' || event.type === 'OPEN' || event.type === 'IMPORTED'
-        ? { sourceId: event.sourceId, error: null }
+        ? { sourceId: event.sourceId, error: null, addressWalkAvailable: false }
         : {},
     ),
-    beginWork: assign({ progress: null, percent: null, stopRequested: false, error: null }),
+    beginWork: assign({ progress: null, percent: null, stopRequested: false, error: null, addressWalkAvailable: false }),
     endWork: assign({ progress: null, percent: null, stopRequested: false }),
     progress: assign(({ event }) =>
       event.type === 'PROGRESS' ? { progress: event.message, percent: event.percent } : {},
     ),
     requestStop: assign({ stopRequested: true }),
-    leaveSource: assign({ sourceId: null, kind: null, error: null }),
+    leaveSource: assign({ sourceId: null, kind: null, error: null, addressWalkAvailable: false }),
   },
 }).createMachine({
   id: 'legacyImport',
@@ -156,6 +159,7 @@ export const legacyImportMachine = setup({
           on: {
             IMPORTED: { target: 'scanning', actions: 'select' },
             RESCAN: { target: 'scanning' },
+            WALK_ADDRESSES: { target: 'scanning', guard: ({ context }) => context.addressWalkAvailable },
             ASK_HINTS: { target: 'awaitingHints', actions: 'clearError' },
             BROWSE: { target: 'browsing', actions: 'clearError' },
             REVIEW: { target: 'reviewing', actions: 'clearError' },
