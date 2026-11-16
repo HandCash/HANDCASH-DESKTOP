@@ -41,6 +41,7 @@ import {
   type WalletRuntime,
   type WalletRuntimeId,
 } from './walletRuntime'
+import { setSyncHealth } from './walletHealth'
 import { inUiPhase } from './uiPhase'
 import { yieldToUi } from './yieldToUi'
 
@@ -133,7 +134,16 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
  */
 export async function refreshAfterAccountSwitch(opts: { arrived?: boolean } = {}): Promise<void> {
   if (opts.arrived) {
-    await recomposeWallet({ reason: 'account-arrived', history: 'mergeArrived' })
+    // BRC-39 imports the holder's validated Toolbox state. Do not rediscover
+    // its UTXOs on arrival; ownership/freshness and sign-time checks remain
+    // independent of chain ingest. Missing history retains normal recovery.
+    const result = await recomposeWallet({ reason: 'account-arrived', history: 'mergeArrived' })
+    if (result.history !== 'synced') {
+      setSyncHealth({
+        phase: 'error',
+        message: `Wallet history incomplete — ${result.historyError ?? 'history has not arrived'}.`,
+      })
+    }
     return
   }
   const { localToolboxStateLooksEmpty } = await import('./layers')
@@ -198,7 +208,10 @@ async function runRecomposeBody(
   const fenced = await runRecompose(async () => {
     const step = await recomposeHistory(opts, runtime, reason)
     if (!step.localStateWasReplaced) return { step, chain: null }
-    const chain = runChain ? await recomposeChain(runtime, reason, 'fenced') : NO_CHAIN
+    // A successful BRC-39 arrival already carries validated localState. Only
+    // that path skips discovery; failed/missing history keeps chain recovery.
+    const reuseArrivedState = opts.history === 'mergeArrived' && step.history === 'synced'
+    const chain = runChain && !reuseArrivedState ? await recomposeChain(runtime, reason, 'fenced') : NO_CHAIN
     await yieldToUi()
     if (runtime) assertRuntimeCurrent(runtime)
     await inUiPhase('recompose-relist', () => relistCollectablesAfterLocalStateReplace())

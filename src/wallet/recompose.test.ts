@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   refreshShared: vi.fn(),
   relist: vi.fn(),
   reconcile: vi.fn(),
+  setSyncHealth: vi.fn(),
   runtime: null as { runtimeId: string; instance: { identityKey: string } } | null,
   inRegion: false,
 }))
@@ -20,6 +21,8 @@ vi.mock('./walletRuntime', () => ({
   // Background derived passes from a prior test must not use a later runtime.
   runtimeIsCurrent: () => false,
 }))
+
+vi.mock('./walletHealth', () => ({ setSyncHealth: mocks.setSyncHealth }))
 
 vi.mock('./paymentReconcile', () => ({
   reconcilePaymentsAfterRestore: mocks.reconcile,
@@ -194,6 +197,9 @@ describe('recomposeWallet', () => {
   })
 
   it('merges an arriving account’s history inside the fence, even with local state and no password', async () => {
+    mocks.runtime = { runtimeId: 'rt-arrived', instance: { identityKey: '02ab' } }
+    let fencedAtReconcile: boolean | null = null
+    mocks.reconcile.mockImplementation(async () => { fencedAtReconcile = mocks.inRegion })
     let fencedDuringMerge: boolean | null = null
     mocks.mergeArrived.mockImplementation(async () => {
       fencedDuringMerge = mocks.inRegion
@@ -206,8 +212,31 @@ describe('recomposeWallet', () => {
     expect(mocks.mergeArrived).toHaveBeenCalledWith(null)
     expect(fencedDuringMerge).toBe(true)
     expect(mocks.autoPush).not.toHaveBeenCalled()
-    expect(mocks.refresh).toHaveBeenCalledWith(FUNDING_PASS)
+    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.refreshShared).not.toHaveBeenCalled()
     expect(mocks.relist).toHaveBeenCalledOnce()
+    expect(mocks.setSyncHealth).not.toHaveBeenCalled()
+    expect(mocks.reconcile).toHaveBeenCalledWith(mocks.runtime)
+    expect(fencedAtReconcile).toBe(true)
+  })
+
+  it.each([
+    { pulled: false, skipReason: null, pullError: 'Download failed (500)' },
+    { pulled: false, skipReason: 'no remote backup', pullError: null },
+    { pulled: false, skipReason: 'no backup url', pullError: null },
+  ])('keeps missing arrival history visibly incomplete while retaining recovery: %j', async (sync) => {
+    mocks.mergeArrived.mockResolvedValue(sync)
+    const { refreshAfterAccountSwitch } = await import('./recompose')
+
+    await refreshAfterAccountSwitch({ arrived: true })
+
+    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.refreshShared).toHaveBeenCalledWith(FUNDING_PASS)
+    expect(mocks.relist).not.toHaveBeenCalled()
+    expect(mocks.setSyncHealth).toHaveBeenCalledWith({
+      phase: 'error',
+      message: `Wallet history incomplete — ${sync.pullError ?? sync.skipReason}.`,
+    })
   })
 
   it('does not call a failed history download synced when the chain pass succeeds', async () => {
