@@ -301,6 +301,9 @@ export function genesisRetryMsFor(
   kind: GenesisFailureKind | null | undefined,
   reason = '',
 ): number {
+  // A walk the wallet stopped (a send, a newer list read) learned nothing about
+  // the item. Waiting a day on it stranded imported tips unverified.
+  if (kind === 'aborted') return 0
   if (kind === 'invalid' || isPermanentGenesisMiss(reason)) {
     return GENESIS_RETRY_MS
   }

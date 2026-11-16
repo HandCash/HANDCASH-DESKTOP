@@ -3535,6 +3535,13 @@ async function listCollectablesNow(
       }
       setCollectablesCache(merged, { announceArrivals, forEpoch: epoch })
       if (!walletRegionsIdleSince(readGeneration)) relistWhenWalletIdle()
+      // Import receipts restored after a restart live only here until Toolbox
+      // lists them. Without this kick their interrupted BRC-150 walk waited for
+      // the user to open each item.
+      if (seeded.length > 0 && !collectableVerifyWalkDeferred) {
+        const ownRead = listInFlight
+        void proveHeldGenesis(wallet, ownRead)
+      }
       return getCachedCollectables()
     }
     // An older page landing beside this read merges back into the grid.
