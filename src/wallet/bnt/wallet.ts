@@ -176,8 +176,8 @@ async function walletPublicKey(active: ActiveWallet, key: WalletSigner, forSelf:
 }
 
 /** Whether this wallet holds the clause key `holder` under `remittance`. */
-async function holdsUnder(active: ActiveWallet, remittance: BntRemittance, holder: string): Promise<boolean> {
-  return (await walletPublicKey(active, bntHolderSigner(selfOf(active), remittance), true)) === holder.toLowerCase()
+async function holdsUnder(active: ActiveWallet, remittance: BntRemittance, holder: string, mode: BntMode): Promise<boolean> {
+  return (await walletPublicKey(active, bntHolderSigner(selfOf(active), remittance, mode), true)) === holder.toLowerCase()
 }
 const selfOf = (active: ActiveWallet) => active.identityKey.toLowerCase()
 const idOf = (tx: Transaction) => String(tx.id('hex')).toLowerCase()
@@ -402,7 +402,7 @@ async function heldRows(active: ActiveWallet, basket: string, assetId?: string):
       remittance = null
     }
     if (!remittance) continue
-    if (!(await holdsUnder(active, remittance, read.clause.holder))) continue
+    if (!(await holdsUnder(active, remittance, read.clause.holder, read.clause.mode))) continue
     if (!(await isBntValidated(txid!, id))) continue
     const deploy = read.form === 'deploy' ? await deployOf(active, id, { txid: txid!, vout }) : null
     const issued = read.form === 'authority' ? read.issued : deploy?.fields.auth ? deployIssued(deploy) : null
@@ -1751,7 +1751,7 @@ async function ingestTransfer(active: ActiveWallet, sender: string, wire: Extrac
     if (!remittance || !read || read.form === 'deploy' || read.form === 'mint' || read.assetId !== wire.asset) {
       return 'invalid'
     }
-    if (!(await holdsUnder(active, remittance, read.clause.holder))) return 'invalid'
+    if (!(await holdsUnder(active, remittance, read.clause.holder, read.clause.mode))) return 'invalid'
     if (read.clause.mode !== 'open') return 'retry'
     mine.push({ vout: o.vout, read, remittance })
   }

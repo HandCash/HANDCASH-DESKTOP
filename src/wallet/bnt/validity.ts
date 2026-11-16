@@ -1,4 +1,5 @@
-import { Transaction } from '@bsv/sdk'
+import { Transaction, type ChainTracker } from '@bsv/sdk'
+import { checkIptHashRelease } from './release'
 import { inputScriptValid, sourceOutputOf, sourceTxidOf } from '../txInputs'
 import { backingCount, backingDepositKey, backingDepositOf, checkBackingProof, type BackingOutpoint, type BntBackingProof } from './backing'
 import { bntIssuerKeyOf } from './keys'
@@ -104,7 +105,7 @@ export function readBntDeploy(tx: Transaction, vout: number): DeployRead {
   if (!fields) return { ok: false, reason: 'payload', detail: 'the payload is not a BRC-255 payload' }
   let issuerKeys: string[]
   try {
-    issuerKeys = fields.iss.map(bntIssuerKeyOf)
+    issuerKeys = fields.iss.map((identity) => bntIssuerKeyOf(identity, fields.mode))
   } catch {
     return { ok: false, reason: 'payload', detail: 'iss names an invalid key' }
   }
@@ -397,7 +398,8 @@ const NO_BACKING: BackingSource = { proven: () => false, proofOf: async () => nu
  * checked against §4; the walk stops at the deploy, at a transaction already
  * validated, or (countersigned) at an accepted transaction, and otherwise
  * continues into the transaction behind every input that spends the asset.
- * Release-branch inputs are never accepted, so they always walk back.
+ * BRC-253 §11: release-branch inputs also require a mined beacon-release
+ * proof and mined transfer. Without both they wait, never credit.
  *
  * Extended Format only claims what an input spends, and a signature covers
  * the claim, so every claim is compared with the parent's real output
@@ -411,6 +413,7 @@ export async function walkBnt(
   txOf: (txid: string) => Promise<Transaction | null>,
   isValidated: (txid: string) => boolean,
   backing: BackingSource = NO_BACKING,
+  release?: { chain?: readonly Transaction[]; tracker: ChainTracker },
 ): Promise<WalkResult> {
   const subject = subjectTxid.toLowerCase()
   const queue: Array<{ txid: string; claims: Claim[] }> = [{ txid: subject, claims: [] }]
@@ -475,7 +478,9 @@ export async function walkBnt(
       if (!read.ok || read.deploy.assetId !== deploy.assetId) return { ok: false, reason: 'invalid', txid, detail: 'the deploy does not read back' }
       continue
     }
-    if (txid !== subject && isValidated(txid)) continue
+    // Old local IPT cache entries did not require a mined release proof.
+    // Recheck their branch rather than letting that cache bypass §11.6.
+    if (txid !== subject && deploy.rules.mode === 'open' && isValidated(txid)) continue
     const check = checkBntTx(tx, deploy)
     if (!check.ok) {
       const carried = claims.length > 0 && claims.every((c) => c.vout === 0) ? mintCarriedFrom(tx, deploy) : null
@@ -492,6 +497,39 @@ export async function walkBnt(
         }],
       })
       continue
+    }
+    // BRC-253 §6 shared issuer sets: sender funding can be double-spent,
+    // so even a quorum's accepted transfer is not final before mining.
+    if (deploy.rules.mode === 'countersign' && deploy.rules.issuer.keys.length > 1 && check.accepted) {
+      const path = tx.merklePath
+      if (!release || !path || !Number.isSafeInteger(path.blockHeight) || path.blockHeight <= 0) {
+        return { ok: false, reason: 'missing', txid, detail: 'the shared-issuer transfer is not proven mined' }
+      }
+      try {
+        if (await path.verify(txid, release.tracker) !== true) {
+          return { ok: false, reason: 'missing', txid, detail: 'the shared-issuer transfer is not proven on this chain' }
+        }
+      } catch {
+        return { ok: false, reason: 'missing', txid, detail: 'the shared-issuer transfer proof could not be checked' }
+      }
+    }
+    // BRC-253 §11.6: knowing the secret is not proof of a public, mined release.
+    if (deploy.rules.mode === 'countersign' && !check.accepted) {
+      if (!release?.chain) return { ok: false, reason: 'missing', txid, detail: 'the mined beacon-release proof is not available' }
+      const proof = await checkIptHashRelease(deploy, release.chain, release.tracker)
+      if (!proof.ok) return { ok: false, reason: proof.missing ? 'missing' : 'invalid', txid, detail: proof.detail }
+      // §9: accept-once is gone after release; a recipient waits for mining.
+      const path = tx.merklePath
+      if (!path || !Number.isSafeInteger(path.blockHeight) || path.blockHeight <= 0) {
+        return { ok: false, reason: 'missing', txid, detail: 'the released transfer is not proven mined' }
+      }
+      try {
+        if (await path.verify(txid, release.tracker) !== true) {
+          return { ok: false, reason: 'missing', txid, detail: 'the released transfer is not proven on this chain' }
+        }
+      } catch {
+        return { ok: false, reason: 'missing', txid, detail: 'the released transfer proof could not be checked' }
+      }
     }
     validated.push(txid)
     if (check.accepted) continue

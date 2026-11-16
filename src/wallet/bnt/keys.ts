@@ -1,5 +1,6 @@
 import { KeyDeriver, PrivateKey, PublicKey, Random, Utils } from '@bsv/sdk'
 import type { WalletSigner } from '../txInputs'
+import type { BntMode } from './script'
 
 /**
  * BRC-255 keys. The issuer key is the identity key's child for `[2, "bnt
@@ -12,16 +13,21 @@ import type { WalletSigner } from '../txInputs'
 export const BNT_ISSUER_PROTOCOL: [2, string] = [2, 'bnt issuer']
 export const BNT_HOLDER_PROTOCOL: [2, string] = [2, 'bnt holder']
 export const BNT_FEE_PROTOCOL: [2, string] = [2, 'bnt fee']
+// BRC-253 §2: IPT issuer and holder keys never share the BNT namespace.
+export const IPT_ISSUER_PROTOCOL: [2, string] = [2, 'ipt issuer']
+export const IPT_HOLDER_PROTOCOL: [2, string] = [2, 'ipt holder']
+const issuerProtocol = (mode: BntMode) => mode === 'countersign' ? IPT_ISSUER_PROTOCOL : BNT_ISSUER_PROTOCOL
+const holderProtocol = (mode: BntMode) => mode === 'countersign' ? IPT_HOLDER_PROTOCOL : BNT_HOLDER_PROTOCOL
 const ISSUER_KEY_ID = '1'
 const ANYONE = new PrivateKey(1)
 const KEY_RE = /^0[23][0-9a-f]{64}$/
 
 /** The clause key an identity's assets name, derivable by anyone. */
-export function bntIssuerKeyOf(identityKeyHex: string): string {
+export function bntIssuerKeyOf(identityKeyHex: string, mode: BntMode = 'open'): string {
   const identity = identityKeyHex.trim().toLowerCase()
   if (!KEY_RE.test(identity)) throw new Error('An issuer identity is a compressed public key')
   return PublicKey.fromString(identity)
-    .deriveChild(ANYONE, `${BNT_ISSUER_PROTOCOL[0]}-${BNT_ISSUER_PROTOCOL[1]}-${ISSUER_KEY_ID}`)
+    .deriveChild(ANYONE, `${issuerProtocol(mode)[0]}-${issuerProtocol(mode)[1]}-${ISSUER_KEY_ID}`)
     .toString()
 }
 
@@ -29,8 +35,8 @@ export function bntIssuerKeyOf(identityKeyHex: string): string {
 export const BNT_ISSUER_SIGNER: WalletSigner = { protocolID: BNT_ISSUER_PROTOCOL, keyID: ISSUER_KEY_ID, counterparty: 'anyone' }
 
 /** This wallet's own issuer private key. */
-export function bntIssuerPrivateKey(root: PrivateKey): PrivateKey {
-  return new KeyDeriver(root).derivePrivateKey(BNT_ISSUER_PROTOCOL, ISSUER_KEY_ID, 'anyone')
+export function bntIssuerPrivateKey(root: PrivateKey, mode: BntMode = 'open'): PrivateKey {
+  return new KeyDeriver(root).derivePrivateKey(issuerProtocol(mode), ISSUER_KEY_ID, 'anyone')
 }
 
 export function freshDerivationString(): string {
@@ -48,34 +54,34 @@ function holderKeyId(prefix: string, suffix: string): string {
 }
 
 /** The holder key a sender writes for `recipient` (an identity key, or this wallet's own). */
-export function bntHolderPublicKey(senderRoot: PrivateKey, recipient: string, prefix: string, suffix: string): string {
+export function bntHolderPublicKey(senderRoot: PrivateKey, recipient: string, prefix: string, suffix: string, mode: BntMode = 'open'): string {
   const self = senderRoot.toPublicKey().toString()
   const who = recipient.trim().toLowerCase()
   const deriver = new KeyDeriver(senderRoot)
   const keyId = holderKeyId(prefix, suffix)
-  if (who === self) return deriver.derivePrivateKey(BNT_HOLDER_PROTOCOL, keyId, 'self').toPublicKey().toString()
+  if (who === self) return deriver.derivePrivateKey(holderProtocol(mode), keyId, 'self').toPublicKey().toString()
   if (!KEY_RE.test(who)) throw new Error('A recipient is an identity key')
-  return deriver.derivePublicKey(BNT_HOLDER_PROTOCOL, keyId, who, false).toString()
+  return deriver.derivePublicKey(holderProtocol(mode), keyId, who, false).toString()
 }
 
 /** The holder key `identityKey`'s wallet shares with `other`: the recipient when sending, the sender when holding. */
-export function bntHolderKeyFor(identityKey: string, other: string, prefix: string, suffix: string): WalletSigner {
+export function bntHolderKeyFor(identityKey: string, other: string, prefix: string, suffix: string, mode: BntMode = 'open'): WalletSigner {
   const who = other.trim().toLowerCase()
   if (!KEY_RE.test(who)) throw new Error('A recipient is an identity key')
   const keyID = holderKeyId(prefix, suffix)
-  return { protocolID: BNT_HOLDER_PROTOCOL, keyID, counterparty: who === identityKey.trim().toLowerCase() ? 'self' : who }
+  return { protocolID: holderProtocol(mode), keyID, counterparty: who === identityKey.trim().toLowerCase() ? 'self' : who }
 }
 
 /** The holder key of an output `identityKey`'s wallet holds under `remittance`, as that wallet signs with it. */
-export function bntHolderSigner(identityKey: string, remittance: BntRemittance): WalletSigner {
+export function bntHolderSigner(identityKey: string, remittance: BntRemittance, mode: BntMode = 'open'): WalletSigner {
   if (!KEY_RE.test(remittance.senderIdentityKey.trim().toLowerCase())) throw new Error('The remittance names no sender identity')
-  return bntHolderKeyFor(identityKey, remittance.senderIdentityKey, remittance.derivationPrefix, remittance.derivationSuffix)
+  return bntHolderKeyFor(identityKey, remittance.senderIdentityKey, remittance.derivationPrefix, remittance.derivationSuffix, mode)
 }
 
 /** The private key of an output this wallet holds under `remittance`. */
-export function bntHolderPrivateKey(root: PrivateKey, remittance: BntRemittance): PrivateKey {
-  const { keyID, counterparty } = bntHolderSigner(root.toPublicKey().toString(), remittance)
-  return new KeyDeriver(root).derivePrivateKey(BNT_HOLDER_PROTOCOL, keyID, counterparty)
+export function bntHolderPrivateKey(root: PrivateKey, remittance: BntRemittance, mode: BntMode = 'open'): PrivateKey {
+  const { protocolID, keyID, counterparty } = bntHolderSigner(root.toPublicKey().toString(), remittance, mode)
+  return new KeyDeriver(root).derivePrivateKey(protocolID, keyID, counterparty)
 }
 
 export function readBntRemittance(value: unknown): BntRemittance | null {

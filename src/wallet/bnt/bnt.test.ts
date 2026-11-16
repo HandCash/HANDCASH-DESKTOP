@@ -1,4 +1,4 @@
-import { LockingScript, OP, PrivateKey, Script, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
+import { LockingScript, MerklePath, OP, PrivateKey, Script, Transaction, UnlockingScript, Utils, type ChainTracker } from '@bsv/sdk'
 import { afterEach, describe, expect, it } from 'vitest'
 import { inputScriptValid, signInput } from '../txInputs'
 import { bntHolderPrivateKey, bntHolderPublicKey, bntIssuerKeyOf, bntIssuerPrivateKey } from './keys'
@@ -8,6 +8,7 @@ import {
   BNT_HOLDER_SCOPE,
   BNT_ISSUER_SCOPE,
   bntAssetId,
+  bntBeaconLock,
   bntAuthorityLock,
   bntDeployLock,
   bntHeldLock,
@@ -17,6 +18,7 @@ import {
   bntUnlockBranch,
   hash160Hex,
   p2pkLock,
+  multisigLock,
   readBnt,
   revealedSecret,
   type BntClause,
@@ -228,6 +230,20 @@ describe('bnt payload', () => {
 })
 
 describe('bnt keys', () => {
+  it('uses distinct IPT issuer and holder namespaces (BRC-253 §2)', () => {
+    const issuer = bntIssuerPrivateKey(identity, 'countersign')
+    expect(bntIssuerKeyOf(pub(identity), 'countersign')).toBe(pub(issuer))
+    expect(pub(issuer)).not.toBe(pub(issuerKey))
+    const remittance = { derivationPrefix: 'p1', derivationSuffix: 's1', senderIdentityKey: pub(alice) }
+    const holder = bntHolderPublicKey(alice, pub(bob), 'p1', 's1', 'countersign')
+    expect(pub(bntHolderPrivateKey(bob, remittance, 'countersign'))).toBe(holder)
+    expect(holder).not.toBe(bntHolderPublicKey(alice, pub(bob), 'p1', 's1'))
+    const fields: BntDeployFields = { ...tokenFields, mode: 'countersign', bcn: `${'11'.repeat(32)}_0`, sil: BNT_MIN_SILENCE_SECONDS, rel: '22'.repeat(20) }
+    const clause: BntClause = { mode: 'countersign', holder, issuer: { m: 1, keys: [pub(issuer)] }, release: { kind: 'hash', rel: fields.rel! } }
+    expect(readBntDeploy(deployTx({ supply: 1000n, fields, signer: issuer, clause }), 0).ok).toBe(true)
+    expect(readBntDeploy(deployTx({ supply: 1000n, fields, signer: issuerKey, clause }), 0)).toMatchObject({ ok: false, reason: 'unsigned' })
+  })
+
   it('anyone derives the issuer key from the identity', () => {
     expect(bntIssuerKeyOf(pub(identity))).toBe(pub(issuerKey))
   })
@@ -277,6 +293,71 @@ describe('bnt deploy', () => {
 })
 
 describe('bnt validity', () => {
+  it('waits for chain-verified mining of an accepted shared-issuer transfer (BRC-253 §6)', async () => {
+    const identities = [identity, bob]
+    const issuers = identities.map((key) => bntIssuerPrivateKey(key, 'countersign'))
+    const keys = issuers.map(pub)
+    const clause: BntClause = { mode: 'countersign', holder: pub(alice), issuer: { m: 2, keys }, release: { kind: 'hash', rel: '22'.repeat(20) } }
+    const fields: BntDeployFields = { ...tokenFields, iss: identities.map(pub), m: 2, mode: 'countersign', bcn: `${'11'.repeat(32)}_0`, sil: BNT_MIN_SILENCE_SECONDS, rel: '22'.repeat(20) }
+    const coin = new Transaction()
+    coin.addOutput({ lockingScript: multisigLock(2, keys), satoshis: 500 })
+    const dTx = new Transaction()
+    dTx.addInput({ sourceTransaction: coin, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    dTx.addOutput({ lockingScript: bntDeployLock({ supply: 100n, payload: encodeBntPayload(fields), clause }), satoshis: 1 })
+    const unlock = new UnlockingScript().writeOpCode(OP.OP_0)
+    issuers.forEach((key) => unlock.writeBin(signInput(dTx, 0, key, BNT_ISSUER_SCOPE)))
+    dTx.inputs[0]!.unlockingScript = unlock
+    const deploy = deployOf(dTx)
+    const tx = new Transaction()
+    tx.addInput({ sourceTransaction: dTx, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    tx.addOutput({ lockingScript: bntHeldLock({ assetId: deploy.assetId, amount: 100n, clause: { ...clause, holder: pub(bob) } }), satoshis: 1 })
+    tx.inputs[0]!.unlockingScript = bntIssuerUnlock({ issuerSignatures: issuers.map((key) => signInput(tx, 0, key, BNT_ISSUER_SCOPE)), shared: true, holderSignature: signInput(tx, 0, alice, BNT_HOLDER_SCOPE) })
+    const id = String(tx.id('hex'))
+    expect(checkBntTx(tx, deploy)).toMatchObject({ ok: true, accepted: true })
+    expect(await walkBnt(id, deploy, storeOf(tx), () => false)).toMatchObject({ ok: false, reason: 'missing', detail: 'the shared-issuer transfer is not proven mined' })
+    tx.merklePath = new MerklePath(800_000, [[{ offset: 0, hash: 'cd'.repeat(32) }, { offset: 1, hash: id, txid: true }]])
+    const root = tx.merklePath.computeRoot(id)
+    const tracker: ChainTracker = { isValidRootForHeight: async () => false, currentHeight: async () => 800_001 }
+    expect(await walkBnt(id, deploy, storeOf(tx), () => false, undefined, { tracker })).toMatchObject({ ok: false, reason: 'missing', detail: 'the shared-issuer transfer is not proven on this chain' })
+    tracker.isValidRootForHeight = async (r, height) => r === root && height === 800_000
+    expect(await walkBnt(id, deploy, storeOf(tx), () => false, undefined, { tracker })).toMatchObject({ ok: true })
+  })
+  it('does not credit a release secret without a mined beacon-release proof (BRC-253 §11.6)', async () => {
+    const secret = new Array(32).fill(7)
+    const issuer = bntIssuerPrivateKey(identity, 'countersign')
+    const beacon = new Transaction()
+    const clause: BntClause = { mode: 'countersign', holder: pub(alice), issuer: { m: 1, keys: [pub(issuer)] }, release: { kind: 'hash', rel: hash160Hex(secret) } }
+    beacon.addOutput({ lockingScript: bntBeaconLock(clause), satoshis: 1 })
+    const fields: BntDeployFields = { ...tokenFields, mode: 'countersign', bcn: `${beacon.id('hex')}_0`, sil: BNT_MIN_SILENCE_SECONDS, rel: hash160Hex(secret) }
+    const dTx = deployTx({ supply: 100n, fields, signer: issuer, clause })
+    const deploy = deployOf(dTx)
+    const tx = new Transaction()
+    tx.addInput({ sourceTransaction: dTx, sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    tx.addOutput({ lockingScript: bntHeldLock({ assetId: deploy.assetId, amount: 100n, clause: { ...clause, holder: pub(bob) } }), satoshis: 1 })
+    const holderSignature = signInput(tx, 0, alice, BNT_HOLDER_SCOPE)
+    tx.inputs[0]!.unlockingScript = bntReleaseUnlock(secret, holderSignature)
+    expect(checkBntTx(tx, deploy)).toMatchObject({ ok: true, accepted: false })
+    expect(await walkBnt(String(tx.id('hex')), deploy, storeOf(dTx, tx), () => false)).toMatchObject({ ok: false, reason: 'missing', detail: 'the mined beacon-release proof is not available' })
+    const release = new Transaction()
+    release.addInput({ sourceTransaction: beacon, sourceOutputIndex: 0, unlockingScript: new UnlockingScript().writeBin(secret).writeOpCode(OP.OP_0), sequence: 0xffffffff })
+    release.addOutput({ lockingScript: new LockingScript().writeOpCode(OP.OP_TRUE), satoshis: 1 })
+    const roots = new Set<string>()
+    const tracker: ChainTracker = { isValidRootForHeight: async (root, height) => height === 800_000 && roots.has(root), currentHeight: async () => 800_001 }
+    const prove = (t: Transaction) => {
+      const id = String(t.id('hex'))
+      t.merklePath = new MerklePath(800_000, [[{ offset: 0, hash: 'cd'.repeat(32) }, { offset: 1, hash: id, txid: true }]])
+      roots.add(t.merklePath.computeRoot(id))
+    }
+    prove(release)
+    const proof = { chain: [beacon, release], tracker }
+    expect(await walkBnt(String(tx.id('hex')), deploy, storeOf(dTx, tx), () => false, undefined, proof)).toMatchObject({ ok: false, reason: 'missing', detail: 'the released transfer is not proven mined' })
+    prove(tx)
+    expect(await walkBnt(String(tx.id('hex')), deploy, storeOf(dTx, tx), () => false, undefined, proof)).toMatchObject({ ok: true })
+    // The same conservation-preserving output is creditable with a valid issuer acceptance.
+    tx.inputs[0]!.unlockingScript = bntIssuerUnlock({ issuerSignatures: [signInput(tx, 0, issuer, BNT_ISSUER_SCOPE)], shared: false, holderSignature })
+    expect(await walkBnt(String(tx.id('hex')), deploy, storeOf(dTx, tx), () => false)).toMatchObject({ ok: true })
+  })
+
   it('conserves, splits and walks back to the deploy', async () => {
     const dTx = deployTx({ supply: 100n })
     const deploy = deployOf(dTx)
