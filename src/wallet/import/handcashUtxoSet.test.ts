@@ -216,7 +216,7 @@ describe('verifyUtxoSet', () => {
     expect(verified.rejected).toBe(1)
   })
 
-  it('rejects cosigned outputs, even ones naming these keys: this wallet signs plain P2PKH only', async () => {
+  it('skips cosigned outputs naming these keys without refusing the set; rejects ones naming another key', async () => {
     const deriver = makeDeriver()
     const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
     const hash = (path: string) => deriver.privateKeyAt(path).toPublicKey().toHash('hex') as string
@@ -228,7 +228,8 @@ describe('verifyUtxoSet', () => {
     ])
     expect([...verified.readAddresses]).toEqual([])
     expect(verified.addresses).toEqual([])
-    expect(verified.rejected).toBe(2)
+    expect(verified.unsupported).toBe(1)
+    expect(verified.rejected).toBe(1)
   })
 })
 

@@ -238,6 +238,11 @@ export type VerifiedUtxoSet = {
   /** Addresses holding tokens or multi-sat inscriptions — read in full from the chain. */
   readAddresses: Set<string>
   rejected: number
+  /**
+   * Rows whose script names this path's own key but in a form this wallet
+   * does not sign (cosigned tokens). Ours, left in place; not a refusal.
+   */
+  unsupported: number
 }
 
 /** Why a row HandCash named was not taken as ours. */
@@ -281,6 +286,8 @@ export async function verifyUtxoSet(
   const readAddresses = new Set<string>()
   const seen = new Set<string>()
   let rejected = 0
+  let unsupported = 0
+  const unsupportedPaths = new Set<string>()
   const rejectedBy = new Map<UtxoSetRejection, { count: number; paths: Set<string> }>()
   const reject = (reason: UtxoSetRejection, path: string) => {
     rejected += 1
@@ -318,7 +325,16 @@ export async function verifyUtxoSet(
       continue
     }
     if (!utxo.script.includes(key.lock)) {
-      reject('script', utxo.path)
+      // The owner hash under another script form (e.g. CHECKSIGVERIFY +
+      // approver CHECKSIG) is still these keys' output, just not one this
+      // wallet signs. Skip it; any other script is HandCash's claim.
+      const ownerHash = key.lock.slice(6, 46)
+      if (utxo.script.includes(`76a914${ownerHash}88ad`)) {
+        unsupported += 1
+        if (unsupportedPaths.size < REJECTED_PATH_SAMPLES) unsupportedPaths.add(utxo.path)
+      } else {
+        reject('script', utxo.path)
+      }
       continue
     }
     if (!addresses.has(key.address)) {
@@ -347,9 +363,9 @@ export async function verifyUtxoSet(
     .join('')
   appendAppLog(
     rejected > 0 ? 'warn' : 'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms${rejectedNote}`,
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms${rejectedNote}${unsupported > 0 ? ` unsupported=${unsupported}(${[...unsupportedPaths].join(',')})` : ''}`,
   )
-  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected }
+  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected, unsupported }
 }
 
 const TERANODE_CHUNK = TERANODE_PROBE_BATCH
