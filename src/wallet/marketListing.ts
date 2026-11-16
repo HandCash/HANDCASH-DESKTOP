@@ -1509,6 +1509,14 @@ function listingAdvertBeef(
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
+  // Bridge callers are not constrained by the TypeScript union. Refuse token
+  // requests before touching reservations or reporting an ordinal holding error.
+  if (args.assetType != null && args.assetType !== 'ordinal') {
+    throw new MarketListingError(
+      'UNSUPPORTED_TOKEN_FORMAT',
+      'Only 1Sat items can be listed on the market. Token listings are not supported.',
+    )
+  }
   // Serialize with consolidate / other spends so fee inputs are not raced, and
   // so a prior failed list's reserved tip can be aborted before we scan.
   const requestedAt = Date.now()

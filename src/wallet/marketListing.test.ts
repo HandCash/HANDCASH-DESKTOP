@@ -398,6 +398,25 @@ describe('isAlreadySpentListingFailure', () => {
   })
 })
 
+describe('market listing bridge asset types', () => {
+  it.each(['bsv21', 'bnt', 'ipt', ''])('refuses %j before reading holdings or creating a spend', async (assetType) => {
+    listingHarness.listOutputsCalls = []
+    listingHarness.createAction.mockClear()
+    listingHarness.abortAction.mockClear()
+    await expect(createMarketListingAdvert({
+      outpoint: `${'ab'.repeat(32)}.0`,
+      assetType: assetType as 'ordinal', // Unchecked JSON from a bridge caller.
+      priceSats: 100,
+    })).rejects.toMatchObject({
+      code: 'UNSUPPORTED_TOKEN_FORMAT',
+      message: 'Only 1Sat items can be listed on the market. Token listings are not supported.',
+    })
+    expect(listingHarness.listOutputsCalls).toEqual([])
+    expect(listingHarness.createAction).not.toHaveBeenCalled()
+    expect(listingHarness.abortAction).not.toHaveBeenCalled()
+  })
+})
+
 describe('list-time market settlement unlocks', () => {
   const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
 

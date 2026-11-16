@@ -246,6 +246,26 @@ describe('open BNT wallet', () => {
     expect(listed.assets.find((a) => a.assetId === item.assetId)).toMatchObject({ kind: 'item', name: 'Lantern', balance: '1' })
   })
 
+  it('indexes 1,000 native REF units without crediting a legacy bsv21 row', async () => {
+    const owner = makeInstall()
+    const token = await as(owner, () => issueBntAsset({ kind: 'token', sym: 'REF', supply: '1000' }))
+    const row = owner.rows.find((r) => r.outpoint === `${token.txid}.0`)!
+    expect(row.basket).toBe('bntft')
+    expect(readBnt(LockingScript.fromHex(row.lockingScript))).toMatchObject({ form: 'deploy' })
+    // A legacy basket cannot become compact BNT merely by sharing its label
+    // or even by containing a copy of a valid compact output.
+    owner.rows.push({ ...row, basket: 'bsv21', outpoint: `${'ab'.repeat(32)}.0` })
+    const assets = (await as(owner, () => listBntAssets())).assets
+    expect(assets).toHaveLength(1)
+    expect(assets[0]).toMatchObject({ assetId: token.assetId, sym: 'REF', balance: '1000', outputs: 1 })
+    const recipient = makeInstall()
+    await as(owner, () => transferBntAsset({ assetId: token.assetId, recipient: recipient.identityKey, amount: '1000' }))
+    await as(recipient, () => serveBntBox({ force: true }))
+    expect(await balanceOf(recipient, token.assetId)).toBe('1000')
+    expect(owner.rows.find((r) => r === row)?.spendable).toBe(false)
+    expect(owner.rows.find((r) => r.basket === 'bsv21')?.spendable).toBe(true)
+  })
+
   it('refuses bad issue arguments before anything is staged', async () => {
     const tries: Array<[Parameters<typeof issueBntAsset>[0], string]> = [
       [{ kind: 'token', supply: '5' }, 'bad-asset-args'],
