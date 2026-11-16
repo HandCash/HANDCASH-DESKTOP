@@ -10,6 +10,7 @@ import { accountLocalKey } from './accountLocalKeys'
  */
 
 const createAction = vi.fn()
+const signAction = vi.fn()
 const abortAction = vi.fn()
 const refreshFromChain = vi.fn()
 const stored = new Map<string, string>()
@@ -61,6 +62,7 @@ vi.mock('./session', () => ({
     chain: 'main',
     wallet: {
       createAction: (...a: unknown[]) => createAction(...a),
+      signAction: (...a: unknown[]) => signAction(...a),
       abortAction: (...a: unknown[]) => abortAction(...a),
     },
     services: {},
@@ -139,6 +141,7 @@ describe('migrateChosenPhraseItems stops', () => {
     vi.resetModules()
     stored.clear()
     createAction.mockReset()
+    signAction.mockReset()
     abortAction.mockReset()
     refreshFromChain.mockReset()
     parentCalls.length = 0
@@ -306,6 +309,41 @@ describe('migrateChosenPhraseItems stops', () => {
 
     expect(run.results.get(TIPS[0]!.outpoint)?.kind).toBe('failed')
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-1' })
+  })
+
+  /** A signable spend of `tip`, and what signAction hands back once signed. */
+  function signableSpendOf(tip: ReturnType<typeof makeTip>) {
+    const parent = Transaction.fromBinary(Beef.fromBinary(tip.beef).findTxid(tip.txid)!.rawTx!)
+    const spend = new Transaction()
+    spend.addInput({ sourceTXID: tip.txid, sourceOutputIndex: 0, unlockingScript: UnlockingScript.fromHex('') })
+    spend.addOutput({ lockingScript: new P2PKH().lock('1PjUSNqWWKFwG9vCnpnoMRDnkr1m89h9NU'), satoshis: 1 })
+    const st = new Beef()
+    st.mergeRawTx(parent.toBinary())
+    st.mergeRawTx(spend.toBinary())
+    const txid = spend.id('hex')
+    const signed = new Beef()
+    signed.mergeRawTx(spend.toBinary())
+    return { st: st.toBinary(), txid, atomic: signed.toBinaryAtomic(txid) }
+  }
+
+  it.each([
+    ['miners answer an unproven conflict', () => minerSubmit.mockResolvedValue({ kind: 'unproven-conflict', summary: {} })],
+    ['the submit itself throws', () => minerSubmit.mockRejectedValue(new Error('invalid body'))],
+  ])('never aborts a signed migrate when %s', async (_label, arrange) => {
+    // never-abort-signed: once signAction returns, the cheque may still land.
+    // Aborting would free its reserved change for a double spend; the outbox
+    // and the next run's sealed-tip resume own its fate instead.
+    const { st, txid, atomic } = signableSpendOf(TIPS[0]!)
+    createAction.mockResolvedValue({ signableTransaction: { reference: 'ref-2', tx: st } })
+    signAction.mockResolvedValue({ txid, tx: atomic })
+    arrange()
+    const { migrateChosenPhraseItems } = await import('./phraseSweep')
+    const run = await migrateChosenPhraseItems({ items: chosen.slice(0, 1) })
+
+    expect(signAction).toHaveBeenCalledTimes(1)
+    expect(minerSubmit).toHaveBeenCalledWith(txid, expect.any(Array))
+    expect(abortAction).not.toHaveBeenCalled()
+    expect(run.results.get(TIPS[0]!.outpoint)?.kind).not.toBe('moved')
   })
 })
 

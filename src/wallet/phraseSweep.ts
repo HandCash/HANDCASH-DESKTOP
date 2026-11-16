@@ -1541,10 +1541,12 @@ async function postForeignInputs(
   })
 
   const reference = car.signableTransaction?.reference
+  const progress = { signed: false }
   try {
     return await signAndPostForeignInputs(
       { active, spendKey: args.spendKey, inputBeef: args.inputBeef, inputs },
       car,
+      progress,
     )
   } catch (err) {
     // An unsigned action keeps its reserved inputs and still lists its `1sat`
@@ -1552,7 +1554,9 @@ async function postForeignInputs(
     // complete with the provenance we attached — until background review failed
     // the transaction and took them away again. Nothing was ever on chain, so
     // there is no broadcast to race: releasing it here is the only correct end.
-    if (reference) {
+    // Once signed it is a cheque for miners (never-abort-signed): the miner
+    // outbox follows it to a verdict and the next run cashes its sealed tips.
+    if (reference && !progress.signed) {
       try {
         await args.active.wallet.abortAction({ reference })
       } catch (abortErr) {
@@ -1576,6 +1580,7 @@ async function signAndPostForeignInputs(
     inputs: ForeignInput[]
   },
   car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
+  progress: { signed: boolean },
 ): Promise<{ txid: string; tx: Transaction | null }> {
   const { active, spendKey, inputs: items } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
@@ -1624,6 +1629,7 @@ async function signAndPostForeignInputs(
       reference: car.signableTransaction.reference,
       spends,
     })
+    progress.signed = true
     sweepTxid = (sar.txid ?? '').toLowerCase()
     sweepAtomic = asBytes(sar.tx)
   }
