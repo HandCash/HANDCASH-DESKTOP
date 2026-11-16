@@ -17,7 +17,7 @@ import { getWalletRuntime } from '../walletRuntime'
 import { signInputWithWallet, sourceTxidOf, type WalletSigner } from '../txInputs'
 import {
   freshDerivationString,
-  BNT_ISSUER_SIGNER,
+  bntIssuerSigner,
   bntHolderKeyFor,
   bntHolderSigner,
   bntIssuerKeyOf,
@@ -636,10 +636,10 @@ function bntActivityItem(active: ActiveWallet, assetId: string, fields: BntDeplo
 }
 
 /** A fresh holder key for `recipient` and the remittance that names it. */
-async function freshHolder(active: ActiveWallet, recipient: string, prefix: string): Promise<{ holder: string; remittance: BntRemittance }> {
+async function freshHolder(active: ActiveWallet, recipient: string, prefix: string, mode: BntMode = 'open'): Promise<{ holder: string; remittance: BntRemittance }> {
   const suffix = freshDerivationString()
   return {
-    holder: await walletPublicKey(active, bntHolderKeyFor(selfOf(active), recipient, prefix, suffix), false),
+    holder: await walletPublicKey(active, bntHolderKeyFor(selfOf(active), recipient, prefix, suffix, mode), false),
     remittance: { derivationPrefix: prefix, derivationSuffix: suffix, senderIdentityKey: selfOf(active) },
   }
 }
@@ -1015,7 +1015,7 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
 async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, prefix: string, issued: BntIssued | undefined = row.issued): Promise<PlannedOutput[]> {
   const out: PlannedOutput[] = []
   if (row.read.form !== 'authority' && row.amount > 0n) {
-    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix)
+    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
     out.push({
       lockingScript: bntHeldLock({ assetId: row.assetId, amount: row.amount, clause: { mode: 'open', holder } }).toHex(),
       satoshis: 1,
@@ -1026,7 +1026,7 @@ async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, p
     })
   }
   if (row.authority) {
-    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix)
+    const { holder, remittance } = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
     out.push({
       lockingScript: bntAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder }, ...(issued ? { issued } : {}) }).toHex(),
       satoshis: 1,
@@ -1063,7 +1063,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
         }
       }
       const prefix = freshDerivationString()
-      const first = await freshHolder(active, selfOf(active), prefix)
+      const first = await freshHolder(active, selfOf(active), prefix, fields.mode)
       const basket = bntFilingOf(fields.kind, fields.mode)
       const inputs: Array<{ outpoint: string; description: string; signer: WalletSigner; scope: number }> = []
       // Build clause with proper types for countersign mode
@@ -1071,7 +1071,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
         ? {
             mode: 'countersign',
             holder: first.holder,
-            issuer: { m: fields.m, keys: fields.iss },
+            issuer: { m: fields.m, keys: fields.iss.map((identity) => bntIssuerKeyOf(identity, fields.mode)) },
             release: fields.rel ? { kind: 'hash', rel: fields.rel } : { kind: 'keys', k: fields.k!, keys: fields.relk! },
           }
         : { mode: 'open', holder: first.holder }
@@ -1089,7 +1089,7 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       if (fields.mode === 'countersign') {
         const beaconRules: BntRules = {
           mode: 'countersign',
-          issuer: { m: fields.m, keys: fields.iss },
+          issuer: { m: fields.m, keys: fields.iss.map((identity) => bntIssuerKeyOf(identity, fields.mode)) },
           release: fields.rel ? { kind: 'hash', rel: fields.rel } : { kind: 'keys', k: fields.k!, keys: fields.relk! },
         }
         outputs.push({
@@ -1120,11 +1120,11 @@ export async function issueBntAsset(args: IssueBntArgs, opts: BntWalletOptions =
       // Issuer input/output: handle multiple issuers for countersigned
       if (fields.mode === 'countersign' && fields.iss.length > 1) {
         const issuerLock = multisigLock(fields.m, fields.iss)
-        inputs.unshift({ outpoint: await issuerCoin(active, fields.iss[0]), description: 'IPT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
+        inputs.unshift({ outpoint: await issuerCoin(active, fields.iss[0]), description: 'IPT issuer signature', signer: bntIssuerSigner(fields.mode), scope: BNT_ISSUER_SCOPE })
         outputs.push({ lockingScript: issuerLock.toHex(), satoshis: 1, outputDescription: 'IPT issuer coin', basket: ISSUER_BASKET, tags: ['ipt-issuer'] })
       } else {
-        const issuerPub = bntIssuerKeyOf(active.identityKey)
-        inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', signer: BNT_ISSUER_SIGNER, scope: BNT_ISSUER_SCOPE })
+        const issuerPub = bntIssuerKeyOf(active.identityKey, fields.mode)
+        inputs.unshift({ outpoint: await issuerCoin(active, issuerPub), description: 'BNT issuer signature', signer: bntIssuerSigner(fields.mode), scope: BNT_ISSUER_SCOPE })
         outputs.push({ lockingScript: p2pkLock(issuerPub).toHex(), satoshis: 1, outputDescription: 'BNT issuer coin', basket: ISSUER_BASKET, tags: ['bnt-issuer'] })
       }
       chart.send({ type: 'BUILT' })
@@ -1181,7 +1181,7 @@ async function splitBackedDeploy(active: ActiveWallet, row: BntRow, deploy: BntD
   const signed = await signBntAction(active, {
     description: `Split ${deploy.fields.sym ?? 'units'} deploy (BNT)`,
     labels: [LABEL, 'bnt-split'],
-    inputs: [{ outpoint: row.outpoint, description: 'BNT deploy', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE }],
+    inputs: [{ outpoint: row.outpoint, description: 'BNT deploy', signer: bntHolderSigner(active.identityKey, row.remittance, deploy.fields.mode), scope: BNT_HOLDER_SCOPE }],
     outputs: await carryBack(active, row, deploy, freshDerivationString()),
     check: (tx) => {
       const check = checkBntTx(tx, deploy)
@@ -1259,14 +1259,14 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
         }
       }
       const prefix = freshDerivationString()
-      const minted = await freshHolder(active, selfOf(active), prefix)
+      const minted = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
       const basket = bntFilingOf(deploy.fields.kind, deploy.fields.mode)
       // Build clause with proper types for countersign mode
       const mintClause: BntClause = deploy.fields.mode === 'countersign'
         ? {
             mode: 'countersign',
             holder: minted.holder,
-            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
             release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
           }
         : { mode: 'open', holder: minted.holder }
@@ -1287,7 +1287,7 @@ export async function mintBntAsset(args: { assetId?: unknown; amount?: unknown }
       const signed = await signBntAction(active, {
         description: `Mint ${label} (BNT)`,
         labels: [LABEL, 'bnt-mint', ...(opts.labels ?? [])],
-        inputs: [{ outpoint: authority.outpoint, description: 'BNT mint authority', signer: bntHolderSigner(active.identityKey, authority.remittance), scope: BNT_HOLDER_SCOPE }],
+        inputs: [{ outpoint: authority.outpoint, description: 'BNT mint authority', signer: bntHolderSigner(active.identityKey, authority.remittance, deploy.fields.mode), scope: BNT_HOLDER_SCOPE }],
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)
@@ -1386,14 +1386,14 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       const total = chosen.reduce((sum, r) => sum + r.amount, 0n)
       const self = selfOf(active)
       const prefix = freshDerivationString()
-      const pay = await freshHolder(active, recipient, prefix)
+      const pay = await freshHolder(active, recipient, prefix, deploy.fields.mode)
       const toSelf = recipient === self
       // Build clause with proper types for countersign mode
       const transferClause: BntClause = deploy.fields.mode === 'countersign'
         ? {
             mode: 'countersign',
             holder: pay.holder,
-            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
             release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
           }
         : { mode: 'open', holder: pay.holder }
@@ -1408,12 +1408,12 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
         },
       ]
       if (total > amount) {
-        const change = await freshHolder(active, self, prefix)
+        const change = await freshHolder(active, self, prefix, deploy.fields.mode)
         const changeClause: BntClause = deploy.fields.mode === 'countersign'
           ? {
               mode: 'countersign',
               holder: change.holder,
-              issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+              issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
               release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
             }
           : { mode: 'open', holder: change.holder }
@@ -1435,7 +1435,7 @@ export async function transferBntAsset(args: TransferArgs): Promise<TransferBntR
       const signed = await signBntAction(active, {
         description: `Send ${label} (BNT)`,
         labels: [LABEL, 'bnt-transfer'],
-        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE })),
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance, deploy.fields.mode), scope: BNT_HOLDER_SCOPE })),
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)
@@ -1546,7 +1546,7 @@ export async function burnBntUnits(
         ? {
             mode: 'countersign',
             holder: args.holder,
-            issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+            issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
             release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
           }
         : { mode: 'open', holder: args.holder }
@@ -1559,12 +1559,12 @@ export async function burnBntUnits(
         { lockingScript: `006a${Utils.toHex([memo.length])}${Utils.toHex(memo)}`, satoshis: 0, outputDescription: 'BNT burn memo' },
       ]
       if (total > args.amount) {
-        const change = await freshHolder(active, selfOf(active), prefix)
+        const change = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
         const changeClause: BntClause = deploy.fields.mode === 'countersign'
           ? {
               mode: 'countersign',
               holder: change.holder,
-              issuer: { m: deploy.fields.m, keys: deploy.fields.iss },
+              issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
               release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
             }
           : { mode: 'open', holder: change.holder }
@@ -1582,7 +1582,7 @@ export async function burnBntUnits(
       const signed = await signBntAction(active, {
         description: `Burn ${label} (BNT)`,
         labels: [LABEL, 'bnt-burn', ...(opts.labels ?? [])],
-        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance), scope: BNT_HOLDER_SCOPE })),
+        inputs: chosen.map((row) => ({ outpoint: row.outpoint, description: 'BNT units', signer: bntHolderSigner(active.identityKey, row.remittance, deploy.fields.mode), scope: BNT_HOLDER_SCOPE })),
         outputs,
         check: (tx) => {
           const check = checkBntTx(tx, deploy)

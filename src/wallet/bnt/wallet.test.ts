@@ -1,7 +1,7 @@
 import { Beef, LockingScript, P2PKH, PrivateKey, ProtoWallet, Random, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { bntHolderPublicKey } from './keys'
-import { bntHeldLock, readBnt } from './script'
+import { bntHolderPublicKey, bntIssuerKeyOf } from './keys'
+import { bntBeaconLock, bntHeldLock, readBnt } from './script'
 import ltcDeposit from '../ltc/fixtures/deposit.json'
 import { setLtcAnchorForTest } from '../ltc/headers'
 import { fromHex, ltcTxid, parseLtcTx, reversed, serializeLtcTxNoWitness, toHex } from '../ltc/litecoin'
@@ -264,6 +264,23 @@ describe('open BNT wallet', () => {
     expect(await balanceOf(recipient, token.assetId)).toBe('1000')
     expect(owner.rows.find((r) => r === row)?.spendable).toBe(false)
     expect(owner.rows.find((r) => r.basket === 'bsv21')?.spendable).toBe(true)
+  })
+
+  it('writes derived IPT issuer keys into the deploy and beacon (BRC-253 §2)', async () => {
+    const owner = makeInstall()
+    const issued = await as(owner, () => issueBntAsset({
+      kind: 'token', sym: 'IPT', supply: '5', mode: 'countersign',
+      bcn: `${'ab'.repeat(32)}_0`, sil: 604_800, rel: 'cd'.repeat(20),
+    }))
+    const tx = owner.txs.get(issued.txid)!
+    const keys = [bntIssuerKeyOf(owner.identityKey, 'countersign')]
+    expect(readBnt(tx.outputs[0]!.lockingScript)).toMatchObject({
+      form: 'deploy', clause: { mode: 'countersign', issuer: { m: 1, keys } },
+    })
+    expect(tx.outputs[1]!.lockingScript.toHex()).toBe(bntBeaconLock({
+      mode: 'countersign', issuer: { m: 1, keys }, release: { kind: 'hash', rel: 'cd'.repeat(20) },
+    }).toHex())
+    expect(owner.rows.find((row) => row.outpoint === `${issued.txid}.0`)?.basket).toBe('iptft')
   })
 
   it('refuses bad issue arguments before anything is staged', async () => {

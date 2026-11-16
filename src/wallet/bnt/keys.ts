@@ -34,6 +34,11 @@ export function bntIssuerKeyOf(identityKeyHex: string, mode: BntMode = 'open'): 
 /** This wallet's issuer key, as the wallet signs with it. */
 export const BNT_ISSUER_SIGNER: WalletSigner = { protocolID: BNT_ISSUER_PROTOCOL, keyID: ISSUER_KEY_ID, counterparty: 'anyone' }
 
+/** This wallet's issuer key for `mode` (BRC-253 §2: IPT keys use `[2, "ipt issuer"]`). */
+export function bntIssuerSigner(mode: BntMode = 'open'): WalletSigner {
+  return { protocolID: issuerProtocol(mode), keyID: ISSUER_KEY_ID, counterparty: 'anyone' }
+}
+
 /** This wallet's own issuer private key. */
 export function bntIssuerPrivateKey(root: PrivateKey, mode: BntMode = 'open'): PrivateKey {
   return new KeyDeriver(root).derivePrivateKey(issuerProtocol(mode), ISSUER_KEY_ID, 'anyone')
