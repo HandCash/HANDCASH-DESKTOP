@@ -3255,8 +3255,8 @@ export function getActivityById(id: string): ActivityEntry | null {
 }
 
 /** Export full local activity (storage-capped) for history backup. */
-export function exportAllActivity(): ActivityEntry[] {
-  return [...readAll()];
+export function exportAllActivity(owner?: BoundAccountKeyScope): ActivityEntry[] {
+  return [...readAll(owner)];
 }
 
 function activityMergeKey(entry: ActivityEntry): string | null {
@@ -3270,8 +3270,8 @@ function activityMergeKey(entry: ActivityEntry): string | null {
 }
 
 /** Merge remote activity into local history (idempotent by id / txid+kind[+outpoint]). */
-export function mergeActivityEntries(incoming: ActivityEntry[]): number {
-  const local = readAll();
+export function mergeActivityEntries(incoming: ActivityEntry[], owner?: BoundAccountKeyScope): number {
+  const local = readAll(owner);
   const byId = new Map(local.map((e) => [e.id, e]));
   const byTxKind = new Map(
     local
@@ -3292,7 +3292,7 @@ export function mergeActivityEntries(incoming: ActivityEntry[]): number {
     added += 1;
   }
   if (added === 0) return 0;
-  writeAll([...byId.values()].sort((a, b) => a.at - b.at));
+  writeAll([...byId.values()].sort((a, b) => a.at - b.at), owner);
   return added;
 }
 

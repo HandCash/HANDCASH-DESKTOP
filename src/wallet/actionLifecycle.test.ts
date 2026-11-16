@@ -8,6 +8,7 @@ import {
   endWalletAction,
   hasBusyAction,
   listLiveActions,
+  listAccountLiveActions,
   liveAction,
   liveActionForOutpoint,
   liveActionForTxid,
@@ -15,6 +16,7 @@ import {
   subscribeLiveActions,
   walletAction,
 } from './actionLifecycle'
+import { bindAccountLocalKeyScope, peekAccountLocalKeyScope } from './accountLocalKeys'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 
@@ -25,6 +27,28 @@ afterEach(() => {
 })
 
 describe('actionLifecycle registry', () => {
+  it('keeps late background action results out of another account after rapid switches', () => {
+    const original = peekAccountLocalKeyScope()
+    const select = (identityKey: string, accountIndex: number) =>
+      bindAccountLocalKeyScope({ identityKey, accountIndex, chain: 'main' })
+    try {
+      select('account-a', 1)
+      const a = beginAction({ id: 'a', origin: 'handcash', method: 'payment', stage: 'signing' })
+      select('account-b', 2)
+      beginAction({ id: 'b', origin: 'handcash', method: 'payment', stage: 'signing' })
+      select('account-a', 1)
+      expect(listAccountLiveActions().map(row => row.id)).toEqual(['a'])
+      select('account-b', 2)
+      a.txid('aa'.repeat(32))
+      a.settle()
+      expect(listAccountLiveActions().map(row => row.id)).toEqual(['b'])
+      // Display isolation must not stop or forget the signed background action.
+      expect(listLiveActions().find(row => row.id === 'a')?.txid).toBe('aa'.repeat(32))
+    } finally {
+      bindAccountLocalKeyScope({ ...original, identityKey: original.identityKey ?? 'vitest-primary-identity' })
+    }
+  })
+
   it('publishes one view per live action, newest first', () => {
     const seen: number[] = []
     const unsubscribe = subscribeLiveActions(() => seen.push(listLiveActions().length))

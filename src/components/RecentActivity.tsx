@@ -138,7 +138,7 @@ import {
   type DisplayCurrency,
 } from "../wallet/displayCurrency";
 import {
-  listLiveActions,
+  listAccountLiveActions,
   subscribeLiveActions,
   type LiveAction,
 } from "../wallet/actionLifecycle";
@@ -888,7 +888,7 @@ function useActivityFeed(limit: number) {
   );
   const [origins, setOrigins] = useState<PaymentOriginOption[]>(firstFeed.origins);
   const [live, setLive] = useState<readonly LiveAction[]>(() =>
-    listLiveActions()
+    listAccountLiveActions()
   );
   // Rows read item, app and tx caches at paint. When those move but the rows
   // did not, repaint the rows without recomposing the feed.
@@ -897,7 +897,7 @@ function useActivityFeed(limit: number) {
   useEffect(() => subscribeUsdRate(setUsdPerBsv), []);
   useEffect(() => subscribeDisplayCurrency(setCurrency), []);
   useEffect(
-    () => subscribeLiveActions(() => setLive(listLiveActions())),
+    () => subscribeLiveActions(() => setLive(listAccountLiveActions())),
     []
   );
   useEffect(() => watchActivityExpiry(), []);
@@ -922,7 +922,7 @@ function useActivityFeed(limit: number) {
         stopFeed();
         watchedWallet = key.wallet;
         stopFeed = activityFeedCache.subscribe(key, (view) => {
-          if (view.data) apply(view.data);
+          if (view.data && openWalletCacheKey() === key.wallet) apply(view.data);
         });
       }
       const current = rebuild ? undefined : currentActivityFeed(key);
@@ -1099,7 +1099,13 @@ function continueRecordKeys(
   return keys;
 }
 
-export function ActivityFeed({
+/** Account changes replace the whole projection before paint, including filters and live rows. */
+export function ActivityFeed(props: FeedProps) {
+  const wallet = useSyncExternalStore(subscribeAppActivity, openWalletCacheKey, openWalletCacheKey);
+  return <AccountActivityFeed key={wallet} {...props} />;
+}
+
+function AccountActivityFeed({
   limit = 40,
   title = "Recent activity",
   embedded = false,

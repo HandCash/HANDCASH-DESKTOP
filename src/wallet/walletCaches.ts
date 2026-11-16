@@ -9,7 +9,7 @@ import { listPaymentOriginOptions, type PaymentOriginOption } from './paymentFil
 /** The open account on its network, which every wallet cache entry is keyed by. */
 export function openWalletCacheKey(): string {
   const active = getActiveWallet()
-  return active ? `${active.identityKey}:${active.chain}` : 'locked'
+  return active ? `${active.identityKey}:${active.chain}:${active.accountIndex}` : 'locked'
 }
 
 /** Loads only for the account still open, so one account's data is never filed under another's key. */

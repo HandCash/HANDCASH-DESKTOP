@@ -3,11 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const feed = vi.hoisted(() => ({ generation: 0, builds: 0 }));
-const account = vi.hoisted(() => ({ identityKey: "02".repeat(33) }));
+const account = vi.hoisted(() => ({ identityKey: "02".repeat(33), accountIndex: 0 }));
 
 vi.mock("../wallet/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../wallet/session")>()),
-  getActiveWallet: () => ({ identityKey: account.identityKey, chain: "main" }),
+  getActiveWallet: () => ({ ...account, chain: "main" }),
 }));
 
 vi.mock("../wallet/appActivity", async (importOriginal) => {
@@ -43,6 +43,7 @@ describe("activity feed cache", () => {
     vi.useFakeTimers();
     activityFeedCache.clear();
     account.identityKey = "02".repeat(33);
+    account.accountIndex = 0;
     feed.generation += 1;
     feed.builds = 0;
   });
@@ -67,6 +68,15 @@ describe("activity feed cache", () => {
   it("rebuilds once a write moves the generation", async () => {
     await loadFeed();
     feed.generation += 1;
+    render();
+    expect(feed.builds).toBe(2);
+  });
+
+  it("keys cached projections by the full account namespace", async () => {
+    await loadFeed();
+    const first = openWalletCacheKey();
+    account.accountIndex = 1;
+    expect(openWalletCacheKey()).not.toBe(first);
     render();
     expect(feed.builds).toBe(2);
   });

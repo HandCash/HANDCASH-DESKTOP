@@ -11,6 +11,7 @@
  * verb lives on the row; the phase lives here.
  */
 import { createActor, type Actor } from 'xstate'
+import { peekAccountLocalKeyScope } from './accountLocalKeys'
 import {
   ACTION_STAGES,
   actionLifecycleFace,
@@ -46,6 +47,7 @@ export type ActionHandle = {
 }
 
 type Entry = {
+  owner: ReturnType<typeof peekAccountLocalKeyScope>
   actor: Actor<typeof actionLifecycleMachine>
   retire: ReturnType<typeof setTimeout> | null
   watchdog: ReturnType<typeof setTimeout> | null
@@ -195,7 +197,7 @@ export function beginAction(
   if (entries.has(input.id)) drop(input.id)
   const actor = createActor(actionLifecycleMachine, { input })
   actor.start()
-  entries.set(input.id, { actor, retire: null, watchdog: null })
+  entries.set(input.id, { owner: peekAccountLocalKeyScope(), actor, retire: null, watchdog: null })
   const handle = handleFor(input.id)
   if (input.stage && input.stage !== 'approving') handle.stage(input.stage)
   else {
@@ -295,6 +297,16 @@ export function endWalletAction(outcome: 'settled' | { failed: string }): void {
 
 export function listLiveActions(): readonly LiveAction[] {
   return views
+}
+
+/** Display only: background actions keep running, but belong to their starting account. */
+export function listAccountLiveActions(): readonly LiveAction[] {
+  const owner = peekAccountLocalKeyScope()
+  return views.filter((view) => {
+    const started = entries.get(view.id)?.owner
+    return started?.identityKey === owner.identityKey &&
+      started?.accountIndex === owner.accountIndex && started?.chain === owner.chain
+  })
 }
 
 export function liveActionView(id: string): LiveAction | null {

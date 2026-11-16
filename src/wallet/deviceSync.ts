@@ -2,6 +2,7 @@ import { errorText } from './errorText'
 import { signedIdentityFetch } from './identityRequestAuth'
 import { getActiveWallet } from './session'
 import { getWalletRuntime } from './walletRuntime'
+import { accountKeyScopeFor } from './accountLocalKeys'
 
 /**
  * Multi-device **historyReplica** via shared BRC-39 backup URL (+ friends sidecar).
@@ -210,8 +211,9 @@ export async function uploadActivityBackup(): Promise<{ url: string; count: numb
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
   assertDeviceLinkBackupUrl()
+  const owner = accountKeyScopeFor(active)
   const { exportAllActivity } = await import('./appActivity')
-  const entries = exportAllActivity()
+  const entries = exportAllActivity(owner)
   const url = activityBackupObjectUrl(active.identityKey)
   const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
     method: 'PUT',
@@ -237,6 +239,7 @@ export async function uploadActivityBackup(): Promise<{ url: string; count: numb
 export async function downloadAndMergeActivityBackup(): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
+  const owner = accountKeyScopeFor(active)
   assertDeviceLinkBackupUrl()
   const url = activityBackupObjectUrl(active.identityKey)
   const res = await signedIdentityFetch(active.rootKeyHex, 'history', url, {
@@ -257,7 +260,7 @@ export async function downloadAndMergeActivityBackup(): Promise<number> {
   }
   const incoming = Array.isArray(data.entries) ? data.entries : []
   const { mergeActivityEntries } = await import('./appActivity')
-  return mergeActivityEntries(incoming as import('./appActivity').ActivityEntry[])
+  return mergeActivityEntries(incoming as import('./appActivity').ActivityEntry[], owner)
 }
 
 /**
