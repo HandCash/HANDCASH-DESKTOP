@@ -45,12 +45,16 @@ export async function beginHandCashImport(origin: string): Promise<HandCashImpor
   const active = activeIdentity()
   const host = normalizeAppHost(origin)
   for (const [id, entry] of pending) {
-    if (entry.request.expiresAt <= Date.now() || entry.request.identityKey !== active.identityKey) pending.delete(id)
+    if (entry.request.expiresAt <= Date.now() || entry.request.identityKey !== active.identityKey ||
+        entry.request.chain !== active.chain) pending.delete(id)
     else if (entry.origin === host && !entry.delivery) return entry.request
   }
   if (pending.size >= 8) throw new Error('Too many pending imports. Try again in a few minutes.')
   const pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits'])
-  if (activeIdentity().identityKey !== active.identityKey) throw new Error('The receiving wallet changed. Connect again.')
+  const current = activeIdentity()
+  if (current.identityKey !== active.identityKey || current.chain !== active.chain) {
+    throw new Error('The receiving wallet changed. Connect again.')
+  }
   const request: HandCashImportRequest = {
     v: 1, id: crypto.randomUUID(), identityKey: active.identityKey, chain: active.chain,
     publicKey: base64(await crypto.subtle.exportKey('raw', pair.publicKey)), expiresAt: Date.now() + TTL,

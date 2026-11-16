@@ -25,16 +25,18 @@ function load(file, ports = {}) {
   return module.exports
 }
 
-let active, saved, routes, receives, saveGate
+let active, saved, routes, receives, saveGate, saveError, afterSave, onActive
 const source = { cloud: 'synthetic cloud share', trustholder: 'synthetic trustholder share' }
 const receiver = load(path.join(root, 'src/wallet/import/encryptedImport.ts'), {
-  '../session': { getActiveWallet: () => active },
+  '../session': { getActiveWallet: () => { if (onActive) onActive(); return active } },
   '../appIdentity': { normalizeAppHost: s => new URL(s.includes('://') ? s : `https://${s}`).host },
   './store': { addImportedSource: async (secret, label, expected, expectedChain) => {
     if (saveGate) await saveGate
+    if (saveError) throw saveError
     assert.equal(active?.identityKey, expected)
     assert.equal(active?.chain, expectedChain)
-    saved.push(secret)
+    saved.push({ ...secret, owner: expected, chain: expectedChain })
+    if (afterSave) afterSave()
     return { source: { id: 'source-1' }, existing: false }
   } },
   './importSource': { parseImportSecret: (kind, fields) => ({ ok: true, secret: { kind, ...fields } }) },
@@ -42,10 +44,11 @@ const receiver = load(path.join(root, 'src/wallet/import/encryptedImport.ts'), {
   './importIntent': { requestImportedSource: id => receives.push(id) },
   '../navStore': { openSetting: id => routes.push(id) },
 })
-const sender = load(path.join(root, '../items-market/src/lib/brc100/encryptedImport.ts'))
+const market = process.env.ITEMS_MARKET_DIR || path.join(root, '../items-market')
+const sender = load(path.join(market, 'src/lib/brc100/encryptedImport.ts'))
 beforeEach(() => {
   active = { identityKey: `02${'a'.repeat(64)}`, chain: 'main' }
-  saved = []; routes = []; receives = []; saveGate = null
+  saved = []; routes = []; receives = []; saveGate = null; saveError = null; afterSave = null; onActive = null
   receiver.clearEncryptedImports()
 })
 
@@ -134,6 +137,96 @@ test('account switching during asynchronous save cannot route the imported sourc
   await assert.rejects(delivery, /Could not save/)
   assert.equal(saved.length, 0)
   assert.equal(receives.length, 0)
+})
+
+test('a chain switch on the same identity never reuses the old receiver', async () => {
+  const mainRequest = await receiver.beginHandCashImport('handcash.io')
+  const sealed = await sender.sealHandCashImport(mainRequest, source)
+  active = { ...active, chain: 'test' }
+  const testRequest = await receiver.beginHandCashImport('handcash.io')
+  assert.notEqual(testRequest.id, mainRequest.id)
+  assert.equal(testRequest.chain, 'test')
+  await assert.rejects(receiver.completeHandCashImport('handcash.io', sealed), /expired|changed/)
+  assert.equal(saved.length, 0)
+})
+
+test('a chain switch while the receiver key is generated refuses the request', async () => {
+  let calls = 0
+  onActive = () => { if (++calls === 2) active = { ...active, chain: 'test' } }
+  await assert.rejects(receiver.beginHandCashImport('handcash.io'), /changed/)
+  onActive = null
+  const fresh = await receiver.beginHandCashImport('handcash.io')
+  assert.equal(fresh.chain, 'test')
+})
+
+test('origins are bound by host and empty origins are refused', async () => {
+  await assert.rejects(receiver.beginHandCashImport(''), /HandCash origin/)
+  const request = await receiver.beginHandCashImport('https://handcash.io')
+  const sealed = await sender.sealHandCashImport(request, source)
+  await assert.rejects(receiver.completeHandCashImport('', sealed), /HandCash origin/)
+  await assert.rejects(receiver.completeHandCashImport('https://handcash.io.evil.example', sealed), /expired|changed/)
+  assert.equal((await receiver.beginHandCashImport('market.handcash.io')).id === request.id, false)
+  assert.equal(saved.length, 0)
+})
+
+test('a different payload after a successful import is refused and saves nothing more', async () => {
+  const request = await receiver.beginHandCashImport('handcash.io')
+  const sealed = await sender.sealHandCashImport(request, source)
+  await receiver.completeHandCashImport('handcash.io', sealed)
+  const other = await sender.sealHandCashImport(request, { cloud: 'other cloud', trustholder: 'other trustholder' })
+  await assert.rejects(receiver.completeHandCashImport('handcash.io', other), /already used/)
+  assert.equal(saved.length, 1)
+  assert.deepEqual(receives, ['source-1'])
+})
+
+test('malformed and oversized envelopes are refused before any decryption', async () => {
+  const request = await receiver.beginHandCashImport('handcash.io')
+  const sealed = await sender.sealHandCashImport(request, source)
+  for (const bad of [{ ...sealed, publicKey: 1 }, { ...sealed, iv: 'x'.repeat(33) }, { ...sealed, ciphertext: 'x'.repeat(32_769) }]) {
+    await assert.rejects(receiver.completeHandCashImport('handcash.io', bad), /Invalid encrypted import/)
+  }
+  await assert.rejects(receiver.completeHandCashImport('handcash.io', { ...sealed, id: 'unknown' }), /expired/)
+  assert.equal((await receiver.completeHandCashImport('handcash.io', sealed)).saved, true)
+})
+
+test('a failed durable save is not routed, cannot be replayed, and needs a fresh request', async () => {
+  const request = await receiver.beginHandCashImport('handcash.io')
+  const sealed = await sender.sealHandCashImport(request, source)
+  saveError = new Error(`disk full ${source.cloud}`)
+  await assert.rejects(receiver.completeHandCashImport('handcash.io', sealed),
+    error => !error.message.includes(source.cloud) && /Could not save/.test(error.message))
+  saveError = null
+  await assert.rejects(receiver.completeHandCashImport('handcash.io', sealed), /Could not save/)
+  assert.equal(saved.length, 0)
+  assert.deepEqual(routes, [])
+  assert.deepEqual(receives, [])
+  const fresh = await receiver.beginHandCashImport('handcash.io')
+  assert.notEqual(fresh.id, request.id)
+  assert.equal((await receiver.completeHandCashImport('handcash.io', await sender.sealHandCashImport(fresh, source))).saved, true)
+  assert.equal(saved.length, 1)
+})
+
+test('a switch or lock right after saving keeps the source with its owner and opens nothing', async () => {
+  for (const next of [{ identityKey: `03${'c'.repeat(64)}`, chain: 'main' }, null]) {
+    receiver.clearEncryptedImports()
+    active = { identityKey: `02${'a'.repeat(64)}`, chain: 'main' }
+    saved = []
+    const request = await receiver.beginHandCashImport('handcash.io')
+    const sealed = await sender.sealHandCashImport(request, source)
+    afterSave = () => { active = next }
+    await assert.rejects(receiver.completeHandCashImport('handcash.io', sealed), /Could not save/)
+    afterSave = null
+    assert.deepEqual(saved.map(s => [s.owner, s.chain]), [[request.identityKey, 'main']])
+  }
+  assert.deepEqual(routes, [])
+  assert.deepEqual(receives, [])
+})
+
+test('the receiver imports no signing, broadcast or payment modules', () => {
+  const text = fs.readFileSync(path.join(root, 'src/wallet/import/encryptedImport.ts'), 'utf8')
+  const imports = [...text.matchAll(/from '([^']+)'/g)].map(m => m[1]).sort()
+  assert.deepEqual(imports, ['../appIdentity', '../navStore', '../session', './importIntent', './importSource', './recoveryHints', './store'])
+  assert.ok(!/createAction|signAction|broadcast|privateKeyAt/.test(text))
 })
 
 test('onboarding migration intent survives module reload and is consumed once', () => {
