@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.716] - 2026-11-17
+
+### Fixed
+
+- Migration: encrypted import refuses a payload whose chain differs from the wallet's before any write.
+- Migration: the old-key collectable sweep never aborts a transaction after signing; signed sweeps are followed to the miners' verdict and resume after a restart.
+- Migration: imported collectables enter full BRC-150 verification on their own after a restart or offline period; aborted walks retry soon instead of after 24h.
+
+### Docs
+
+- Migration review and remediation plan (`docs/migration-remediation-plan.md`).
+
 ## [1.3.715] - 2026-11-13
 
 ### Fixed
