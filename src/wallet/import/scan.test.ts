@@ -31,7 +31,7 @@ import type { KeyDeriver } from './importSource'
 import { createHistoryReader, readItemOwners, type HandCashRecoveryHints, type HintedAddresses } from './recoveryHints'
 import { fetchHandCashUtxoSet, readUnspentOnChain, type HandCashUtxo } from './handcashUtxoSet'
 import { checkUtxoSetItems } from './items'
-import { hintedScan, utxoSetScan } from './scan'
+import { hintedScan, utxoSetScan, utxoSetScanOrRefusal } from './scan'
 import { P2PKH } from '@bsv/sdk'
 
 const keys = new Map<string, PrivateKey>()
@@ -226,6 +226,21 @@ describe('utxoSetScan', () => {
     })
     expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toBeNull()
     expect(inspectHoldings).not.toHaveBeenCalled()
+  })
+
+  it.each(['unknown-keys', 'unavailable', 'bad-response', 'stopped'] as const)('reports a %s refusal with its reason and detail', async (reason) => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'refused', reason, detail: `${reason}-detail` })
+    expect(await utxoSetScanOrRefusal(deriver, 'main', { sourceId: 's' })).toEqual({ refusal: { reason, detail: `${reason}-detail` } })
+    expect(inspectHoldings).not.toHaveBeenCalled()
+  })
+
+  it('reports rows that do not derive as an underived refusal', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [
+      row(1, 'm/0/4', 9_000),
+      { ...row(2, 'm/0/5', 4_000), address: PrivateKey.fromRandom().toAddress() },
+    ] })
+    expect(await utxoSetScanOrRefusal(deriver, 'main', { sourceId: 's' })).toEqual({ refusal: { reason: 'underived', detail: 'rejected=1' } })
+    expect(readUnspentOnChain).not.toHaveBeenCalled()
   })
 
   it('takes an empty set as an empty account', async () => {

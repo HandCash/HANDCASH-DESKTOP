@@ -1,3 +1,4 @@
+import { errorText } from '../errorText'
 import { getWalletRuntime } from '../walletRuntime'
 import { assertOnlineForPayment } from '../paymentPolicy'
 import { appendAppLog } from '../appLog'
@@ -10,7 +11,7 @@ import {
   type ItemsLookup,
 } from './discovery'
 import { addCashOutput, emptyHoldings, inspectHoldings, type AddressHoldings } from './holdings'
-import { fetchHandCashUtxoSet, readUnspentOnChain, verifyUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, readUnspentOnChain, verifyUtxoSet, type UtxoSetRefusal } from './handcashUtxoSet'
 import { keyDeriverFor, type KeyDeriver } from './importSource'
 import { checkUtxoSetItems, knownAddresses } from './items'
 import {
@@ -48,10 +49,31 @@ type ScanArgs = {
  * HandCash uses its verified UTXO set by default. Refusal or failure stops
  * the scan; only an explicit addressWalk request runs network discovery.
  */
+/** Why the HandCash UTXO set could not be used: a refusal, rejected rows, or a thrown error. */
+export type UtxoScanRefusal = {
+  reason: UtxoSetRefusal | 'underived' | 'error'
+  detail: string
+}
+
+/** The UTXO set scan, or the refusal that stopped it. */
+export type UtxoScanResult = SourceScan | { refusal: UtxoScanRefusal }
+
+const REFUSAL_TEXT: Record<UtxoScanRefusal['reason'], string> = {
+  'unknown-keys': 'HandCash has no account for these keys',
+  unavailable: 'the HandCash service did not answer',
+  'bad-response': 'the HandCash answer did not open or parse',
+  stopped: 'the scan was stopped',
+  underived: 'some rows did not derive to these keys',
+  error: 'the scan failed',
+}
+
 export class AddressWalkAvailableError extends Error {
-  constructor() {
-    super('The HandCash UTXO service could not provide a verified scan. Retry, or tap Walk addresses to search the chain. This can take longer and may miss addresses beyond the discovery gap.')
+  readonly refusal: UtxoScanRefusal | null
+  constructor(refusal: UtxoScanRefusal | null = null) {
+    const reason = refusal ? ` Reason: ${REFUSAL_TEXT[refusal.reason]} (${refusal.detail}).` : ''
+    super(`The HandCash UTXO service could not provide a verified scan. Retry, or tap Walk addresses to search the chain. This can take longer and may miss addresses beyond the discovery gap.${reason}`)
     this.name = 'AddressWalkAvailableError'
+    this.refusal = refusal
   }
 }
 
@@ -68,13 +90,17 @@ export async function scanImportedSource(args: ScanArgs): Promise<ImportedSource
   if (!args.addressWalk && source.secret.kind === 'handcash') {
     // HandCash keys read the account's UTXO set from the BRC-CLOUD worker only.
     // No address walk: a refusal is reported, not scanned around.
+    let direct: UtxoScanResult
     try {
-      const direct = await utxoSetScan(deriver, active.chain, args, cache, knownAddresses(source))
-      if (!direct) throw new Error('UTXO set refused')
-      scan = direct
-    } catch {
-      throw new AddressWalkAvailableError()
+      direct = await utxoSetScanOrRefusal(deriver, active.chain, args, cache, knownAddresses(source))
+    } catch (err) {
+      direct = { refusal: { reason: 'error', detail: errorText(err) } }
     }
+    if ('refusal' in direct) {
+      appendAppLog('warn', `[import] utxo scan refused reason=${direct.refusal.reason} detail=${direct.refusal.detail} — explicit address walk available`)
+      throw new AddressWalkAvailableError(direct.refusal)
+    }
+    scan = direct
   } else {
     scan = await walkScan(
       deriver,
@@ -130,23 +156,23 @@ async function walkScan(
  * token addresses are read live; one-sat items are counted by outpoint where
  * the chain shows them unspent (the 1Sat index only names them).
  */
-export async function utxoSetScan(
+export async function utxoSetScanOrRefusal(
   deriver: KeyDeriver,
   chain: Chain,
   args: ScanArgs,
   cache: Map<string, AddressHoldings> = new Map(),
   known?: ReadonlyMap<string, string>,
-): Promise<SourceScan | null> {
+): Promise<UtxoScanResult> {
   const set = await fetchHandCashUtxoSet({
     deriver,
     onProgress: (fetched) => args.onProgress?.({ phase: 'utxoSet', fetched }),
     shouldStop: args.shouldStop,
   })
-  if (set.kind === 'refused') return null
+  if (set.kind === 'refused') return { refusal: { reason: set.reason, detail: set.detail } }
   const verified = await verifyUtxoSet(deriver, set.utxos, known)
   if (verified.rejected > 0) {
     appendAppLog('warn', `[import] utxo set refused reason=underived rejected=${verified.rejected} — scan stopped; explicit address walk available`)
-    return null
+    return { refusal: { reason: 'underived', detail: `rejected=${verified.rejected}` } }
   }
   const cash = await readUnspentOnChain({
     chain,
@@ -194,6 +220,18 @@ export async function utxoSetScan(
     holdings,
     via: 'handcash-utxo-set',
   }
+}
+
+/** The scan, or null when it was refused; the reason is in utxoSetScanOrRefusal. */
+export async function utxoSetScan(
+  deriver: KeyDeriver,
+  chain: Chain,
+  args: ScanArgs,
+  cache: Map<string, AddressHoldings> = new Map(),
+  known?: ReadonlyMap<string, string>,
+): Promise<SourceScan | null> {
+  const result = await utxoSetScanOrRefusal(deriver, chain, args, cache, known)
+  return 'refusal' in result ? null : result
 }
 
 /** History windows, newest first: most HandCash balances sit in recent outputs. */

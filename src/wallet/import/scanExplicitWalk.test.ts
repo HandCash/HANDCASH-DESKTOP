@@ -23,6 +23,7 @@ import { fetchHandCashUtxoSet, verifyUtxoSet } from './handcashUtxoSet'
 import { discoverAddresses } from './discovery'
 import { inspectHoldings } from './holdings'
 import { legacyImportMachine } from '../../machines/legacyImportMachine'
+import { appendAppLog } from '../appLog'
 
 const source = { id: 'saved', secret: { kind: 'handcash', first: 'one', second: 'two' } } as ImportedSource
 
@@ -69,5 +70,48 @@ describe('explicit HandCash address walk', () => {
     actor.send({ type: 'SCANNED' })
     expect(actor.getSnapshot().context.addressWalkAvailable).toBe(false)
     actor.stop()
+  })
+})
+
+describe('address walk refusal reason', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(loadImportedSources).mockResolvedValue([source])
+    vi.mocked(inspectHoldings).mockResolvedValue([])
+  })
+
+  it.each([
+    ['unknown-keys', 'HandCash has no account for these keys'],
+    ['unavailable', 'the HandCash service did not answer'],
+    ['bad-response', 'the HandCash answer did not open or parse'],
+    ['stopped', 'the scan was stopped'],
+  ] as const)('shows the %s reason to the user and in the app log', async (reason, text) => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'refused', reason, detail: `${reason}-detail` })
+
+    const failure = await scanImportedSource({ sourceId: source.id, gap: 5 }).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(AddressWalkAvailableError)
+    expect((failure as AddressWalkAvailableError).refusal).toEqual({ reason, detail: `${reason}-detail` })
+    expect((failure as Error).message).toContain(`Reason: ${text} (${reason}-detail).`)
+    expect(appendAppLog).toHaveBeenCalledWith('warn', expect.stringContaining(`utxo scan refused reason=${reason} detail=${reason}-detail`))
+    expect(discoverAddresses).not.toHaveBeenCalled()
+  })
+
+  it('shows an underived refusal to the user and in the app log', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [] })
+    vi.mocked(verifyUtxoSet).mockResolvedValue({ rejected: 2 } as Awaited<ReturnType<typeof verifyUtxoSet>>)
+
+    const failure = await scanImportedSource({ sourceId: source.id, gap: 5 }).catch((e: unknown) => e)
+    expect((failure as AddressWalkAvailableError).refusal).toEqual({ reason: 'underived', detail: 'rejected=2' })
+    expect((failure as Error).message).toContain('Reason: some rows did not derive to these keys (rejected=2).')
+    expect(appendAppLog).toHaveBeenCalledWith('warn', expect.stringContaining('utxo set refused reason=underived rejected=2'))
+  })
+
+  it('shows a thrown scan error as the reason instead of hiding it', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockRejectedValue(new Error('offline'))
+
+    const failure = await scanImportedSource({ sourceId: source.id, gap: 5 }).catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(AddressWalkAvailableError)
+    expect((failure as AddressWalkAvailableError).refusal).toEqual({ reason: 'error', detail: 'offline' })
+    expect((failure as Error).message).toContain('Reason: the scan failed (offline).')
   })
 })
