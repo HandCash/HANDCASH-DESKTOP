@@ -1,6 +1,6 @@
 # Activity account isolation investigation
 
-Investigation started 2026-11-16; reverified 2026-11-18 at master `e4f411b098e319da48f345a142cd1ca4b7c15008`. The existing fix is commit `6a2d08e973107114288d5145767568cd84cc6cf7`, already contained in master and the local origin/master tracking ref; no reimplementation or release was performed in this verification. No wallet data was inspected or repaired; the user's specific rows remain unverified.
+Local investigation, 2026-11-16. No wallet data was inspected or repaired; the user's specific rows remain unverified.
 
 ## Verified causes and fixes
 
@@ -18,8 +18,6 @@ Investigation started 2026-11-16; reverified 2026-11-18 at master `e4f411b098e31
 
 Job j85: eight focused files, 143 tests passed; `tsc --noEmit` and `git diff --check` passed. Suites: deviceSync.activityIsolation, actionLifecycle, activityLedger.runtime, appActivity, RecentActivity, brc100Handler.accountChange, spendGuard, aeonAdherence. New tests cover rapid A→B→A→B with a late A backup, unchanged B durable entries, export ownership across a lazy-import switch, late signed A action progress while B is displayed, and cache account-index separation. Component tests are server-rendered, not a mounted WebView switch test. TypeScript diagnostics for touched code are clean.
 
-2026-11-18 job je9 reran the same eight files: 143/143 passed, followed by `./node_modules/.bin/tsc --noEmit` and `git diff --check`, exit 0. `read_lints` found no errors in the five implementation files. The backup regression uses mocked durable storage and verifies B's rows stay unchanged after A→B→A→B; component coverage remains SSR only, not mounted-device evidence.
-
-Mandatory Jev UI review remains blocked: a fresh presence-only check found no JEV_API_KEY, JEV_KEY or TYPESAFE_API_KEY in the process environment. The review script was not invoked because its missing-environment fallback reads .env files, which this session must not access. Configure the credential securely in the tool process environment, then run the file-specific review for `src/components/RecentActivity.tsx`; require composite < 1 and `fix first: nothing`. No credential files were read. No visual verification, commit, push, install or restart occurred. Shared `src/` means the fixes also affect Mobile once released.
+Mandatory Jev UI review is blocked: the process environment has no JEV_API_KEY, JEV_KEY or TYPESAFE_API_KEY (checked presence only). No credential files were read. No visual verification, commit, push, install or restart occurred. Shared `src/` means the fixes also affect Mobile once released.
 
 Before release: configure the review credential securely and complete the UI gate. On Desktop and Mobile, switch rapidly between two accounts with distinct known transactions while a history download and an action finish; verify Activity and Dashboard never show the previous account, switch back, and relaunch to check persistence. Compare the reported suspect txids against each account's actual ledger and scoped Activity backup before proposing any repair. Existing mixed sidecar rows, if any, are preserved; this patch does not guess ownership or delete history. Full network/device reproduction and historical-data attribution remain open.
