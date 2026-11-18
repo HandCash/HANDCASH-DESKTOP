@@ -429,6 +429,13 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  /** Append-only chosen item work; signed transactions belong to the outbox. */
+  importCheckpoint: defineStorage({
+    key: 'handcash.import-checkpoint.v1',
+    owner: 'legacy-import',
+    scope: 'wallet',
+    version: 1,
+  }),
   /** Import section: legacy key sets, AES-GCM sealed under the account root. */
   importedSources: defineStorage({
     key: 'handcash.import.sources.v1',

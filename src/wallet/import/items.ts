@@ -29,6 +29,7 @@ import {
 } from './importItem'
 import {
   clearImportListing,
+  scopedImportSourceId,
   countImportItems,
   decidedImportOutpoints,
   forgetImportItemStore,
@@ -200,8 +201,10 @@ export async function syncImportItems(args: {
 }): Promise<ImportItemSync> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
-  const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
-  if (!source) throw new Error('That saved wallet is gone')
+  const itemSourceId = scopedImportSourceId(args.sourceId)
+  const saved = (await loadImportedSources()).find((s) => s.id === args.sourceId)
+  if (!saved) throw new Error('That saved wallet is gone')
+  const source = { ...saved, id: itemSourceId }
   const scan = source.scan
   if (!scan) throw new Error('Scan this wallet first')
   const startedAt = Date.now()
@@ -533,6 +536,7 @@ export class ImportWalletChangedError extends Error {
  * is open by the time this chunk runs, it refuses without moving anything.
  */
 export async function importItems(args: {
+  owner?: { identityKey: string; accountIndex: number; chain: Chain }
   sourceId: string
   outpoints: readonly string[]
   identityKey?: string
@@ -543,11 +547,22 @@ export async function importItems(args: {
 }): Promise<ImportItemsResult> {
   const active = getWalletRuntime()?.instance
   if (!active) throw new Error('Unlock this wallet first')
+  const runtime = getWalletRuntime()
+  const assertOwner = () => {
+    const now = getWalletRuntime()
+    if (now?.instance !== active || now?.runtimeId !== runtime?.runtimeId || (args.owner && (args.owner.identityKey !== now?.instance.identityKey ||
+        args.owner.accountIndex !== now.instance.accountIndex || args.owner.chain !== now.instance.chain))) {
+      throw new ImportWalletChangedError()
+    }
+  }
+  assertOwner()
   if (args.identityKey && args.identityKey.toLowerCase() !== active.identityKey.toLowerCase()) {
     throw new ImportWalletChangedError()
   }
-  const source = (await loadImportedSources()).find((s) => s.id === args.sourceId)
-  if (!source) throw new Error('That saved wallet is gone')
+  const itemSourceId = scopedImportSourceId(args.sourceId, args.owner)
+  const saved = (await loadImportedSources()).find((s) => s.id === args.sourceId)
+  if (!saved) throw new Error('That saved wallet is gone')
+  const source = { ...saved, id: itemSourceId }
   const startedAt = Date.now()
   const answers = new Map<string, ImportItemResult>()
   const refused = new Map<ImportItemRefusal, number>()
@@ -598,6 +613,7 @@ export async function importItems(args: {
     chosen.push({ item, holding, keyHex: key.keyHex })
   }
 
+  assertOwner()
   const run =
     chosen.length > 0
       ? await migrateChosenPhraseItems({
@@ -625,6 +641,7 @@ export async function importItems(args: {
     if (result.kind === 'moved') movedPerAddress.set(holding.address, (movedPerAddress.get(holding.address) ?? 0) + 1)
   }
 
+  assertOwner()
   if (leftList.length > 0) {
     await markImportOutpointsGone(source.id, leftList).catch((err: unknown) => {
       appendAppLog('warn', `[import] saved item list not updated: ${errorText(err)}`)
@@ -632,7 +649,7 @@ export async function importItems(args: {
   }
   if (movedPerAddress.size > 0 && source.scan) {
     const scan = source.scan
-    await updateImportedSource(source.id, {
+    await updateImportedSource(args.sourceId, {
       scan: {
         ...scan,
         holdings: scan.holdings.map((h) => {

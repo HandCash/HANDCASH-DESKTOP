@@ -1,4 +1,5 @@
 import 'fake-indexeddb/auto'
+import { bindAccountLocalKeyScope } from '../accountLocalKeys'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   __resetImportItemStoreForTests,
@@ -127,6 +128,28 @@ describe('saved import items', () => {
     expect(removed).toEqual([op(1)])
     expect(outpoints(added)).toEqual([op(4)])
     expect(outpoints((await readImportItemPage('s', { after: null, limit: 10 })).items)).toEqual([op(2), op(3), op(4)])
+  })
+
+  it('isolates listings, metadata and gone marks by identity, index and chain', async () => {
+    const a = { identityKey: 'owner-a', accountIndex: 0, chain: 'main' as const }
+    bindAccountLocalKeyScope(a)
+    // Pin the write synchronously, then change accounts before IDB opens.
+    const late = saveImportItems('same', [item(1), item(2)])
+    bindAccountLocalKeyScope({ ...a, identityKey: 'owner-b' })
+    await late
+    expect(await countImportItems('same')).toBe(0)
+    bindAccountLocalKeyScope(a)
+    await markImportOutpointsGone('same', [op(2)])
+    await writeImportListMeta('same', { complete: true })
+    for (const other of [{ ...a, accountIndex: 1 }, { ...a, chain: 'test' as const }]) {
+      bindAccountLocalKeyScope(other)
+      expect(await countImportItems('same')).toBe(0)
+      expect(await decidedImportOutpoints('same')).toEqual(new Set())
+      expect((await readImportListMeta('same')).complete).toBe(false)
+    }
+    bindAccountLocalKeyScope(a)
+    expect(await countImportItems('same')).toBe(1)
+    expect(await decidedImportOutpoints('same')).toEqual(new Set([op(1), op(2)]))
   })
 
   it('keeps sources apart and forgets one with its scan marks', async () => {

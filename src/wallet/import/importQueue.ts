@@ -14,7 +14,9 @@ import { appendAppLog } from '../appLog'
 import { getWalletRuntime } from '../walletRuntime'
 import { beginWalletJob, type WalletJobHandle } from '../walletJobs'
 import { finishWalletProgress, getWalletProgress, startWalletProgress, updateWalletProgress } from '../walletProgress'
-import { importItems, prefetchImportItems } from './items'
+import { importItems, prefetchImportItems, ImportWalletChangedError } from './items'
+import { pinAccountKeyScope, type BoundAccountKeyScope } from '../accountLocalKeys'
+import { ImportCheckpoint } from './importCheckpoint'
 
 /**
  * The wallet's import queue: one `importQueueMachine` for the life of the
@@ -39,19 +41,50 @@ function openRun(identityKey: string): Run {
   return run
 }
 
-const PORTS: ImportQueuePorts = {
-  importMany: ({ onLanded, ...chunk }) =>
-    importItems({ ...chunk, onLanded, activityGroup: openRun(chunk.identityKey).job.id }),
-  prefetch: (chunk) => prefetchImportItems(chunk),
+let actor: ReturnType<typeof createActor<typeof importQueueMachine>> | null = null
+let checkpoint: ImportCheckpoint | null = null
+
+function currentOwner(): BoundAccountKeyScope | undefined {
+  return pinAccountKeyScope(getWalletRuntime()?.instance)
 }
 
-let actor: ReturnType<typeof createActor<typeof importQueueMachine>> | null = null
+function sameOwner(a: BoundAccountKeyScope, b: BoundAccountKeyScope | undefined): boolean {
+  return !!b && a.identityKey === b.identityKey && a.accountIndex === b.accountIndex && a.chain === b.chain
+}
 
 function queue() {
-  if (actor) return actor
-  actor = createActor(importQueueMachine, { input: { ports: PORTS } })
+  const owner = currentOwner()
+  if (actor && (!owner || (checkpoint && sameOwner(checkpoint.owner, owner)))) return actor
+  // Stopping the actor does not abort a signed transaction: its promise/outbox
+  // finishes, while the old account's checkpoint remains available on return.
+  actor?.stop()
+  actor = null
+  run?.job.stop('Wallet changed; import waits for its wallet')
+  run = null
+  checkpoint = owner ? new ImportCheckpoint(owner) : null
+  const saved = checkpoint
+  const ports: ImportQueuePorts = {
+    importMany: async ({ onLanded, ...chunk }) => {
+      if (!saved || !sameOwner(saved.owner, currentOwner())) throw new ImportWalletChangedError()
+      const result = await importItems({
+        ...chunk, owner: saved.owner, onLanded, activityGroup: openRun(chunk.identityKey).job.id,
+      })
+      // Failures/offline/deferred work stay durable. Only a decided spend is
+      // removed; a crash before here re-enters the sealed-tip recovery path.
+      saved.settled(chunk.sourceId, result.results
+        .filter(({ result }) => result.kind === 'moved' || result.kind === 'skipped')
+        .map(({ outpoint }) => outpoint))
+      return result
+    },
+    prefetch: (chunk) => sameOwner(owner!, currentOwner()) ? prefetchImportItems(chunk) : Promise.resolve(),
+  }
+  actor = createActor(importQueueMachine, { input: { ports } })
   actor.subscribe(report)
   actor.start()
+  // Read only this account's journal. ENQUEUE deduplicates a repeated resume.
+  for (const entry of saved?.entries() ?? []) {
+    actor.send({ type: 'ENQUEUE', identityKey: saved!.owner.identityKey, ...entry })
+  }
   return actor
 }
 
@@ -157,16 +190,20 @@ export function enqueueImportItems(
   sourceId: string,
   items: ReadonlyArray<{ outpoint: string; name: string | null }>,
 ): void {
-  const identityKey = getWalletRuntime()?.instance?.identityKey
-  if (!identityKey) throw new Error('Unlock this wallet first')
+  const owner = currentOwner()
+  if (!owner) throw new Error('Unlock this wallet first')
   if (items.length === 0) return
+  const target = queue()
+  checkpoint!.enqueue(sourceId, items)
   appendAppLog('info', `[import] queued ${items.length} item(s)`)
-  queue().send({ type: 'ENQUEUE', sourceId, identityKey, items })
+  target.send({ type: 'ENQUEUE', sourceId, identityKey: owner.identityKey, items })
 }
 
 /** Drop a source's waiting items; the chunk in flight finishes. */
 export function stopImportItems(sourceId: string): void {
-  queue().send({ type: 'STOP', sourceId })
+  const target = queue()
+  checkpoint?.stop(sourceId)
+  target.send({ type: 'STOP', sourceId })
 }
 
 export function dismissImportReport(sourceId: string): void {
@@ -192,6 +229,7 @@ export function watchImportSource(
 export function resetImportQueueForTests(): void {
   actor?.stop()
   actor = null
+  checkpoint = null
   run = null
   pillOpen = false
 }

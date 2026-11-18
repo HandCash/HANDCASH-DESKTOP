@@ -2,9 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ImportItemsResult } from './items'
 
 vi.mock('../appLog', () => ({ appendAppLog: vi.fn() }))
-const runtime = { instance: { identityKey: 'id1' } as { identityKey: string } | null }
+const runtime = { instance: { identityKey: 'id1', accountIndex: 0, chain: 'main' as const } as { identityKey: string; accountIndex: number; chain: 'main' | 'test' } | null }
 vi.mock('../walletRuntime', () => ({ getWalletRuntime: () => runtime }))
-vi.mock('./items', () => ({ importItems: vi.fn(), prefetchImportItems: vi.fn(async () => undefined) }))
+const disk = new Map<string, string>()
+vi.mock('../durableStorage', () => ({
+  durableGetItem: (key: string) => disk.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => { disk.set(key, value); return true },
+}))
+vi.mock('./items', () => ({
+  ImportWalletChangedError: class extends Error {},
+  importItems: vi.fn(), prefetchImportItems: vi.fn(async () => undefined),
+}))
 
 import {
   bindWalletProgressAccount,
@@ -35,7 +43,8 @@ function heldChunks() {
 }
 
 beforeEach(() => {
-  runtime.instance = { identityKey: 'id1' }
+  disk.clear()
+  runtime.instance = { identityKey: 'id1', accountIndex: 0, chain: 'main' }
   resetWalletProgressForTests()
   bindWalletProgressAccount({ identityKey: 'id1', accountIndex: 0 })
   resetImportQueueForTests()
@@ -64,6 +73,7 @@ describe('importQueue', () => {
     expect(importItems).toHaveBeenCalledWith({
       sourceId: 's1',
       identityKey: 'id1',
+      owner: { identityKey: 'id1', accountIndex: 0, chain: 'main' },
       outpoints: [op(1), op(2), op(3)],
       activityGroup: job!.id,
       onLanded: expect.any(Function),
@@ -80,6 +90,38 @@ describe('importQueue', () => {
     expect(answered).toEqual([[op(1), op(2), op(3)]])
     expect(importSourceView('s1').report).toMatchObject({ title: '3 items imported' })
     stop()
+  })
+
+  it('replays an interrupted chunk once after restart, retaining offline work', async () => {
+    vi.mocked(importItems).mockRejectedValueOnce(new Error('offline'))
+    enqueueImportItems('s1', items(3))
+    await vi.waitFor(() => expect(importSourceView('s1').report).not.toBeNull())
+    resetImportQueueForTests()
+    const release = heldChunks()
+    importSourceView('s1')
+    expect(importItems).toHaveBeenCalledTimes(2)
+    // Repeated subscriptions/readers cannot start another chunk.
+    importSourceView('s1')
+    expect(importItems).toHaveBeenCalledTimes(2)
+    release()
+    await vi.waitFor(() => expect(getWalletProgress().status).toBe('done'))
+    resetImportQueueForTests()
+    importSourceView('s1')
+    expect(importItems).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not restore another account or chain, and returns to the original work', () => {
+    heldChunks()
+    enqueueImportItems('s1', items(3))
+    resetImportQueueForTests()
+    runtime.instance = { identityKey: 'id1', accountIndex: 1, chain: 'main' }
+    importSourceView('s1')
+    runtime.instance = { identityKey: 'id1', accountIndex: 0, chain: 'test' }
+    importSourceView('s1')
+    expect(importItems).toHaveBeenCalledTimes(1)
+    runtime.instance = { identityKey: 'id1', accountIndex: 0, chain: 'main' }
+    importSourceView('s1')
+    expect(importItems).toHaveBeenCalledTimes(2)
   })
 
   it('steps aside for a Refresh and takes the pill back once it ends', async () => {
