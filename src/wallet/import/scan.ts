@@ -63,7 +63,7 @@ const REFUSAL_TEXT: Record<UtxoScanRefusal['reason'], string> = {
   unavailable: 'the HandCash service did not answer',
   'bad-response': 'the HandCash answer did not open or parse',
   stopped: 'the scan was stopped',
-  underived: 'some rows did not derive to these keys',
+  underived: 'no rows could be derived to these keys',
   error: 'the scan failed',
 }
 
@@ -171,8 +171,14 @@ export async function utxoSetScanOrRefusal(
   if (set.kind === 'refused') return { refusal: { reason: set.reason, detail: set.detail } }
   const verified = await verifyUtxoSet(deriver, set.utxos, known)
   if (verified.rejected > 0) {
-    appendAppLog('warn', `[import] utxo set refused reason=underived rejected=${verified.rejected} — scan stopped; explicit address walk available`)
-    return { refusal: { reason: 'underived', detail: `rejected=${verified.rejected}` } }
+    const breakdown = Object.entries(verified.rejectedBy)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(', ')
+    appendAppLog('warn', `[import] utxo set rejected ${verified.rejected} rows breakdown=${breakdown} — scanning ${verified.addresses.length} derived rows`)
+    if (verified.addresses.length === 0) {
+      return { refusal: { reason: 'underived', detail: `rejected=${verified.rejected} (${breakdown})` } }
+    }
   }
   const cash = await readUnspentOnChain({
     chain,

@@ -234,34 +234,41 @@ describe('utxoSetScan', () => {
     expect(inspectHoldings).not.toHaveBeenCalled()
   })
 
-  it('reports rows that do not derive as an underived refusal', async () => {
+  it('scans derived rows and reports rejections without refusing', async () => {
     vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [
       row(1, 'm/0/4', 9_000),
       { ...row(2, 'm/0/5', 4_000), address: PrivateKey.fromRandom().toAddress() },
     ] })
-    expect(await utxoSetScanOrRefusal(deriver, 'main', { sourceId: 's' })).toEqual({ refusal: { reason: 'underived', detail: 'rejected=1' } })
-    expect(readUnspentOnChain).not.toHaveBeenCalled()
-  })
-
-  it('takes an empty set as an empty account', async () => {
-    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [] })
+    vi.mocked(readUnspentOnChain).mockResolvedValue({ unspent: new Set([op(1)]), unknown: new Set(), stopped: false })
     vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 0, stopped: false })
-    chainHolds({})
-    expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toMatchObject({
-      via: 'handcash-utxo-set',
-      complete: true,
-      addresses: [],
-      holdings: [],
-    })
+    chainHolds({ [at('m/0/4')]: { cashSats: 9_000, cashCount: 1 } })
+
+    const result = await utxoSetScanOrRefusal(deriver, 'main', { sourceId: 's' })
+    expect('refusal' in result).toBe(false)
+    if (!('refusal' in result)) {
+      expect(result.addresses).toHaveLength(1)
+      expect(result.addresses[0].path).toBe('m/0/4')
+      expect(result.holdings).toHaveLength(1)
+      expect(result.holdings[0].cashSats).toBe(9_000)
+    }
+    expect(readUnspentOnChain).toHaveBeenCalled()
   })
 
-  it('falls back when only some rows derive, rather than hiding rejected assets', async () => {
+  it('scans derived rows rather than hiding rejected assets', async () => {
     vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [
       row(1, 'm/0/4', 9_000),
       { ...row(2, 'm/0/5', 4_000), address: PrivateKey.fromRandom().toAddress() },
     ] })
-    expect(await utxoSetScan(deriver, 'main', { sourceId: 's' })).toBeNull()
-    expect(readUnspentOnChain).not.toHaveBeenCalled()
+    vi.mocked(readUnspentOnChain).mockResolvedValue({ unspent: new Set([op(1)]), unknown: new Set(), stopped: false })
+    vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 0, stopped: false })
+    chainHolds({ [at('m/0/4')]: { cashSats: 9_000, cashCount: 1 } })
+
+    const scan = await utxoSetScan(deriver, 'main', { sourceId: 's' })
+    expect(scan).not.toBeNull()
+    expect(scan?.addresses).toHaveLength(1)
+    expect(scan?.addresses[0].path).toBe('m/0/4')
+    expect(scan?.holdings[0].cashSats).toBe(9_000)
+    expect(readUnspentOnChain).toHaveBeenCalled()
   })
 
   it('marks unreadable live addresses incomplete', async () => {
