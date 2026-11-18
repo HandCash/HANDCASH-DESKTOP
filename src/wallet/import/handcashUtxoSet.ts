@@ -238,6 +238,8 @@ export type VerifiedUtxoSet = {
   /** Addresses holding tokens or multi-sat inscriptions — read in full from the chain. */
   readAddresses: Set<string>
   rejected: number
+  /** Rejection breakdown by reason: path, address, script */
+  rejectedBy: Record<UtxoSetRejection, number>
   /**
    * Rows whose script names this path's own key but in a form this wallet
    * does not sign (cosigned tokens). Ours, left in place; not a refusal.
@@ -361,11 +363,16 @@ export async function verifyUtxoSet(
   const rejectedNote = [...rejectedBy]
     .map(([reason, { count, paths }]) => ` rejected.${reason}=${count}(${[...paths].join(',')})`)
     .join('')
+  const rejectedByCounts: Record<UtxoSetRejection, number> = {
+    path: rejectedBy.get('path')?.count ?? 0,
+    address: rejectedBy.get('address')?.count ?? 0,
+    script: rejectedBy.get('script')?.count ?? 0,
+  }
   appendAppLog(
     rejected > 0 ? 'warn' : 'info',
     `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms${rejectedNote}${unsupported > 0 ? ` unsupported=${unsupported}(${[...unsupportedPaths].join(',')})` : ''}`,
   )
-  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected, unsupported }
+  return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected, rejectedBy: rejectedByCounts, unsupported }
 }
 
 const TERANODE_CHUNK = TERANODE_PROBE_BATCH

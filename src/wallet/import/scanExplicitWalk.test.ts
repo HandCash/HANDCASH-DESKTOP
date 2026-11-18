@@ -19,7 +19,8 @@ vi.mock('./handcashUtxoSet', () => ({
 
 import { scanImportedSource, AddressWalkAvailableError } from './scan'
 import { loadImportedSources, updateImportedSource, type ImportedSource } from './store'
-import { fetchHandCashUtxoSet, verifyUtxoSet } from './handcashUtxoSet'
+import { fetchHandCashUtxoSet, verifyUtxoSet, readUnspentOnChain } from './handcashUtxoSet'
+import { checkUtxoSetItems } from './items'
 import { discoverAddresses } from './discovery'
 import { inspectHoldings } from './holdings'
 import { legacyImportMachine } from '../../machines/legacyImportMachine'
@@ -41,7 +42,15 @@ describe('explicit HandCash address walk', () => {
     else vi.mocked(fetchHandCashUtxoSet).mockResolvedValue(reason === 'refused'
       ? { kind: 'refused', reason: 'unavailable' }
       : { kind: 'fetched', utxos: [] })
-    vi.mocked(verifyUtxoSet).mockResolvedValue({ rejected: 1 } as Awaited<ReturnType<typeof verifyUtxoSet>>)
+    vi.mocked(verifyUtxoSet).mockResolvedValue({
+      rejected: 1,
+      rejectedBy: { path: 0, address: 0, script: 0 },
+      addresses: [],
+      cashOutputs: new Map(),
+      itemOutpoints: new Map(),
+      readAddresses: new Set(),
+      unsupported: 0
+    } as Awaited<ReturnType<typeof verifyUtxoSet>>)
 
     await expect(scanImportedSource({ sourceId: source.id, gap: 5 })).rejects.toBeInstanceOf(AddressWalkAvailableError)
     expect(discoverAddresses).not.toHaveBeenCalled()
@@ -96,14 +105,45 @@ describe('address walk refusal reason', () => {
     expect(discoverAddresses).not.toHaveBeenCalled()
   })
 
-  it('shows an underived refusal to the user and in the app log', async () => {
+  it('shows an underived refusal to the user and in the app log when no rows derive', async () => {
     vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [] })
-    vi.mocked(verifyUtxoSet).mockResolvedValue({ rejected: 2 } as Awaited<ReturnType<typeof verifyUtxoSet>>)
+    vi.mocked(verifyUtxoSet).mockResolvedValue({
+      rejected: 2,
+      rejectedBy: { path: 0, address: 0, script: 2 },
+      addresses: [],
+      cashOutputs: new Map(),
+      itemOutpoints: new Map(),
+      readAddresses: new Set(),
+      unsupported: 0
+    } as Awaited<ReturnType<typeof verifyUtxoSet>>)
 
     const failure = await scanImportedSource({ sourceId: source.id, gap: 5 }).catch((e: unknown) => e)
-    expect((failure as AddressWalkAvailableError).refusal).toEqual({ reason: 'underived', detail: 'rejected=2' })
-    expect((failure as Error).message).toContain('Reason: some rows did not derive to these keys (rejected=2).')
-    expect(appendAppLog).toHaveBeenCalledWith('warn', expect.stringContaining('utxo set refused reason=underived rejected=2'))
+    expect((failure as AddressWalkAvailableError).refusal).toEqual({ reason: 'underived', detail: 'rejected=2 (script=2)' })
+    expect((failure as Error).message).toContain('Reason: no rows could be derived to these keys (rejected=2 (script=2)).')
+    expect(appendAppLog).toHaveBeenCalledWith('warn', expect.stringContaining('utxo set rejected 2 rows breakdown=script=2'))
+  })
+
+  it('scans derived rows even when some rows are rejected', async () => {
+    vi.mocked(fetchHandCashUtxoSet).mockResolvedValue({ kind: 'fetched', utxos: [] })
+    vi.mocked(verifyUtxoSet).mockResolvedValue({
+      rejected: 2,
+      rejectedBy: { path: 0, address: 0, script: 2 },
+      addresses: [{ path: "m/0/0", address: "1Test", label: "HandCash", wallets: "HandCash" }],
+      cashOutputs: new Map([["1Test", [{ outpoint: "abc_0", txid: "abc", vout: 0, satoshis: 1000 }]]]),
+      itemOutpoints: new Map(),
+      readAddresses: new Set(),
+      unsupported: 0
+    } as Awaited<ReturnType<typeof verifyUtxoSet>>)
+    vi.mocked(readUnspentOnChain).mockResolvedValue({ unspent: new Set(["abc_0"]), unknown: new Set(), stopped: false })
+    vi.mocked(checkUtxoSetItems).mockResolvedValue({ unspent: new Set(), failed: 0, stopped: false })
+    vi.mocked(inspectHoldings).mockResolvedValue([{ address: "1Test", path: "m/0/0", label: "HandCash", balance: 1000, itemCount: 0, error: undefined }])
+
+    const result = await scanImportedSource({ sourceId: source.id, gap: 5 })
+    expect(result.scan).toBeDefined()
+    expect(result.scan?.addresses).toHaveLength(1)
+    expect(result.scan?.holdings).toHaveLength(1)
+    expect(updateImportedSource).toHaveBeenCalled()
+    expect(appendAppLog).toHaveBeenCalledWith('warn', expect.stringContaining('utxo set rejected 2 rows breakdown=script=2'))
   })
 
   it('shows a thrown scan error as the reason instead of hiding it', async () => {
