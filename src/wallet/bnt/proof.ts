@@ -99,7 +99,8 @@ export function buildBntPackage(
     if (seen.has(id)) continue
     seen.add(id)
     const ef = tx.toHexEF()
-    if (size + ef.length + 3 > budget) {
+    // BRC-255 §6: a partial package must still fit the recipient's limits.
+    if (size + ef.length + 3 > budget || pkg.txs.length + pkg.deploys.length >= MAX_PACKAGE_TXS) {
       complete = false
       continue
     }
@@ -111,7 +112,7 @@ export function buildBntPackage(
     if (seen.has(id)) continue
     seen.add(id)
     const ef = tx.toHexEF()
-    if (size + ef.length + 3 > budget) {
+    if (size + ef.length + 3 > budget || pkg.txs.length + pkg.deploys.length >= MAX_PACKAGE_TXS) {
       complete = false
       break
     }
