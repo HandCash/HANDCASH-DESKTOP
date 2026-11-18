@@ -118,7 +118,7 @@ async function readAll(o: Owner): Promise<ImportedSource[]> {
   return Array.isArray(list) ? (list as ImportedSource[]) : []
 }
 
-async function writeAll(o: Owner, sources: ImportedSource[]): Promise<void> {
+async function writeAll(o: Owner, sources: ImportedSource[], authorize?: () => void): Promise<void> {
   if (sources.length === 0) {
     durableRemoveItem(storageKey(o))
     notify(sources)
@@ -133,6 +133,8 @@ async function writeAll(o: Owner, sources: ImportedSource[]): Promise<void> {
   const record: SealedRecord = { v: 1, iv: bytesToBase64(iv), ct: bytesToBase64(new Uint8Array(ct)) }
   const current = owner()
   if (current.identityKey !== o.identityKey || current.chain !== o.chain || current.accountIndex !== o.accountIndex) throw new Error('The receiving wallet changed.')
+  // Last synchronous check before the sealed write: no await separates it from storage.
+  authorize?.()
   if (!durableSetItem(storageKey(o), JSON.stringify(record))) {
     throw new Error('Could not save this import on the device. Free some storage and try again.')
   }
@@ -166,7 +168,11 @@ export function loadImportedSources(): Promise<ImportedSource[]> {
 
 export type AddSourceResult = { source: ImportedSource; existing: boolean }
 
-export function addImportedSource(secret: ImportSecret, label?: string, expectedIdentityKey?: string, expectedChain?: string): Promise<AddSourceResult> {
+/**
+ * `authorize` throws to refuse. It runs synchronously right before storage is
+ * touched (and before an existing match is reported), after every await.
+ */
+export function addImportedSource(secret: ImportSecret, label?: string, expectedIdentityKey?: string, expectedChain?: string, authorize?: () => void): Promise<AddSourceResult> {
   return exclusive(async () => {
     const o = owner()
     if (expectedIdentityKey && o.identityKey !== expectedIdentityKey) throw new Error('The receiving wallet changed.')
@@ -174,7 +180,10 @@ export function addImportedSource(secret: ImportSecret, label?: string, expected
     const sources = await readAll(o)
     const fingerprint = sourceFingerprint(secret)
     const prior = sources.find((s) => s.fingerprint === fingerprint && s.kind === secret.kind)
-    if (prior) return { source: prior, existing: true }
+    if (prior) {
+      authorize?.()
+      return { source: prior, existing: true }
+    }
     const source: ImportedSource = {
       id: crypto.randomUUID(),
       kind: secret.kind,
@@ -186,7 +195,7 @@ export function addImportedSource(secret: ImportSecret, label?: string, expected
       scan: null,
       lastSweep: null,
     }
-    await writeAll(o, [...sources, source])
+    await writeAll(o, [...sources, source], authorize)
     return { source, existing: false }
   })
 }

@@ -99,7 +99,6 @@ import {
   isMigrationOrigin,
   listMigrationTxids,
   openKeyRecoveryPayload,
-  refreshLegacyAddressPayload,
   beginHandCashImport,
   completeHandCashImport,
 } from './migration'
@@ -572,12 +571,17 @@ export async function dispatchWalletMethod(
     }
     case 'getLegacyAddress':
       return getLegacyAddressPayload()
-    case 'refreshLegacyAddress':
-      return refreshLegacyAddressPayload(
-        args && typeof args === 'object' && !Array.isArray(args)
-          ? (args as { txids?: string[]; items?: Array<{ outpoint: string; origin?: string; txid?: string; vout?: number }> })
-          : undefined,
-      )
+    case 'refreshLegacyAddress': {
+      // App-driven ingest writes wallet state with no pending review, so the
+      // bridge refuses it; Refresh stays a wallet-owned action and migration
+      // continues through the reviewed keys-only import.
+      appendAppLog('warn', `[migrate] refused refreshLegacyAddress from ${normalizeOrigin(originator) || 'unknown origin'}`)
+      const refused = new Error(
+        'Refreshing the wallet from an app is no longer available. Use Refresh in HandCash, or migrate with the reviewed key import.',
+      ) as Error & { code: string }
+      refused.code = 'MIGRATION_PENDING_REVIEW_UNAVAILABLE'
+      throw refused
+    }
     case 'listMigrationTxids':
       return listMigrationTxids()
     case 'openKeyRecovery':
@@ -1727,13 +1731,7 @@ async function handleBrc100RequestInner(
       }
     }
 
-    if (method === 'refreshLegacyAddress') {
-      const payload = result as { importedCount?: number; importedItemsCount?: number } | null
-      const funds = payload?.importedCount ?? 0
-      const items = payload?.importedItemsCount ?? 0
-      if (funds > 0 || items > 0) playWalletSound('receive')
-      else playWalletSound('soft')
-    } else if (method === 'processAction') {
+    if (method === 'processAction') {
       const txid = extractTxid(result) ?? extractTxid(args)
       if (txid) {
         const completed = await cacheCreateActionBeef(active, txid, result)
