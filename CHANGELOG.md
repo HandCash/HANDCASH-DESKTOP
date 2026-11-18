@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.717] - 2026-11-17
+
+### Fixed
+
+- Release: wallet-ui package version matches Desktop so the Mobile release sync test passes (1.3.716 Linux CI failed on it; 1.3.716 was never published).
+
 ## [1.3.716] - 2026-11-17
 
 ### Fixed
