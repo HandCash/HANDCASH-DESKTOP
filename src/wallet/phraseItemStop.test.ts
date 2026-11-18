@@ -186,6 +186,19 @@ describe('migrateChosenPhraseItems stops', () => {
     expect(run.results.get(three[1]!.outpoint)).toEqual({ kind: 'moved', txid: earlierTxid })
     expect(run.results.get(three[2]!.outpoint)?.kind).toBe('funds')
     expect(landed).toEqual([three[0]!.outpoint, three[1]!.outpoint])
+
+    // Crash after broadcast, before the listing/checkpoint records completion:
+    // replay the same selection against the durable signed-spender archive.
+    createAction.mockClear()
+    const replay = await migrateChosenPhraseItems({
+      items: three.slice(0, 2).map((t) => ({ outpoint: t.outpoint, keyHex: PHRASE_KEY.toHex() })),
+    })
+    expect([...replay.results.values()]).toEqual([
+      { kind: 'moved', txid: earlierTxid }, { kind: 'moved', txid: earlierTxid },
+    ])
+    expect(createAction).not.toHaveBeenCalled()
+    expect(signAction).not.toHaveBeenCalled()
+    expect(abortAction).not.toHaveBeenCalled()
   })
 
   it('leaves tips sealed by an undecided leg for the next run, without building over them', async () => {

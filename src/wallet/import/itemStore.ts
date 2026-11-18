@@ -1,3 +1,5 @@
+import { accountLocalKeyFor, peekAccountLocalKeyScope, type BoundAccountKeyScope } from '../accountLocalKeys'
+import { yieldToUi } from '../yieldToUi'
 import { compareImportGroups, importItemGroup, type ImportItem, type ImportItemGroup } from './importItem'
 
 /**
@@ -17,12 +19,21 @@ import { compareImportGroups, importItemGroup, type ImportItem, type ImportItemG
  */
 
 const DB_NAME = 'handcash.import-items'
+const SOURCE_PREFIX = 'import-account:'
+
+/** Pin before network awaits. Unowned legacy rows are not adopted by an account. */
+export function scopedImportSourceId(sourceId: string, owner?: BoundAccountKeyScope): string {
+  if (sourceId.startsWith(SOURCE_PREFIX)) return sourceId
+  const scope = owner ?? peekAccountLocalKeyScope()
+  if (!scope.identityKey) throw new Error('Unlock this wallet first')
+  return accountLocalKeyFor(SOURCE_PREFIX + encodeURIComponent(sourceId), { ...scope, identityKey: scope.identityKey })
+}
 const DB_VERSION = 2
 const ITEMS = 'items'
 const GONE = 'gone'
 const META = 'meta'
 const GROUPS = 'groups'
-const READ_CHUNK = 400
+const READ_CHUNK = 100
 /** Items read per shelf to find its face pile. */
 const FACE_SCAN = 24
 export const IMPORT_GROUP_FACES = 4
@@ -149,6 +160,7 @@ function emptyMeta(sourceId: string): ImportListMeta {
 }
 
 export async function readImportListMeta(sourceId: string): Promise<ImportListMeta> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const row = await request(db.transaction(META).objectStore(META).get(sourceId))
   return (row as ImportListMeta | undefined) ?? emptyMeta(sourceId)
@@ -158,6 +170,7 @@ export async function writeImportListMeta(
   sourceId: string,
   patch: Partial<Omit<ImportListMeta, 'sourceId' | 'nextSeq'>>,
 ): Promise<void> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const tx = db.transaction(META, 'readwrite')
   const store = tx.objectStore(META)
@@ -175,7 +188,16 @@ export async function saveImportItems(
   sourceId: string,
   items: readonly StoredImportItem[],
 ): Promise<StoredImportItem[]> {
+  sourceId = scopedImportSourceId(sourceId)
   if (items.length === 0) return []
+  if (items.length > READ_CHUNK) {
+    const added: StoredImportItem[] = []
+    for (let i = 0; i < items.length; i += READ_CHUNK) {
+      added.push(...await saveImportItems(sourceId, items.slice(i, i + READ_CHUNK)))
+      await yieldToUi()
+    }
+    return added
+  }
   const db = await open()
   const tx = db.transaction([ITEMS, GONE, META, GROUPS], 'readwrite')
   const itemStore = tx.objectStore(ITEMS)
@@ -226,8 +248,23 @@ export async function saveImportItems(
   return added
 }
 
+/** Only selected tombstones, not a whole-store read during queue recovery. */
+export async function goneImportOutpoints(sourceId: string, outpoints: readonly string[]): Promise<Set<string>> {
+  sourceId = scopedImportSourceId(sourceId)
+  const db = await open()
+  const gone = new Set<string>()
+  for (let i = 0; i < outpoints.length; i += READ_CHUNK) {
+    const slice = outpoints.slice(i, i + READ_CHUNK)
+    const store = db.transaction(GONE).objectStore(GONE)
+    const keys = await Promise.all(slice.map((outpoint) => request(store.getKey([sourceId, outpoint]))))
+    slice.forEach((outpoint, index) => { if (keys[index] !== undefined) gone.add(outpoint) })
+  }
+  return gone
+}
+
 /** Outputs checked and found spent, or moved: they leave the list and stay out. */
 export async function markImportOutpointsGone(sourceId: string, outpoints: readonly string[]): Promise<void> {
+  sourceId = scopedImportSourceId(sourceId)
   if (outpoints.length === 0) return
   const db = await open()
   const tx = db.transaction([ITEMS, GONE], 'readwrite')
@@ -249,6 +286,7 @@ export async function readImportItemPage(
   sourceId: string,
   opts: { after: number | null; limit: number; query?: string; group?: string },
 ): Promise<ImportItemPage> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const query = opts.query?.trim().toLowerCase() ?? ''
   const items: StoredImportItem[] = []
@@ -276,6 +314,7 @@ export async function readImportItemPage(
  * face pile. Shelves left empty are dropped.
  */
 export async function readImportGroups(sourceId: string): Promise<StoredImportGroup[]> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const groupRows = (await request(
     db.transaction(GROUPS).objectStore(GROUPS).getAll(sourceRange(sourceId)),
@@ -307,6 +346,7 @@ export async function readImportGroups(sourceId: string): Promise<StoredImportGr
 
 /** Every outpoint on one shelf, in list order. */
 export async function groupImportOutpoints(sourceId: string, group: string): Promise<string[]> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const keys = await request(
     db.transaction(ITEMS).objectStore(ITEMS).index('group').getAllKeys(groupRange(sourceId, group)),
@@ -319,6 +359,7 @@ export async function readStoredImportItems(
   sourceId: string,
   outpoints: readonly string[],
 ): Promise<Map<string, StoredImportItem>> {
+  sourceId = scopedImportSourceId(sourceId)
   const store = (await open()).transaction(ITEMS).objectStore(ITEMS)
   const rows = (await Promise.all(outpoints.map((outpoint) => request(store.get([sourceId, outpoint]))))) as Array<
     ItemRow | undefined
@@ -329,12 +370,14 @@ export async function readStoredImportItems(
 }
 
 export async function countImportItems(sourceId: string): Promise<number> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   return request(db.transaction(ITEMS).objectStore(ITEMS).count(sourceRange(sourceId)))
 }
 
 /** Outpoints already decided for this source — listed, spent or moved. */
 export async function decidedImportOutpoints(sourceId: string): Promise<Set<string>> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const tx = db.transaction([ITEMS, GONE])
   const [items, gone] = await Promise.all([
@@ -348,6 +391,7 @@ export async function decidedImportOutpoints(sourceId: string): Promise<Set<stri
 
 /** Outpoints currently listed for this source. */
 export async function listedImportOutpoints(sourceId: string): Promise<Set<string>> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const keys = await request(db.transaction(ITEMS).objectStore(ITEMS).getAllKeys(sourceRange(sourceId)))
   return new Set(keys.map((key) => (key as [string, string])[1]))
@@ -364,6 +408,7 @@ export async function pruneImportItems(
   live: ReadonlySet<string>,
   keepAddresses: ReadonlySet<string>,
 ): Promise<string[]> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const removed: string[] = []
   let after: number | null = null
@@ -392,6 +437,7 @@ export async function replaceAddressItems(
   address: string,
   items: readonly StoredImportItem[],
 ): Promise<{ removed: string[]; added: StoredImportItem[] }> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const index = db.transaction(ITEMS).objectStore(ITEMS).index('address')
   const held = (await request(index.getAllKeys(IDBKeyRange.only([sourceId, address])))) as Array<[string, string]>
@@ -410,6 +456,7 @@ export async function replaceAddressItems(
  * what the sweep moved cannot come back while an index catches up.
  */
 export async function clearImportListing(sourceId: string): Promise<void> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const tx = db.transaction([ITEMS, META, GROUPS], 'readwrite')
   tx.objectStore(ITEMS).delete(sourceRange(sourceId))
@@ -420,6 +467,7 @@ export async function clearImportListing(sourceId: string): Promise<void> {
 
 /** The saved source is removed: forget everything about it. */
 export async function forgetImportItemStore(sourceId: string): Promise<void> {
+  sourceId = scopedImportSourceId(sourceId)
   const db = await open()
   const tx = db.transaction([ITEMS, GONE, META, GROUPS], 'readwrite')
   tx.objectStore(ITEMS).delete(sourceRange(sourceId))
