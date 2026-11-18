@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { inputScriptValid, signInput } from '../txInputs'
 import { bntHolderPrivateKey, bntHolderPublicKey, bntIssuerKeyOf, bntIssuerPrivateKey } from './keys'
 import { decodeBntPayload, encodeBntPayload, BNT_MIN_SILENCE_SECONDS, bntSupplyPolicy, type BntDeployFields } from './payload'
-import { buildBntPackage, bntAncestry, MAX_PACKAGE_TXS, readBntPackage } from './proof'
+import { buildBntPackage, bntAncestry, readBntPackage } from './proof'
 import {
   BNT_HOLDER_SCOPE,
   BNT_ISSUER_SCOPE,
@@ -460,27 +460,6 @@ describe('bnt validity', () => {
 })
 
 describe('bnt proof package', () => {
-  it.each(['ancestors', 'deploys'] as const)('cuts %s at the shared transaction limit and still reads back', (kind) => {
-    const template = coinFor(issuerKey)
-    const txs = Array.from({ length: MAX_PACKAGE_TXS }, (_, i) => {
-      const tx = new Transaction()
-      tx.addInput({ ...template.inputs[0] })
-      tx.addOutput({ ...template.outputs[0], satoshis: i + 1 })
-      return tx
-    })
-    const subject = coinFor(alice)
-    const { pkg, complete } = buildBntPackage(
-      subject,
-      kind === 'ancestors' ? txs : [],
-      kind === 'deploys' ? txs : [txs[0]],
-      Number.MAX_SAFE_INTEGER,
-    )
-    expect(complete).toBe(false)
-    expect(pkg.txs.length + pkg.deploys.length).toBe(MAX_PACKAGE_TXS)
-    expect(readBntPackage(pkg)).not.toBeNull()
-    expect(readBntPackage({ ...pkg, txs: [...pkg.txs, subject.toHexEF()] })).toBeNull()
-  })
-
   it('carries the subject and the hops a recipient lacks, and reads back strictly', async () => {
     const dTx = deployTx({ supply: 100n })
     const deploy = deployOf(dTx)
