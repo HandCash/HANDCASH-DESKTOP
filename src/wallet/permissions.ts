@@ -589,6 +589,10 @@ export function revokeOrigin(origin: string, reason: 'disconnect' | 'lapsed' = '
   const name = appDisplayName(key)
   writeConnected(readConnected().filter((a) => a.origin !== key))
   clearAutoPaySettings(key)
+  // Pending app writes die with the connection (Packet F).
+  void import('./import/encryptedImport').then(({ revokeEncryptedImports }) => {
+    revokeEncryptedImports(key)
+  })
   void import('./spendingAuthorization').then(({ clearSpendingAuthorization }) => {
     clearSpendingAuthorization(key)
   })
@@ -606,6 +610,9 @@ export function revokeOrigin(origin: string, reason: 'disconnect' | 'lapsed' = '
 export function revokeAllOrigins(): void {
   writeConnected([])
   clearAutoPaySettings()
+  void import('./import/encryptedImport').then(({ revokeEncryptedImports }) => {
+    revokeEncryptedImports()
+  })
   void import('./spendingAuthorization').then(({ clearSpendingAuthorization }) => {
     clearSpendingAuthorization()
   })
@@ -780,6 +787,26 @@ function releasePromptFocusIfIdle(): void {
   }
 }
 
+/** Deny and drop one app's waiting action prompts for `method` (its scope lapsed). */
+export function withdrawActionPrompts(origin: string, method: string): void {
+  const key = normalizeOrigin(origin)
+  const matches = (request: PendingPrompt) =>
+    request.kind === 'action' && request.origin === key && request.method === method
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const item = queue[i]!
+    if (!matches(item.request)) continue
+    queue.splice(i, 1)
+    item.resolve('deny')
+  }
+  if (current && matches(current.request)) {
+    const { resolve } = current
+    current = null
+    resolve('deny')
+    dispatchWalletUiEvent('handcash:permission-dismissed', {})
+  }
+  pumpQueue()
+}
+
 /** Drop every waiting connect/action prompt (HTTP timeout / client gone). */
 export function cancelPendingPermissions(reason = 'cancelled'): void {
   void reason
@@ -945,6 +972,23 @@ export function summarizeAction(method: string, args: unknown): {
 } {
   const body = asRecord(args)
   const details: string[] = []
+
+  if (method === 'completeHandCashImport') {
+    // Packet F: the wallet builds these args itself after decrypting; the app
+    // never describes what is being approved. Counts are unknown until a scan.
+    const identityKey = typeof body.identityKey === 'string' ? body.identityKey : ''
+    const network = body.chain === 'test' ? 'Testnet' : 'Mainnet'
+    return {
+      title: 'Save HandCash keys',
+      summary: 'Save one HandCash key source to Import for you to review',
+      details: [
+        `Receiving account: ${identityKey.slice(0, 8)}…${identityKey.slice(-8)} (${network})`,
+        'Adds 1 HandCash key source; 0 coin outputs and 0 item outputs',
+        'No baskets change; nothing is scanned, swept or spent',
+        'One use; refused if this app disconnects, the wallet locks or the account changes',
+      ],
+    }
+  }
 
   if (method === 'issueHandle') {
     const handle = typeof body.handle === 'string' ? body.handle : ''

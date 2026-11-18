@@ -1,7 +1,12 @@
 /** HandCash extension carried by the authenticated BRC-100 bridge.
  * A one-time receiver key seals exported shares in transit. It never signs a
- * transaction. The source is saved for the existing preview/confirm flow.
+ * transaction. The decrypted source waits in memory for the user's review
+ * (importWriteGrant chart, Packet F) and is saved only after they approve it;
+ * then it goes to the existing preview/confirm flow.
  */
+import { createActor, fromPromise, waitFor, type ActorRefFrom } from 'xstate'
+import { importWriteGrantMachine, type ImportReviewDecision, type ImportWriteRefusal } from '../../machines/importWriteGrantMachine'
+import { isOriginAllowed, requestActionApproval, withdrawActionPrompts } from '../permissions'
 import { getActiveWallet } from '../session'
 import { normalizeAppHost } from '../appIdentity'
 import { addImportedSource } from './store'
@@ -25,14 +30,70 @@ type Pending = {
   privateKey: CryptoKey | null
   delivery?: Promise<HandCashImportReceipt>
   fingerprint?: string
+  /** Set by lock, disconnect or account change; a revoked receiver never writes. */
+  revoked: boolean
+  review?: ActorRefFrom<typeof importWriteGrantMachine>
 }
 const pending = new Map<string, Pending>()
+const REVIEW_METHOD = 'completeHandCashImport'
+
+/** A refused app write. `code` reaches the app; nothing was saved. */
+export class ImportWriteRefused extends Error {
+  readonly code: string
+  constructor(refusal: ImportWriteRefusal) {
+    const [code, message] = {
+      denied: ['IMPORT_REVIEW_DENIED', 'The wallet owner did not approve saving these keys.'],
+      timeout: ['IMPORT_REVIEW_EXPIRED', 'The import review expired. Connect again.'],
+      revoked: ['IMPORT_REVIEW_REVOKED', 'The import was cancelled because the app disconnected or the wallet locked.'],
+      unauthorized: ['IMPORT_REVIEW_REVOKED', 'Import connection expired or the receiving wallet changed. Connect again.'],
+      failed: ['IMPORT_SAVE_FAILED', 'Could not save the encrypted import. Reconnect and try again, or import your exported keys in Settings.'],
+    }[refusal]
+    super(message)
+    this.name = 'ImportWriteRefused'
+    this.code = code
+  }
+}
 const TTL = 5 * 60_000
 const encoder = new TextEncoder()
 const bytes = (s: string): Uint8Array<ArrayBuffer> => Uint8Array.from(atob(s), (c) => c.charCodeAt(0))
 const base64 = (b: ArrayBuffer): string => btoa(String.fromCharCode(...new Uint8Array(b)))
 
-export function clearEncryptedImports(): void { pending.clear() }
+/** Lock or account rebind: every receiver and pending review is refused. */
+export function clearEncryptedImports(): void { revokeEncryptedImports() }
+
+/** Disconnect / lapse for one host (or all): refuse its receivers and reviews. */
+export function revokeEncryptedImports(host?: string): void {
+  for (const [id, entry] of pending) {
+    if (host && entry.origin !== host) continue
+    entry.revoked = true
+    entry.privateKey = null
+    if (entry.review) {
+      entry.review.send({ type: 'REVOKE' })
+      withdrawActionPrompts(entry.origin, REVIEW_METHOD)
+    }
+    pending.delete(id)
+  }
+}
+
+/** Pending reviews by host, metadata only (Connected Apps). */
+export function pendingImportReviews(): Array<{ host: string; expiresAt: number }> {
+  return [...pending.values()]
+    .filter((e) => e.review && !e.revoked && e.review.getSnapshot().matches('pendingReview'))
+    .map((e) => ({ host: e.origin, expiresAt: e.request.expiresAt }))
+}
+
+/**
+ * The grant's scope, checked synchronously: this exact receiver still pending
+ * and unrevoked, before its deadline, same account and network, and the host
+ * still connected. Origin allowlisting is checked by the bridge as well.
+ */
+function authorized(entry: Pending): boolean {
+  if (entry.revoked || pending.get(entry.request.id) !== entry) return false
+  if (entry.request.expiresAt <= Date.now()) return false
+  const active = getActiveWallet()
+  if (!active || active.identityKey !== entry.request.identityKey || active.chain !== entry.request.chain) return false
+  return isOriginAllowed(entry.origin)
+}
 
 function activeIdentity(): { identityKey: string; chain: string } {
   const active = getActiveWallet()
@@ -59,8 +120,16 @@ export async function beginHandCashImport(origin: string): Promise<HandCashImpor
     v: 1, id: crypto.randomUUID(), identityKey: active.identityKey, chain: active.chain,
     publicKey: base64(await crypto.subtle.exportKey('raw', pair.publicKey)), expiresAt: Date.now() + TTL,
   }
-  pending.set(request.id, { request, origin: host, privateKey: pair.privateKey })
-  if (typeof window !== 'undefined') window.setTimeout(() => pending.delete(request.id), TTL)
+  pending.set(request.id, { request, origin: host, privateKey: pair.privateKey, revoked: false })
+  if (typeof window !== 'undefined') window.setTimeout(() => {
+    // Expiry ends the receiver; an in-flight review is refused, never left waiting.
+    const entry = pending.get(request.id)
+    if (entry?.review) {
+      entry.review.send({ type: 'REVOKE' })
+      withdrawActionPrompts(entry.origin, REVIEW_METHOD)
+    }
+    pending.delete(request.id)
+  }, TTL)
   return request
 }
 
@@ -74,7 +143,7 @@ export async function completeHandCashImport(origin: string, raw: unknown): Prom
   const args = (raw ?? {}) as Record<string, unknown>
   const entry = typeof args.id === 'string' ? pending.get(args.id) : undefined
   const active = activeIdentity()
-  if (!entry || entry.origin !== normalizeAppHost(origin) || entry.request.expiresAt <= Date.now() ||
+  if (!entry || entry.revoked || entry.origin !== normalizeAppHost(origin) || entry.request.expiresAt <= Date.now() ||
       entry.request.identityKey !== active.identityKey || entry.request.chain !== active.chain) {
     throw new Error('Import connection expired or the receiving wallet changed. Connect again.')
   }
@@ -94,6 +163,25 @@ export async function completeHandCashImport(origin: string, raw: unknown): Prom
   return entry.delivery
 }
 
+/** One BRC-100 action prompt, bounded by the receiver's deadline. */
+async function reviewDelivery(entry: Pending): Promise<ImportReviewDecision> {
+  const left = entry.request.expiresAt - Date.now()
+  if (left <= 0) return 'timeout'
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), left) })
+  try {
+    // The wallet writes the prompt's args; nothing the app sent describes the write.
+    const decision = await Promise.race([
+      requestActionApproval(entry.origin, REVIEW_METHOD, { identityKey: entry.request.identityKey, chain: entry.request.chain }),
+      deadline,
+    ])
+    if (decision === 'timeout') withdrawActionPrompts(entry.origin, REVIEW_METHOD)
+    return decision === 'allow' ? 'allow' : decision === 'timeout' ? 'timeout' : 'deny'
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function receive(entry: Pending, args: { publicKey: string; iv: string; ciphertext: string }, hints: unknown): Promise<HandCashImportReceipt> {
   let plaintext: ArrayBuffer | undefined
   try {
@@ -108,19 +196,35 @@ async function receive(entry: Pending, args: { publicKey: string; iv: string; ci
     if (typeof body.cloud !== 'string' || typeof body.trustholder !== 'string') throw new Error('Invalid shares')
     const parsed = parseImportSecret('handcash', { primary: body.cloud, secondary: body.trustholder })
     if (!parsed.ok) throw new Error('Invalid shares')
-    if (entry.request.expiresAt <= Date.now()) throw new Error('Request expired')
-    const saved = await addImportedSource(parsed.secret, undefined, entry.request.identityKey, entry.request.chain)
-    const current = activeIdentity()
-    if (current.identityKey !== entry.request.identityKey || current.chain !== entry.request.chain) throw new Error('Wallet changed')
+    // The shares wait for review as parsed fields only; drop the raw buffer now.
+    new Uint8Array(plaintext).fill(0)
+    if (!authorized(entry)) throw new ImportWriteRefused('unauthorized')
+    const secret = parsed.secret
+    const guard = () => { if (!authorized(entry)) throw new ImportWriteRefused('unauthorized') }
+    const review = createActor(importWriteGrantMachine.provide({
+      actors: {
+        review: fromPromise<ImportReviewDecision>(() => reviewDelivery(entry)),
+        persist: fromPromise<unknown>(() => addImportedSource(secret, undefined, entry.request.identityKey, entry.request.chain, guard)),
+      },
+    }), { input: { authorized: () => authorized(entry) } })
+    entry.review = review
+    review.start()
+    const done = await waitFor(review, (s) => s.status === 'done')
+    entry.review = undefined
+    const { receipt, refusal } = done.output!
+    if (refusal) throw new ImportWriteRefused(refusal)
+    const saved = receipt as Awaited<ReturnType<typeof addImportedSource>>
     const recovery = parseRecoveryHints(hints)
     if (recovery) rememberRecoveryHints(recovery)
     requestImportedSource(saved.source.id)
     openSetting('import')
     if (typeof window !== 'undefined') void window.handcash?.focusWindow?.().catch(() => undefined)
     return { sourceId: saved.source.id, saved: true, existing: saved.existing }
-  } catch {
+  } catch (err) {
     // Crypto and parsing errors can include secret material. Never surface them.
-    throw new Error('Could not save the encrypted import. Reconnect and try again, or import your exported keys in Settings.')
+    if (err instanceof ImportWriteRefused) throw err
+    // A revoke that lands mid-decryption nulls the key; report it as revoked.
+    throw new ImportWriteRefused(entry.revoked ? 'revoked' : 'failed')
   } finally {
     entry.privateKey = null
     if (plaintext) new Uint8Array(plaintext).fill(0)

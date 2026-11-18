@@ -50,6 +50,16 @@ describe('imported source store', () => {
     expect(disk.size).toBe(0)
   })
 
+  it('a refusing authorize check writes nothing and reports no existing match', async () => {
+    const refuse = () => { throw new Error('revoked') }
+    await expect(addImportedSource({ kind: 'phrase', mnemonic: PHRASE, passphrase: '' }, undefined, undefined, undefined, refuse)).rejects.toThrow('revoked')
+    expect(disk.size).toBe(0)
+    await addImportedSource({ kind: 'phrase', mnemonic: PHRASE, passphrase: '' })
+    const before = [...disk.values()]
+    await expect(addImportedSource({ kind: 'phrase', mnemonic: PHRASE, passphrase: '' }, undefined, undefined, undefined, refuse)).rejects.toThrow('revoked')
+    expect([...disk.values()]).toEqual(before)
+  })
+
   it('opens only under the wallet key that sealed it', async () => {
     await addImportedSource({ kind: 'phrase', mnemonic: PHRASE, passphrase: '' })
     rootKeyHex = '22'.repeat(32)
