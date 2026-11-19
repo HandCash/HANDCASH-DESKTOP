@@ -182,6 +182,25 @@ export function rememberItemArtFromScript(
   return keepEnvelopeArt(key, scriptHex)
 }
 
+/** Post-paint script decoding; failed work remains eligible for a later retry. */
+export async function rememberItemArtFromScriptOffThread(
+  origin: string,
+  scriptHex: string | undefined,
+): Promise<string | undefined> {
+  const key = originArtKey(origin)
+  if (!key) return undefined
+  const known = getItemArtDataUrl(key)
+  if (known) return known
+  if (!scriptHex || examined.has(key)) return undefined
+  examined.add(key)
+  try {
+    return keepArt(key, await getComputePort().run('itemArtFromScript', { scriptHex }))
+  } catch {
+    examined.delete(key)
+    return undefined
+  }
+}
+
 /** Art from a BEEF that contains the origin transaction. */
 export function rememberItemArtFromBeef(origin: string, beef: Beef): string | undefined {
   const key = originArtKey(origin)
@@ -219,6 +238,8 @@ export async function rememberItemArtFromProvenanceOffThread(
   try {
     return keepArt(request.origin, await getComputePort().run('itemArtFromProvenance', request))
   } catch {
+    // A failed worker did not examine the proof; permit a later retry.
+    examined.delete(request.origin)
     return undefined
   }
 }

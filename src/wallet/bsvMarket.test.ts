@@ -46,6 +46,19 @@ describe('refreshMarketBoard', () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it('updates all coins in memory even when the origin quota is full', async () => {
+    vi.stubGlobal('localStorage', {
+      getItem: () => null,
+      setItem: () => { throw new Error('QuotaExceededError') },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify([
+      row('bitcoin-cash-sv', 18), row('dogecoin', 0.09),
+    ]))))
+    await refreshMarketBoard(true)
+    expect(getCachedBsvMarket('bsv')?.priceUsd).toBe(18)
+    expect(getCachedBsvMarket('doge')?.priceUsd).toBe(0.09)
+  })
+
   it('prices every ticker coin with a single request', async () => {
     const fetchMock = vi.fn(async () =>
       new Response(

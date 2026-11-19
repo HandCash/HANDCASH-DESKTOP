@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { P2PKH, PrivateKey, Transaction } from '@bsv/sdk'
 
 const spendWaiting = vi.hoisted(() => ({ value: false }))
@@ -8,6 +8,9 @@ vi.mock('./walletCoordinator', () => ({
 vi.mock('./yieldToUi', () => ({ yieldToUi: () => Promise.resolve() }))
 
 import { fillItemScripts, type ScriptRow } from './itemScriptFill'
+import { setComputePortForTests } from './compute/computeClient'
+import { runComputeOp } from './compute/computeOps'
+afterEach(() => setComputePortForTests(null))
 
 function txWithOutputs(n: number): Transaction {
   const tx = new Transaction()
@@ -40,6 +43,25 @@ function walletWith(txs: Transaction[]) {
 const keyOf = (o: string) => o.replace('.', '_')
 
 describe('fillItemScripts', () => {
+  it('does not apply worker results after an account change', async () => {
+    spendWaiting.value = false
+    let current = true
+    const tx = txWithOutputs(1)
+    const { wallet } = walletWith([tx])
+    setComputePortForTests({ run: async (op, input) => {
+      const result = runComputeOp(op, input)
+      current = false
+      return result
+    } })
+    const rows: ScriptRow[] = [{ outpoint: `${tx.id('hex')}.0` }]
+    const result = await fillItemScripts(wallet, rows, {
+      known: new Map(), keyOf, stillCurrent: () => current,
+    })
+    expect(rows[0]!.lockingScript).toBeUndefined()
+    expect(result.stoppedFor).toBe('stale')
+    expect(result.unread.has(rows[0]!)).toBe(true)
+  })
+
   it('carries known scripts and reads each missing transaction once', async () => {
     spendWaiting.value = false
     const a = txWithOutputs(2)
