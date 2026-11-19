@@ -560,14 +560,34 @@ function persistDurableList(items: Collectable[]): void {
   }
 }
 
+let pendingCollectablesNotify: { items: Collectable[]; epoch: number } | null = null
+let collectablesNotifyScheduled = false
+
 function notifyCollectables(items: Collectable[]) {
-  const emit = () => {
-    for (const listener of collectablesListeners) listener(items)
+  const emit = (latest: Collectable[], epoch: number) => {
+    for (const listener of collectablesListeners) {
+      if (epoch !== collectablesAccountEpoch) break
+      listener(latest)
+    }
   }
   if (items.length > 120) {
-    void yieldToUi().then(emit)
+    // One pending paint, not one render per background result. The cache and
+    // spend authority update synchronously; only display notification yields.
+    pendingCollectablesNotify = { items, epoch: collectablesAccountEpoch }
+    if (collectablesNotifyScheduled) return
+    collectablesNotifyScheduled = true
+    void yieldToUi().then(() => {
+      collectablesNotifyScheduled = false
+      const pending = pendingCollectablesNotify
+      pendingCollectablesNotify = null
+      if (pending && pending.epoch === collectablesAccountEpoch) {
+        emit(pending.items, pending.epoch)
+      }
+    })
   } else {
-    emit()
+    // An immediate clear/small list supersedes an older deferred large list.
+    pendingCollectablesNotify = null
+    emit(items, collectablesAccountEpoch)
   }
 }
 
@@ -713,6 +733,7 @@ export function retireCollectableAfterSpend(
 }
 
 export function clearCollectablesCache(options?: { notify?: boolean }): void {
+  pendingCollectablesNotify = null
   cachedCollectables = []
   collectablesHydrated = false
   listedOutputCursor = 0
