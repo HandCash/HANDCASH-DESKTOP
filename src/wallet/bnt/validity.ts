@@ -1,5 +1,5 @@
 import { Transaction, type ChainTracker } from '@bsv/sdk'
-import { checkIptHashRelease } from './release'
+import { checkIptRelease } from './release'
 import { inputScriptValid, sourceOutputOf, sourceTxidOf } from '../txInputs'
 import { backingCount, backingDepositKey, backingDepositOf, checkBackingProof, type BackingOutpoint, type BntBackingProof } from './backing'
 import { bntIssuerKeyOf } from './keys'
@@ -516,7 +516,7 @@ export async function walkBnt(
     // BRC-253 §11.6: knowing the secret is not proof of a public, mined release.
     if (deploy.rules.mode === 'countersign' && !check.accepted) {
       if (!release?.chain) return { ok: false, reason: 'missing', txid, detail: 'the mined beacon-release proof is not available' }
-      const proof = await checkIptHashRelease(deploy, release.chain, release.tracker)
+      const proof = await checkIptRelease(deploy, release.chain, release.tracker)
       if (!proof.ok) return { ok: false, reason: proof.missing ? 'missing' : 'invalid', txid, detail: proof.detail }
       // §9: accept-once is gone after release; a recipient waits for mining.
       const path = tx.merklePath
