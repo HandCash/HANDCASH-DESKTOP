@@ -8,6 +8,7 @@
 mod bridge;
 mod device_auth;
 mod durable;
+mod durable_cache;
 #[cfg(target_os = "linux")]
 mod file_chooser;
 #[cfg(target_os = "linux")]

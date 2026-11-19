@@ -1,11 +1,11 @@
 //! File-backed durable store + loopback sync HTTP for storageGetSync/SetSync.
 
+use crate::durable_cache::DurableCache;
 use crate::seal;
 use directories::ProjectDirs;
 use rand::RngCore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs;
 #[allow(unused_imports)]
 use std::io::Read;
@@ -25,7 +25,7 @@ const MAX_PLAIN_NAME: usize = 200;
 
 pub struct DurableStore {
     dir: PathBuf,
-    cache: Mutex<HashMap<String, Option<String>>>,
+    cache: Mutex<DurableCache>,
     vault_open_error: Mutex<Option<String>>,
 }
 
@@ -43,7 +43,7 @@ impl DurableStore {
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
         Ok(Arc::new(Self {
             dir,
-            cache: Mutex::new(HashMap::new()),
+            cache: Mutex::new(DurableCache::default()),
             vault_open_error: Mutex::new(None),
         }))
     }
@@ -425,6 +425,34 @@ mod tests {
         assert_eq!(store.get("plain.key").as_deref(), Some("value"));
         assert!(store.remove("plain.key"));
         assert_eq!(store.get("plain.key"), None);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn uncached_large_values_still_round_trip_update_and_remove() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("hc-durable-large-{stamp}"));
+        let store = DurableStore::open(dir.clone()).expect("open");
+        assert!(store.set("journal", "old", false));
+        let large = "x".repeat(2 * 1024 * 1024);
+        assert!(store.set("journal", &large, false));
+        assert!(store.cache.lock().unwrap().get("journal").is_none());
+        assert_eq!(store.get("journal").as_deref(), Some(large.as_str()));
+        assert!(store.cache.lock().unwrap().get("journal").is_none());
+        let reopened = DurableStore::open(dir.clone()).expect("reopen");
+        assert_eq!(reopened.get("journal").as_deref(), Some(large.as_str()));
+        assert!(store.set("journal", "new", false));
+        assert_eq!(store.get("journal").as_deref(), Some("new"));
+        for i in 0..128 {
+            assert!(store.set(&format!("small-{i}"), "value", false));
+        }
+        assert!(store.cache.lock().unwrap().get("journal").is_none());
+        assert_eq!(store.get("journal").as_deref(), Some("new"));
+        assert!(store.remove("journal"));
+        assert_eq!(store.get("journal"), None);
         let _ = fs::remove_dir_all(dir);
     }
 
