@@ -8,6 +8,7 @@
  * never with an invented time. The last read is kept so a launch paints that
  * projection before a live read.
  */
+import { activityOutputProjection } from './activityOutputProjection'
 import { sleep } from './timing'
 import type { ActivityEntry, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { itemMigrateTxDescription, jobOfTxid } from './activityJobIndex'
@@ -505,6 +506,7 @@ export function paintSavedActivityLedger(runtime: WalletRuntime): void {
 }
 
 type IdbTransaction = {
+  db?: { name: string }
   objectStore(name: string): {
     index(name: string): { getAllKeys(query: unknown): Promise<unknown[]> }
     get(key: unknown): Promise<unknown>
@@ -666,6 +668,8 @@ async function readItemOutputs(
   itemBaskets: LedgerBasket[],
 ): Promise<LedgerOutput[]> {
   const outputs: LedgerOutput[] = []
+  const projection = activityOutputProjection()
+  try {
   for (const basket of itemBaskets) {
     let offset = 0
     let afterOutputId: number | undefined
@@ -674,6 +678,17 @@ async function readItemOutputs(
       const page = asRows<LedgerOutput>(
         await withStorageLockLabel('activityLedger(items)', () => storage.runAsStorageProvider(async (raw) => {
           const sp = raw as unknown as LedgerReader
+          const probe = sp.toDbTrx?.(['outputs'], 'readonly')
+          const database = probe?.db?.name
+          if (probe) await probe.done
+          if (database && basket.basketId != null) {
+            const projected = await projection.read({
+              database, userId, basketId: basket.basketId,
+              after: afterOutputId, limit: OUTPUT_PAGE,
+            })
+            assertCurrent(runtime)
+            if (projected) return projected
+          }
           return sp.findOutputs({
             partial: { userId, basketId: basket.basketId },
             noScript: true,
@@ -691,6 +706,9 @@ async function readItemOutputs(
     }
   }
   return outputs
+  } finally {
+    projection.close()
+  }
 }
 
 /**

@@ -78,6 +78,13 @@ describe('compute port', () => {
     expect(spawned).toHaveLength(1)
   })
 
+  it('extracts origin script art in the worker', async () => {
+    const scriptHex = ordEnvelopeHex('image/png', PNG) + p2pkhScriptHex(PrivateKey.fromRandom().toAddress())
+    const { spawn } = inProcessWorker()
+    const port = createWorkerComputePort(spawn)
+    await expect(port.run('itemArtFromScript', { scriptHex })).resolves.toEqual({ mime: 'image/png', body: PNG })
+  })
+
   it('answers concurrent requests by id from one worker', async () => {
     const art = remittance()
     const text = remittance(new TextEncoder().encode('hello'), 'text/plain')
@@ -110,19 +117,38 @@ describe('compute port', () => {
     expect(reply).toEqual({ id: 1, ok: false, error: 'Unknown compute op: nope' })
   })
 
-  it('computes inline when the worker dies or cannot start', async () => {
+  it('rejects without computing inline when the worker dies or cannot start', async () => {
     const request = remittance()
     const crashing = inProcessWorker({ crash: true })
     const port = createWorkerComputePort(crashing.spawn)
 
-    await expect(port.run('itemArtFromProvenance', request)).resolves.toMatchObject({ mime: 'image/png' })
-    await expect(port.run('itemArtFromProvenance', request)).resolves.toMatchObject({ mime: 'image/png' })
+    await expect(port.run('itemArtFromProvenance', request)).rejects.toThrow('worker died')
+    await expect(port.run('itemArtFromProvenance', request)).rejects.toThrow('Background compute unavailable')
     expect(crashing.spawned).toHaveLength(1)
 
     const unstartable = createWorkerComputePort(() => {
       throw new Error('no workers here')
     })
-    await expect(unstartable.run('itemArtFromProvenance', request)).resolves.toMatchObject({ mime: 'image/png' })
+    await expect(unstartable.run('itemArtFromProvenance', request)).rejects.toThrow('no workers here')
+  })
+
+  it('stops a timed-out worker and rejects every queued request', async () => {
+    vi.useFakeTimers()
+    const terminate = vi.fn()
+    const port = createWorkerComputePort(() => ({
+      onmessage: null, onerror: null, postMessage: vi.fn(), terminate,
+    }), { timeoutMs: 100 })
+    const input = { origin: 'not-an-origin', beefB64: '' }
+    const requests = Promise.allSettled([
+      port.run('itemArtFromProvenance', input),
+      port.run('itemArtFromProvenance', input),
+    ])
+    await vi.advanceTimersByTimeAsync(100)
+    const results = await requests
+    expect(results.map(result => result.status)).toEqual(['rejected', 'rejected'])
+    expect(terminate).toHaveBeenCalledOnce()
+    await expect(port.run('itemArtFromProvenance', input)).rejects.toThrow('Background compute unavailable')
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('lets the worker go after a quiet spell and starts a fresh one on demand', async () => {

@@ -182,7 +182,11 @@ function noteStoreCost(op: string, key: string, startedAt: number, bytes: number
   }
 }
 
-/** Drop plaintext copies of sealed values left by earlier mirrors. */
+/**
+ * Drop plaintext copies of sealed values left by earlier mirrors, and mirrors
+ * over LOCAL_MIRROR_MAX_BYTES written before that cap existed. Those fill the
+ * origin quota, so every plain `localStorage.setItem` (price caches) throws.
+ */
 function purgeSealedMirrors(): void {
   if (purgedSealedMirrors || typeof localStorage === 'undefined') return
   purgedSealedMirrors = true
@@ -190,14 +194,20 @@ function purgeSealedMirrors(): void {
     const stale: string[] = []
     for (let i = 0; i < localStorage.length; i++) {
       const name = localStorage.key(i)
-      if (name && NEVER_MIRROR_RE.test(name)) stale.push(name)
+      if (!name || !name.startsWith('handcash.') || name === PROBE_KEY) continue
+      if (NEVER_MIRROR_RE.test(name)) stale.push(name)
+      else if ((localStorage.getItem(name)?.length ?? 0) > LOCAL_MIRROR_MAX_BYTES) stale.push(name)
     }
+    let removed = 0
     for (const name of stale) {
       // Only once the shell holds its own copy — never drop the last one.
       const held = window.handcash?.storageGetSync?.(name)
-      if (typeof held === 'string' && held !== '') localStorage.removeItem(name)
+      if (typeof held === 'string' && held !== '' && held === localStorage.getItem(name)) {
+        localStorage.removeItem(name)
+        removed += 1
+      }
     }
-    if (stale.length > 0) console.info(`[durable] removed ${stale.length} plaintext mirror(s) of sealed values`)
+    if (removed > 0) console.info(`[durable] removed ${removed} sealed or oversized local mirror(s)`)
   } catch {
     // retried next launch
   }

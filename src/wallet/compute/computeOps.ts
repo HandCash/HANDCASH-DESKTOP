@@ -1,3 +1,4 @@
+import { Transaction } from '@bsv/sdk'
 import { errorText } from '../errorText'
 import type {
   ComputeInput,
@@ -6,10 +7,15 @@ import type {
   ComputeReply,
   ComputeRequest,
 } from '../../ports/computePort'
-import { decodeItemArtFromProvenance } from '../itemArtDecode'
+import { artFromScript, decodeItemArtFromProvenance } from '../itemArtDecode'
 
 const ops: { [K in ComputeOp]: (input: ComputeInput<K>) => ComputeOutput<K> } = {
   itemArtFromProvenance: decodeItemArtFromProvenance,
+  itemArtFromScript: ({ scriptHex }) => artFromScript(scriptHex),
+  transactionScripts: ({ raw, vouts }) => {
+    const tx = Transaction.fromBinary(raw)
+    return vouts.map((vout) => tx.outputs[vout]?.lockingScript?.toHex() ?? null)
+  },
 }
 
 export function runComputeOp<K extends ComputeOp>(op: K, input: ComputeInput<K>): ComputeOutput<K> {
@@ -36,7 +42,7 @@ export function handleComputeRequest(request: ComputeRequest): {
 } {
   try {
     let output = runComputeOp(request.op, request.input) as ComputeOutput<ComputeOp>
-    if (output && output.body.byteLength !== output.body.buffer.byteLength) {
+    if (output && 'body' in output && output.body.byteLength !== output.body.buffer.byteLength) {
       output = { ...output, body: output.body.slice() }
     }
     return { reply: { id: request.id, ok: true, output }, transfer: transferablesOf(output) }

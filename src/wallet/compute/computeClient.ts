@@ -2,9 +2,9 @@
  * Main-thread side of the compute port.
  *
  * One worker serves every request and is let go after a quiet spell, so a
- * screen that paints a hundred received items spawns it once. A worker that
- * cannot start or dies hands its requests to the same ops in process: slower
- * frames, never a missing result.
+ * screen that paints a hundred received items spawns it once. Worker failure
+ * rejects the request: optional background decoding must never migrate onto
+ * the UI thread and freeze input. Callers retain their last painted result.
  */
 import { errorText } from '../errorText'
 import { fromPromise } from 'xstate'
@@ -73,7 +73,7 @@ export function createWorkerComputePort(
   const fail = (message: string) => {
     usable = false
     release()
-    appendAppLog('warn', `[compute] worker unavailable (${message}) — computing inline`)
+    appendAppLog('warn', '[compute] worker unavailable — background decoding deferred')
     for (const [id, p] of pending) {
       clearTimeout(p.timer)
       pending.delete(id)
@@ -112,25 +112,22 @@ export function createWorkerComputePort(
       }
       const id = nextId++
       const timer = setTimeout(() => {
-        pending.delete(id)
-        settleIdle()
-        reject(new Error(`compute ${op} timed out`))
+        // A timed-out decode is still consuming CPU until its worker is stopped.
+        fail(`compute ${op} timed out`)
       }, timeoutMs)
       pending.set(id, { resolve: resolve as Pending['resolve'], reject, timer })
       settleIdle()
-      target.postMessage({ id, op, input } as ComputeRequest)
+      try {
+        target.postMessage({ id, op, input } as ComputeRequest)
+      } catch {
+        fail('request could not be posted')
+      }
     })
 
   return {
     async run(op, input) {
-      if (usable) {
-        try {
-          return await post(op, input)
-        } catch (err) {
-          if (!(err instanceof WorkerFailed)) throw err
-        }
-      }
-      return runComputeOp(op, input)
+      if (!usable) throw new WorkerFailed('Background compute unavailable')
+      return post(op, input)
     },
   }
 }
@@ -138,7 +135,10 @@ export function createWorkerComputePort(
 let port: ComputePort | null = null
 
 export function getComputePort(): ComputePort {
-  port ??= typeof Worker === 'undefined' ? inProcessComputePort : createWorkerComputePort()
+  // Pure in-process execution is for non-UI hosts/tests, never a browser fallback.
+  port ??= typeof window === 'undefined' && typeof Worker === 'undefined'
+    ? inProcessComputePort
+    : createWorkerComputePort()
   return port
 }
 

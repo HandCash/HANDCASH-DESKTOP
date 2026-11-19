@@ -2,7 +2,7 @@
  * CPU work the UI thread hands off.
  *
  * Each op is a pure function of structured-cloneable input. Production runs
- * them in a Web Worker; tests and hosts without workers run the same functions
+ * them in a Web Worker; explicitly non-UI hosts and tests run the same functions
  * in process. An op belongs here only when its input is cheap to send and its
  * work is not: a history projection whose input clones as slowly as it
  * projects gains nothing off the main thread.
@@ -21,6 +21,8 @@ export type ItemArt = {
 }
 
 export type ComputeOps = {
+  itemArtFromScript: { input: { scriptHex: string }; output: ItemArt | null }
+  transactionScripts: { input: { raw: number[]; vouts: number[] }; output: Array<string | null> }
   itemArtFromProvenance: { input: ItemArtRequest; output: ItemArt | null }
 }
 

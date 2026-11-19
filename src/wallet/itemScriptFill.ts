@@ -1,4 +1,4 @@
-import { Transaction } from '@bsv/sdk'
+import { getComputePort } from './compute/computeClient'
 import { type ActiveWallet } from './session'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 import { yieldToUi } from './yieldToUi'
@@ -113,9 +113,16 @@ export async function fillItemScripts(
     const raw = await readRawTx(storage!, txid)
     if (raw) {
       try {
-        const tx = Transaction.fromBinary(raw)
-        for (const { row, vout } of group) {
-          const hex = tx.outputs[vout]?.lockingScript?.toHex()
+        const scripts = await getComputePort().run('transactionScripts', {
+          raw, vouts: group.map(({ vout }) => vout),
+        })
+        if (!opts.stillCurrent()) {
+          outcome.stoppedFor = 'stale'
+          for (const { row } of group) outcome.unread.add(row)
+          continue
+        }
+        for (const [index, { row }] of group.entries()) {
+          const hex = scripts[index]
           if (hex) {
             row.lockingScript = hex
             outcome.filled++

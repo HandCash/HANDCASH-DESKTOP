@@ -30,6 +30,25 @@ async function loadDurable() {
 }
 
 describe('durable store ownership', () => {
+  it('reclaims only identical shell-backed oversized HandCash mirrors', async () => {
+    const local = installLocalStorage()
+    const shell = new Map<string, string>()
+    for (const key of ['handcash.same', 'handcash.different', 'handcash.onlyLocal', 'other.app']) local.set(key, BIG)
+    shell.set('handcash.same', BIG)
+    shell.set('handcash.different', 'different shell value')
+    shell.set('other.app', BIG)
+    vi.stubGlobal('window', { handcash: {
+      storageGetSync: (key: string) => shell.get(key) ?? null,
+      storageSetSync: (key: string, value: string) => { shell.set(key, value); return true },
+    } })
+    const { durableStoreIsShell } = await loadDurable()
+    expect(durableStoreIsShell()).toBe(true)
+    expect(local.has('handcash.same')).toBe(false)
+    expect(local.get('handcash.different')).toBe(BIG)
+    expect(local.get('handcash.onlyLocal')).toBe(BIG)
+    expect(local.get('other.app')).toBe(BIG)
+  })
+
   beforeEach(() => {
     vi.unstubAllGlobals()
   })

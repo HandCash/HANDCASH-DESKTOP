@@ -152,7 +152,11 @@ function readCache(coin: MarketCoin): BsvMarketStats | null {
 
 function writeCache(coin: MarketCoin, stats: BsvMarketStats): void {
   memory[coin] = stats
-  localStorage.setItem(COINS[coin].cacheKey, JSON.stringify(stats))
+  try {
+    localStorage.setItem(COINS[coin].cacheKey, JSON.stringify(stats))
+  } catch {
+    // quota full: memory still serves this session, listeners still update
+  }
   for (const cb of listeners) cb()
 }
 

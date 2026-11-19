@@ -81,7 +81,7 @@ import {
   itemArtUnexamined,
   rememberItemArtFromBeef,
   rememberItemArtFromProvenanceOffThread,
-  rememberItemArtFromScript,
+  rememberItemArtFromScriptOffThread,
 } from './localItemArt'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -1211,14 +1211,8 @@ function toCollectable(
     !!fromOrigin && !!issuerMetadata.issuer && boundOrigin && retainedSignedBy(origin, issuerMetadata.issuer)
   const chainSigner = retainedSigmaSignerAddress(origin)
   const signer = chainSigner ?? resolved?.signer ?? undefined
-  // An unmoved tip *is* its origin, so its locking script still carries the ord
-  // envelope this wallet (or the minting app) wrote. Keep those bytes: the
-  // indexer has not seen a fresh mint yet, and asking it paints the placeholder.
-  if (isSelfOrigin(mediaOrigin, normalizeOutpoint(o.outpoint))) {
-    rememberItemArtFromScript(mediaOrigin, o.lockingScript)
-  }
-  // Remittance art costs a BEEF decode, so it happens in `hydrateLocalItemArt`
-  // after the list is on screen — never inside a list build.
+  // Art decoding belongs to post-paint hydration, never card projection.
+  // Both origin scripts and remittance are decoded by the compute worker.
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -1824,9 +1818,10 @@ function heldNamedCollectable(outpoint: string): Collectable | undefined {
   return undefined
 }
 
-function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
+async function buildItems(outputs: ItemOutput[], chain: Chain): Promise<Collectable[]> {
   const items: Collectable[] = []
   for (const o of outputs) {
+    if (uiBudgetExpired()) await yieldToUi()
     if (!isListableItem(o)) continue
     const item = mergeCollectablePaint(
       toCollectable(
@@ -1857,17 +1852,24 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
  * and is empty before the first read, so rebuilding the list from it alone
  * dropped held cards until the next read put them back.
  */
-function repaintedCollectables(): Collectable[] {
+async function repaintedCollectables(): Promise<Collectable[]> {
   const startedAt = performance.now()
+  const epoch = collectablesAccountEpoch
+  const shown = cachedCollectables
+  const source = lastItemOutputs
   const byOp = new Map(lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]))
   for (const seed of seededItems.values()) {
     const key = outpointKey(seed.outpoint)
     if (!byOp.has(key)) byOp.set(key, seed)
   }
   const painted = new Map(
-    buildItems([...byOp.values()], lastItemChain).map((c) => [outpointKey(c.outpoint), c]),
+    (await buildItems([...byOp.values()], lastItemChain)).map((c) => [outpointKey(c.outpoint), c]),
   )
-  const repainted = cachedCollectables.map((c) => painted.get(outpointKey(c.outpoint)) ?? c)
+  // A list or account switch may have landed while the projection yielded.
+  if (epoch !== collectablesAccountEpoch || shown !== cachedCollectables || source !== lastItemOutputs) {
+    return cachedCollectables
+  }
+  const repainted = shown.map((c) => painted.get(outpointKey(c.outpoint)) ?? c)
   const ms = Math.round(performance.now() - startedAt)
   if (ms >= 250) {
     console.info(`[collectables] repaint done ${ms}ms — ${repainted.length} card(s)`)
@@ -1910,13 +1912,13 @@ function repaintAfterProof(epoch: number, after?: () => void): void {
   if (wait <= 0) flushProvenRepaint()
 }
 
-function flushProvenRepaint(): void {
+async function flushProvenRepaint(): Promise<void> {
   const pending = provenRepaint
   if (!pending) return
   provenRepaint = null
   clearTimeout(pending.timer)
   provenRepaintAt = Date.now()
-  setCollectablesCache(repaintedCollectables(), { forEpoch: pending.epoch })
+  setCollectablesCache(await repaintedCollectables(), { forEpoch: pending.epoch })
   for (const after of pending.after) after()
 }
 
@@ -1951,8 +1953,13 @@ async function hydrateLocalItemArt(
     if (epoch !== collectablesAccountEpoch) return
     if (!isListableItem(o)) continue
     const custom = parseCustom(o.customInstructions)
-    const origin = custom.content ?? custom.origin ?? tagValue(o.tags, 'origin:')
-    if (!origin || !itemArtUnexamined(origin)) continue
+    const origin = custom.content ?? custom.origin ?? tagValue(o.tags, 'origin:') ?? o.outpoint
+    if (!itemArtUnexamined(origin)) continue
+    if (isSelfOrigin(origin, normalizeOutpoint(o.outpoint)) && o.lockingScript) {
+      if (await rememberItemArtFromScriptOffThread(origin, o.lockingScript)) found += 1
+      if (epoch !== collectablesAccountEpoch) return
+      continue
+    }
     if (custom.provenance && (await rememberItemArtFromProvenanceOffThread(custom.provenance))) {
       found += 1
       await yieldToUi()
@@ -1968,7 +1975,7 @@ async function hydrateLocalItemArt(
   }
   if (found === 0 || epoch !== collectablesAccountEpoch) return
   console.info(`[items] painted ${found} item(s) from local art — no content indexer`)
-  setCollectablesCache(repaintedCollectables(), {
+  setCollectablesCache(await repaintedCollectables(), {
     announceArrivals: false,
     forEpoch: epoch,
   })
@@ -1994,7 +2001,7 @@ async function backfillItemSigners(items: readonly Collectable[], chain: Chain):
     shouldStop: () => epoch !== collectablesAccountEpoch,
   })
   if (updated === 0 || epoch !== collectablesAccountEpoch) return
-  setCollectablesCache(repaintedCollectables(), {
+  setCollectablesCache(await repaintedCollectables(), {
     announceArrivals: false,
     forEpoch: epoch,
   })
@@ -2096,7 +2103,7 @@ async function resolveUnknownOrigins(): Promise<void> {
       clearVerificationProgress(outpoint)
     }
     if (changed)
-      setCollectablesCache(repaintedCollectables())
+      setCollectablesCache(await repaintedCollectables())
   } finally {
     resolvingOrigins = false
     clearVerificationProgress()
@@ -3180,12 +3187,12 @@ export function listCollectables(
   if (listInFlight) return listInFlight
   const run = listCollectablesNow(active, false)
   listInFlight = run
-  void run
-    .catch(() => {})
-    .then(() => {
-      if (listInFlight === run) listInFlight = null
-      loadOlderPagesWhenIdle()
-    })
+  // Release ownership before awaiting callers resume and request another read.
+  const settled = () => {
+    if (listInFlight === run) listInFlight = null
+    loadOlderPagesWhenIdle()
+  }
+  void run.then(settled, settled)
   return run
 }
 
@@ -3735,7 +3742,8 @@ async function listCollectablesNow(
   // loaded yet are not in `lastItemOutputs` and must not leave with it.
   const deduped = append
     ? mergeShortBasketPage(outputs, wallet.chain, neverOurs, 'older')
-    : buildItems(outputs, wallet.chain)
+    : await buildItems(outputs, wallet.chain)
+  if (epoch !== collectablesAccountEpoch) return getCachedCollectables()
   if (readComplete) {
     const shown = new Set(deduped.map((c) => outpointKey(c.outpoint)))
     reportItemHoldings({

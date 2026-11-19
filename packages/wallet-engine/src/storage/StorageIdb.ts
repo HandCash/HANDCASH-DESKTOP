@@ -590,14 +590,14 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   }
 
   async getTagsForOutputId(outputId: number, trx?: TrxToken): Promise<TableOutputTag[]> {
-    const maps = await this.findOutputTagMaps({ partial: { outputId, isDeleted: false }, trx })
-    const tagIds = maps.map(m => m.outputTagId)
-    const tags: TableOutputTag[] = []
-    for (const outputTagId of tagIds) {
-      const tag = verifyOneOrNone(await this.findOutputTags({ partial: { outputTagId, isDeleted: false }, trx }))
-      if (tag != null) tags.push(tag)
-    }
-    return tags
+    // Hydrating a basket must not commit a separate transaction per tag.
+    // Queue primary-key reads together, preserving map order and soft deletes.
+    const dbTrx = this.toDbTrx(['output_tags_map', 'output_tags'], 'readonly', trx)
+    const maps: TableOutputTagMap[] = await dbTrx.objectStore('output_tags_map').index('outputId').getAll(outputId)
+    const store = dbTrx.objectStore('output_tags')
+    const tags = await Promise.all(maps.filter(m => !m.isDeleted).map(m => store.get(m.outputTagId)))
+    if (trx == null) await dbTrx.done
+    return tags.filter((tag): tag is TableOutputTag => tag != null && !tag.isDeleted)
   }
 
   async listActions(auth: AuthId, vargs: ValidListActionsArgs): Promise<ListActionsResult> {
@@ -818,16 +818,41 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     store: any,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     partial: Partial<any>,
-    direction: IDBCursorDirection
+    direction: IDBCursorDirection,
+    status?: string[],
+    txids?: string[]
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Promise<any> {
+  ): Promise<{ cursor: any; next?: () => Promise<unknown> }> {
     if (partial?.provenTxReqId != null && partial.provenTxReqId !== 0)
-      return store.openCursor(partial.provenTxReqId, direction)
-    if (partial?.provenTxId !== undefined) return store.index('provenTxId').openCursor(partial.provenTxId, direction)
-    if (partial?.txid !== undefined) return store.index('txid').openCursor(partial.txid, direction)
-    if (partial?.status !== undefined) return store.index('status').openCursor(partial.status, direction)
-    if (partial?.batch !== undefined) return store.index('batch').openCursor(partial.batch, direction)
-    return store.openCursor(null, direction)
+      return { cursor: await store.openCursor(partial.provenTxReqId, direction) }
+    if (partial?.provenTxId !== undefined)
+      return { cursor: await store.index('provenTxId').openCursor(partial.provenTxId, direction) }
+    if (partial?.txid !== undefined) return { cursor: await store.index('txid').openCursor(partial.txid, direction) }
+    if (partial?.status !== undefined)
+      return { cursor: await store.index('status').openCursor(partial.status, direction) }
+    if (partial?.batch !== undefined) return { cursor: await store.index('batch').openCursor(partial.batch, direction) }
+    // Monitor tasks ask by a status (or txid) list with an empty partial. Resolve
+    // primary keys through the index so only matching rows are read, instead of
+    // deserialising every rawTx/inputBEEF in the table. Keeps primary-key order.
+    let keyLists: Array<Promise<IDBValidKey[]>> | undefined
+    if (txids != null && txids.length > 0) {
+      const index = store.index('txid')
+      keyLists = [...new Set(txids)].map(async txid => await index.getAllKeys(txid))
+    } else if (status != null && status.length > 0) {
+      const index = store.index('status')
+      keyLists = [...new Set(status)].map(async s => await index.getAllKeys(s))
+    }
+    if (keyLists != null) {
+      const ordered = [...new Set((await Promise.all(keyLists)).flat() as number[])].sort((a, b) => a - b)
+      if (direction === 'prev') ordered.reverse()
+      const iterator = ordered.values()
+      const next = async (): Promise<unknown> => {
+        const key = iterator.next()
+        return key.done === true ? null : await store.openCursor(key.value, direction)
+      }
+      return { cursor: await next(), next }
+    }
+    return { cursor: await store.openCursor(null, direction) }
   }
 
   async filterProvenTxReqs(
@@ -848,7 +873,13 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const dbTrx = this.toDbTrx(['proven_tx_reqs', 'transactions'], 'readonly', args.trx)
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('proven_tx_reqs')
-    const cursor = await this.openProvenTxReqsCursor(store, args.partial, direction)
+    const { cursor, next } = await this.openProvenTxReqsCursor(
+      store,
+      args.partial,
+      direction,
+      args.status,
+      args.txids
+    )
     await scanCursor<TableProvenTxReq>(
       cursor,
       args.since,
@@ -864,7 +895,8 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
         }
         return true
       },
-      filtered
+      filtered,
+      next
     )
     if (args.trx == null) await dbTrx.done
   }
