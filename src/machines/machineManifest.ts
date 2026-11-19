@@ -59,6 +59,7 @@ import { entryMeshMachine } from './entryMeshMachine'
 import { recordingPlayerMachine } from './recordingPlayerMachine'
 import { fiatCurrencyMenuMachine } from './fiatCurrencyMenuMachine'
 import { importWriteGrantMachine } from './importWriteGrantMachine'
+import { iptAcceptRequestMachine } from './iptAcceptRequestMachine'
 
 /**
  * Executable statechart catalog. Settings and architecture tests consume this
@@ -126,6 +127,7 @@ export const machineManifest = Object.freeze({
   recordingPlayer: recordingPlayerMachine,
   fiatCurrencyMenu: fiatCurrencyMenuMachine,
   importWriteGrant: importWriteGrantMachine,
+  iptAcceptRequest: iptAcceptRequestMachine,
 })
 
 export type MachineManifestId = keyof typeof machineManifest

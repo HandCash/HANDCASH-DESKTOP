@@ -132,7 +132,11 @@ describe('BRC-253 proposal commitment and holder validation', () => {
     expect(fund).toHaveBeenCalledTimes(1)
     const failed = createIptAcceptor({ ...host, journal: { read: () => [], append: () => { throw new Error('disk failure') } } })
     await expect(failed.accept(request)).rejects.toThrow('disk failure')
+    await expect(failed.accept(request)).rejects.toMatchObject({ name: 'IptAcceptError', held: true })
     expect(fund).toHaveBeenCalledTimes(1)
+    // A request refused before reservation holds nothing.
+    const refused = createIptAcceptor({ ...host, authorize: async () => { throw new Error('sender not allowed') } })
+    await expect(refused.accept(request)).rejects.toMatchObject({ held: false, message: 'sender not allowed' })
   })
   it('refuses non-final proposal sequences', () => {
     const f = fixture()

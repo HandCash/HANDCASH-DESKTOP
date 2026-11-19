@@ -104,8 +104,16 @@ singleton transaction to the original request, checks unchanged outputs/holder
 signatures, final sequences, the single fee input and all completed scripts.
 It does not establish chain ancestry or that the fee input remains unspent.
 
+Request chart (2026-11-19; not enabled): `src/machines/iptAcceptRequestMachine.ts`
+runs one acceptor request as idle → accepting → signed | held | refused.
+`createIptAcceptor` now throws `IptAcceptError` with `held`, false only when the
+request failed before any reservation write. `held` has no cancel or timeout;
+only RECOVER (host funding recovery, still unimplemented and refusing by
+default) or replaying the same request can finish it. `signed` is final. The
+default actors refuse, so the chart signs nothing until a host wires it.
+
 These primitives are not wired to wallet issue/mint/transfer, BRC-78 requests,
-request charts, funding selection/recovery, decision authentication or receipt.
+funding selection/recovery, decision authentication or receipt.
 Shared issuer and sender-funded signing remain unsupported. Do not enable the
 demo or remove receipt gates based on these tests. Dev-key-only remains unchanged;
 no production key is generated, exported or persisted by these helpers.
