@@ -112,6 +112,15 @@ no production key is generated, exported or persisted by these helpers.
 
 ### 3. Beacon and release (IPT task; requires durable service)
 
+Local `signIptBeaconSpend` now constructs singleton issuer refresh and retirement
+transactions with beacon input 0, one separate fee input, final sequences, exactly
+one next beacon at output 0 and no change. Retirement adds the genesis-bound
+`ipt retire` marker. It snapshots transaction sources and callback views, requires
+issuer ALL|FORKID and executes both completed scripts. Shared quorum signing,
+genesis creation, release spending, reservation/funding ownership, durable signed
+recovery, broadcast and mined scheduling remain host/service work. The builder
+must not be called as an automatic wallet operation yet.
+
 Implement BRC-253 §9 refresh/discovery and custodian policy separately from the pure
 chain reader. Add key-set disclosure verification, tracker-backed finality and
 history traversal for released transfers. Test refresh chains, premature release,

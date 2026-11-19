@@ -203,7 +203,7 @@ vi.mock('../messageTransport', () => ({
   },
 }))
 
-const { issueBntAsset, mintBntAsset, transferBntAsset, preflightBntTransfer, burnBntUnits, burnBntAsset, preflightBntBurn, BNT_BURN_HOLDER, listBntAssets, serveBntBox, proveBntBacking, adoptSignedBntAction, BntRefusal } = await import('./wallet')
+const { issueBntAsset, mintBntAsset, preflightBntMint, transferBntAsset, preflightBntTransfer, burnBntUnits, burnBntAsset, preflightBntBurn, BNT_BURN_HOLDER, listBntAssets, serveBntBox, proveBntBacking, adoptSignedBntAction, BntRefusal } = await import('./wallet')
 const { readBntState, writeBntState } = await import('./state')
 
 const alice = makeInstall()
@@ -281,6 +281,20 @@ describe('open BNT wallet', () => {
       mode: 'countersign', issuer: { m: 1, keys }, release: { kind: 'hash', rel: 'cd'.repeat(20) },
     }).toHex())
     expect(owner.rows.find((row) => row.outpoint === `${issued.txid}.0`)?.basket).toBe('iptft')
+  })
+
+  it('finds IPT mint authority only in the IPT basket during preflight', async () => {
+    const owner = makeInstall()
+    const issued = await as(owner, () => issueBntAsset({
+      kind: 'token', sym: 'IPT', supply: '5', max: '10', mode: 'countersign',
+      bcn: `${'ab'.repeat(32)}_0`, sil: 604_800, rel: 'cd'.repeat(20),
+    }))
+    const before = registered.length
+    await expect(as(owner, () => preflightBntMint({ assetId: issued.assetId, amount: '1' }))).resolves.toBeUndefined()
+    expect(registered).toHaveLength(before)
+    const row = owner.rows.find((r) => r.outpoint === `${issued.txid}.0`)!
+    row.basket = 'bntft'
+    await expect(as(owner, () => preflightBntMint({ assetId: issued.assetId, amount: '1' }))).rejects.toMatchObject({ reason: 'not-held' })
   })
 
   it('refuses bad issue arguments before anything is staged', async () => {

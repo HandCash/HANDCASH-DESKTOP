@@ -1201,7 +1201,7 @@ async function splitBackedDeploy(active: ActiveWallet, row: BntRow, deploy: BntD
     },
   })
   await commitSigned(signed, [deploy.assetId], true)
-  const authority = (await heldRows(active, BNT_TOKEN_BASKET, deploy.assetId)).find((r) => r.authority && r.txid === signed.txid)
+  const authority = (await heldRows(active, bntFilingOf('token', deploy.fields.mode), deploy.assetId)).find((r) => r.authority && r.txid === signed.txid)
   if (!authority) throw new Error('The split deploy left no authority')
   return authority
 }
@@ -1227,7 +1227,7 @@ async function mintChecks(active: ActiveWallet, args: { assetId?: unknown; amoun
   if (deploy.fields.mode !== 'open' && deploy.fields.mode !== 'countersign') refuse('unsupported-mode', 'This wallet mints open or countersigned BNT assets only.')
   const policy = bntSupplyPolicy(deploy.fields)
   if (policy.kind === 'fixed') refuse('fixed-supply', 'This asset has a fixed supply; nothing more can be minted.')
-  const authority = (await heldRows(active, BNT_TOKEN_BASKET, assetId)).find((r) => r.authority)
+  const authority = (await heldRows(active, bntFilingOf('token', deploy.fields.mode), assetId)).find((r) => r.authority)
   if (!authority) refuse('not-held', "This wallet does not hold the asset's mint authority.")
   if (deploy.fields.bk) {
     if (!opts.backing) refuse('bad-asset-args', 'A backed token mints only against a deposit.')
