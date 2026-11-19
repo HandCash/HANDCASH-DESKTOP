@@ -74,6 +74,32 @@ script signatures. Test replay, altered outputs, cancellation/acceptance races,
 duplicate inputs, missing response and restart. Preserve `iptft`/`iptnft` filing and
 IPT labels. Only then remove each receipt gate with an end-to-end regression.
 
+#### Local acceptor primitives (2026-11-19; not enabled)
+
+`iptProposal.ts` now supplies `iptRequestId` (SHA-256 of exact bounded EF),
+`validateIptProposal` and `signIptProposal`. Validation requires trusted deploy
+facts and an accepted-outpoint map with exact source scripts and carrier values.
+It checks real holder signatures against the original source script, scope 0xC1,
+closure, duplicate inputs and unit conservation. The singleton signing helper
+adds one caller-reserved fee input, no change, signs issuer/fee inputs with 0x41,
+and executes every completed input script. It neither reserves nor broadcasts.
+The caller must apply recipient linkage/policy and its fee policy first.
+
+`iptReservations.ts` supplies an accept-once reservation projection over a
+caller-provided atomic durable append journal. Replay retains pending requests
+and returns stored signed bytes; conflicting requests remain refused after
+restart. Failed writes do not release reservations. This is NOT yet a durable
+host adapter or a multi-process transaction manager. Exactly one account-bound
+acceptor writer must own it. The signed-record method requires a validated final
+transaction; it is not itself transaction validation.
+
+These primitives are not wired to wallet issue/mint/transfer, BRC-78 requests,
+BRC-69/72 linkage verification, a bound durable storage adapter, request charts,
+funding selection/recovery, decision authentication or receipt. Shared issuer
+and sender-funded signing remain unsupported. Do not enable the demo or remove
+receipt gates based on these tests. Dev-key-only remains unchanged; no key is
+generated, exported or persisted by these helpers.
+
 ### 3. Beacon and release (IPT task; requires durable service)
 
 Implement BRC-253 §9 refresh/discovery and custodian policy separately from the pure
