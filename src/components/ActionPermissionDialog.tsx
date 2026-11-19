@@ -254,7 +254,6 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     label: committing ? 'Approving…' : 'Approve',
                     onClick: allow,
                     disabled: committing || (showAutoPay && autoPay.limitsInvalid),
-                    autoFocus: true,
                     tone: 'primary',
                   }}
                 />
