@@ -53,7 +53,7 @@ export function selectZipRelease(
     if (!semver(version) || compareVersions(version, currentVersion) <= 0) continue
     const name = `HandCash-${version}-${target.arch}-${target.os}.zip`
     const url = release.assets?.find((a) => a.name === name)?.browser_download_url
-    if (!url) continue
+    if (!url || !url.startsWith('https://')) continue
     if (!best || compareVersions(version, best.version) > 0) best = { version, zipUrl: url }
   }
   return best
@@ -205,6 +205,9 @@ export function createReleaseUpdater(deps: {
 
 let shared: ReleaseUpdater | null | undefined
 
+const ALLOWED_RELEASE_DOWNLOAD_PREFIX =
+  'https://github.com/HandCash/HANDCASH-DESKTOP/releases/download/'
+
 /** Updater for a shell that brings none (Linux / Windows thin shell); null elsewhere. */
 export function thinShellReleaseUpdater(): ReleaseUpdater | null {
   if (shared !== undefined) return shared
@@ -212,7 +215,15 @@ export function thinShellReleaseUpdater(): ReleaseUpdater | null {
   const target = zipTargetFor(api?.platform, navigator.userAgent)
   shared =
     target && api && !api.checkForUpdates && api.openExternal
-      ? createReleaseUpdater({ target, openUrl: (url) => api.openExternal!(url) })
+      ? createReleaseUpdater({
+          target,
+          openUrl: (url) => {
+            if (!url.startsWith(ALLOWED_RELEASE_DOWNLOAD_PREFIX)) {
+              return Promise.reject(new Error('Untrusted release download URL'))
+            }
+            return api.openExternal!(url)
+          },
+        })
       : null
   return shared
 }

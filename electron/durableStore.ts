@@ -45,12 +45,22 @@ function fallbackEncrypt(plaintext: string): string {
   return SEALED_FALLBACK_PREFIX + packed.toString('base64')
 }
 
+/** Read an existing fallback key without creating a new unencrypted key file on disk. */
+function readExistingFallbackKey(): Buffer {
+  const keyPath = fallbackKeyPath()
+  const existing = fs.readFileSync(keyPath)
+  if (existing.length !== 32) {
+    throw new Error('Fallback key has invalid length')
+  }
+  return existing
+}
+
 /** Decrypt with fallback key using AES-256-GCM. */
 function fallbackDecrypt(value: string): string {
   if (!value.startsWith(SEALED_FALLBACK_PREFIX)) {
     throw new Error('Not a fallback-sealed value')
   }
-  const key = getFallbackKey()
+  const key = readExistingFallbackKey()
   const packed = Buffer.from(value.slice(SEALED_FALLBACK_PREFIX.length), 'base64')
   if (packed.length < 12 + 16) {
     throw new Error('Fallback-sealed value too short')

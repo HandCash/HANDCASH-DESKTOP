@@ -1,4 +1,5 @@
 import { errorText } from './errorText'
+import { trustsLocalHandCashHosts } from './labs'
 import {
   enrichIdentityIssuance,
   finishIdentityIssuance,
@@ -504,8 +505,6 @@ export async function dispatchWalletMethod(
   args: unknown,
   originator?: string,
 ): Promise<unknown> {
-  const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
-
   const refusal = reservedKeyRefusal(method, args, getWalletRuntime()?.instance?.identityKey)
   if (refusal) {
     appendAppLog(
@@ -518,11 +517,11 @@ export async function dispatchWalletMethod(
   switch (method) {
     case 'createAdminIdentityProof': {
       const origin = normalizeOrigin(originator)
+      const isLocal = origin === 'localhost' || origin === '127.0.0.1'
       if (
         origin !== 'handcash.io' &&
         origin !== 'brc-cloud.bcryderman.workers.dev' &&
-        origin !== 'localhost' &&
-        origin !== '127.0.0.1'
+        !(isLocal && trustsLocalHandCashHosts())
       ) {
         throw new Error('Operations identity proofs are restricted to HandCash')
       }
@@ -828,9 +827,6 @@ export async function dispatchWalletMethod(
     case 'getHeaderForHeight':
       return wallet.getHeaderForHeight((args ?? {}) as never)
     default: {
-      if (typeof w[method] === 'function') {
-        return w[method](args, originator)
-      }
       throw new Error(`Unsupported BRC-100 method: ${method}`)
     }
   }

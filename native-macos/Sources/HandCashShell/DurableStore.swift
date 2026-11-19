@@ -225,12 +225,37 @@ final class DurableStore {
         return try KeychainSeal.unseal(raw)
     }
 
-    private func fileURL(for key: String) -> URL {
-        if key.count <= Self.maxPlainName {
-            return dir.appendingPathComponent(key, isDirectory: false)
+    private static func isPlainName(_ key: String) -> Bool {
+        guard !key.isEmpty,
+              key.utf8.count <= maxPlainName,
+              !key.contains("/"),
+              !key.contains("\\"),
+              !key.contains("..")
+        else { return false }
+        return key.unicodeScalars.allSatisfy { scalar in
+            guard scalar.isASCII else { return false }
+            let v = scalar.value
+            return (v >= 0x30 && v <= 0x39)
+                || (v >= 0x41 && v <= 0x5A)
+                || (v >= 0x61 && v <= 0x7A)
+                || v == 0x2E || v == 0x5F || v == 0x2D || v == 0x3A
         }
-        let digest = sha256Hex(key)
-        return dir.appendingPathComponent(Self.hashedPrefix + digest, isDirectory: false)
+    }
+
+    private func fileURL(for key: String) -> URL {
+        let candidate: URL
+        if Self.isPlainName(key) {
+            candidate = dir.appendingPathComponent(key, isDirectory: false)
+        } else {
+            let digest = sha256Hex(key)
+            candidate = dir.appendingPathComponent(Self.hashedPrefix + digest, isDirectory: false)
+        }
+        let basePath = dir.standardizedFileURL.path
+        let resolvedPath = candidate.standardizedFileURL.path
+        if resolvedPath.hasPrefix(basePath + "/") {
+            return candidate
+        }
+        return dir.appendingPathComponent(Self.hashedPrefix + sha256Hex(key), isDirectory: false)
     }
 
     private func sidecarURL(for key: String) -> URL {
@@ -403,7 +428,11 @@ final class DurableStorePrompt: NSObject, WKUIDelegate {
     }
 
     private func trusted(_ source: WKSecurityOrigin) -> Bool {
-        source.protocol == origin.scheme && source.host == origin.host
+        let expectedPort = origin.port ?? (origin.scheme == "https" ? 443 : 80)
+        let sourcePort = source.port == 0 ? (source.protocol == "https" ? 443 : 80) : source.port
+        return source.protocol == origin.scheme
+            && source.host == origin.host
+            && sourcePort == expectedPort
     }
 
     private func reply(_ object: [String: Any]) -> String {

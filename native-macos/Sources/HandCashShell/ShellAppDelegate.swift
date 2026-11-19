@@ -3,7 +3,7 @@ import Foundation
 import WebKit
 
 /// Thin Mac host: one window, OS WKWebView, wallet UI on localhost:5173.
-final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
     private var window: NSWindow?
     private var webView: ShellWebView?
     private var bridge: HandcashBridge?
@@ -25,11 +25,16 @@ final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
             ?? "0.0.0-native"
     }
 
+    private var isPackaged: Bool {
+        ProcessInfo.processInfo.environment["HANDCASH_UI_ROOT"] != nil
+            || Bundle.main.bundlePath.hasSuffix(".app")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         startPackagedUiIfNeeded()
 
         let config = WKWebViewConfiguration()
-        config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        config.preferences.setValue(!isPackaged, forKey: "developerExtrasEnabled")
 
         // User scripts must be registered before the WKWebView exists.
         config.userContentController.addUserScript(
@@ -44,6 +49,7 @@ final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
         self.bridge = bridge
 
         let webView = ShellWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = self
         webView.setValue(false, forKey: "drawsBackground")
         self.webView = webView
 
@@ -81,6 +87,31 @@ final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate 
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let target = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if target.scheme == "about" {
+            decisionHandler(.allow)
+            return
+        }
+        let expectedPort = uiOrigin.port ?? (uiOrigin.scheme == "https" ? 443 : 80)
+        let targetPort = target.port ?? (target.scheme == "https" ? 443 : 80)
+        if target.scheme == uiOrigin.scheme && target.host == uiOrigin.host && targetPort == expectedPort {
+            decisionHandler(.allow)
+            return
+        }
+        if target.scheme == "https" || target.scheme == "http" {
+            NSWorkspace.shared.open(target)
+        }
+        decisionHandler(.cancel)
     }
 
     /// Matches Electron View → Copy Screenshot (⌘⇧S).

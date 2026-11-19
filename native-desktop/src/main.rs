@@ -48,7 +48,7 @@ fn main() -> wry::Result<()> {
     .to_string();
 
     let store = DurableStore::open_default().expect("durable store");
-    let (durable_url, _durable_thread) =
+    let (durable_url, durable_token, _durable_thread) =
         durable::start_sync_server(Arc::clone(&store), ui_origin.clone())
             .expect("durable sync http");
 
@@ -87,14 +87,29 @@ fn main() -> wry::Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let init_script = build_init_script(&platform, &durable_url);
+    let init_script = build_init_script(&platform, &durable_url, &durable_token);
     let state_ipc = Arc::clone(&state);
     let proxy_ipc = proxy.clone();
+    let ui_origin_ipc = ui_origin.trim_end_matches('/').to_string();
+    let ui_origin_nav = ui_origin_ipc.clone();
 
     let builder = WebViewBuilder::new()
         .with_url(&ui_origin)
         .with_initialization_script(&init_script)
+        .with_navigation_handler(move |url: String| {
+            if url == ui_origin_nav || url.starts_with(&format!("{ui_origin_nav}/")) || url == "about:blank" {
+                return true;
+            }
+            if url.starts_with("https://") || url.starts_with("http://") {
+                let _ = open::that(&url);
+            }
+            false
+        })
         .with_ipc_handler(move |req: Request<String>| {
+            let uri = req.uri().to_string();
+            if uri != ui_origin_ipc && !uri.starts_with(&format!("{ui_origin_ipc}/")) {
+                return;
+            }
             let Ok(msg) = serde_json::from_str::<Value>(req.body()) else {
                 return;
             };
@@ -188,12 +203,13 @@ fn main() -> wry::Result<()> {
     });
 }
 
-fn build_init_script(platform: &str, durable_url: &str) -> String {
+fn build_init_script(platform: &str, durable_url: &str, durable_token: &str) -> String {
     let page = load_page_script();
     format!(
-        "window.__HANDCASH_NATIVE_PLATFORM__={plat};window.__HANDCASH_DURABLE_URL__={dur};{page}",
+        "window.__HANDCASH_NATIVE_PLATFORM__={plat};window.__HANDCASH_DURABLE_URL__={dur};window.__HANDCASH_DURABLE_TOKEN__={tok};{page}",
         plat = serde_json::to_string(platform).unwrap(),
         dur = serde_json::to_string(durable_url).unwrap(),
+        tok = serde_json::to_string(durable_token).unwrap(),
         page = page,
     )
 }

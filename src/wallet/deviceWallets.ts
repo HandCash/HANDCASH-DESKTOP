@@ -324,7 +324,29 @@ export function enrollLocalDevice(args: {
     linkedAt: null,
     linkMode: 'linked',
   }
-  writeRoster([local, ...peers])
+  const prevLocal = previous.find((w) => w.isLocal && w.deviceId === deviceId)
+  const unchanged =
+    prevLocal &&
+    previous.length === peers.length + 1 &&
+    prevLocal.label === local.label &&
+    prevLocal.platform === local.platform &&
+    prevLocal.peerBaseUrl === local.peerBaseUrl &&
+    prevLocal.identityKey === local.identityKey &&
+    prevLocal.address === local.address &&
+    prevLocal.online === local.online &&
+    peers.every((p, idx) => {
+      const old = previous[idx + 1]
+      return (
+        old &&
+        old.deviceId === p.deviceId &&
+        old.peerBaseUrl === p.peerBaseUrl &&
+        old.online === p.online &&
+        old.linkMode === p.linkMode
+      )
+    })
+  if (!unchanged) {
+    writeRoster([local, ...peers])
+  }
   if (!durableGetItem(SELECTED_KEY)) {
     durableSetItem(SELECTED_KEY, deviceId)
   }

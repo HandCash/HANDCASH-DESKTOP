@@ -9,6 +9,8 @@
   var seq = 0;
   var platform = window.__HANDCASH_NATIVE_PLATFORM__ || 'linux';
   var durableBase = window.__HANDCASH_DURABLE_URL__ || '';
+  var durableToken = window.__HANDCASH_DURABLE_TOKEN__ || '';
+  try { delete window.__HANDCASH_DURABLE_TOKEN__; } catch (e) { window.__HANDCASH_DURABLE_TOKEN__ = ''; }
   var subs = {
     'http-request': new Set(),
     'http-request-cancelled': new Set(),
@@ -66,6 +68,7 @@
     xhr.open('POST', durableBase + '/op', false);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('X-HandCash-Origin', location.origin);
+    if (durableToken) xhr.setRequestHeader('X-HandCash-Token', durableToken);
     xhr.send(JSON.stringify(body));
     if (xhr.status !== 200) throw new Error('durable http ' + xhr.status);
     return JSON.parse(xhr.responseText);

@@ -201,7 +201,7 @@ function getIconPath(): string | undefined {
 
 function appUrlPolicy() {
   return {
-    devOrigins: [DEV_ORIGIN, 'http://127.0.0.1:5173'] as const,
+    devOrigins: isDev ? ([DEV_ORIGIN, 'http://127.0.0.1:5173'] as const) : ([] as const),
     packagedUiOrigin,
     distRoot: path.join(__dirname, '../dist'),
   }
@@ -749,7 +749,8 @@ ipcMain.handle('app:get-log-info', () => {
   }
 })
 
-ipcMain.handle('app:open-logs', async () => {
+ipcMain.handle('app:open-logs', async (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return { ok: false as const, error: 'Denied' }
   try {
     const file = log.transports.file.getFile()
     const filePath = file.path
@@ -763,7 +764,8 @@ ipcMain.handle('app:open-logs', async () => {
   }
 })
 
-ipcMain.handle('app:read-logs', async (_event, opts: unknown) => {
+ipcMain.handle('app:read-logs', async (event, opts: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return { ok: false as const, error: 'Denied' }
   try {
     const file = log.transports.file.getFile()
     const filePath = file.path
@@ -821,11 +823,14 @@ ipcMain.handle('bridge:get-status', () => bridgeStatus())
  * would be dropped until the 120s timeout.
  */
 ipcMain.on('bridge:renderer-ready', (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return
+  const wasReady = bridgeWindows.isRendererReady()
   bridgeWindows.markRendererReady(event.sender.id)
-  notifyBridgeStatus()
+  if (!wasReady) notifyBridgeStatus()
 })
 
-ipcMain.handle('bridge:restart', async () => {
+ipcMain.handle('bridge:restart', async (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   if (bridge) {
     await bridge.stop()
     bridge = null
@@ -894,7 +899,8 @@ ipcMain.handle('calls:delete-recording', (event, identityKey: unknown, id: unkno
   deleteRecording(identityKey, id)
 })
 
-ipcMain.handle('app:open-external', async (_event, url: unknown) => {
+ipcMain.handle('app:open-external', async (event, url: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   if (typeof url !== 'string' || !isSafeExternalUrl(url)) {
     throw new Error('Invalid external URL')
   }
@@ -902,10 +908,18 @@ ipcMain.handle('app:open-external', async (_event, url: unknown) => {
 })
 
 ipcMain.on('storage:get-sync', (event, key: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) {
+    event.returnValue = null
+    return
+  }
   event.returnValue = typeof key === 'string' ? durableGet(key) : null
 })
 
 ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) {
+    event.returnValue = false
+    return
+  }
   const allow =
     opts &&
     typeof opts === 'object' &&
@@ -917,20 +931,37 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
       : false
 })
 
-ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
-ipcMain.handle('storage:vault-open-error', () => durableVaultOpenError())
+ipcMain.handle('storage:safe-storage-available', (event) =>
+  fromMainApp(event.sender, event.senderFrame) ? durableSafeStorageAvailable() : false,
+)
+ipcMain.handle('storage:vault-open-error', (event) =>
+  fromMainApp(event.sender, event.senderFrame) ? durableVaultOpenError() : null,
+)
 
-ipcMain.handle('storage:wipe-wallet', () => {
+ipcMain.handle('storage:wipe-wallet', (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   deviceAuthClear()
   return durableWipeWallet()
 })
 
-ipcMain.handle('device-auth:status', () => deviceAuthStatus())
-ipcMain.handle('device-auth:enroll', (_event, secret: unknown) => deviceAuthEnroll(secret))
-ipcMain.handle('device-auth:unlock', (_event, reason: unknown) => deviceAuthUnlock(reason))
-ipcMain.handle('device-auth:clear', () => deviceAuthClear())
+ipcMain.handle('device-auth:status', (event) =>
+  fromMainApp(event.sender, event.senderFrame) ? deviceAuthStatus() : { available: false, enrolled: false },
+)
+ipcMain.handle('device-auth:enroll', (event, secret: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return deviceAuthEnroll(secret)
+})
+ipcMain.handle('device-auth:unlock', (event, reason: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return deviceAuthUnlock(reason)
+})
+ipcMain.handle('device-auth:clear', (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return deviceAuthClear()
+})
 
-ipcMain.handle('brc39-archive:write', (_event, payload: unknown) => {
+ipcMain.handle('brc39-archive:write', (event, payload: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Invalid UTXO archive payload')
   }
@@ -950,12 +981,14 @@ ipcMain.handle('brc39-archive:write', (_event, payload: unknown) => {
   })
 })
 
-ipcMain.handle('brc39-archive:list', (_event, identityKey: unknown) => {
+ipcMain.handle('brc39-archive:list', (event, identityKey: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return []
   if (typeof identityKey !== 'string') return []
   return listArchiveForIdentity(identityKey)
 })
 
-ipcMain.handle('brc39-archive:read', (_event, payload: unknown) => {
+ipcMain.handle('brc39-archive:read', (event, payload: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('Invalid UTXO archive read')
   }
@@ -970,16 +1003,21 @@ ipcMain.handle('brc39-archive:read', (_event, payload: unknown) => {
   return { meta, bytesBase64: bytes.toString('base64') }
 })
 
-ipcMain.handle('brc39-archive:root', () => brc39ArchiveRootPath())
+ipcMain.handle('brc39-archive:root', (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return brc39ArchiveRootPath()
+})
 
-ipcMain.handle('clipboard:write', (_event, text: unknown) => {
+ipcMain.handle('clipboard:write', (event, text: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')
   clipboard.writeText(text)
 })
 
 ipcMain.handle(
   'clipboard:write-image',
-  (_event, payload: unknown) => {
+  (event, payload: unknown) => {
+    if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
     if (!payload || typeof payload !== 'object') throw new Error('Invalid image payload')
     const mime = (payload as { mime?: unknown }).mime
     const base64 = (payload as { base64?: unknown }).base64
@@ -998,6 +1036,7 @@ ipcMain.handle(
 )
 
 ipcMain.handle('dialog:save-backup', async (event, payload: unknown) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) return { ok: false as const, error: 'Denied' }
   const parsed = parseSaveBackupPayload(payload)
   if (!parsed) return { ok: false as const, error: 'Invalid backup payload' }
   const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
@@ -1015,6 +1054,9 @@ ipcMain.handle('dialog:save-backup', async (event, payload: unknown) => {
 ipcMain.handle(
   'dialog:save-image',
   async (event, payload: unknown) => {
+    if (!fromMainApp(event.sender, event.senderFrame)) {
+      return { ok: false as const, error: 'Denied' }
+    }
     if (!payload || typeof payload !== 'object') {
       return { ok: false as const, error: 'Invalid image payload' }
     }
@@ -1052,4 +1094,7 @@ ipcMain.handle(
   },
 )
 
-ipcMain.handle('clipboard:screenshot', async () => copyAppScreenshotToClipboard())
+ipcMain.handle('clipboard:screenshot', async (event) => {
+  if (!fromMainApp(event.sender, event.senderFrame)) throw new Error('Denied')
+  return copyAppScreenshotToClipboard()
+})

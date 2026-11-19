@@ -244,8 +244,15 @@ let becameVisibleAt = Date.now()
 const STALL_FLUSH_INTERVAL_MS = 10_000
 let lastStallFlushAt = 0
 
+function stopStallWatch(): void {
+  if (!stallTimer) return
+  clearInterval(stallTimer)
+  stallTimer = null
+}
+
 function startStallWatch(): void {
   if (stallTimer) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
   let last = Date.now()
   /**
    * Context sampled by the tick *before* the block.
@@ -457,8 +464,13 @@ export function installAppLogCapture(): void {
     // Distinguishes "user backgrounded it and Android reclaimed it" from
     // "died while the user was looking at it".
     appendAppLog('info', `[lifecycle] ${document.visibilityState}`)
-    if (document.visibilityState === 'hidden') flushNow()
-    else becameVisibleAt = Date.now()
+    if (document.visibilityState === 'hidden') {
+      stopStallWatch()
+      flushNow()
+    } else {
+      becameVisibleAt = Date.now()
+      startStallWatch()
+    }
   })
 
   // Whatever this run writes becomes the previous session for the next one.

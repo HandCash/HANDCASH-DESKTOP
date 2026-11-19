@@ -80,6 +80,7 @@ export const appMachine = setup({
   },
   on: {
     BRIDGE: {
+      guard: ({ context, event }) => context.bridgeOnline !== event.online,
       actions: assign({ bridgeOnline: ({ event }) => event.online }),
     },
   },

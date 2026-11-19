@@ -58,11 +58,22 @@ final class HandcashBridge: NSObject, WKScriptMessageHandler {
             || Bundle.main.bundlePath.hasSuffix(".app")
     }
 
+    private func isTrustedFrame(_ frame: WKFrameInfo) -> Bool {
+        guard frame.isMainFrame else { return false }
+        let source = frame.securityOrigin
+        let expectedPort = uiOrigin.port ?? (uiOrigin.scheme == "https" ? 443 : 80)
+        let sourcePort = source.port == 0 ? (source.protocol == "https" ? 443 : 80) : source.port
+        return source.protocol == uiOrigin.scheme
+            && source.host == uiOrigin.host
+            && sourcePort == expectedPort
+    }
+
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
         guard message.name == Self.handlerName,
+              isTrustedFrame(message.frameInfo),
               let body = message.body as? [String: Any],
               let id = body["id"] as? String,
               let method = body["method"] as? String

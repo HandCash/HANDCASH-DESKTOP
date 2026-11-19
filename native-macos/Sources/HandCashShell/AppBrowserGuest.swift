@@ -41,12 +41,30 @@ final class AppBrowserGuestHost: NSObject, WKNavigationDelegate {
         parentSuperview.addSubview(view)
         apply(bounds: bounds, visible: visible, to: view)
 
-        if let target = URL(string: url) {
+        if let target = URL(string: url),
+           let scheme = target.scheme?.lowercased(),
+           scheme == "https" || scheme == "http"
+        {
             emit(["id": id, "type": "loading", "url": url])
             view.load(URLRequest(url: target))
         } else {
             emit(["id": id, "type": "failed", "url": url, "description": "Invalid app URL"])
         }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let target = navigationAction.request.url,
+              let scheme = target.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" || scheme == "about"
+        else {
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
     }
 
     func setBounds(id: String, bounds: CGRect, visible: Bool) {

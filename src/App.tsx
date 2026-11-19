@@ -134,11 +134,18 @@ export function App() {
       try {
         await finishPendingWalletWipe()
         if (cancelled) return
-        const info = window.handcash
-          ? await window.handcash.getAppInfo()
-          : { version: '1.0.0-web', name: 'HandCash', isPackaged: false, platform: 'web' }
+        const [info, vaultOpenError] = await Promise.all([
+          window.handcash
+            ? window.handcash.getAppInfo()
+            : Promise.resolve({
+                version: '1.0.0-web',
+                name: 'HandCash',
+                isPackaged: false,
+                platform: 'web',
+              }),
+          window.handcash?.vaultOpenError?.() ?? Promise.resolve(null),
+        ])
         if (cancelled) return
-        const vaultOpenError = await window.handcash?.vaultOpenError?.()
         if (vaultOpenError) throw new Error(vaultOpenError)
         if (cancelled) return
         const orphanedToolbox = !hasVault() ? await hasOrphanedToolboxWallet() : false

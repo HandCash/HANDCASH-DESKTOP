@@ -56,7 +56,7 @@ function ensureMermaid(mermaid: typeof import('mermaid').default) {
         },
     flowchart: {
       useMaxWidth: false,
-      htmlLabels: true,
+      htmlLabels: false,
       wrappingWidth: 160,
       padding: 16,
       nodeSpacing: 48,

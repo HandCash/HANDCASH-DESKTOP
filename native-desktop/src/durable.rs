@@ -2,17 +2,21 @@
 
 use crate::seal;
 use directories::ProjectDirs;
+use rand::RngCore;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 #[allow(unused_imports)]
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 const VAULT_KEY: &str = "handcash.brc100.vault.v1";
+const VAULT_PREFIX: &str = "handcash.brc100.vault";
 const VAULT_SEAL_STATUS_KEY: &str = "handcash.brc100.vaultSealStatus";
 const HASHED_PREFIX: &str = "h-";
 const KEY_SIDECAR: &str = ".key";
@@ -35,6 +39,8 @@ impl DurableStore {
 
     pub fn open(dir: PathBuf) -> Result<Arc<Self>, String> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
         Ok(Arc::new(Self {
             dir,
             cache: Mutex::new(HashMap::new()),
@@ -165,7 +171,7 @@ impl DurableStore {
     }
 
     fn seal_if_vault(&self, key: &str, value: &str) -> String {
-        if key != VAULT_KEY || seal::is_sealed(value) {
+        if !key.starts_with(VAULT_PREFIX) || seal::is_sealed(value) {
             return value.to_string();
         }
         if !seal::is_available() {
@@ -195,6 +201,8 @@ impl DurableStore {
         if fs::write(&tmp, stored).is_err() {
             return false;
         }
+        #[cfg(unix)]
+        let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600));
         if fs::rename(&tmp, &path).is_err() {
             let _ = fs::remove_file(&tmp);
             return false;
@@ -275,11 +283,22 @@ fn identity_key(json: &str) -> Option<String> {
     }
 }
 
-/// Loopback-only sync HTTP for the renderer (sync XHR). Origin must match UI.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Loopback-only sync HTTP for the renderer (sync XHR). Origin and per-launch token must match.
 pub fn start_sync_server(
     store: Arc<DurableStore>,
     ui_origin: String,
-) -> Result<(String, thread::JoinHandle<()>), String> {
+) -> Result<(String, String, thread::JoinHandle<()>), String> {
     // Pick an ephemeral port, then hand it to tiny_http (keeps API portable).
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -287,13 +306,17 @@ pub fn start_sync_server(
     let server =
         tiny_http::Server::http(format!("127.0.0.1:{port}")).map_err(|e| e.to_string())?;
     let base = format!("http://127.0.0.1:{port}");
+    let mut token_bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut token_bytes);
+    let token = hex::encode(token_bytes);
+    let expected_token = token.clone();
     let origin = ui_origin;
     let handle = thread::spawn(move || {
         for mut request in server.incoming_requests() {
             let req_origin = request
                 .headers()
                 .iter()
-                .find(|h| h.field.equiv("X-HandCash-Origin") || h.field.equiv("Origin"))
+                .find(|h| h.field.equiv("Origin"))
                 .map(|h| h.value.as_str().to_string());
             let allowed = req_origin.as_deref() == Some(origin.as_str());
             if !allowed {
@@ -303,7 +326,7 @@ pub fn start_sync_server(
                 continue;
             }
             // The page's sync XHR is cross-origin (UI origin → loopback port) and
-            // carries JSON plus X-HandCash-Origin, so WebKit preflights it. A 404
+            // carries JSON plus X-HandCash-Token, so WebKit preflights it. A 404
             // here failed every storeGet/storeSet, the renderer's probe fell back
             // to the WebView's ~5MB origin storage, and this store stayed empty.
             if *request.method() == tiny_http::Method::Options {
@@ -311,7 +334,10 @@ pub fn start_sync_server(
                 for (name, value) in [
                     ("Access-Control-Allow-Origin", origin.as_str()),
                     ("Access-Control-Allow-Methods", "POST"),
-                    ("Access-Control-Allow-Headers", "Content-Type, X-HandCash-Origin"),
+                    (
+                        "Access-Control-Allow-Headers",
+                        "Content-Type, X-HandCash-Origin, X-HandCash-Token",
+                    ),
                     ("Access-Control-Max-Age", "600"),
                 ] {
                     if let Ok(h) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
@@ -324,6 +350,21 @@ pub fn start_sync_server(
             if request.url() != "/op" || *request.method() != tiny_http::Method::Post {
                 let _ = request.respond(
                     tiny_http::Response::from_string("{\"error\":\"not found\"}").with_status_code(404),
+                );
+                continue;
+            }
+            let req_token = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("X-HandCash-Token"))
+                .map(|h| h.value.as_str());
+            let token_ok = req_token
+                .map(|t| constant_time_eq(t.as_bytes(), expected_token.as_bytes()))
+                .unwrap_or(false);
+            if !token_ok {
+                let _ = request.respond(
+                    tiny_http::Response::from_string("{\"error\":\"unauthorized\"}")
+                        .with_status_code(401),
                 );
                 continue;
             }
@@ -345,7 +386,7 @@ pub fn start_sync_server(
             let _ = request.respond(response);
         }
     });
-    Ok((base, handle))
+    Ok((base, token, handle))
 }
 
 fn handle_op(store: &DurableStore, body: &str) -> String {
@@ -409,24 +450,34 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hc-durable-cors-{stamp}"));
         let store = DurableStore::open(dir.clone()).expect("open");
         let ui = "http://localhost:5173";
-        let (base, _thread) = start_sync_server(Arc::clone(&store), ui.to_string()).expect("server");
+        let (base, token, _thread) =
+            start_sync_server(Arc::clone(&store), ui.to_string()).expect("server");
 
         let preflight = raw_http(
             &base,
             &format!(
-                "OPTIONS /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,x-handcash-origin\r\nConnection: close\r\n\r\n"
+                "OPTIONS /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,x-handcash-origin,x-handcash-token\r\nConnection: close\r\n\r\n"
             ),
         );
         let head = preflight.to_ascii_lowercase();
         assert!(head.starts_with("http/1.1 204"), "{preflight}");
         assert!(head.contains(&format!("access-control-allow-origin: {ui}")), "{preflight}");
-        assert!(head.contains("x-handcash-origin"), "{preflight}");
+        assert!(head.contains("x-handcash-token"), "{preflight}");
 
         let body = r#"{"op":"set","key":"plain.key","value":"v"}"#;
+        let missing_token = raw_http(
+            &base,
+            &format!(
+                "POST /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            ),
+        );
+        assert!(missing_token.starts_with("HTTP/1.1 401"), "{missing_token}");
+
         let set = raw_http(
             &base,
             &format!(
-                "POST /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nX-HandCash-Origin: {ui}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "POST /op HTTP/1.1\r\nHost: x\r\nOrigin: {ui}\r\nX-HandCash-Origin: {ui}\r\nX-HandCash-Token: {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             ),
         );

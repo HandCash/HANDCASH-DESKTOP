@@ -92,16 +92,17 @@ async function refreshPeer(peer: DeviceWallet, identityKey: string, rootKeyHex: 
 
 export async function pollDeviceMeshOnce(): Promise<void> {
   if (polling) return
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
   const active = getActiveWallet()
   if (!active) return
+  const peers = listDeviceWallets().filter(
+    (w) =>
+      !w.isLocal &&
+      w.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
+  )
+  if (peers.length === 0) return
   polling = true
   try {
-    await enrollLocalFromBridge(active.identityKey)
-    const peers = listDeviceWallets().filter(
-      (w) =>
-        !w.isLocal &&
-        w.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
-    )
     await Promise.all(peers.map((p) => refreshPeer(p, active.identityKey, active.rootKeyHex)))
   } finally {
     polling = false
