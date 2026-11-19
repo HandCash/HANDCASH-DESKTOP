@@ -192,7 +192,40 @@ describe('verifyUtxoSet', () => {
     expect(verified.rejected).toBe(3)
     const line = String(vi.mocked(appendAppLog).mock.calls.at(-1)?.[1])
     expect(line).toContain("rejected=3 ")
-    expect(line).toMatch(/ rejected\.address=1\(m\/1\/2\) rejected\.script=1\(m\/1\/2\) rejected\.path=1\(m\/44'\/0'\/0'\/0\/0\)$/)
+    expect(line).toMatch(
+      / rejected\.address=1\(m\/1\/2\) rejected\.script=1\(m\/1\/2\) rejected\.path=1\(m\/44'\/0'\/0'\/0\/0\) rejected\.scriptShape=p2pkh-other:1\(25b\)$/,
+    )
+  })
+
+  it('names the shape of each script it rejects without logging a hash or address, and still takes none of them', async () => {
+    const deriver = makeDeriver()
+    const at = (path: string) => deriver.privateKeyAt(path).toPublicKey().toAddress()
+    const hash = (path: string) => deriver.privateKeyAt(path).toPublicKey().toHash('hex') as string
+    const lock = (path: string) => new P2PKH().lock(at(path)).toHex()
+    const stranger = PrivateKey.fromRandom().toPublicKey().toHash('hex') as string
+    const envelope = '0063036f7264510a746578742f706c61696e000268696800'
+    const rows = [
+      utxo(1, { path: 'm/7/2', address: at('m/7/2'), script: lock('m/7/2') }),
+      utxo(2, { path: 'm/7/1', address: at('m/7/1'), script: lock('m/7/2') }),
+      utxo(3, { path: 'm/7/3', address: at('m/7/3'), script: `${envelope}76a914${stranger}88ac` }),
+      utxo(4, { path: 'm/7/4', address: at('m/7/4'), script: lock('m/7/4').toUpperCase() }),
+      utxo(5, { path: 'm/7/5', address: at('m/7/5'), script: `a914${hash('m/7/5')}87` }),
+      utxo(6, { path: 'm/7/6', address: at('m/7/6'), script: `76a914${stranger}88ad21${'02'.padEnd(66, 'ab')}ac` }),
+      utxo(7, { path: 'm/7/7', address: at('m/7/7'), script: '' }),
+      utxo(8, { path: 'm/7/8', address: at('m/7/8'), script: 'zz' }),
+      utxo(9, { path: 'm/7/9', address: at('m/7/9'), script: '6a0568656c6c6f' }),
+    ]
+    const verified = await verifyUtxoSet(deriver, rows)
+    expect(verified.addresses.map((a) => a.path)).toEqual(['m/7/2'])
+    expect(verified.rejected).toBe(8)
+    expect(verified.rejectedBy).toEqual({ path: 0, address: 0, script: 8 })
+    const line = String(vi.mocked(appendAppLog).mock.calls.at(-1)?.[1])
+    expect(line).toContain(
+      ' rejected.scriptShape=p2pkh-sibling:1(25b),wrapped-p2pkh-other:1(49b),own-lock-case:1(25b),own-hash-other-form:1(23b),cosign-other:1(60b),empty:1(0b),non-hex:1(1b),other:1(7b)',
+    )
+    for (const secret of [stranger, ...rows.map((r) => r.address), ...['m/7/1', 'm/7/2', 'm/7/5'].map(hash)]) {
+      expect(line.toLowerCase()).not.toContain(secret.toLowerCase())
+    }
   })
 
   it('reuses the last scan’s addresses instead of deriving, and still rejects a row naming another address', async () => {

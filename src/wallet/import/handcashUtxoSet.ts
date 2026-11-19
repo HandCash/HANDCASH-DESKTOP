@@ -253,6 +253,37 @@ type UtxoSetRejection = 'path' | 'address' | 'script'
 /** At most this many rejected paths are named in the log, per reason. */
 const REJECTED_PATH_SAMPLES = 3
 
+type ScriptForm = 'p2pkh' | 'wrapped-p2pkh' | 'cosign'
+
+/**
+ * Secret-free shape of a script rejected for not paying its path's key: what
+ * the log may say about it. `sibling` means the hash it pays is another path
+ * these keys derived in the same set (a service mapping slip, not a stranger).
+ */
+type ScriptShape =
+  | 'empty'
+  | 'non-hex'
+  | 'own-lock-case'
+  | 'own-hash-other-form'
+  | 'other'
+  | `${ScriptForm}-${'other' | 'sibling'}`
+
+const P2PKH_LIKE = /76a914([0-9a-f]{40})88a([cd])/g
+
+/** The shape of `script`, plus the hashes it pays (kept in memory only, never logged). */
+function scriptShapeOf(script: string, lock: string): { shape: ScriptShape; bytes: number; hashes: string[] } {
+  const bytes = Math.floor(script.length / 2)
+  if (script.length === 0) return { shape: 'empty', bytes, hashes: [] }
+  if (script.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(script)) return { shape: 'non-hex', bytes, hashes: [] }
+  const lower = script.toLowerCase()
+  if (lower.includes(lock)) return { shape: 'own-lock-case', bytes, hashes: [] }
+  if (lower.includes(lock.slice(6, 46))) return { shape: 'own-hash-other-form', bytes, hashes: [] }
+  const found = [...lower.matchAll(P2PKH_LIKE)]
+  if (found.length === 0) return { shape: 'other', bytes, hashes: [] }
+  const form: ScriptForm = found.every((f) => f[2] === 'd') ? 'cosign' : lower.length === 50 ? 'p2pkh' : 'wrapped-p2pkh'
+  return { shape: `${form}-other`, bytes, hashes: found.map((f) => f[1]) }
+}
+
 const HANDCASH_PATH = /^m\/(\d)\/(\d{1,9})$/
 
 function p2pkhLockFor(address: string): string | null {
@@ -298,6 +329,7 @@ export async function verifyUtxoSet(
     if (tally.paths.size < REJECTED_PATH_SAMPLES) tally.paths.add(path)
     rejectedBy.set(reason, tally)
   }
+  const scriptShapes: Array<ReturnType<typeof scriptShapeOf>> = []
   for (const utxo of utxos) {
     const outpoint = `${utxo.txid}_${utxo.vout}`
     if (seen.has(outpoint)) continue
@@ -336,6 +368,7 @@ export async function verifyUtxoSet(
         if (unsupportedPaths.size < REJECTED_PATH_SAMPLES) unsupportedPaths.add(utxo.path)
       } else {
         reject('script', utxo.path)
+        scriptShapes.push(scriptShapeOf(utxo.script, key.lock))
       }
       continue
     }
@@ -363,6 +396,19 @@ export async function verifyUtxoSet(
   const rejectedNote = [...rejectedBy]
     .map(([reason, { count, paths }]) => ` rejected.${reason}=${count}(${[...paths].join(',')})`)
     .join('')
+  const derivedHashes = new Set<string>()
+  for (const key of derived.values()) if (key) derivedHashes.add(key.lock.slice(6, 46))
+  const shapeTally = new Map<ScriptShape, { count: number; bytes: Set<number> }>()
+  for (const { shape, bytes, hashes } of scriptShapes) {
+    const named = hashes.some((h) => derivedHashes.has(h)) ? (shape.replace(/-other$/, '-sibling') as ScriptShape) : shape
+    const tally = shapeTally.get(named) ?? { count: 0, bytes: new Set<number>() }
+    tally.count += 1
+    if (tally.bytes.size < REJECTED_PATH_SAMPLES) tally.bytes.add(bytes)
+    shapeTally.set(named, tally)
+  }
+  const shapeNote = shapeTally.size
+    ? ` rejected.scriptShape=${[...shapeTally].map(([shape, { count, bytes }]) => `${shape}:${count}(${[...bytes].join(',')}b)`).join(',')}`
+    : ''
   const rejectedByCounts: Record<UtxoSetRejection, number> = {
     path: rejectedBy.get('path')?.count ?? 0,
     address: rejectedBy.get('address')?.count ?? 0,
@@ -370,7 +416,7 @@ export async function verifyUtxoSet(
   }
   appendAppLog(
     rejected > 0 ? 'warn' : 'info',
-    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms${rejectedNote}${unsupported > 0 ? ` unsupported=${unsupported}(${[...unsupportedPaths].join(',')})` : ''}`,
+    `[import] utxo set verified addresses=${addresses.size} cash=${cashOutputs.size} itemAddresses=${itemOutpoints.size} read=${readAddresses.size} rejected=${rejected} derived=${derivations} done ${Date.now() - startedAt}ms${rejectedNote}${shapeNote}${unsupported > 0 ? ` unsupported=${unsupported}(${[...unsupportedPaths].join(',')})` : ''}`,
   )
   return { addresses: [...addresses.values()], cashOutputs, itemOutpoints, readAddresses, rejected, rejectedBy: rejectedByCounts, unsupported }
 }
