@@ -48,6 +48,7 @@ export function validateIptProposal(
   let amount = 0n
   for (let vin = 0; vin < tx.inputs.length; vin++) {
     const input = tx.inputs[vin]!
+    if (input.sequence !== 0xffffffff) throw new Error('IPT inputs must have final sequences')
     const outpoint = `${sourceTxidOf(tx, vin)}.${input.sourceOutputIndex}`
     const source = sourceOutputOf(tx, vin)
     const known = accepted.get(outpoint)
@@ -125,5 +126,58 @@ export async function signIptProposal(args: {
   const feeVin = tx.inputs.length - 1
   tx.inputs[feeVin]!.unlockingScript = await args.signFee(Transaction.fromEF(tx.toEF()), feeVin, BNT_ISSUER_SCOPE)
   if (tx.inputs.some((_, vin) => !inputScriptValid(tx, vin))) throw new Error('Invalid completed IPT signatures')
-  return { requestId: proposal.requestId, tx, signedEf: tx.toEF() }
+  const signedEf = tx.toEF()
+  validateIptAcceptance(args.ef, signedEf, args.deploy, args.accepted)
+  return { requestId: proposal.requestId, tx, signedEf }
+}
+
+/** BRC-253 §7: the completed transaction, not the transport identity, proves
+ * singleton acceptance. Bind it to the exact holder proposal before crediting
+ * or broadcasting. This does not prove the fee input unspent or chain ancestry.
+ */
+export function validateIptAcceptance(
+  proposalEf: number[],
+  signedEf: number[],
+  deploy: BntDeploy,
+  accepted: ReadonlyMap<string, { satoshis: number; lockingScript: string }>,
+): { requestId: string; tx: Transaction } {
+  const proposal = validateIptProposal(proposalEf, deploy, accepted)
+  if (deploy.rules.mode !== 'countersign' || deploy.rules.issuer.m !== 1 || deploy.rules.issuer.keys.length !== 1) {
+    throw new Error('Not a singleton IPT acceptance')
+  }
+  iptRequestId(signedEf)
+  const original = Transaction.fromEF(proposalEf)
+  const tx = Transaction.fromEF(signedEf)
+  if (tx.version !== original.version || tx.lockTime !== original.lockTime ||
+      tx.inputs.length !== original.inputs.length + 1 || tx.outputs.length !== original.outputs.length ||
+      tx.outputs.some((output, index) => output.satoshis !== original.outputs[index]!.satoshis ||
+        output.lockingScript.toHex() !== original.outputs[index]!.lockingScript.toHex())) {
+    throw new Error('IPT acceptance changed the proposal')
+  }
+  for (let vin = 0; vin < original.inputs.length; vin++) {
+    const input = tx.inputs[vin]!
+    const source = sourceOutputOf(tx, vin)
+    const expected = sourceOutputOf(original, vin)!
+    const chunks = input.unlockingScript?.chunks ?? []
+    const holder = original.inputs[vin]!.unlockingScript!.chunks[0]!.data!
+    if (sourceTxidOf(tx, vin) !== sourceTxidOf(original, vin) ||
+        input.sourceOutputIndex !== original.inputs[vin]!.sourceOutputIndex ||
+        input.sequence !== 0xffffffff || !source || source.satoshis !== expected.satoshis ||
+        source.lockingScript.toHex() !== expected.lockingScript.toHex() ||
+        chunks.length !== 3 || !chunks[0]?.data || chunks[1]?.op !== 81 ||
+        chunks[0].data.at(-1) !== BNT_ISSUER_SCOPE ||
+        Utils.toHex(chunks[2]?.data ?? []) !== Utils.toHex(holder)) {
+      throw new Error('IPT acceptance changed an asset input')
+    }
+  }
+  const feeVin = tx.inputs.length - 1
+  const fee = sourceOutputOf(tx, feeVin)
+  const feeOutpoint = `${sourceTxidOf(tx, feeVin)}.${tx.inputs[feeVin]!.sourceOutputIndex}`
+  if (!fee || !Number.isSafeInteger(fee.satoshis) || fee.satoshis! < 1 || readBnt(fee.lockingScript) ||
+      fee.satoshis! + original.inputs.length <= tx.outputs.reduce((sum, output) => sum + output.satoshis!, 0) ||
+      proposal.inputs.includes(feeOutpoint) || tx.inputs[feeVin]!.sequence !== 0xffffffff ||
+      tx.inputs.some((_, vin) => !inputScriptValid(tx, vin))) {
+    throw new Error('Invalid IPT acceptance signatures or fee input')
+  }
+  return { requestId: proposal.requestId, tx }
 }

@@ -184,6 +184,9 @@ export const storageRegistry = Object.freeze({
     scope: 'wallet',
     version: 1,
   }),
+  iptReservations: defineStorage({
+    key: 'handcash.iptReservations.v1', owner: 'custody', scope: 'wallet', version: 1,
+  }),
   noticeJournal: defineStorage({
     key: 'handcash.brc29.noticeJournal.v1',
     owner: 'propagation',

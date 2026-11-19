@@ -88,17 +88,27 @@ The caller must apply recipient linkage/policy and its fee policy first.
 `iptReservations.ts` supplies an accept-once reservation projection over a
 caller-provided atomic durable append journal. Replay retains pending requests
 and returns stored signed bytes; conflicting requests remain refused after
-restart. Failed writes do not release reservations. This is NOT yet a durable
-host adapter or a multi-process transaction manager. Exactly one account-bound
-acceptor writer must own it. The signed-record method requires a validated final
-transaction; it is not itself transaction validation.
+restart. Failed writes do not release reservations. `iptJournal.ts` now binds
+that projection to account + chain + issuer using the registered authoritative
+durable store. Events occupy immutable bounded segments, with a small head;
+an event saved before a failed head write is recovered on reopen. Missing or
+corrupt committed segments fail closed. A failed writer must reopen; a stale
+writer cannot overwrite a segment. This is NOT a multi-process transaction
+manager: exactly one acceptor writer must own an account/issuer. The signed-record
+method requires a validated final transaction; it is not transaction validation.
+
+`verifyIptRecipients` opens actual SDK BRC-69/72 ciphertext using wallet decryption
+and checks every output's identity-plus-linkage equation. The enclosing sender
+must already be authenticated by BRC-78. `validateIptAcceptance` binds a completed
+singleton transaction to the original request, checks unchanged outputs/holder
+signatures, final sequences, the single fee input and all completed scripts.
+It does not establish chain ancestry or that the fee input remains unspent.
 
 These primitives are not wired to wallet issue/mint/transfer, BRC-78 requests,
-BRC-69/72 linkage verification, a bound durable storage adapter, request charts,
-funding selection/recovery, decision authentication or receipt. Shared issuer
-and sender-funded signing remain unsupported. Do not enable the demo or remove
-receipt gates based on these tests. Dev-key-only remains unchanged; no key is
-generated, exported or persisted by these helpers.
+request charts, funding selection/recovery, decision authentication or receipt.
+Shared issuer and sender-funded signing remain unsupported. Do not enable the
+demo or remove receipt gates based on these tests. Dev-key-only remains unchanged;
+no production key is generated, exported or persisted by these helpers.
 
 ### 3. Beacon and release (IPT task; requires durable service)
 

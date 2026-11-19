@@ -1,9 +1,13 @@
 import { Hash, PrivateKey, Transaction, UnlockingScript, Utils } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { createIptAcceptor } from './iptAcceptor'
+import type { IptReservationEvent } from './iptReservations'
+
+vi.mock('./iptRecipients', () => ({ verifyIptRecipients: vi.fn(async () => ['verified-recipient']) }))
 import { signInput } from '../txInputs'
 import { BNT_HOLDER_SCOPE, bntHeldLock, bntOpenUnlock, p2pkLock, type BntRules } from './script'
 import type { BntDeploy } from './validity'
-import { iptRequestId, signIptProposal, validateIptProposal } from './iptProposal'
+import { iptRequestId, signIptProposal, validateIptProposal, validateIptAcceptance } from './iptProposal'
 
 function fixture() {
   const holder = PrivateKey.fromRandom()
@@ -77,6 +81,14 @@ describe('BRC-253 proposal commitment and holder validation', () => {
       signFee: async (tx: Transaction, vin: number, scope: number) => bntOpenUnlock(signInput(tx, vin, feeKey, scope)),
     }
     const result = await signIptProposal(args)
+    expect(validateIptAcceptance(ef, result.signedEf, f.deploy, f.accepted).requestId).toBe(iptRequestId(ef))
+    const altered = Transaction.fromEF(result.signedEf)
+    altered.outputs[0]!.satoshis = 2
+    expect(() => validateIptAcceptance(ef, altered.toEF(), f.deploy, f.accepted)).toThrow('changed the proposal')
+    const unsigned = Transaction.fromEF(result.signedEf)
+    unsigned.inputs[0]!.unlockingScript = new UnlockingScript()
+    expect(() => validateIptAcceptance(ef, unsigned.toEF(), f.deploy, f.accepted)).toThrow('asset input')
+    expect(() => validateIptAcceptance(fixture().sign(), result.signedEf, f.deploy, f.accepted)).toThrow()
     expect(result.requestId).toBe(iptRequestId(ef))
     expect(result.tx.inputs).toHaveLength(2)
     expect(result.tx.outputs.map((o) => o.lockingScript.toHex())).toEqual(f.tx.outputs.map((o) => o.lockingScript.toHex()))
@@ -84,6 +96,48 @@ describe('BRC-253 proposal commitment and holder validation', () => {
     expect(f.tx.inputs).toHaveLength(1)
     await expect(signIptProposal({ ...args, signIssuer: async (tx, vin, scope) => signInput(tx, vin, feeKey, scope) })).rejects.toThrow('signatures')
     await expect(signIptProposal({ ...args, minimumFee: 501 })).rejects.toThrow('fee source')
+  })
+  it('serializes acceptance, persists before reply and replays without funding again', async () => {
+    const f = fixture()
+    const feeKey = PrivateKey.fromRandom()
+    const fee = new Transaction()
+    fee.addInput({ sourceTXID: '12'.repeat(32), sourceOutputIndex: 0, unlockingScript: new UnlockingScript(), sequence: 0xffffffff })
+    fee.addOutput({ satoshis: 500, lockingScript: p2pkLock(feeKey.toPublicKey().toString()) })
+    const events: IptReservationEvent[] = []
+    const authorize = vi.fn(async () => {})
+    const fund = vi.fn(async () => {
+      expect(events[0]?.t).toBe('reserved')
+      return {
+        fee: { tx: fee, vout: 0 }, minimumFee: 1,
+        signIssuer: async (tx: Transaction, vin: number, scope: number) => signInput(tx, vin, f.issuer, scope),
+        signFee: async (tx: Transaction, vin: number, scope: number) => bntOpenUnlock(signInput(tx, vin, feeKey, scope)),
+      }
+    })
+    const host = {
+      journal: { read: () => events, append: (event: IptReservationEvent) => { events.push(structuredClone(event)) } },
+      wallet: {} as Parameters<typeof createIptAcceptor>[0]['wallet'],
+      deploy: f.deploy, accepted: f.accepted, authorize, fund,
+    }
+    const request = { sender: 'authenticated-sender', ef: f.sign(), recipients: [] }
+    const acceptor = createIptAcceptor(host)
+    const [first, duplicate] = await Promise.all([acceptor.accept(request), acceptor.accept(request)])
+    expect(first.state).toBe('signed')
+    expect(duplicate).toEqual(first)
+    expect(events.map((e) => e.t)).toEqual(['reserved', 'signed'])
+    expect(fund).toHaveBeenCalledTimes(1)
+    expect(await createIptAcceptor(host).accept(request)).toEqual(first)
+    expect(fund).toHaveBeenCalledTimes(1)
+    const pendingHost = { ...host, journal: { ...host.journal, read: () => events.slice(0, 1) } }
+    expect((await createIptAcceptor(pendingHost).accept(request)).state).toBe('pending')
+    expect(fund).toHaveBeenCalledTimes(1)
+    const failed = createIptAcceptor({ ...host, journal: { read: () => [], append: () => { throw new Error('disk failure') } } })
+    await expect(failed.accept(request)).rejects.toThrow('disk failure')
+    expect(fund).toHaveBeenCalledTimes(1)
+  })
+  it('refuses non-final proposal sequences', () => {
+    const f = fixture()
+    f.tx.inputs[0]!.sequence = 0
+    expect(() => validateIptProposal(f.sign(), f.deploy, f.accepted)).toThrow('final sequences')
   })
   it('bounds bytes before parsing', () => {
     expect(() => iptRequestId([])).toThrow('bytes')
