@@ -8,7 +8,7 @@ type Signing = Parameters<typeof signIptProposal>[0]
 /** Why an acceptance failed, and whether this request may now hold inputs.
  * `held` is false only when the failure came before this request reached any
  * reservation; otherwise it may own its inputs and only replaying the same
- * request or recovering its funding can finish it (BRC-253 §6 accept-once).
+ * request can finish it (BRC-253 §6 accept-once; no paid recovery).
  */
 export class IptAcceptError extends Error {
   readonly held: boolean
@@ -26,8 +26,8 @@ type Request = {
 
 /** BRC-253 §§5–6. One pinned account/issuer writer, never an ambient active
  * wallet. Hosts must supply trusted accepted facts, authenticated sender,
- * policy and durable funding recovery. No signature escapes before journaling.
- * A pending request is NOT signed again: its funding action needs recovery.
+ * policy and funding. No signature escapes before journaling.
+ * A pending request is NOT signed again: a replay returns it still pending.
  */
 export function createIptAcceptor(host: {
   journal: IptReservationJournal
@@ -75,7 +75,7 @@ export function createIptAcceptor(host: {
           return reservation
         }
         // Reservation precedes funding. Any failure leaves it pending, including
-        // a failed durable signed write; retry must recover, never create anew.
+        // a failed durable signed write; a replay finds it pending, never creates anew.
         const funding = await host.fund(proposal.requestId)
         const signed = await signIptProposal({
           ...funding, ef: snapshot.ef, deploy: host.deploy, accepted: host.accepted,

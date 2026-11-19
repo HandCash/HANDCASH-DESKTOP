@@ -26,13 +26,14 @@ function failure(error: unknown): Failure {
  * idle → accepting → signed | held | refused.
  * `refused` holds nothing: the request failed before any reservation write.
  * `held` means its inputs may be reserved (a pending journal entry or a write
- * attempt). Accept-once forbids a timeout, cancel or new signature from here:
- * only RECOVER (the host recovers the staged funding of this same request) or
- * replaying the same request may finish it. `signed` is final and carries the
- * journaled bytes; the host delivers them and never aborts a signed spend.
+ * attempt). Accept-once forbids a timeout, cancel or new signature from here,
+ * and there is no paid recovery: only REPLAY of this same request may finish
+ * it, by finding its journaled signature. A still-pending replay stays held.
+ * `signed` is final and carries the journaled bytes; the host delivers them
+ * and never aborts a signed spend.
  *
- * `accept` and `recover` are host actors (`createIptAcceptor`); the defaults
- * refuse so this chart cannot sign anything until a host is wired in.
+ * `accept` is the host actor (`createIptAcceptor`); the default refuses so
+ * this chart cannot sign anything until a host is wired in.
  */
 export const iptAcceptRequestMachine = setup({
   types: {
@@ -45,14 +46,11 @@ export const iptAcceptRequestMachine = setup({
     events: {} as
       | { type: 'SUBMIT'; request: IptAcceptRequest }
       | { type: 'CANCEL' }
-      | { type: 'RECOVER' },
+      | { type: 'REPLAY' },
   },
   actors: {
     accept: fromPromise<Outcome, IptAcceptRequest>(async () => {
       throw new Error('No IPT acceptor is wired in')
-    }),
-    recover: fromPromise<Outcome, { request: IptAcceptRequest; requestId: string | null }>(async () => {
-      throw Object.assign(new Error('IPT funding recovery is not implemented'), { held: true })
     }),
   },
   guards: {
@@ -69,7 +67,7 @@ export const iptAcceptRequestMachine = setup({
       }
     }),
     recordFailure: assign({ error: ({ event }) => failure((event as { error?: unknown }).error) }),
-    // A failed recovery cannot release inputs, whatever the error says.
+    // A failed replay cannot release inputs, whatever the error says.
     recordHeldFailure: assign({
       error: ({ event }) => ({ ...failure((event as { error?: unknown }).error), held: true }),
     }),
@@ -95,7 +93,7 @@ export const iptAcceptRequestMachine = setup({
         input: ({ context }) => context.request!,
         onDone: [
           { guard: 'isSigned', target: 'signed', actions: 'recordOutcome' },
-          // pending: reserved earlier, unsigned; it must be recovered, never re-signed.
+          // pending: reserved earlier, unsigned; it stays held, never re-signed.
           { target: 'held', actions: 'recordOutcome' },
         ],
         onError: [
@@ -105,12 +103,12 @@ export const iptAcceptRequestMachine = setup({
       },
     },
     held: {
-      on: { RECOVER: 'recovering' },
+      on: { REPLAY: 'replaying' },
     },
-    recovering: {
+    replaying: {
       invoke: {
-        src: 'recover',
-        input: ({ context }) => ({ request: context.request!, requestId: context.requestId }),
+        src: 'accept',
+        input: ({ context }) => context.request!,
         onDone: [
           { guard: 'isSigned', target: 'signed', actions: 'recordOutcome' },
           { target: 'held', actions: 'recordOutcome' },

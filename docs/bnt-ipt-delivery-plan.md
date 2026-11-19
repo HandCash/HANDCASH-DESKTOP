@@ -107,10 +107,11 @@ It does not establish chain ancestry or that the fee input remains unspent.
 Request chart (2026-11-19; not enabled): `src/machines/iptAcceptRequestMachine.ts`
 runs one acceptor request as idle → accepting → signed | held | refused.
 `createIptAcceptor` now throws `IptAcceptError` with `held`, false only when the
-request failed before any reservation write. `held` has no cancel or timeout;
-only RECOVER (host funding recovery, still unimplemented and refusing by
-default) or replaying the same request can finish it. `signed` is final. The
-default actors refuse, so the chart signs nothing until a host wires it.
+request failed before any reservation write. `held` has no cancel or timeout,
+and there is no paid (host-funded) recovery (decided 2026-11-19): only REPLAY
+of the same request can finish it, by finding its journaled signature; a
+still-pending or failed replay stays held. `signed` is final. The default
+accept actor refuses, so the chart signs nothing until a host wires it.
 
 These primitives are not wired to wallet issue/mint/transfer, BRC-78 requests,
 funding selection/recovery, decision authentication or receipt.

@@ -5,19 +5,17 @@ import type { IptReservationResult } from '../wallet/bnt/iptReservations'
 
 const request: IptAcceptRequest = { sender: 'sender', ef: [1, 2], recipients: [] }
 
-function run(accept: (input: IptAcceptRequest) => Promise<IptReservationResult>,
-  recover?: () => Promise<IptReservationResult>) {
+function run(accept: (input: IptAcceptRequest) => Promise<IptReservationResult>) {
   const machine = iptAcceptRequestMachine.provide({
     actors: {
       accept: fromPromise<IptReservationResult, IptAcceptRequest>(({ input }) => accept(input)),
-      ...(recover ? { recover: fromPromise<IptReservationResult, unknown>(() => recover()) } : {}),
     },
   })
   const actor = createActor(machine).start()
   return actor
 }
 
-const settled = (s: { value: unknown }) => s.value !== 'accepting' && s.value !== 'recovering'
+const settled = (s: { value: unknown }) => s.value !== 'accepting' && s.value !== 'replaying'
 
 describe('iptAcceptRequest chart (BRC-253 §§5–6)', () => {
   it('ends signed with the journaled bytes and accepts nothing after', async () => {
@@ -60,29 +58,36 @@ describe('iptAcceptRequest chart (BRC-253 §§5–6)', () => {
     }
   })
 
-  it('stays held when recovery fails or is not wired, and finishes when it signs', async () => {
-    const unwired = run(async () => ({ state: 'pending', requestId: 'r3' }))
-    unwired.send({ type: 'SUBMIT', request })
-    await waitFor(unwired, settled)
-    unwired.send({ type: 'RECOVER' })
-    const still = await waitFor(unwired, settled)
-    expect(still.value).toBe('held')
-    expect(still.context.error?.held).toBe(true)
+  it('replays only the same request: pending stays held, a failed replay stays held, a journaled signature finishes', async () => {
+    const seen: IptAcceptRequest[] = []
+    const pending = run(async (input) => { seen.push(input); return { state: 'pending', requestId: 'r3' } })
+    pending.send({ type: 'SUBMIT', request })
+    await waitFor(pending, settled)
+    pending.send({ type: 'REPLAY' })
+    expect((await waitFor(pending, settled)).value).toBe('held')
+    expect(seen).toEqual([request, request])
 
-    // Even an error claiming nothing is held cannot release inputs from recovery.
-    const failing = run(async () => ({ state: 'pending', requestId: 'r3' }),
-      async () => { throw Object.assign(new Error('offline'), { held: false }) })
+    // Even an error claiming nothing is held cannot release inputs on replay.
+    let calls = 0
+    const failing = run(async () => {
+      if (calls++ === 0) return { state: 'pending', requestId: 'r3' }
+      throw Object.assign(new Error('offline'), { held: false })
+    })
     failing.send({ type: 'SUBMIT', request })
     await waitFor(failing, settled)
-    failing.send({ type: 'RECOVER' })
-    expect((await waitFor(failing, settled)).value).toBe('held')
+    failing.send({ type: 'REPLAY' })
+    const still = await waitFor(failing, settled)
+    expect(still.value).toBe('held')
+    expect(still.context.error).toEqual({ message: 'offline', held: true })
 
-    const recovered = run(async () => ({ state: 'pending', requestId: 'r3' }),
-      async () => ({ state: 'signed', requestId: 'r3', signedEf: [5] }))
-    recovered.send({ type: 'SUBMIT', request })
-    await waitFor(recovered, settled)
-    recovered.send({ type: 'RECOVER' })
-    const done = await waitFor(recovered, settled)
+    let replays = 0
+    const replayed = run(async () => (replays++ === 0
+      ? { state: 'pending', requestId: 'r3' }
+      : { state: 'signed', requestId: 'r3', signedEf: [5] }))
+    replayed.send({ type: 'SUBMIT', request })
+    await waitFor(replayed, settled)
+    replayed.send({ type: 'REPLAY' })
+    const done = await waitFor(replayed, settled)
     expect(done.value).toBe('signed')
     expect(done.context.signedEf).toEqual([5])
   })
