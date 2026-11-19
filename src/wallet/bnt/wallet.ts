@@ -1014,10 +1014,20 @@ export function bntIssueFields(args: IssueBntArgs, identityKey: string): { field
  */
 async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, prefix: string, issued: BntIssued | undefined = row.issued): Promise<PlannedOutput[]> {
   const out: PlannedOutput[] = []
+  // A countersigned deploy keeps its issuer and release clause on every
+  // carried-back output; an open deploy keeps the open clause.
+  const clauseFor = (holder: string): BntClause => deploy.fields.mode === 'countersign'
+    ? {
+        mode: 'countersign',
+        holder,
+        issuer: { m: deploy.fields.m, keys: deploy.fields.iss.map((identity) => bntIssuerKeyOf(identity, deploy.fields.mode)) },
+        release: deploy.fields.rel ? { kind: 'hash', rel: deploy.fields.rel } : { kind: 'keys', k: deploy.fields.k!, keys: deploy.fields.relk! },
+      }
+    : { mode: 'open', holder }
   if (row.read.form !== 'authority' && row.amount > 0n) {
     const { holder, remittance } = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
     out.push({
-      lockingScript: bntHeldLock({ assetId: row.assetId, amount: row.amount, clause: { mode: 'open', holder } }).toHex(),
+      lockingScript: bntHeldLock({ assetId: row.assetId, amount: row.amount, clause: clauseFor(holder) }).toHex(),
       satoshis: 1,
       outputDescription: 'BNT units back to the holder',
       basket: bntFilingOf(deploy.fields.kind, deploy.fields.mode),
@@ -1028,7 +1038,7 @@ async function carryBack(active: ActiveWallet, row: BntRow, deploy: BntDeploy, p
   if (row.authority) {
     const { holder, remittance } = await freshHolder(active, selfOf(active), prefix, deploy.fields.mode)
     out.push({
-      lockingScript: bntAuthorityLock({ assetId: row.assetId, clause: { mode: 'open', holder }, ...(issued ? { issued } : {}) }).toHex(),
+      lockingScript: bntAuthorityLock({ assetId: row.assetId, clause: clauseFor(holder), ...(issued ? { issued } : {}) }).toHex(),
       satoshis: 1,
       outputDescription: 'BNT authority',
       basket: bntFilingOf(deploy.fields.kind, deploy.fields.mode),
