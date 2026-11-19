@@ -169,7 +169,7 @@ async function runSweep(
     appendAppLog('info', `[import] cash scan addresses=${cashFrom.length} holding=${sources.length} done ${Date.now() - scannedAt}ms`)
     if (sources.length > 0 && !stop()) {
       report('cash', `Moving BSV from ${sources.length} address(es)…`)
-      const result = await sweepPhraseFunding({ sources })
+      const result = await sweepPhraseFunding({ sources, activityGroup: job.id })
       cashSats += result.fundingSatsMoved
       failed += result.failed
       notes.push(...result.errors.slice(0, 2))

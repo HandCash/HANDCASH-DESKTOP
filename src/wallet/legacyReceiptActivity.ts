@@ -20,14 +20,27 @@ import { contentUrlForOrigin } from './oneSatImport'
 import type { LegacyFundingReceipt } from './legacyScan'
 import type { Chain } from './vault'
 
-/** Activity rows for newly swept funding — one per incoming payment txid. */
-export function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
+/**
+ * Activity rows for newly swept funding — one per incoming payment txid.
+ *
+ * A `groupId` (a wallet job's id) folds the run's rows and its sweep
+ * transactions into one record, the same way a collectables migrate does.
+ */
+export function recordFundingReceipts(
+  receipts: LegacyFundingReceipt[],
+  opts?: { groupId?: string | null },
+): void {
+  const groupId = opts?.groupId?.trim() || undefined
   const byTx = new Map<string, number>()
+  const sweepTxids: string[] = []
   for (const receipt of receipts) {
     const txid = receipt.receiveTxid.trim().toLowerCase()
     if (!txid || !(receipt.satoshis > 0)) continue
     byTx.set(txid, (byTx.get(txid) ?? 0) + receipt.satoshis)
+    const sweep = receipt.sweepTxid?.trim().toLowerCase()
+    if (sweep) sweepTxids.push(sweep)
   }
+  if (groupId) noteJobTxids(groupId, [...byTx.keys(), ...sweepTxids])
   for (const [txid, sats] of byTx) {
     if (hasSettledActivityTxid(txid, 'earned', { item: false })) continue
     upsertAppActivity({
@@ -38,8 +51,10 @@ export function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
       note: 'Received coins',
       txid,
       status: 'complete',
+      ...(groupId ? { sendGroupId: groupId } : {}),
     })
   }
+  if (groupId) scheduleActivityLedgerRefresh()
 }
 
 export type MigratedItemReceipt = {

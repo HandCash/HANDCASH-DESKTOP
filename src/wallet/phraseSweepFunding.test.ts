@@ -117,6 +117,7 @@ describe('sweepPhraseFunding stale import marks', () => {
     // Swept coins that never reach Activity read as a sweep that did nothing.
     expect(recordFundingReceipts).toHaveBeenCalledWith(
       expect.arrayContaining([expect.objectContaining({ satoshis: 6_217_733 })]),
+      { groupId: undefined },
     )
   })
 
@@ -140,13 +141,16 @@ describe('sweepPhraseFunding stale import marks', () => {
     const { sweepPhraseFunding } = await import('./phraseSweep')
     await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
-    expect(recordFundingReceipts).toHaveBeenCalledWith([
-      expect.objectContaining({
-        outpoint: FUNDING[0]!.outpoint,
-        satoshis: 6_217_733,
-        receiveTxid: FUNDING[0]!.txid,
-      }),
-    ])
+    expect(recordFundingReceipts).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          outpoint: FUNDING[0]!.outpoint,
+          satoshis: 6_217_733,
+          receiveTxid: FUNDING[0]!.txid,
+        }),
+      ],
+      { groupId: undefined },
+    )
     // Backfilling a row must never re-spend the coins.
     expect(importLegacyUtxos).toHaveBeenCalledTimes(1)
   })
@@ -159,7 +163,20 @@ describe('sweepPhraseFunding stale import marks', () => {
     await sweepPhraseFunding({ sources: [{ candidate: CANDIDATE, utxos: FUNDING }] })
 
     expect(recordFundingReceipts).toHaveBeenCalledTimes(1)
-    expect(recordFundingReceipts).toHaveBeenCalledWith([])
+    expect(recordFundingReceipts).toHaveBeenCalledWith([], { groupId: undefined })
+  })
+
+  it('folds the cash rows and the sweep spend under the job id', async () => {
+    importLegacyUtxos.mockResolvedValue(importResult({ imported: 1 }))
+    retryableStuckSweeps.mockResolvedValue([])
+
+    const { sweepPhraseFunding } = await import('./phraseSweep')
+    await sweepPhraseFunding({
+      sources: [{ candidate: CANDIDATE, utxos: FUNDING }],
+      activityGroup: 'job-sweep-1',
+    })
+
+    expect(recordFundingReceipts).toHaveBeenCalledWith(expect.any(Array), { groupId: 'job-sweep-1' })
   })
 
   it('sweeps coins from many addresses in one call, each signed by its own key', async () => {

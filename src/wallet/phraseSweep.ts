@@ -597,6 +597,7 @@ export async function previewPhraseSweep(
 function backfillSweptFundingActivity(
   funding: LegacyUtxo[],
   importedOutpoints: string[],
+  groupId?: string | null,
 ): void {
   const imported = new Set(importedOutpoints.map((op) => op.trim().toLowerCase()))
   const receipts = funding.flatMap((utxo) => {
@@ -607,7 +608,7 @@ function backfillSweptFundingActivity(
     if (!sweepTxid || !(utxo.satoshis > 0)) return []
     return [{ outpoint: op, satoshis: utxo.satoshis, receiveTxid: utxo.txid, sweepTxid }]
   })
-  if (receipts.length > 0) recordFundingReceipts(receipts)
+  if (receipts.length > 0) recordFundingReceipts(receipts, { groupId })
 }
 
 /** One address of a phrase and the coins scanned on it. */
@@ -620,6 +621,8 @@ export type PhraseFundingSource = { candidate: PhraseCandidate; utxos: LegacyUtx
  */
 export async function sweepPhraseFunding(args: {
   sources: readonly PhraseFundingSource[]
+  /** Wallet job id: the run's cash rows fold into one Activity record. */
+  activityGroup?: string | null
 }): Promise<PhraseFundingSweepResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -663,8 +666,8 @@ export async function sweepPhraseFunding(args: {
 
     // Without this the coins land in the balance with no Activity row, which
     // reads as a sweep that silently did nothing.
-    recordFundingReceipts(result.importedReceipts)
-    backfillSweptFundingActivity(funding, result.importedOutpoints)
+    recordFundingReceipts(result.importedReceipts, { groupId: args.activityGroup })
+    backfillSweptFundingActivity(funding, result.importedOutpoints, args.activityGroup)
 
     const moved = result.importedReceipts.reduce((s, r) => s + r.satoshis, 0)
     appendAppLog(

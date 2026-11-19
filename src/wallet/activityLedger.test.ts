@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
+const JOB_SPEND = 'ab'.repeat(32)
+vi.mock('./activityJobIndex', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./activityJobIndex')>()),
+  jobOfTxid: (txid: string | undefined) => (txid === 'ab'.repeat(32) ? 'job-sweep-1' : null),
+}))
+
 const budget = vi.hoisted(() => ({ expired: false, yields: 0 }))
 vi.mock('./yieldToUi', () => ({
   uiBudgetExpired: () => budget.expired,
@@ -47,6 +53,19 @@ describe('ledgerActivityRows', () => {
       baskets,
     )
     expect(rows.map((r) => r.id)).toEqual([`ledger:${tx(3)}`])
+  })
+
+  it('folds a wallet job\'s own spend into its record, whatever its description', () => {
+    const at = new Date('2026-10-18T10:50:00Z')
+    const rows = ledgerActivityRows(
+      [
+        { transactionId: 1, txid: JOB_SPEND, satoshis: -60, isOutgoing: true, description: 'Import 2 P2PKH UTXO', created_at: at },
+        { transactionId: 2, txid: tx(4), satoshis: -1_500, isOutgoing: true, description: 'Import notes', created_at: at },
+      ],
+      [],
+      baskets,
+    )
+    expect(rows.map((r) => r.id)).toEqual([`ledger:${tx(4)}`])
   })
 
   it('never invents a time or an amount', () => {
