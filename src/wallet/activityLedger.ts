@@ -245,7 +245,10 @@ function* ledgerRowSteps(
       }
       continue
     }
+    // A wallet job's own transaction (a sweep's spend) is folded into the job's
+    // Activity record, so it never reads as a stray Sent or Received row.
     if (isP2pkhSweepDescription(description)) continue
+    if (jobOfTxid(txid)) continue
     const kind = outgoing ? 'spent' : 'earned'
     const sats = Math.abs(net)
     if (sats === 0) continue
