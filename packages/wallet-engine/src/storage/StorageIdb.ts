@@ -562,6 +562,38 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     return rawTx
   }
 
+  /**
+   * Raw transactions for many txids in one readonly transaction, with the
+   * status set of the slice path above. Hydrating a page of locking scripts
+   * reads each transaction once instead of two transactions per row, so a
+   * page of outputs from one inscription batch does not reread the same
+   * multi-megabyte raw transaction for every output.
+   */
+  async getRawTxsForScriptSlices(txids: string[], trx?: TrxToken): Promise<Map<string, ArrayLike<number>>> {
+    const results = new Map<string, ArrayLike<number>>()
+    const unique = [...new Set(txids.filter(txid => txid !== ''))]
+    if (unique.length === 0) return results
+    if (!this.isAvailable()) await this.makeAvailable()
+    const dbTrx = this.toDbTrx(['proven_txs', 'proven_tx_reqs'], 'readonly', trx)
+    const provenIndex = dbTrx.objectStore('proven_txs').index('txid')
+    const requestIndex = dbTrx.objectStore('proven_tx_reqs').index('txid')
+    const validStatuses = new Set(['unsent', 'nosend', 'sending', 'unmined', 'completed', 'unfail'])
+    await Promise.all(
+      unique.map(async txid => {
+        const proven = (await provenIndex.get(txid)) as TableProvenTx | undefined
+        if (proven?.rawTx != null) {
+          results.set(txid, proven.rawTx)
+          return
+        }
+        if (proven != null) return
+        const request = (await requestIndex.get(txid)) as TableProvenTxReq | undefined
+        if (request?.rawTx != null && validStatuses.has(request.status)) results.set(txid, request.rawTx)
+      })
+    )
+    if (trx == null) await dbTrx.done
+    return results
+  }
+
   private async getRawTxForSlice(txid: string, trx?: TrxToken): Promise<number[] | undefined> {
     const proven = verifyOneOrNone(await this.findProvenTxs({ partial: { txid }, trx }))
     if (proven != null) return proven.rawTx

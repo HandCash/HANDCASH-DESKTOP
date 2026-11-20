@@ -24,7 +24,8 @@
  * off-device replication in `custodyJournalBackup.ts`, recovery in
  * `custodyJournalRecovery.ts`.
  */
-import { Hash, Utils } from '@bsv/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
@@ -71,7 +72,14 @@ type JournalFile = { v: 1; e: CustodyEntry[] }
 
 type JournalState = {
   entries: CustodyEntry[]
-  ids: Set<string>
+  /**
+   * Canonical JSON of every entry. An entry id is the sha256 of exactly this
+   * string, so equal keys are equal ids: dedupe needs no hashing, and a load
+   * of a multi-megabyte journal hashes nothing until a root is asked for.
+   */
+  keys: Set<string>
+  /** Ids of `entries[0..ids.length)`, filled on demand by the root. */
+  ids: string[]
   /** Latest recipe per outpoint; a wallet-payment recipe outranks a basket one. */
   recipes: Map<string, { sats: number; r: SpendRecipe }>
   spent: Set<string>
@@ -192,18 +200,32 @@ export function cleanCustodyEntry(raw: unknown, self?: string): CustodyEntry | n
   return r ? { k: 'out', op, sats, r } : null
 }
 
+const utf8 = new TextEncoder()
+
+function sha256Hex(text: string): string {
+  return bytesToHex(sha256(utf8.encode(text)))
+}
+
 export function custodyEntryId(entry: CustodyEntry): string {
-  return Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(entry), 'utf8')))
+  return sha256Hex(JSON.stringify(entry))
 }
 
 function keyFor(owner: BoundAccountKeyScope): string {
   return accountLocalKeyFor(KEY_BASE, owner)
 }
 
-function admit(state: JournalState, entry: CustodyEntry, id: string): void {
+/** Admit `entry` unless already held; true when it is new. */
+function admit(state: JournalState, entry: CustodyEntry): boolean {
+  const key = JSON.stringify(entry)
+  if (state.keys.has(key)) return false
+  state.keys.add(key)
   state.entries.push(entry)
-  state.ids.add(id)
   state.root = null
+  admitRecipe(state, entry)
+  return true
+}
+
+function admitRecipe(state: JournalState, entry: CustodyEntry): void {
   if (entry.k === 'spent') {
     state.spent.add(entry.op)
     return
@@ -226,9 +248,7 @@ function admitFile(state: JournalState, raw: string | null, self: string): void 
     const file = raw ? (JSON.parse(raw) as Partial<JournalFile>) : null
     for (const rawEntry of Array.isArray(file?.e) ? file.e : []) {
       const entry = cleanCustodyEntry(rawEntry, self)
-      if (!entry) continue
-      const id = custodyEntryId(entry)
-      if (!state.ids.has(id)) admit(state, entry, id)
+      if (entry) admit(state, entry)
     }
   } catch {
     // An unreadable file is reported by the next write failing to grow it.
@@ -241,7 +261,8 @@ function load(owner: BoundAccountKeyScope): JournalState {
   if (held) return held
   const state: JournalState = {
     entries: [],
-    ids: new Set(),
+    keys: new Set(),
+    ids: [],
     recipes: new Map(),
     spent: new Set(),
     released: new Set(),
@@ -297,10 +318,7 @@ export function appendCustody(
   let added = 0
   for (const raw of entries) {
     const entry = cleanCustodyEntry(raw, owner.identityKey)
-    if (!entry) continue
-    const id = custodyEntryId(entry)
-    if (state.ids.has(id)) continue
-    admit(state, entry, id)
+    if (!entry || !admit(state, entry)) continue
     state.unsaved.push(entry)
     added += 1
   }
@@ -385,8 +403,11 @@ export function unspentCoinCustody(
 export function custodyJournalRoot(owner: BoundAccountKeyScope): string {
   const state = load(owner)
   if (state.root) return state.root
-  const ids = [...state.ids].sort().join('')
-  state.root = Utils.toHex(Hash.sha256(Utils.toArray(ids, 'utf8')))
+  // Entries only grow, so only ids admitted since the last root are hashed.
+  for (let i = state.ids.length; i < state.entries.length; i++) {
+    state.ids.push(custodyEntryId(state.entries[i]))
+  }
+  state.root = sha256Hex([...state.ids].sort().join(''))
   return state.root
 }
 

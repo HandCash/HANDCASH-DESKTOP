@@ -202,6 +202,33 @@ async function hydrateIdbWalletOutput(
   return walletOutput
 }
 
+/**
+ * Restore stripped locking scripts for a whole page at once: one readonly
+ * transaction, each raw transaction read once however many of its outputs
+ * the page holds. Rows this leaves untouched fall back to
+ * `validateOutputScript`, which makes no change when the script is whole.
+ */
+async function fillStrippedScripts(storage: StorageIdb, outputs: TableOutput[]): Promise<void> {
+  const stripped = outputs.filter(
+    o =>
+      o.txid != null &&
+      o.txid !== '' &&
+      o.scriptLength != null &&
+      o.scriptLength > 0 &&
+      o.scriptOffset != null &&
+      o.scriptOffset > 0 &&
+      o.lockingScript?.length !== o.scriptLength
+  )
+  if (stripped.length === 0) return
+  const rawTxs = await storage.getRawTxsForScriptSlices(stripped.map(o => o.txid as string))
+  for (const output of stripped) {
+    const rawTx = rawTxs.get(output.txid as string)
+    if (rawTx == null) continue
+    const start = output.scriptOffset as number
+    output.lockingScript = Array.prototype.slice.call(rawTx, start, start + (output.scriptLength as number)) as number[]
+  }
+}
+
 async function hydrateIdbOutputResult(
   storage: StorageIdb,
   outputs: TableOutput[],
@@ -210,6 +237,7 @@ async function hydrateIdbOutputResult(
 ): Promise<void> {
   const labelsByTxid: Record<string, string[]> = {}
   const beef = new Beef()
+  if (vargs.includeLockingScripts) await fillStrippedScripts(storage, outputs)
   for (const output of outputs) {
     result.outputs.push(await hydrateIdbWalletOutput(storage, output, vargs, labelsByTxid, beef))
   }
