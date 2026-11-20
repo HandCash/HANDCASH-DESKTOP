@@ -1,14 +1,13 @@
 #!/usr/bin/env node
 /**
- * Package HandCash Desktop as a thin Win/Linux folder (no Electron).
- * Layout: release/<platform>/HandCash/{handcash-shell, node, *.cjs, app/, handcash-page.js, start script}
+ * Package HandCash Desktop as a pure-Rust thin Win/Linux folder (no Electron, no Node runtime).
+ * Layout: release/<platform>/HandCash/{handcash-shell, app/, handcash-page.js, start script}
  *
- * Stub (explicit): does not yet produce NSIS / AppImage / .deb installers — zip only.
- * Money-moving paths stay in the Node sidecar; never silently dropped.
+ * The Rust binary hosts the OS WebView, BRC-100 HTTP/HTTPS bridge (:3321/:2121),
+ * LAN device-peer (:3340), durable keyring store, and packaged UI server (:5173).
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -68,9 +67,6 @@ if (process.env.HANDCASH_SKIP_RENDERER !== '1') {
   run('npm', ['run', 'build:renderer'])
 }
 
-console.log('==> build:sidecar')
-run('npm', ['run', 'build:sidecar'])
-
 // Keep artifacts in-tree (Cursor sandboxes otherwise redirect CARGO_TARGET_DIR).
 const cargoTargetDir = path.join(crate, 'target')
 console.log('==> cargo build --release (native-desktop)')
@@ -91,32 +87,18 @@ fs.mkdirSync(outDir, { recursive: true })
 copyFile(binSrc, path.join(outDir, binName))
 if (target !== 'win') fs.chmodSync(path.join(outDir, binName), 0o755)
 
-copyFile(path.join(root, 'dist-sidecar/bridgeSidecar.cjs'), path.join(outDir, 'bridgeSidecar.cjs'))
-copyFile(path.join(root, 'dist-sidecar/uiSidecar.cjs'), path.join(outDir, 'uiSidecar.cjs'))
-for (const map of ['bridgeSidecar.cjs.map', 'uiSidecar.cjs.map']) {
-  const src = path.join(root, 'dist-sidecar', map)
-  if (fs.existsSync(src)) copyFile(src, path.join(outDir, map))
-}
 copyFile(path.join(crate, 'handcash-page.js'), path.join(outDir, 'handcash-page.js'))
 copyDir(path.join(root, 'dist'), path.join(outDir, 'app'))
-
-const nodeSrc = process.execPath
-const nodeDest = path.join(outDir, target === 'win' ? 'node.exe' : 'node')
-copyFile(nodeSrc, nodeDest)
-if (target !== 'win') fs.chmodSync(nodeDest, 0o755)
 
 if (target === 'win') {
   const cmd = `@echo off
 setlocal
 set "DIR=%~dp0"
 set "HANDCASH_UI_ROOT=%DIR%app"
-set "HANDCASH_BRIDGE_SIDECAR=%DIR%bridgeSidecar.cjs"
-set "HANDCASH_NODE=%DIR%node.exe"
 set "HANDCASH_SHELL_PAGE_JS=%DIR%handcash-page.js"
 set "HANDCASH_UI_ORIGIN=http://localhost:5173"
 set "HANDCASH_APP_VERSION=${version}"
-start "HandCash UI" /b "%HANDCASH_NODE%" "%DIR%uiSidecar.cjs"
-"%DIR%${binName}"
+"%DIR%${binName}" %*
 `
   fs.writeFileSync(path.join(outDir, 'HandCash.cmd'), cmd)
 } else {
@@ -124,15 +106,10 @@ start "HandCash UI" /b "%HANDCASH_NODE%" "%DIR%uiSidecar.cjs"
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 export HANDCASH_UI_ROOT="$DIR/app"
-export HANDCASH_BRIDGE_SIDECAR="$DIR/bridgeSidecar.cjs"
-export HANDCASH_NODE="$DIR/node"
 export HANDCASH_SHELL_PAGE_JS="$DIR/handcash-page.js"
 export HANDCASH_UI_ORIGIN=http://localhost:5173
 export HANDCASH_APP_VERSION=${version}
-"$HANDCASH_NODE" "$DIR/uiSidecar.cjs" &
-UI_PID=$!
-trap 'kill "$UI_PID" 2>/dev/null || true' EXIT
-"$DIR/${binName}"
+exec "$DIR/${binName}" "$@"
 `
   const startPath = path.join(outDir, 'HandCash')
   fs.writeFileSync(startPath, sh)
@@ -142,11 +119,23 @@ trap 'kill "$UI_PID" 2>/dev/null || true' EXIT
 fs.writeFileSync(
   path.join(outDir, 'STUBS.txt'),
   [
-    `HandCash Desktop ${version} — thin native shell (${target}/${arch}).`,
+    `HandCash Desktop ${version} — pure-Rust native shell (${target}/${arch}, zero Electron, zero Node).`,
     '',
-    'Stub (explicit): no NSIS / AppImage / .deb yet — this zip is the ship artifact.',
-    'Screen share / call recording / biometrics stay host stubs where noted in docs/thin-desktop-shell.md.',
-    'BRC-100 + device-peer run in bridgeSidecar.cjs (Node); never silently dropped.',
+    'Implemented natively in handcash-shell (Rust):',
+    '  - BRC-100 HTTP (:3321) + HTTPS (:2121, rustls + self-signed localhost cert) on 127.0.0.1 and [::1]',
+    '  - LAN device-peer HTTP server (0.0.0.0:3340) with origin allowlist',
+    '  - Built-in packaged UI static server (http://localhost:5173)',
+    '  - Durable file store + OS keyring AES-GCM vault seal (sealed:native:v1:)',
+    '  - Embedded app-browser guests (isolated child WebViews)',
+    '  - Save dialogs (verified atomic backups + images) & file chooser',
+    '  - Text + image clipboard and in-app screenshot capture (Linux)',
+    '  - Append-only local BRC-39 UTXO archive & sealed on-device call recordings',
+    '  - Rotating host logs (getLogInfo / readLogs / openLogs) & live Omarchy theme watcher',
+    '  - GitHub release update check/download via renderer desktopReleaseUpdate.ts',
+    '',
+    'Platform notes:',
+    '  - Shipped as a portable zip (no NSIS / AppImage / .deb installer wrapper yet).',
+    '  - Screen share picker and OS biometric unlock remain unavailable on Linux/Windows (matching Electron).',
     '',
   ].join('\n'),
 )
@@ -172,8 +161,7 @@ if (process.platform === 'win32') {
   })
 }
 
-console.log(`==> packaged ${zipPath}`)
-console.log('    (installer formats stubbed — zip only; see STUBS.txt in the folder)')
+console.log(`==> packaged ${zipPath} (pure Rust, zero Node runtime)`)
 
 // Generate SHA256 checksum for verification
 const crypto = await import('node:crypto')

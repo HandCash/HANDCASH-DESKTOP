@@ -28,11 +28,11 @@ invent a second partition.
   WebView localStorage.
 - **Async host calls** — Mac: `webkit.messageHandlers.handcash`; Win/Linux: wry
   `window.ipc.postMessage`.
-- **Local BRC-100 bridge + device-peer** — HTTP on `127.0.0.1:3321` / `:2121`
-  and LAN `:3340` run in a **Node sidecar** (`electron/bridgeSidecar.ts` →
-  `dist-sidecar/bridgeSidecar.cjs` via `npm run build:sidecar`), not inside the
-  WebView. The folder name `electron/` is historical; it holds shared Node host
-  code only (no Electron runtime).
+- **Local BRC-100 bridge + device-peer** — HTTP on `127.0.0.1:3321` / HTTPS `:2121`
+  (plus `[::1]`) and LAN `:3340` run natively inside the **Rust binary** on
+  Windows/Linux (`native-desktop/src/brc100_server.rs`, zero Node runtime) and
+  in a **Node sidecar** (`electron/bridgeSidecar.ts` → `dist-sidecar/bridgeSidecar.cjs`)
+  on macOS (`native-macos/`). The folder name `electron/` is historical (no Electron runtime).
 
 ## Size goal
 
@@ -68,23 +68,28 @@ invent a second partition.
   `chooseScreenSource`). Calls work; share stays unavailable until
   ScreenCaptureKit is wired. `screenShareAvailable()` is false.
 
-## What Win/Linux implements vs stubs
+## What Win/Linux implements (pure Rust, zero Node)
 
-**In `native-desktop/` (+ same Node sidecar):**
+**In `native-desktop/` (single native binary, no Node sidecar):**
 
-- tao window + wry WebView (WebView2 / WebKitGTK) loading the wallet UI URL
+- tao window + wry WebView (WebView2 / WebKitGTK) loading the wallet UI URL, with frameless titlebar drag (`startWindowDrag`)
+- **Built-in BRC-100 HTTP `:3321` + HTTPS `:2121`** (pure-Rust `rustls` + P-256 self-signed localhost cert covering `localhost`, `127.0.0.1`, `::1`, SpendLedger deduplication, BRC-219 prompt deadline hold, BRC-326 failure enrichment)
+- **Built-in LAN device-peer `:3340`** (`0.0.0.0:3340` with origin allowlist and `if-addrs` LAN IPv4 discovery)
+- **Built-in packaged UI server `:5173`** (`src/ui_server.rs` serving `app/` on `127.0.0.1` + `[::1]`, refusing to hijack an existing owner)
 - Inject `window.handcash` via wry `window.ipc` (`handcash-page.js`)
-- Sync durable store over loopback HTTP; vault seal via OS keyring AES-GCM
-  (`sealed:native:v1:`)
-- **BRC-100 + device-peer** via the same sidecar stdio protocol as Mac
+- Sync durable store over loopback HTTP; vault seal via OS keyring AES-GCM (`sealed:native:v1:`)
+- **Embedded app tabs:** `appBrowserGuest` overlays isolated child WebViews (`src/app_browser.rs`, separate storage, no wallet JS); guests use the local BRC-100 HTTP bridge like a normal browser
+- **Local BRC-39 UTXO archive & sealed call recordings:** write-once files under `<userData>/brc39-archive` and `<userData>/call-recordings` (`src/brc39_archive.rs`, `src/call_recordings.rs`)
+- **Native Save dialogs & file upload:** verified atomic `saveBackupFile` and `saveImageFile` via GTK `FileChooserNative` (Linux) / Win32 `GetSaveFileNameW` (Windows), plus WebKitGTK `run-file-chooser` (`src/dialogs.rs`, `src/file_chooser.rs`)
+- **Clipboard, screenshots, logs & Omarchy theme:** text + image clipboard (`wl-copy` / `arboard`), WebKitGTK `copyScreenshot` + Ctrl+Shift+S on Linux (`src/clipboard.rs`), rotating host log file (`src/host_log.rs`), and live Omarchy `colors.toml` theme watcher (`src/omarchy_theme.rs`)
+- **Release updates:** GitHub release zip check/download via `src/wallet/desktopReleaseUpdate.ts` (`thinShellReleaseUpdater`)
 
-**Still stubbed on Win/Linux (explicit):**
+**Platform notes on Win/Linux:**
 
-- Auto-update, embedded app-browser tabs, screen share/recording
-- Device unlock biometrics (`available: false`)
-- **Installers:** `npm run package:win` / `package:linux` produce a **zip** of the
-  shell + sidecar + UI (see `STUBS.txt` in the folder). NSIS / AppImage / `.deb`
-  are not produced yet — never pretend they are.
+- Screen share picker (`listScreenSources` / `chooseScreenSource` omitted so `screenShareAvailable()` stays `false`)
+- Device unlock biometrics (`available: false`, matching Electron's macOS-only Touch ID policy)
+- Windows in-app `copyScreenshot` (returns explicit message pointing to Win+Shift+S; Linux WebKitGTK captures natively)
+- **Installers:** `npm run package:win` / `package:linux` produce a self-contained portable **zip** (pure-Rust binary + UI assets, no Node runtime).
 
 **File upload (`<input type=file>`):** Linux thin shell wires WebKitGTK
 `run-file-chooser` (`native-desktop/src/file_chooser.rs`). Mac

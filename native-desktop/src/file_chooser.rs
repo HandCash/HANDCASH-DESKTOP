@@ -5,10 +5,15 @@ use gtk::prelude::*;
 use webkit2gtk::{FileChooserRequestExt, WebViewExt};
 use wry::WebViewExtUnix;
 
-/// Attach an OS file dialog to the underlying WebKitGTK web view.
+/// Attach an OS file dialog to the underlying WebKitGTK web view of a `wry::WebView`.
 /// Returns true when the signal was connected.
 pub fn attach(webview: &wry::WebView) -> bool {
     let wk = webview.webview();
+    attach_webkit(&wk)
+}
+
+/// Attach an OS file dialog directly to any `webkit2gtk::WebView` (main or app-browser guest).
+pub fn attach_webkit(wk: &webkit2gtk::WebView) -> bool {
     wk.connect_run_file_chooser(move |_view, request| {
         let request = request.clone();
         let multiple = request.selects_multiple();

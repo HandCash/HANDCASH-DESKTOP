@@ -59,16 +59,16 @@ jobs:
       - name: Install native shell deps (WebKitGTK)
         run: bash scripts/ci-linux-native-deps.sh
 
-      - name: Renderer + sidecar build
-        run: |
-          npm run build:renderer
-          npm run build:sidecar
+      - name: Renderer build
+        run: npm run build:renderer
 
-      - name: Native shell cargo build
+      - name: Native shell cargo test + build
         working-directory: native-desktop
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/native-desktop/target
-        run: cargo build
+        run: |
+          cargo test
+          cargo build
 
       - name: Package Linux zip (smoke)
         env:

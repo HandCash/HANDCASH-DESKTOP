@@ -69,14 +69,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Thin native shell (no Electron): zip only. NSIS and code signing
-          # return with a native installer; electron-builder no longer applies
-          # because dist-electron is not built.
+          # Pure-Rust native shell (no Electron, no Node runtime): zip only.
           rm -rf release
           npm run package:win
           VERSION="${{ steps.meta.outputs.version }}"
           DIR=release/win-x64/HandCash
-          for f in handcash-shell.exe node.exe bridgeSidecar.cjs uiSidecar.cjs handcash-page.js app/index.html HandCash.cmd; do
+          for f in handcash-shell.exe handcash-page.js app/index.html HandCash.cmd; do
             test -f "$DIR/$f" || { echo "missing $DIR/$f" >&2; exit 1; }
           done
           test -f "release/HandCash-${VERSION}-x64-win.zip"

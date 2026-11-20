@@ -15,7 +15,10 @@
     'http-request': new Set(),
     'http-request-cancelled': new Set(),
     'device-peer-http-request': new Set(),
-    'bridge-status': new Set()
+    'bridge-status': new Set(),
+    'app-browser-guest': new Set(),
+    'screenshot:copied': new Set(),
+    'omarchy:theme': new Set()
   };
 
   function call(method, params) {
@@ -40,6 +43,29 @@
     return function () {
       set.delete(handler);
     };
+  }
+
+  function bytesToBase64(input) {
+    var bytes;
+    if (input instanceof Uint8Array) bytes = input;
+    else if (input instanceof ArrayBuffer) bytes = new Uint8Array(input);
+    else if (ArrayBuffer.isView(input)) bytes = new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+    else throw new Error('Invalid binary payload');
+    var chunk = 0x8000;
+    var parts = [];
+    for (var i = 0; i < bytes.length; i += chunk) {
+      parts.push(String.fromCharCode.apply(null, bytes.subarray(i, i + chunk)));
+    }
+    return btoa(parts.join(''));
+  }
+
+  function base64ToBytes(b64) {
+    var bin = atob(String(b64));
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i += 1) {
+      out[i] = bin.charCodeAt(i);
+    }
+    return out;
   }
 
   window.__handcashNativeReply = function (msg) {
@@ -101,7 +127,28 @@
 
   window.handcash = {
     platform: platform,
+    // Native child WebView guests (not Electron <webview>).
     embeddedAppBrowser: false,
+    appBrowserGuest: {
+      create: function (options) {
+        return call('appBrowserGuestCreate', options);
+      },
+      setBounds: function (options) {
+        return call('appBrowserGuestSetBounds', options);
+      },
+      navigate: function (options) {
+        return call('appBrowserGuestNavigate', options);
+      },
+      capture: function (options) {
+        return call('appBrowserGuestCapture', options);
+      },
+      destroy: function (options) {
+        return call('appBrowserGuestDestroy', options);
+      },
+      onEvent: function (handler) {
+        return subscribe('app-browser-guest', handler);
+      }
+    },
     getAppInfo: function () {
       return call('getAppInfo');
     },
@@ -140,11 +187,26 @@
     focusWindow: function () {
       return call('focusWindow');
     },
+    startWindowDrag: function () {
+      return call('startWindowDrag');
+    },
     releasePromptFocus: function () {
       return call('releasePromptFocus');
     },
     openExternal: function (url) {
       return call('openExternal', { url: String(url) });
+    },
+    getLogInfo: function () {
+      return call('getLogInfo');
+    },
+    openLogs: function () {
+      return call('openLogs');
+    },
+    readLogs: function (opts) {
+      return call('readLogs', opts && typeof opts === 'object' ? opts : {});
+    },
+    uploadLogs: function (url) {
+      return call('uploadLogs', { url: String(url || '') });
     },
     storageGetSync: storeGet,
     storageSetSync: storeSet,
@@ -157,8 +219,83 @@
     wipeWalletStorage: function () {
       return call('wipeWalletStorage');
     },
+    archiveBrc39Snapshot: function (payload) {
+      return call('archiveBrc39Snapshot', payload || {});
+    },
+    listBrc39Archive: function (identityKey) {
+      return call('listBrc39Archive', { identityKey: String(identityKey || '') });
+    },
+    readBrc39Archive: function (payload) {
+      return call('readBrc39Archive', payload || {});
+    },
+    brc39ArchiveRoot: function () {
+      return call('brc39ArchiveRoot');
+    },
+    appendCallRecording: function (identityKey, id, seq, sealed) {
+      return call('appendCallRecording', {
+        identityKey: String(identityKey || ''),
+        id: String(id || ''),
+        seq: seq,
+        sealedBase64: bytesToBase64(sealed)
+      });
+    },
+    finishCallRecording: function (identityKey, id, sealedMeta) {
+      return call('finishCallRecording', {
+        identityKey: String(identityKey || ''),
+        id: String(id || ''),
+        sealedMetaBase64: bytesToBase64(sealedMeta)
+      });
+    },
+    readCallRecording: function (identityKey, id) {
+      return call('readCallRecording', {
+        identityKey: String(identityKey || ''),
+        id: String(id || '')
+      }).then(function (res) {
+        return {
+          meta: res && res.meta ? base64ToBytes(res.meta) : null,
+          parts: Array.isArray(res && res.parts) ? res.parts.map(base64ToBytes) : []
+        };
+      });
+    },
+    deleteCallRecording: function (identityKey, id) {
+      return call('deleteCallRecording', {
+        identityKey: String(identityKey || ''),
+        id: String(id || '')
+      });
+    },
     clipboardWrite: function (text) {
       return call('clipboardWrite', { text: String(text) });
+    },
+    clipboardWriteImage: function (payload) {
+      return call('clipboardWriteImage', payload || {});
+    },
+    saveBackupFile: function (payload) {
+      if (!payload || typeof payload !== 'object') {
+        return Promise.resolve({ ok: false, error: 'Invalid backup payload' });
+      }
+      try {
+        return call('saveBackupFile', {
+          filename: String(payload.filename || ''),
+          bytesBase64: bytesToBase64(payload.bytes)
+        });
+      } catch (e) {
+        return Promise.resolve({ ok: false, error: 'Invalid backup payload' });
+      }
+    },
+    saveImageFile: function (payload) {
+      return call('saveImageFile', payload || {});
+    },
+    copyScreenshot: function () {
+      return call('copyScreenshot');
+    },
+    onScreenshotCopied: function (handler) {
+      return subscribe('screenshot:copied', handler);
+    },
+    getOmarchyTheme: function () {
+      return call('getOmarchyTheme');
+    },
+    onOmarchyTheme: function (handler) {
+      return subscribe('omarchy:theme', handler);
     },
     deviceAuthStatus: function () {
       return call('deviceAuthStatus');
@@ -174,4 +311,46 @@
     }
   };
   Object.freeze(window.handcash);
+
+  // WebKitGTK / WebView2 ignore `-webkit-app-region` in frameless windows.
+  // Match native-macos drag-region handling for `.titlebar` / `[data-aeon-drag]`.
+  function appRegionFor(el) {
+    for (var node = el; node && node.nodeType === 1; node = node.parentElement) {
+      if (node.hasAttribute && node.hasAttribute('data-aeon-no-drag')) return 'no-drag';
+      if (node.hasAttribute && node.hasAttribute('data-aeon-drag')) return 'drag';
+      var tag = node.tagName ? node.tagName.toUpperCase() : '';
+      if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+        return 'no-drag';
+      }
+      if (
+        node.classList &&
+        (node.classList.contains('titlebar') || node.classList.contains('aeon-titlebar'))
+      ) {
+        return 'drag';
+      }
+      var region = '';
+      try {
+        var cs = window.getComputedStyle(node);
+        region = (
+          cs.getPropertyValue('-webkit-app-region') ||
+          cs.getPropertyValue('app-region') ||
+          ''
+        ).trim();
+      } catch (e) {}
+      if (region === 'drag' || region === 'no-drag') return region;
+    }
+    return '';
+  }
+
+  document.addEventListener(
+    'mousedown',
+    function (e) {
+      if (e.button !== 0) return;
+      var target = e.target;
+      if (target && target.nodeType === 3) target = target.parentElement;
+      if (appRegionFor(target) !== 'drag') return;
+      call('startWindowDrag').catch(function () {});
+    },
+    true
+  );
 })();

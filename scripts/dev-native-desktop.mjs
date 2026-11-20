@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Thin Win/Linux shell (native-desktop / wry) against Vite on :5173.
+ * Pure-Rust Win/Linux shell (native-desktop / wry) against Vite on :5173.
  * Called from dev-native.mjs on win32/linux, or directly via npm run dev:native-desktop.
+ * BRC-100 (:3321/:2121) and LAN device-peer (:3340) run natively inside handcash-shell.
  */
 import { spawn } from 'node:child_process'
 import { createConnection } from 'node:net'
@@ -68,18 +69,6 @@ function run(cmd, args, opts = {}) {
   })
 }
 
-async function ensureSidecar() {
-  const sidecarJs = path.join(root, 'dist-sidecar/bridgeSidecar.cjs')
-  const legacySidecar = path.join(root, 'dist-electron/bridgeSidecar.js')
-  if (!fs.existsSync(sidecarJs)) {
-    console.log('[dev:native-desktop] building sidecar…')
-    await run('npm', ['run', 'build:sidecar'])
-  }
-  if (fs.existsSync(sidecarJs)) return sidecarJs
-  if (fs.existsSync(legacySidecar)) return legacySidecar
-  throw new Error(`missing ${sidecarJs} after build:sidecar`)
-}
-
 if (process.platform !== 'win32' && process.platform !== 'linux') {
   console.error(
     `[dev:native-desktop] this script is for win32/linux (got ${process.platform}); use npm run dev:native on macOS`,
@@ -88,7 +77,6 @@ if (process.platform !== 'win32' && process.platform !== 'linux') {
 }
 
 await waitTcp(5173)
-const sidecarPath = await ensureSidecar()
 
 const binName = process.platform === 'win32' ? 'handcash-shell.exe' : 'handcash-shell'
 const outBin = path.join(crate, 'target', 'debug', binName)
@@ -97,7 +85,7 @@ const cargoEnv = {
   // Keep the binary in-tree; Cursor sandboxes otherwise redirect CARGO_TARGET_DIR.
   CARGO_TARGET_DIR: path.join(crate, 'target'),
 }
-if (!fs.existsSync(outBin)) {
+if (!fs.existsSync(outBin) || process.env.HANDCASH_FORCE_CARGO === '1') {
   console.log('[dev:native-desktop] cargo build (native-desktop)…')
   await run('cargo', ['build', '--manifest-path', path.join(crate, 'Cargo.toml')], {
     cwd: crate,
@@ -105,27 +93,19 @@ if (!fs.existsSync(outBin)) {
   })
 } else {
   console.log('[dev:native-desktop] using existing binary (set HANDCASH_FORCE_CARGO=1 to rebuild)')
-  if (process.env.HANDCASH_FORCE_CARGO === '1') {
-    console.log('[dev:native-desktop] cargo build (forced)…')
-    await run('cargo', ['build', '--manifest-path', path.join(crate, 'Cargo.toml')], {
-      cwd: crate,
-      env: cargoEnv,
-    })
-  }
 }
 if (!fs.existsSync(outBin)) {
   throw new Error(`missing ${outBin} after cargo build`)
 }
 const st = fs.statSync(outBin)
 console.log(`[dev:native-desktop] binary ${(st.size / 1024).toFixed(0)} KB → ${outBin}`)
-console.log('[dev:native-desktop] launching (sidecar', sidecarPath, ')')
+console.log('[dev:native-desktop] launching pure-Rust shell (built-in BRC-100 + device-peer)')
 
 await run(outBin, [], {
   env: {
     ...process.env,
+    HANDCASH_SKIP_UI_SERVER: '1',
     HANDCASH_SHELL_PAGE_JS: pageJs,
-    HANDCASH_BRIDGE_SIDECAR: sidecarPath,
-    HANDCASH_NODE: process.execPath,
     HANDCASH_APP_VERSION: JSON.parse(
       fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
     ).version,

@@ -2,7 +2,7 @@
 name = "handcash-shell"
 version = "0.1.0"
 edition = "2021"
-description = "Thin Win/Linux WebView host for HandCash Desktop (tao + wry + Node bridge sidecar)"
+description = "Pure-Rust Win/Linux WebView host for HandCash Desktop (tao + wry + built-in BRC-100/UI servers, zero Node)"
 license = "Open BSV License"
 publish = false
 
@@ -19,9 +19,14 @@ keyring = "3"
 # wayland-data-control: Hyprland / wlroots paste without relying on Xwayland.
 # Clipboard must stay alive after set_text or Wayland clears the selection.
 arboard = { version = "3", features = ["wayland-data-control"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 tiny_http = "0.12"
 ctrlc = "3"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+ring = "0.17"
+if-addrs = "0.15"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 tao = "0.30"
