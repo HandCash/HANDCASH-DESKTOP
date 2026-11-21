@@ -144,6 +144,7 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
     // measurement, so the content shifted under a scroll still in flight.
     let estimate = 0
     let width = list.clientWidth
+    let pitchMeasuredWidth = 0
     let reportOffset: ((offset: number, isScrolling: boolean) => void) | null = null
 
     const optionsFor = (scrollMargin: number): VirtualizerOptions<Root, HTMLElement> => ({
@@ -203,6 +204,7 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       style = getComputedStyle(list!)
       cols = columnsOf(style)
       pitch = measureListRowExtent(list!, style, itemExtent, rowSelector, axis)
+      pitchMeasuredWidth = list!.clientWidth
       virtualizer.setOptions(optionsFor(virtualizer.options.scrollMargin))
       virtualizer.measure()
     }
@@ -228,17 +230,25 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       const listRect = list.getBoundingClientRect()
       if ((horizontal ? listRect.width : listRect.height) <= 0) return
       style = getComputedStyle(list)
-      if (
-        columnsOf(style) !== cols ||
-        (cols !== 1 && Math.abs(measureListRowExtent(list, style, pitch, rowSelector, axis) - pitch) > 0.5)
-      ) {
+      const currentCols = columnsOf(style)
+      const currentWidth = list.clientWidth
+      if (currentCols !== cols) {
         relayout()
         return
+      }
+      if (cols !== 1 && currentWidth > 0 && pitchMeasuredWidth !== currentWidth) {
+        const measuredPitch = measureListRowExtent(list, style, pitch, rowSelector, axis)
+        pitchMeasuredWidth = currentWidth
+        if (Math.abs(measuredPitch - pitch) > 0.5) {
+          relayout()
+          return
+        }
       }
       const gap = Number.parseFloat(horizontal ? style.columnGap : style.rowGap)
       const gapPx = Number.isFinite(gap) ? gap : 0
       const pitches: Array<[number, number]> = []
       let head: number | null = null
+      let hasStartPad = false
       let index = shown.start
       for (const node of Array.from(list.children)) {
         if (!(node instanceof HTMLElement)) continue
@@ -247,7 +257,10 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
         const isRow = !pad && (!rowSelector || node.matches(rowSelector))
         if (pad !== 'start' && !isRow) continue
         const rect = node.getBoundingClientRect()
-        if (head === null) head = horizontal ? rect.left : rect.top
+        if (head === null) {
+          head = horizontal ? rect.left : rect.top
+          hasStartPad = pad === 'start'
+        }
         if (!isRow) continue
         if (cols !== 1) break
         const size = horizontal ? rect.width : rect.height
@@ -256,7 +269,15 @@ export function useWindowedRange(options: UseWindowedRangeOptions): ListWindow {
       }
       let moved = false
       if (head !== null) {
-        const margin = scrollOffsetOf(root, axis) + head - edgeOf(root, axis)
+        // Callers applying `padStart` as list padding (paddingTop / paddingInlineStart)
+        // without a `data-aeon-window-pad="start"` child shift the first mounted row by
+        // `padStart`. Subtracting that applied padding recovers row 0's edge so
+        // `scrollMargin` stays constant instead of oscillating into React Error #185.
+        const cssPad = horizontal
+          ? Math.max(Number.parseFloat(style.paddingLeft) || 0, Number.parseFloat(style.paddingInlineStart) || 0)
+          : Math.max(Number.parseFloat(style.paddingTop) || 0, Number.parseFloat(style.paddingBlockStart) || 0)
+        const appliedPad = hasStartPad ? 0 : Math.min(shown.padStart, Math.max(0, cssPad))
+        const margin = scrollOffsetOf(root, axis) + (head - appliedPad) - edgeOf(root, axis)
         if (Math.abs(margin - virtualizer.options.scrollMargin) > 0.5) {
           virtualizer.setOptions(optionsFor(margin))
           moved = true

@@ -112,4 +112,29 @@ describe('a Collect read that outlives its timeout', () => {
       expect(getCachedCollectables().map((c) => c.outpoint).sort()).toEqual([HELD, IMPORTED].sort()),
     )
   })
+
+  it('completes a multi-slice read longer than 20s when each slice keeps making progress', async () => {
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+    const slice = (offset: number, count: number) =>
+      Array.from({ length: count }, (_, i) =>
+        row(`${(offset + i + 1).toString(16).padStart(64, '0')}.0`, `item-${offset + i}`),
+      )
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    // Three slices taking 9s each = 27s total (> 20s stall timeout), yet each slice lands cleanly.
+    answers.push(
+      () => new Promise<Listed>((resolve) => setTimeout(() => resolve({ outputs: slice(0, 10) }), 9_000)),
+      () => new Promise<Listed>((resolve) => setTimeout(() => resolve({ outputs: slice(10, 10) }), 9_000)),
+      () => new Promise<Listed>((resolve) => setTimeout(() => resolve({ outputs: slice(20, 3) }), 9_000)),
+    )
+    const reading = listCollectables(active)
+    await vi.advanceTimersByTimeAsync(9_001)
+    await vi.advanceTimersByTimeAsync(9_001)
+    await vi.advanceTimersByTimeAsync(9_001)
+    const listed = await reading
+    vi.useRealTimers()
+    expect(listed).toHaveLength(23)
+    expect(getCachedCollectables()).toHaveLength(23)
+    const basketReads = active.wallet.listOutputs.mock.calls.filter(([args]) => args.basket === '1sat' && args.includeTags)
+    expect(basketReads).toHaveLength(3)
+  })
 })

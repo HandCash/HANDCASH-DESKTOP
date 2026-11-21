@@ -2698,15 +2698,20 @@ let lateBasketRead: {
 const LATE_READ_REUSE_MS = 120_000
 /** Raw reads whose caller hit {@link LIST_TIMEOUT_MS} while they still ran. */
 const abandonedBasketReads = new WeakSet<Promise<unknown>>()
+/** Progress listeners notified whenever a sliced basket read finishes a slice. */
+const basketReadProgress = new WeakMap<Promise<unknown>, Set<() => void>>()
 
 /**
- * Ceiling on one basket read.
+ * Stall ceiling on one basket read.
  *
  * `listOutputs` has no timeout of its own, and callers share the in-flight
  * promise. A storage host that accepts the socket and never answers therefore
  * wedges every later list *and* every details open for the life of the process.
+ * Healthy multi-slice reads over hundreds of imported items reset this stall
+ * timer on each completed slice up to {@link LIST_HARD_TIMEOUT_MS}.
  */
 const LIST_TIMEOUT_MS = 20_000
+const LIST_HARD_TIMEOUT_MS = 120_000
 
 /** Shared ceiling for basket reads that would otherwise wedge sends and panels. */
 export async function listOutputsWithTimeout(
@@ -2749,6 +2754,10 @@ function listCollectableBasketPage(
   const startedAt = Date.now()
   const startedIdle = walletRegionsIdle()
   const generation = walletRegionsGeneration()
+  const progressListeners = new Set<() => void>()
+  const notifyProgress = () => {
+    for (const listener of progressListeners) listener()
+  }
   const promise = listOutputsInSlices(
     (args) => wallet.listOutputs(args),
     {
@@ -2766,7 +2775,12 @@ function listCollectableBasketPage(
       includeCustomInstructions: false,
       seekPermission: false,
     },
-    offset === 0 ? { onSlice: (rows) => queueSliceArrivals(wallet, rows) } : {},
+    {
+      onSlice: (rows) => {
+        notifyProgress()
+        if (offset === 0) queueSliceArrivals(wallet, rows)
+      },
+    },
   ).then((read) => {
     const ms = Date.now() - startedAt
     if (ms > 250) {
@@ -2781,6 +2795,7 @@ function listCollectableBasketPage(
       totalOutputs: read.totalOutputs ?? offset + read.outputs.length,
     }
   })
+  basketReadProgress.set(promise, progressListeners)
   collectableBasketReadInFlight = { wallet, offset, promise }
   void promise.then(
     () => {
@@ -2800,16 +2815,40 @@ function listCollectableBasketPage(
   return promise
 }
 
-let sliceArrivals: Promise<void> = Promise.resolve()
+type SliceArrivalRow = { outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }
+let pendingSliceArrivals: { wallet: ActiveWallet['wallet']; rows: SliceArrivalRow[] } | null = null
+let drainingSliceArrivals = false
 
-/** Paint a slice's new rows in order, one slice at a time. */
+/**
+ * Paint new rows from basket slices without firing one cache/storage pass per
+ * 10-row slice: slices landing while a paint is already running merge into one
+ * batch so a 400+ item read does not trigger a 150-commit render storm.
+ */
 function queueSliceArrivals(
   wallet: ActiveWallet['wallet'],
-  rows: ReadonlyArray<{ outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }>,
+  rows: ReadonlyArray<SliceArrivalRow>,
 ): void {
-  sliceArrivals = sliceArrivals
-    .then(() => paintSliceArrivals(wallet, rows))
-    .catch((err: unknown) => console.warn('[collectables] slice paint skipped', err))
+  if (rows.length === 0) return
+  if (pendingSliceArrivals && pendingSliceArrivals.wallet === wallet) {
+    pendingSliceArrivals.rows.push(...rows)
+  } else {
+    pendingSliceArrivals = { wallet, rows: [...rows] }
+  }
+  if (drainingSliceArrivals) return
+  drainingSliceArrivals = true
+  void (async () => {
+    try {
+      while (pendingSliceArrivals) {
+        const batch = pendingSliceArrivals
+        pendingSliceArrivals = null
+        await paintSliceArrivals(batch.wallet, batch.rows).catch((err: unknown) =>
+          console.warn('[collectables] slice paint skipped', err),
+        )
+      }
+    } finally {
+      drainingSliceArrivals = false
+    }
+  })()
 }
 
 /**
@@ -3426,16 +3465,29 @@ async function listCollectablesNow(
 
   const raw = listCollectableBasketPage(wallet.wallet, pageOffset)
   let readTimer: ReturnType<typeof setTimeout> | undefined
+  const progressListeners = basketReadProgress.get(raw)
+  let onSliceProgress: (() => void) | undefined
   try {
     const result = await Promise.race([
       raw,
       new Promise<never>((_, reject) => {
-        readTimer = setTimeout(() => {
-          abandonedBasketReads.add(raw)
-          reject(new Error('listOutputs timed out'))
-        }, LIST_TIMEOUT_MS)
+        const hardDeadline = Date.now() + LIST_HARD_TIMEOUT_MS
+        const arm = () => {
+          if (readTimer !== undefined) clearTimeout(readTimer)
+          const remaining = Math.min(LIST_TIMEOUT_MS, Math.max(0, hardDeadline - Date.now()))
+          readTimer = setTimeout(() => {
+            abandonedBasketReads.add(raw)
+            reject(new Error('listOutputs timed out'))
+          }, remaining)
+        }
+        onSliceProgress = arm
+        progressListeners?.add(arm)
+        arm()
       }),
-    ]).finally(() => clearTimeout(readTimer))
+    ]).finally(() => {
+      if (readTimer !== undefined) clearTimeout(readTimer)
+      if (onSliceProgress) progressListeners?.delete(onSliceProgress)
+    })
     const rows: ItemOutput[] = (result.outputs ?? []).map((o) => {
       const lockingScript = normalizeLockingScriptHex(
         (o as { lockingScript?: unknown }).lockingScript

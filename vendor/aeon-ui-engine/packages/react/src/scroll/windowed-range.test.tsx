@@ -243,4 +243,185 @@ describe('useWindowedRange', () => {
     expect(strip.querySelector('li')!.textContent).toBe('Chip 499')
     delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth
   })
+
+  it('windows a padded vertical grid under a scrolled header without looping', async () => {
+    const HEADER = 120
+    const COLS = 3
+    const TOTAL = 600
+    const TOTAL_ROWS = Math.ceil(TOTAL / COLS)
+    let renders = 0
+
+    function PaddedGrid() {
+      renders += 1
+      const ref = useRef<HTMLUListElement>(null)
+      const w = useWindowedRange({
+        total: TOTAL,
+        itemExtent: ROW,
+        columns: COLS,
+        overscan: 2,
+        scrollRef: ref,
+      })
+      const padStyle =
+        w.padStart > 0 || w.padEnd > 0 ? { paddingTop: w.padStart, paddingBottom: w.padEnd } : undefined
+      return (
+        <div style={{ overflowY: 'auto' }} data-testid="scroller">
+          <div style={{ height: HEADER }} />
+          <ul ref={ref} style={padStyle} data-testid="padded-grid">
+            {Array.from({ length: w.end - w.start }, (_, i) => w.start + i).map((n) => (
+              <li key={n} data-item={n} style={{ height: ROW }}>
+                Item {n}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+    }
+
+    const box = (top: number, height: number) =>
+      ({ top, left: 0, width: 300, height, bottom: top + height, right: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === 'scroller') return box(0, VIEWPORT)
+      if (this.dataset.testid === 'padded-grid') {
+        const scroller = this.parentElement!
+        return box(HEADER - scroller.scrollTop, TOTAL_ROWS * ROW)
+      }
+      const list = this.parentElement!
+      const scroller = list.parentElement!
+      const padTop = Number.parseFloat(list.style.paddingTop) || 0
+      const indexInWindow = Array.from(list.children).indexOf(this)
+      const rowInWindow = Math.floor(Math.max(0, indexInWindow) / COLS)
+      return box(HEADER - scroller.scrollTop + padTop + rowInWindow * ROW, ROW)
+    })
+
+    const { getByTestId } = render(<PaddedGrid />)
+    const scroller = getByTestId('scroller')
+    const list = getByTestId('padded-grid')
+
+    for (const scrollTop of [HEADER + ROW * 20, HEADER + ROW * 90, 0]) {
+      const before = renders
+      await act(async () => {
+        scroller.scrollTop = scrollTop
+        scroller.dispatchEvent(new Event('scroll'))
+        for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(renders - before).toBeLessThan(10)
+    }
+
+    await act(async () => {
+      scroller.scrollTop = HEADER + ROW * 40
+      scroller.dispatchEvent(new Event('scroll'))
+      for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+    })
+    const first = list.querySelector<HTMLElement>('li')!
+    expect(Number(first.dataset.item)).toBe(38 * COLS)
+    const padTop = Number.parseFloat(list.style.paddingTop) || 0
+    const padBottom = Number.parseFloat(list.style.paddingBottom) || 0
+    const mountedRowCount = Math.ceil(list.querySelectorAll('li').length / COLS)
+    expect(padTop + mountedRowCount * ROW + padBottom).toBe(TOTAL_ROWS * ROW)
+  })
+
+  it('windows a horizontal strip using paddingInlineStart without looping', async () => {
+    const ITEM = 80
+    const TOTAL = 1_000
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 400 })
+    let renders = 0
+
+    function PaddedStrip() {
+      renders += 1
+      const ref = useRef<HTMLUListElement>(null)
+      const w = useWindowedRange({ total: TOTAL, itemExtent: ITEM, overscan: 1, axis: 'x', scrollRef: ref })
+      const padStyle =
+        w.padStart > 0 || w.padEnd > 0
+          ? { paddingInlineStart: w.padStart, paddingInlineEnd: w.padEnd }
+          : undefined
+      return (
+        <ul ref={ref} style={{ overflowX: 'auto', ...padStyle }} data-testid="padded-strip">
+          {Array.from({ length: w.end - w.start }, (_, i) => w.start + i).map((n) => (
+            <li key={n} data-chip={n} style={{ width: ITEM }}>
+              Chip {n}
+            </li>
+          ))}
+        </ul>
+      )
+    }
+
+    const box = (left: number, width: number) =>
+      ({ top: 0, left, width, height: 100, bottom: 100, right: left + width, x: left, y: 0, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === 'padded-strip') return box(0, 400)
+      const list = this.parentElement!
+      const padStart = Number.parseFloat(list.style.paddingInlineStart) || Number.parseFloat(list.style.paddingLeft) || 0
+      const indexInWindow = Array.from(list.children).indexOf(this)
+      return box(-list.scrollLeft + padStart + Math.max(0, indexInWindow) * ITEM, ITEM)
+    })
+
+    const { getByTestId } = render(<PaddedStrip />)
+    const strip = getByTestId('padded-strip')
+    const before = renders
+    await act(async () => {
+      strip.scrollLeft = ITEM * 500
+      strip.dispatchEvent(new Event('scroll'))
+      for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(renders - before).toBeLessThan(10)
+    expect(strip.querySelector('li')!.textContent).toBe('Chip 499')
+    const padStart = Number.parseFloat(strip.style.paddingInlineStart) || 0
+    const padEnd = Number.parseFloat(strip.style.paddingInlineEnd) || 0
+    expect(padStart + strip.querySelectorAll('li').length * ITEM + padEnd).toBe(TOTAL * ITEM)
+    delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth
+  })
+
+  it('keeps spacer-mode scroll margin exact when the list also has base CSS padding', async () => {
+    const HEADER = 100
+    const BASE_PAD = 16
+    function PaddedSpacerList() {
+      const ref = useRef<HTMLUListElement>(null)
+      const w = useWindowedRange({ total: 1_000, itemExtent: ROW, overscan: 2, scrollRef: ref })
+      return (
+        <div style={{ overflowY: 'auto' }} data-testid="spacer-scroller">
+          <div style={{ height: HEADER }} />
+          <ul ref={ref} style={{ paddingTop: BASE_PAD }} data-testid="spacer-list">
+            {w.padStart > 0 ? <li {...listWindowPadAttrs('start')} style={{ height: w.padStart }} /> : null}
+            {Array.from({ length: w.end - w.start }, (_, i) => w.start + i).map((n) => (
+              <li key={n} data-row={n} style={{ height: ROW }}>
+                Row {n}
+              </li>
+            ))}
+            {w.padEnd > 0 ? <li {...listWindowPadAttrs('end')} style={{ height: w.padEnd }} /> : null}
+          </ul>
+        </div>
+      )
+    }
+
+    const box = (top: number, height: number) =>
+      ({ top, left: 0, width: 300, height, bottom: top + height, right: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.dataset.testid === 'spacer-scroller') return box(0, VIEWPORT)
+      if (this.dataset.testid === 'spacer-list') {
+        const scroller = this.parentElement!
+        return box(HEADER - scroller.scrollTop, BASE_PAD + 1_000 * ROW)
+      }
+      const list = this.parentElement!
+      const scroller = list.parentElement!
+      let top = HEADER - scroller.scrollTop + BASE_PAD
+      for (const sibling of Array.from(list.children)) {
+        if (sibling === this) break
+        top += Number.parseFloat((sibling as HTMLElement).style.height) || 0
+      }
+      return box(top, Number.parseFloat(this.style.height) || 0)
+    })
+
+    const { getByTestId } = render(<PaddedSpacerList />)
+    const scroller = getByTestId('spacer-scroller')
+    const list = getByTestId('spacer-list')
+    const past = HEADER + BASE_PAD + ROW * 200
+    await act(async () => {
+      scroller.scrollTop = past
+      scroller.dispatchEvent(new Event('scroll'))
+      for (let tick = 0; tick < 3; tick++) await new Promise((r) => setTimeout(r, 0))
+    })
+    const first = list.querySelector<HTMLElement>('[data-row]')!
+    expect(Number(first.dataset.row)).toBe(198)
+    expect(first.getBoundingClientRect().top + past).toBe(HEADER + BASE_PAD + 198 * ROW)
+  })
 })
