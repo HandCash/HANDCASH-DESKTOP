@@ -171,12 +171,17 @@ export async function walkGenesisLineage(
   const hydrate = async (txid: string): Promise<void> => {
     if (fetched.has(txid)) return
     fetched.add(txid)
-    const piece = (await args.getBeef(txid)).toBinary()
-    fetchedBytes += piece.length
-    if (maxBeefBytes != null && fetchedBytes > maxBeefBytes) {
-      throw new Error('genesis-lineage-over-budget')
+    const beef = await args.getBeef(txid)
+    if (maxBeefBytes != null) {
+      const piece = beef.toBinary()
+      fetchedBytes += piece.length
+      if (fetchedBytes > maxBeefBytes) {
+        throw new Error('genesis-lineage-over-budget')
+      }
+      merged.mergeBeef(piece)
+      return
     }
-    merged.mergeBeef(piece)
+    merged.mergeBeef(beef)
   }
 
   const outputAt = (point: string) => {

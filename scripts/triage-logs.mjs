@@ -180,35 +180,45 @@ async function fetchLogs(bucket, all) {
 
 /* ---------------------------------------------------------- local sources */
 
-const ELECTRON_APP_ID = 'handcash-brc100'
+const NATIVE_APP_ID = 'HandCashDesktopNative'
+const LEGACY_ELECTRON_APP_ID = 'handcash-brc100'
 const RING_CURRENT_KEY = 'handcash.applog.current.v1'
 const RING_PREVIOUS_KEY = 'handcash.applog.previous.v1'
 
-/** Electron `userData` and `logs` folders for the installed Desktop app. */
+/** Native Desktop (`HandCashDesktopNative`) userData/logs, falling back to legacy Electron paths. */
 function desktopLocalPaths() {
   const home = os.homedir()
-  if (process.platform === 'darwin') {
-    return {
-      prefs: path.join(home, 'Library/Application Support', ELECTRON_APP_ID, 'durable-prefs.json'),
-      mainLog: path.join(home, 'Library/Logs', ELECTRON_APP_ID, 'main.log'),
-      mainOldLog: path.join(home, 'Library/Logs', ELECTRON_APP_ID, 'main.old.log'),
+  const make = (appId, darwinLogInLibrary) => {
+    if (process.platform === 'darwin') {
+      const base = path.join(home, 'Library/Application Support', appId)
+      const logDir = darwinLogInLibrary ? path.join(home, 'Library/Logs', appId) : path.join(base, 'logs')
+      return {
+        prefs: path.join(base, 'durable-prefs.json'),
+        mainLog: path.join(logDir, 'main.log'),
+        mainOldLog: path.join(logDir, 'main.old.log'),
+      }
     }
-  }
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA ?? path.join(home, 'AppData/Roaming')
-    const base = path.join(appData, ELECTRON_APP_ID)
+    if (process.platform === 'win32') {
+      const appData = process.env.APPDATA ?? path.join(home, 'AppData/Roaming')
+      const base = path.join(appData, appId)
+      return {
+        prefs: path.join(base, 'durable-prefs.json'),
+        mainLog: path.join(base, 'logs/main.log'),
+        mainOldLog: path.join(base, 'logs/main.old.log'),
+      }
+    }
+    const base = path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), appId)
     return {
       prefs: path.join(base, 'durable-prefs.json'),
       mainLog: path.join(base, 'logs/main.log'),
       mainOldLog: path.join(base, 'logs/main.old.log'),
     }
   }
-  const base = path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), ELECTRON_APP_ID)
-  return {
-    prefs: path.join(base, 'durable-prefs.json'),
-    mainLog: path.join(base, 'logs/main.log'),
-    mainOldLog: path.join(base, 'logs/main.old.log'),
-  }
+  const nativePaths = make(NATIVE_APP_ID, false)
+  if (fs.existsSync(nativePaths.prefs) || fs.existsSync(nativePaths.mainLog)) return nativePaths
+  const legacyPaths = make(LEGACY_ELECTRON_APP_ID, true)
+  if (fs.existsSync(legacyPaths.prefs) || fs.existsSync(legacyPaths.mainLog)) return legacyPaths
+  return nativePaths
 }
 
 /**

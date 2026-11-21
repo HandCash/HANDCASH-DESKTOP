@@ -31,8 +31,8 @@ invent a second partition.
 - **Local BRC-100 bridge + device-peer** — HTTP on `127.0.0.1:3321` / HTTPS `:2121`
   (plus `[::1]`) and LAN `:3340` run natively inside the **Rust binary** on
   Windows/Linux (`native-desktop/src/brc100_server.rs`, zero Node runtime) and
-  in a **Node sidecar** (`electron/bridgeSidecar.ts` → `dist-sidecar/bridgeSidecar.cjs`)
-  on macOS (`native-macos/`). The folder name `electron/` is historical (no Electron runtime).
+  in the Rust `handcash-sidecar` on macOS (`native-macos/` launches it). The Electron
+  shell and Node sidecars have been removed.
 
 ## Size goal
 
@@ -40,7 +40,7 @@ invent a second partition.
 | --- | --- |
 | Old Electron ship (Chromium + Node + app) | ~150 MB |
 | Mobile (OS WebView + UI) | ~15 MB |
-| **This shell** (native binary + UI assets + bundled Node for sidecar; WebView is the OS) | aim **≪** old Electron; debug `HandCashShell` binary is ~220 KB |
+| **This shell** (native binary + UI assets; WebView is the OS; no Node) | aim **≪** old Electron; debug `HandCashShell` binary is ~220 KB |
 
 ## What Mac production implements vs stubs
 
@@ -101,7 +101,6 @@ See `native-desktop/README.md`, `native-windows/`, `native-linux/`.
 ## Run (dev)
 
 ```bash
-npm run build:sidecar   # once (or after electron/ sidecar changes)
 npm run dev             # darwin/win32/linux: Vite + native shell
 # or split:
 npm run dev:vite              # terminal A

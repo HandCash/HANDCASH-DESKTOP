@@ -224,6 +224,13 @@
     },
     storageGetSync: storeGet,
     storageSetSync: storeSet,
+    storageSetAsync: function (key, value, opts) {
+      return call('storageSetAsync', {
+        key: String(key),
+        value: String(value),
+        allow: !!(opts && opts.allowVaultIdentityReplace)
+      });
+    },
     safeStorageAvailable: function () {
       return call('safeStorageAvailable');
     },

@@ -2,7 +2,6 @@
   "name": "handcash-brc100",
   "version": "1.3.718",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
-  "main": "dist-electron/main.js",
   "type": "module",
   "author": "HandCash BRC100",
   "license": "Open BSV License",
@@ -19,28 +18,16 @@
     "dev:vite": "node scripts/dev-vite.mjs",
     "dev:native": "node scripts/dev-native.mjs",
     "dev:native-desktop": "node scripts/dev-native-desktop.mjs",
-    "dev:electron": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron-only\"",
-    "dev:electron-only": "wait-on tcp:5173 && npm run build:electron && env -u ELECTRON_RUN_AS_NODE electron .",
     "build": "npm run build:renderer",
     "build:wallet-engine": "node scripts/build-wallet-engine.mjs",
     "build:renderer": "npm run build:wallet-engine && tsc -p tsconfig.json --noEmit && vite build",
-    "build:sidecar": "node scripts/build-sidecar.mjs",
-    "build:electron": "tsc -p tsconfig.electron.json && npm run build:preload && node scripts/copy-electron-assets.mjs",
-    "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
     "package": "node scripts/package-native-by-os.mjs",
     "package:linux": "node scripts/package-native-linux.mjs",
     "package:win": "node scripts/package-native-win.mjs",
     "package:mac": "node scripts/package-native-mac.mjs",
-    "package:electron": "npm run build:renderer && npm run build:electron && electron-builder",
-    "package:electron:linux": "npm run build:renderer && npm run build:electron && electron-builder --linux AppImage",
-    "package:electron:linux:all": "npm run build:renderer && npm run build:electron && electron-builder --linux AppImage deb",
-    "package:electron:mac": "npm run build:renderer && npm run build:electron && electron-builder --mac",
-    "package:electron:win": "npm run build:renderer && npm run build:electron && electron-builder --win",
     "preview": "vite preview",
     "test": "vitest run",
     "test:ci": "node scripts/test-ci.mjs",
-    "test:e2e": "playwright test",
-    "test:e2e:update": "playwright test --update-snapshots",
     "test:watch": "vitest",
     "test:live-tx": "HANDCASH_LIVE_TX=1 vitest run --config vitest.live.config.ts",
     "test:live-tx:print": "HANDCASH_LIVE_TX=print vitest run --config vitest.live.config.ts",
@@ -58,8 +45,6 @@
     "mobile:release": "node scripts/release-mobile.mjs --mobile-dir ../HANDCASH-MOBILE",
     "version:sync-market": "node scripts/bump-version.mjs --sync-market",
     "version:check": "node scripts/require-version-bump.mjs",
-    "icons:tray": "node scripts/build-tray-icons.mjs",
-    "icons:tray:check": "node scripts/build-tray-icons.mjs --check",
     "ltc:checkpoint": "node scripts/ltc-checkpoint.mjs",
     "ltc:probe": "node scripts/ltc-probe.mjs",
     "coin:checkpoint": "node scripts/coin-checkpoint.mjs",
@@ -80,16 +65,11 @@
     "@zxing/library": "^0.21.3",
     "aeon-ui-engine": "file:vendor/aeon-ui-engine",
     "buffer": "^6.0.3",
-    "cors": "^2.8.5",
-    "electron-log": "^5.4.3",
-    "electron-updater": "^6.7.3",
     "events": "^3.3.0",
     "eventsource": "^3.0.7",
-    "express": "^4.21.2",
     "hash-wasm": "^4.12.0",
     "idb": "^8.0.3",
     "mermaid": "^11.16.0",
-    "node-forge": "^1.3.1",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -98,121 +78,16 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
     "@types/node": "^22.15.21",
-    "@types/node-forge": "^1.3.11",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^9.1.2",
-    "electron": "^43.7.7",
-    "electron-builder": "^26.0.12",
     "esbuild": "^0.28.2",
     "fake-indexeddb": "^6.2.5",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vitest": "^4.1.11",
-    "wait-on": "^8.0.3"
-  },
-  "build": {
-    "appId": "io.handcash.brc100",
-    "productName": "HandCash",
-    "copyright": "Copyright © HandCash",
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "afterPack": "scripts/afterPack.cjs",
-    "files": [
-      "dist/**/*",
-      "dist-electron/**/*",
-      "package.json"
-    ],
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "HandCash",
-        "repo": "HANDCASH-DESKTOP",
-        "releaseType": "prerelease"
-      }
-    ],
-    "mac": {
-      "icon": "build/icon.icns",
-      "category": "public.app-category.finance",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-${version}-${arch}-mac.${ext}",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "extendInfo": {
-        "NSCameraUsageDescription": "HandCash uses the camera to scan payment and sign-in QR codes, and for video calls with your friends.",
-        "NSMicrophoneUsageDescription": "HandCash uses the microphone for calls with your friends."
-      },
-      "notarize": true
-    },
-    "dmg": {
-      "writeUpdateInfo": true
-    },
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "${productName}-Setup-${version}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "perMachine": false,
-      "createDesktopShortcut": "always",
-      "createStartMenuShortcut": true,
-      "shortcutName": "HandCash",
-      "installerIcon": "build/icon.ico",
-      "uninstallerIcon": "build/icon.ico"
-    },
-    "linux": {
-      "icon": "build/icon.png",
-      "target": [
-        "AppImage",
-        "deb"
-      ],
-      "category": "Finance",
-      "maintainer": "HandCash BRC100 <devs@handcash.io>",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "synopsis": "Official HandCash Desktop wallet",
-      "description": "Official HandCash Desktop — self-custodial BRC-100 wallet with local app bridge.",
-      "executableName": "HandCash"
-    },
-    "forceCodeSigning": true,
-    "beforePack": "scripts/check-release-signing.cjs"
+    "vitest": "^4.1.11"
   }
 }

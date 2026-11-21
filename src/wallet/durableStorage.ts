@@ -59,6 +59,37 @@ const REBUILDABLE_CACHE_KEYS = Object.values(storageRegistry)
   )
   .map((descriptor) => descriptor.key)
 
+const ASYNC_CACHE_PREFIXES = [
+  ...REBUILDABLE_CACHE_KEYS,
+  'handcash.collectables.list.',
+  'handcash.applog.',
+]
+const ASYNC_FLUSH_DEBOUNCE_MS = 250
+const pendingAsyncWrites = new Map<string, string>()
+let asyncFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+function canWriteAsyncToShell(key: string, opts?: DurableSetOptions): boolean {
+  if (opts?.allowVaultIdentityReplace) return false
+  return ASYNC_CACHE_PREFIXES.some((prefix) => key === prefix || key.startsWith(prefix))
+}
+
+function flushPendingAsyncWrites(): void {
+  asyncFlushTimer = null
+  const setAsync = typeof window === 'undefined' ? undefined : window.handcash?.storageSetAsync
+  if (!setAsync || pendingAsyncWrites.size === 0) return
+  const entries = Array.from(pendingAsyncWrites.entries())
+  pendingAsyncWrites.clear()
+  for (const [key, value] of entries) {
+    void setAsync(key, value).catch(() => {})
+  }
+}
+
+function scheduleAsyncShellWrite(key: string, value: string): void {
+  pendingAsyncWrites.set(key, value)
+  if (asyncFlushTimer !== null) return
+  asyncFlushTimer = setTimeout(flushPendingAsyncWrites, ASYNC_FLUSH_DEBOUNCE_MS)
+}
+
 /**
  * Which process holds the durable copy.
  *
@@ -391,6 +422,13 @@ function removeMigratedLegacyKey(key: string, bytes: number): void {
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
   const writeStartedAt = storeNow()
   if (durableStoreOwner() === 'shell') {
+    if (canWriteAsyncToShell(key, opts) && typeof window.handcash?.storageSetAsync === 'function') {
+      if (cache.get(key) === value) return true
+      cache.set(key, value)
+      mirrorLocally(key, value)
+      scheduleAsyncShellWrite(key, value)
+      return true
+    }
     try {
       const ok = window.handcash?.storageSetSync?.(key, value, opts)
       noteStoreCost('write', key, writeStartedAt, value.length)
@@ -530,6 +568,7 @@ function reportStoragePressure(key: string, wanted: number): void {
  * next read migrates that stale value straight back.
  */
 export function durableRemoveItem(key: string): void {
+  pendingAsyncWrites.delete(key)
   try {
     localStorage.removeItem(key)
   } catch {

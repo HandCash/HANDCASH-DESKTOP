@@ -12,8 +12,8 @@
  * - amounts (sats, BSV, fiat, labelled balances and fees) are removed. Zero and
  *   one stay: a placeholder row and a one-sat item carry no amount.
  *
- * `electron/logPrivacy.ts` is the same scrubber for the Desktop main-process
- * log (Electron cannot import `src/`); `logPrivacy.test.ts` holds them equal.
+ * `native-desktop/src/log_privacy.rs` is the Rust host-log twin wired into
+ * `native-desktop/src/host_log.rs`, matching the same rules and corpus.
  */
 import { Hash } from '@bsv/sdk'
 

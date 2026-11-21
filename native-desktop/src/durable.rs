@@ -106,6 +106,14 @@ impl DurableStore {
                     return false;
                 }
             }
+        } else if !key.starts_with(VAULT_PREFIX) {
+            if let Ok(cache) = self.cache.lock() {
+                if let Some(Some(existing)) = cache.get(key) {
+                    if existing == value {
+                        return true;
+                    }
+                }
+            }
         }
         let to_store = self.seal_if_vault(key, value);
         let ok = self.put(key, &to_store, Some(value));
@@ -207,9 +215,12 @@ impl DurableStore {
             let _ = fs::remove_file(&tmp);
             return false;
         }
-        match fs::read_to_string(&path) {
-            Ok(got) if got == stored => {}
-            _ => return false,
+        // Vault keys get a full read-back check; non-vault caches already have atomic rename.
+        if key.starts_with(VAULT_PREFIX) {
+            match fs::read_to_string(&path) {
+                Ok(got) if got == stored => {}
+                _ => return false,
+            }
         }
         if key.len() > MAX_PLAIN_NAME || !is_plain_name(key) {
             let side = self.sidecar_path(key);

@@ -198,7 +198,7 @@ function units(section) {
 
 const RFC2119 = ['MUST NOT', 'MUST', 'SHOULD NOT', 'SHOULD', 'MAY', 'REQUIRED', 'OPTIONAL']
 const HISTORY_RE = /\b(earlier draft|withdrawn|previously|formerly|no longer|used to|was cancelled|replaces? the)\b/gi
-const IMPL_RE = /`?(?:src|electron|packages)\/[\w./-]+`?|\bHandCash (?:Desktop|uses|wallet)\b/g
+const IMPL_RE = /`?(?:src|native-desktop|native-macos|packages)\/[\w./-]+`?|\bHandCash (?:Desktop|uses|wallet)\b/g
 
 function resolveLink(abs, target) {
   if (/^(https?:|mailto:|#)/.test(target)) return true

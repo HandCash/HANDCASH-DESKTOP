@@ -9,7 +9,7 @@ Devices POST session logs to BRC-CLOUD. **Do not ask the user to paste logs** wh
 the upload URL / bucket is known — fetch `/latest` (and the bucket index) first.
 
 Logs carry no identity relationships or transaction details
-(`src/wallet/logPrivacy.ts`, twin `electron/logPrivacy.ts`): txids, keys and
+(`src/wallet/logPrivacy.ts`, Rust host twin `native-desktop/src/log_privacy.rs`): txids, keys and
 device ids are per-run pseudonyms (same length, prefixes kept), peers and
 handles are `id-…` / `$h-…` / `p-…@paymail` tags, addresses / blobs are
 `[address]` / `[blob]` / `[hex]`, amounts are `[amt]` (0 and 1 sat stay). A

@@ -1,5 +1,6 @@
 import { sleep } from './timing'
 import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordinator'
+import { yieldToUi } from './yieldToUi'
 
 /**
  * The toolbox storage lock is FIFO and a call already inside it cannot be
@@ -12,6 +13,9 @@ import { shouldYieldChainIngestToSpend, spendNeedsStorage } from './walletCoordi
 export const BASKET_SUB_READ_ROWS = 10
 const SPEND_WAIT_POLL_MS = 200
 const SPEND_WAIT_MAX_MS = 90_000
+const SLOW_SLICE_PACE_THRESHOLD_MS = 40
+const MIN_PACE_MS = 16
+const MAX_PACE_MS = 120
 
 type ListArgs = { limit?: number; offset?: number }
 type ListResult<O> = { outputs?: O[]; totalOutputs?: number; lastOutputId?: number }
@@ -57,15 +61,29 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
   let slices = 0
   let yieldedMs = 0
   let resumeAfter: number | undefined
+  let lastSliceMs = 0
+  const interactiveUi = typeof window !== 'undefined'
   while (outputs.length < limit) {
     // A macrotask, not a microtask: the tap that starts a send is a task, and
-    // it has to run before this loop takes the lock again.
-    await sleep(0)
+    // it has to run before this loop takes the lock again. In interactive UI
+    // sessions, also pace background slices so heavy IndexedDB reads cannot
+    // starve input, compositing, or GC.
+    if (!opts.inSpend && interactiveUi && slices > 0) {
+      await yieldToUi()
+      if (lastSliceMs >= SLOW_SLICE_PACE_THRESHOLD_MS) {
+        await sleep(Math.min(MAX_PACE_MS, Math.max(MIN_PACE_MS, Math.round(lastSliceMs / 4))))
+      } else {
+        await sleep(0)
+      }
+    } else {
+      await sleep(0)
+    }
     if (!opts.inSpend && spendWaiting()) yieldedMs += await letSpendPass()
     const want = Math.min(subRows, limit - outputs.length)
     const at = skip + outputs.length
     // Only the last slice pays for the whole-basket total count.
     const lastSlice = outputs.length + want >= limit
+    const sliceStartedAt = Date.now()
     const page = await listOutputs({
       ...args,
       limit: want,
@@ -75,6 +93,7 @@ export async function listOutputsInSlices<A extends ListArgs, O>(
       // the scan after the previous slice's last row instead.
       ...(resumeAfter != null ? { resumeAfterOutputId: resumeAfter } : {}),
     })
+    lastSliceMs = Date.now() - sliceStartedAt
     slices++
     const rows = page.outputs ?? []
     resumeAfter = rows.length >= want ? page.lastOutputId : undefined

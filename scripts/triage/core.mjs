@@ -23,13 +23,15 @@ function ringEvents(rows) {
   }))
 }
 
-/** electron-log main process lines: `[2026-08-29 10:55:55.497] [info]  message`. */
+/** Native Rust host (`[2026-11-21T08:55:55.497Z] [info] [brc100] msg`) or legacy electron-log lines. */
+const RUST_HOST_LINE = /^\[(\d{4}-\d\d-\d\dT[\d:.]+Z)\] \[(\w+)\] \[[^\]]+\]\s+(.*)$/
 const ELECTRON_LINE = /^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\] \[(\w+)\]\s+(.*)$/
 
 function parseElectronLog(text) {
   const events = []
   for (const raw of text.split('\n')) {
-    const m = ELECTRON_LINE.exec(raw.trim())
+    const trimmed = raw.trim()
+    const m = RUST_HOST_LINE.exec(trimmed) ?? ELECTRON_LINE.exec(trimmed)
     if (m) events.push({ at: Date.parse(m[1]), level: m[2], text: m[3] })
   }
   return events

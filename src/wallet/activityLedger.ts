@@ -670,42 +670,53 @@ async function readItemOutputs(
   const outputs: LedgerOutput[] = []
   const projection = activityOutputProjection()
   try {
-  for (const basket of itemBaskets) {
-    let offset = 0
-    let afterOutputId: number | undefined
-    for (;;) {
-      await yieldToWaitingSends(runtime)
-      const page = asRows<LedgerOutput>(
-        await withStorageLockLabel('activityLedger(items)', () => storage.runAsStorageProvider(async (raw) => {
-          const sp = raw as unknown as LedgerReader
-          const probe = sp.toDbTrx?.(['outputs'], 'readonly')
-          const database = probe?.db?.name
-          if (probe) await probe.done
-          if (database && basket.basketId != null) {
-            const projected = await projection.read({
-              database, userId, basketId: basket.basketId,
-              after: afterOutputId, limit: OUTPUT_PAGE,
-            })
-            assertCurrent(runtime)
-            if (projected) return projected
-          }
-          return sp.findOutputs({
-            partial: { userId, basketId: basket.basketId },
-            noScript: true,
-            paged: { limit: OUTPUT_PAGE, offset },
-            ...(afterOutputId != null ? { afterOutputId } : {}),
+    // Resolve the IndexedDB database name once so read-only worker pages do not
+    // hold the exclusive storage lock across every 10-row slice.
+    const database = (await withStorageLockLabel('activityLedger(db)', () =>
+      storage.runAsStorageProvider(async (raw) => {
+        const sp = raw as unknown as LedgerReader
+        const probe = sp.toDbTrx?.(['outputs'], 'readonly')
+        const name = probe?.db?.name
+        if (probe) await probe.done
+        return name
+      }),
+    )) as string | undefined
+    for (const basket of itemBaskets) {
+      let offset = 0
+      let afterOutputId: number | undefined
+      for (;;) {
+        await yieldToWaitingSends(runtime)
+        let page: LedgerOutput[] | null = null
+        if (database && basket.basketId != null) {
+          const projected = await projection.read({
+            database, userId, basketId: basket.basketId,
+            after: afterOutputId, limit: OUTPUT_PAGE,
           })
-        })),
-      )
-      outputs.push(...page)
-      if (page.length < OUTPUT_PAGE) break
-      offset += page.length
-      const lastId = Number(page[page.length - 1]?.outputId)
-      afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
-      await yieldToUi()
+          assertCurrent(runtime)
+          if (projected) page = asRows<LedgerOutput>(projected)
+        }
+        if (page == null) {
+          page = asRows<LedgerOutput>(
+            await withStorageLockLabel('activityLedger(items)', () => storage.runAsStorageProvider(async (raw) => {
+              const sp = raw as unknown as LedgerReader
+              return sp.findOutputs({
+                partial: { userId, basketId: basket.basketId },
+                noScript: true,
+                paged: { limit: OUTPUT_PAGE, offset },
+                ...(afterOutputId != null ? { afterOutputId } : {}),
+              })
+            })),
+          )
+        }
+        outputs.push(...page)
+        if (page.length < OUTPUT_PAGE) break
+        offset += page.length
+        const lastId = Number(page[page.length - 1]?.outputId)
+        afterOutputId = Number.isSafeInteger(lastId) && lastId > 0 ? lastId : undefined
+        await yieldToUi()
+      }
     }
-  }
-  return outputs
+    return outputs
   } finally {
     projection.close()
   }

@@ -1,6 +1,7 @@
 //! Rotating host log file (`<userData>/logs/main.log`) backing `getLogInfo`,
 //! `readLogs`, `openLogs`, and `uploadLogs` on `window.handcash`.
 
+use crate::log_privacy::LogScrubber;
 use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -20,6 +21,7 @@ pub struct HostLog {
     file: PathBuf,
     old_file: PathBuf,
     lock: Mutex<()>,
+    scrubber: LogScrubber,
 }
 
 impl HostLog {
@@ -39,13 +41,21 @@ impl HostLog {
             file,
             old_file,
             lock: Mutex::new(()),
+            scrubber: LogScrubber::new_random(),
         });
         log.append("info", "shell", "handcash-shell log initialized");
         log
     }
 
     pub fn append(&self, level: &str, source: &str, message: &str) {
-        let line = format!("[{}] [{}] [{}] {}\n", format_utc_now(), level, source, message);
+        let scrubbed = self.scrubber.scrub(message);
+        let line = format!(
+            "[{}] [{}] [{}] {}\n",
+            format_utc_now(),
+            level,
+            source,
+            scrubbed
+        );
         eprint!("{line}");
         let Ok(_guard) = self.lock.lock() else {
             return;
@@ -187,7 +197,7 @@ mod tests {
             .as_nanos();
         let dir = std::env::temp_dir().join(format!("hc-host-log-trunc-{stamp}"));
         let log = HostLog::open(dir.clone());
-        let big = "a".repeat(6_000);
+        let big = "hello ".repeat(1_000);
         log.append("info", "test", &big);
         // Requests below 4096 clamp to 4096.
         let res = log.read_logs(Some(100));
@@ -202,5 +212,32 @@ mod tests {
         let res = HostLog::upload_logs_denied();
         assert_eq!(res["ok"], Value::Bool(false));
         assert_eq!(res["error"], json!("Use Send logs in Settings"));
+    }
+
+    #[test]
+    fn append_scrubs_sensitive_values_before_writing() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("hc-host-log-privacy-{stamp}"));
+        let log = HostLog::open(dir.clone());
+        let txid = "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b";
+        log.append(
+            "info",
+            "brc100",
+            &format!("paying $alice 12500 sat txid={txid} addr 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"),
+        );
+        let text = log.read_logs(Some(8_192))["text"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(!text.contains("alice"));
+        assert!(!text.contains("12500"));
+        assert!(!text.contains(&txid[..8]));
+        assert!(!text.contains("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"));
+        assert!(text.contains("[amt] sat"));
+        assert!(text.contains("[address]"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

@@ -13,7 +13,7 @@ Desktop and Mobile must **never** drift into two wallet UIs. The clever cut is n
             ▼                                           ▼
 ┌───────────────────────┐                 ┌───────────────────────┐
 │ Desktop shell         │                 │ Mobile shell          │
-│ electron/ + main.tsx  │                 │ Capacitor + bridge    │
+│ native-* + main.tsx   │                 │ Capacitor + bridge    │
 │ BRC-100, auto-update  │                 │ APK, native plugins   │
 └───────────────────────┘                 └───────────────────────┘
 ```

@@ -162,5 +162,7 @@ verify signatures and smoke-test startup/shutdown/port-conflict behaviour.
 Keep external-agent docs, photos, live tests, rebuilt sidecars and pre-ship-711
 stash untouched until their current contents and dependencies are rechecked
 and exact deletion is approved. No branch deletion is needed for this slice.
-Existing electron/atomicFile imports in live test helpers and electron/logPrivacy
-test parity mean deleting electron/ wholesale would currently break callers.
+The Electron shell (`electron/`, `dist-sidecar/`, `tsconfig.electron.json`,
+electron-builder config and Electron-only scripts) is deleted on the `rust` branch.
+The Rust host log (`native-desktop/src/host_log.rs`) now scrubs every appended
+line through `native-desktop/src/log_privacy.rs` with parity to `src/wallet/logPrivacy.ts`.

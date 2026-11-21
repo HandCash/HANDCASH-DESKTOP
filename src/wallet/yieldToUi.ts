@@ -41,6 +41,15 @@ export function yieldToUi(): Promise<void> {
       markResumed()
       resolve()
     }
+    // On visible WebKit (Linux WebKitGTK / macOS WKWebView, which lack
+    // `scheduler.yield`), `MessageChannel` can starve input, compositing, and
+    // timer tasks under heavy loops. Yield through `setTimeout(0)` while
+    // visible; keep `MessageChannel` when hidden (not timer-throttled) or in
+    // headless Node tests.
+    if (!hidden && typeof window !== 'undefined') {
+      setTimeout(resume, 0)
+      return
+    }
     if (typeof MessageChannel === 'function') {
       const { port1, port2 } = new MessageChannel()
       port1.onmessage = resume

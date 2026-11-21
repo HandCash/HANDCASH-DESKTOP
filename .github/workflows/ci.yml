@@ -22,7 +22,6 @@ jobs:
       - name: Typecheck
         run: |
           npx tsc -p tsconfig.json --noEmit
-          npx tsc -p tsconfig.electron.json --noEmit
 
       - name: Critical payment regressions
         run: >-

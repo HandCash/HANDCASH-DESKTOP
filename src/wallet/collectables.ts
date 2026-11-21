@@ -2141,6 +2141,10 @@ async function resolveUnknownOrigins(): Promise<void> {
  * is not counted: at eight per ten minutes a thousand imports took a day.
  */
 const GENESIS_WALK_BUDGET = 8
+const BACKGROUND_GENESIS_WALK_BUDGET = 2
+const BACKGROUND_GENESIS_INITIAL_DELAY_MS = 20_000
+const BACKGROUND_GENESIS_GAP_MS = 5_000
+const BACKGROUND_GENESIS_MAX_PER_PASS = 4
 /**
  * The budget refills instead of being spent once per session.
  *
@@ -2239,7 +2243,13 @@ async function proveHeldGenesis(
 
   provingGenesis = true
   const queued = new Set(candidates)
+  const interactiveUi = typeof window !== 'undefined'
+  let walksInPass = 0
   try {
+    if (interactiveUi && !preferred) {
+      await new Promise<void>((r) => setTimeout(r, BACKGROUND_GENESIS_INITIAL_DELAY_MS))
+      if (epoch !== collectablesAccountEpoch) return
+    }
     for (const outpoint of candidates) {
       if (isItemSent(outpoint)) {
         queued.delete(outpoint)
@@ -2248,6 +2258,10 @@ async function proveHeldGenesis(
       }
       if (outpointLooksLikeFungible(outpoint)) continue
       if (genesisWalkBudgetSpent()) break
+      if (interactiveUi && outpoint !== preferred) {
+        if (genesisWalkTimes.length >= BACKGROUND_GENESIS_WALK_BUDGET) break
+        if (walksInPass >= BACKGROUND_GENESIS_MAX_PER_PASS) break
+      }
       if (getWalletCoordinatorSnapshot().spend === 'active') break
       if (shouldYieldChainIngestToSpend()) break
       // A basket read newer than the one that spawned us is somebody looking at
@@ -2257,7 +2271,14 @@ async function proveHeldGenesis(
       if (outpoint !== preferred && listInFlight && listInFlight !== ownRead) {
         break
       }
-      if (outpoint !== preferred) await whenInputQuiet()
+      if (outpoint !== preferred) {
+        if (interactiveUi && walksInPass > 0) {
+          await new Promise<void>((r) => setTimeout(r, BACKGROUND_GENESIS_GAP_MS))
+          if (epoch !== collectablesAccountEpoch) return
+        }
+        await whenInputQuiet()
+      }
+      walksInPass += 1
       if (epoch !== collectablesAccountEpoch) return
       const alreadyProven = getProvenVerdict(outpoint)?.tier === 'brc150'
       if (!alreadyProven) {
@@ -2768,6 +2789,7 @@ function listCollectableBasketPage(
     },
     offset === 0 ? { onSlice: (rows) => queueSliceArrivals(wallet, rows) } : {},
   ).then((read) => {
+    clearPendingSliceArrivals()
     const ms = Date.now() - startedAt
     if (ms > 250) {
       console.info(
@@ -2801,15 +2823,51 @@ function listCollectableBasketPage(
 }
 
 let sliceArrivals: Promise<void> = Promise.resolve()
+type SliceRow = { outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }
+const SLICE_PAINT_COALESCE_MS = 1_000
+let pendingSliceWallet: ActiveWallet['wallet'] | null = null
+let pendingSliceRows: SliceRow[] = []
+let slicePaintTimer: ReturnType<typeof setTimeout> | null = null
 
-/** Paint a slice's new rows in order, one slice at a time. */
-function queueSliceArrivals(
-  wallet: ActiveWallet['wallet'],
-  rows: ReadonlyArray<{ outpoint: string; satoshis?: number; tags?: string[]; lockingScript?: unknown }>,
-): void {
+function clearPendingSliceArrivals(): void {
+  if (slicePaintTimer !== null) {
+    clearTimeout(slicePaintTimer)
+    slicePaintTimer = null
+  }
+  pendingSliceWallet = null
+  pendingSliceRows = []
+}
+
+function flushSliceArrivals(): void {
+  slicePaintTimer = null
+  const wallet = pendingSliceWallet
+  const rows = pendingSliceRows
+  pendingSliceWallet = null
+  pendingSliceRows = []
+  if (!wallet || rows.length === 0) return
   sliceArrivals = sliceArrivals
     .then(() => paintSliceArrivals(wallet, rows))
     .catch((err: unknown) => console.warn('[collectables] slice paint skipped', err))
+}
+
+/** Paint a slice's new rows in order, coalesced in interactive UI so a 44-slice read cannot cause a render storm. */
+function queueSliceArrivals(
+  wallet: ActiveWallet['wallet'],
+  rows: ReadonlyArray<SliceRow>,
+): void {
+  if (typeof window === 'undefined') {
+    sliceArrivals = sliceArrivals
+      .then(() => paintSliceArrivals(wallet, rows))
+      .catch((err: unknown) => console.warn('[collectables] slice paint skipped', err))
+    return
+  }
+  if (pendingSliceWallet && pendingSliceWallet !== wallet) {
+    clearPendingSliceArrivals()
+  }
+  pendingSliceWallet = wallet
+  pendingSliceRows.push(...rows)
+  if (slicePaintTimer !== null) return
+  slicePaintTimer = setTimeout(flushSliceArrivals, SLICE_PAINT_COALESCE_MS)
 }
 
 /**
@@ -3703,7 +3761,9 @@ async function listCollectablesNow(
     // rows must not toast as receives.
     const kept: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
-    for (const o of outputs) {
+    for (let i = 0; i < outputs.length; i++) {
+      if (i > 0 && i % 40 === 0) await yieldToUi()
+      const o = outputs[i]!
       if ((o.satoshis ?? 1) !== 1) {
         kept.push(o)
         continue
