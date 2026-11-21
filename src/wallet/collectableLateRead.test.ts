@@ -114,7 +114,7 @@ describe('a Collect read that outlives its timeout', () => {
   })
 
   it('completes a multi-slice read longer than 20s when each slice keeps making progress', async () => {
-    const { listCollectables, getCachedCollectables } = await import('./collectables')
+    const { listCollectables, getCachedCollectables, rebindCollectablesForAccount } = await import('./collectables')
     const slice = (offset: number, count: number) =>
       Array.from({ length: count }, (_, i) =>
         row(`${(offset + i + 1).toString(16).padStart(64, '0')}.0`, `item-${offset + i}`),
@@ -136,5 +136,8 @@ describe('a Collect read that outlives its timeout', () => {
     expect(getCachedCollectables()).toHaveLength(23)
     const basketReads = active.wallet.listOutputs.mock.calls.filter(([args]) => args.basket === '1sat' && args.includeTags)
     expect(basketReads).toHaveLength(3)
+    // Stop the queued BRC-150 walks for these 23 items: a new account epoch
+    // drops their results unlogged, so nothing logs after the file closes.
+    rebindCollectablesForAccount()
   })
 })
