@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 pub struct HostState {
+    pub updater: Arc<crate::release_update::ReleaseUpdater>,
     pub store: Arc<DurableStore>,
     pub bridge: Arc<Brc100Bridge>,
     pub host_log: Arc<HostLog>,
@@ -39,6 +40,7 @@ impl HostState {
         is_packaged: bool,
     ) -> Self {
         Self {
+            updater: crate::release_update::ReleaseUpdater::new(Arc::clone(&store), &app_version, &platform),
             store,
             bridge,
             host_log,
@@ -90,6 +92,14 @@ pub enum HostReply {
 
 pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> HostReply {
     match method {
+        "getUpdateStatus" => HostReply::Ok { id, value: state.updater.status() },
+        "checkForUpdates" => HostReply::Ok { id, value: state.updater.check(false) },
+        "downloadUpdate" | "installUpdate" => HostReply::Ok { id, value: state.updater.download() },
+        "setUpdateMode" => match state.updater.mode(params["mode"].as_str().unwrap_or("")) {
+            Ok(value) => HostReply::Ok { id, value },
+            Err(error) => HostReply::Err { id, error },
+        },
+        "startUpdateChecks" => { state.updater.start(); HostReply::Ok { id, value: Value::Null } },
         "getAppInfo" => HostReply::Ok {
             id,
             value: json!({
@@ -506,6 +516,22 @@ mod tests {
     use base64::{engine::general_purpose::STANDARD as B64, Engine};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn update_ipc_validates_modes_and_never_fetches_when_disabled() {
+        let (dir, state) = test_state("update");
+        assert!(matches!(dispatch(&state, "1".into(), "setUpdateMode", &json!({"mode":"invalid"})), HostReply::Err { .. }));
+        assert!(matches!(dispatch(&state, "2".into(), "setUpdateMode", &json!({"mode":"none"})), HostReply::Ok { .. }));
+        match dispatch(&state, "3".into(), "checkForUpdates", &Value::Null) {
+            HostReply::Ok { value, .. } => {
+                assert_eq!(value["mode"], "none");
+                assert_eq!(value["error"], "Updates are off.");
+            }
+            _ => panic!("missing native update response"),
+        }
+        drop(state);
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     fn test_state(label: &str) -> (std::path::PathBuf, HostState) {
         let stamp = SystemTime::now()

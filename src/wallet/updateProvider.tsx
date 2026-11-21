@@ -16,7 +16,7 @@ import {
 } from '../machines/updateMachine'
 import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { thinShellReleaseUpdater, type ReleaseUpdater } from './desktopReleaseUpdate'
+import type { ReleaseUpdater } from './desktopReleaseUpdate'
 
 const MODE_KEY = 'handcash.update.mode'
 
@@ -39,7 +39,7 @@ type ShellUpdater = Partial<ReleaseUpdater> & {
 }
 
 function updater(): ShellUpdater | undefined {
-  return thinShellReleaseUpdater() ?? window.handcash
+  return window.handcash
 }
 
 function readStoredMode(): UpdateMode | null {

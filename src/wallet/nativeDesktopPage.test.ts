@@ -79,8 +79,8 @@ describe('native-desktop handcash-page.js facade', () => {
     expect(typeof handcash.onOmarchyTheme).toBe('function')
     expect(typeof handcash.startWindowDrag).toBe('function')
 
-    // Keep checkForUpdates unset so desktopReleaseUpdate.ts activates thinShellReleaseUpdater().
-    expect(handcash.checkForUpdates).toBeUndefined()
+    // Release checks are owned by the Rust host, not a renderer fallback.
+    expect(typeof handcash.checkForUpdates).toBe('function')
     // Keep screen share unset so screenShareAvailable() truthfully reports false.
     expect(handcash.listScreenSources).toBeUndefined()
     expect(handcash.chooseScreenSource).toBeUndefined()

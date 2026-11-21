@@ -26,6 +26,7 @@ mod http_wire;
 mod media;
 mod omarchy_theme;
 mod paths;
+mod release_update;
 mod seal;
 mod spend_ledger;
 mod tls_cert;
@@ -170,6 +171,12 @@ fn main() -> wry::Result<()> {
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
+    {
+        let proxy = proxy.clone();
+        state.updater.set_push(move |payload| {
+            let _ = proxy.send_event(UserEvent::Push { channel: "update-status".into(), payload });
+        });
+    }
 
     {
         let proxy = proxy.clone();
@@ -246,6 +253,20 @@ fn main() -> wry::Result<()> {
                 .cloned()
                 .unwrap_or(Value::Object(Default::default()));
             if id.is_empty() || method.is_empty() {
+                return;
+            }
+            // Network checks and browser launch must never block the WebView event loop.
+            if matches!(method.as_str(), "checkForUpdates" | "downloadUpdate" | "installUpdate") {
+                let state = Arc::clone(&state_ipc);
+                let proxy = proxy_ipc.clone();
+                std::thread::spawn(move || {
+                    let result = match dispatch(&state, id.clone(), &method, &params) {
+                        HostReply::Ok { value, .. } => json!({"id":id,"ok":true,"value":value}),
+                        HostReply::Err { error, .. } => json!({"id":id,"ok":false,"error":error}),
+                        _ => return,
+                    };
+                    let _ = proxy.send_event(UserEvent::Eval(format!("window.__handcashNativeReply({result});")));
+                });
                 return;
             }
             let reply = dispatch(&state_ipc, id.clone(), &method, &params);

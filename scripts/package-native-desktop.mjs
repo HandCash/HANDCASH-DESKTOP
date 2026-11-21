@@ -131,7 +131,7 @@ fs.writeFileSync(
     '  - Text + image clipboard and in-app screenshot capture (Linux)',
     '  - Append-only local BRC-39 UTXO archive & sealed on-device call recordings',
     '  - Rotating host logs (getLogInfo / readLogs / openLogs) & live Omarchy theme watcher',
-    '  - GitHub release update check/download via renderer desktopReleaseUpdate.ts',
+    '  - Bounded GitHub release checks in Rust; portable zip downloads open in the browser',
     '',
     'Platform notes:',
     '  - Shipped as a portable zip (no NSIS / AppImage / .deb installer wrapper yet).',

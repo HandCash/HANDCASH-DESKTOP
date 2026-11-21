@@ -16,6 +16,7 @@
     'http-request-cancelled': new Set(),
     'device-peer-http-request': new Set(),
     'bridge-status': new Set(),
+    'update-status': new Set(),
     'app-browser-guest': new Set(),
     'screenshot:copied': new Set(),
     'omarchy:theme': new Set()
@@ -151,6 +152,16 @@
     },
     getAppInfo: function () {
       return call('getAppInfo');
+    },
+    getUpdateStatus: function () { return call('getUpdateStatus'); },
+    checkForUpdates: function () { return call('checkForUpdates'); },
+    downloadUpdate: function () { return call('downloadUpdate'); },
+    installUpdate: function () { return call('installUpdate').then(function () {}); },
+    setUpdateMode: function (mode) { return call('setUpdateMode', { mode: mode }); },
+    onUpdateStatus: function (handler) {
+      var unsub = subscribe('update-status', handler);
+      call('startUpdateChecks').catch(function () {});
+      return unsub;
     },
     getBridgeStatus: function () {
       return call('getBridgeStatus');
