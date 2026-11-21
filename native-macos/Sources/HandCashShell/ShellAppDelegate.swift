@@ -31,7 +31,7 @@ final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        startPackagedUiIfNeeded()
+        guard startPackagedUiIfNeeded() else { return }
 
         let config = WKWebViewConfiguration()
         config.preferences.setValue(!isPackaged, forKey: "developerExtrasEnabled")
@@ -218,44 +218,69 @@ final class ShellAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
 
     /// Packaged .app: Resources/app is the Vite dist; serve it on :5173.
-    private func startPackagedUiIfNeeded() {
+    private func startPackagedUiIfNeeded() -> Bool {
         let uiRoot =
             ProcessInfo.processInfo.environment["HANDCASH_UI_ROOT"]
             ?? Bundle.main.resourceURL?.appendingPathComponent("app").path
         guard let uiRoot,
               FileManager.default.fileExists(atPath: (uiRoot as NSString).appendingPathComponent("index.html"))
-        else { return }
+        else { return !isPackaged }
 
-        let node = ProcessInfo.processInfo.environment["HANDCASH_NODE"]
-            ?? Bundle.main.resourceURL?.appendingPathComponent("node").path
-        let script = ProcessInfo.processInfo.environment["HANDCASH_UI_SIDECAR"]
-            ?? Bundle.main.resourceURL?.appendingPathComponent("uiSidecar.cjs").path
-
-        guard let node, let script,
-              FileManager.default.isExecutableFile(atPath: node),
-              FileManager.default.fileExists(atPath: script)
-        else {
-            NSLog("[HandCashShell] packaged UI present but node/uiSidecar missing")
-            return
+        guard let binary = BridgeSidecar.resolveBinary() else {
+            NSLog("[HandCashShell] packaged UI present but Rust host services missing")
+            NSApp.terminate(nil)
+            return false
         }
 
         // So HandcashBridge.isPackaged and child processes see the root.
         setenv("HANDCASH_UI_ROOT", uiRoot, 1)
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [script]
+        proc.executableURL = URL(fileURLWithPath: binary)
+        proc.arguments = ["--ui"]
         var env = ProcessInfo.processInfo.environment
         env["HANDCASH_UI_ROOT"] = uiRoot
         proc.environment = env
+        // Keep stdin open until shutdown. EOF makes the Rust server exit.
+        let input = Pipe()
+        let output = Pipe()
+        proc.standardInput = input
+        proc.standardOutput = output
         do {
             try proc.run()
             uiSidecar = proc
-            // Brief wait so :5173 is listening before load.
-            Thread.sleep(forTimeInterval: 0.35)
+            let startupTimeout = DispatchWorkItem {
+                if proc.isRunning { proc.terminate() }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 15, execute: startupTimeout)
+            defer { startupTimeout.cancel() }
+            // Rust emits readiness only after both trusted loopback binds succeed.
+            // Do not navigate to another process's :5173 if startup fails.
+            var ready = Data()
+            while ready.count < 65_536 {
+                let byte = output.fileHandleForReading.readData(ofLength: 1)
+                if byte.isEmpty { break }
+                ready.append(byte)
+                if byte.first == 10 { break }
+            }
+            guard ready.last == 10,
+                  let frame = try JSONSerialization.jsonObject(with: ready) as? [String: Any],
+                  frame["v"] as? Int == 1,
+                  frame["type"] as? String == "ready",
+                  frame["origin"] as? String == "http://localhost:5173"
+            else {
+                proc.terminate()
+                NSLog("[HandCashShell] Rust UI server refused startup")
+                NSApp.terminate(nil)
+                return false
+            }
         } catch {
-            NSLog("[HandCashShell] failed to start ui sidecar: %@", error.localizedDescription)
+            if proc.isRunning { proc.terminate() }
+            NSLog("[HandCashShell] failed to start Rust UI server: %@", error.localizedDescription)
+            NSApp.terminate(nil)
+            return false
         }
+        return true
     }
 
     private func stopPackagedUi() {

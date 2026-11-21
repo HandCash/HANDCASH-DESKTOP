@@ -28,7 +28,14 @@ pub fn user_data_dir() -> PathBuf {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.trim().is_empty() {
+            return PathBuf::from(home).join("Library/Application Support/HandCashDesktopNative");
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
             let trimmed = xdg.trim();

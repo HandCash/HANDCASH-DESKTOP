@@ -136,20 +136,10 @@ function swiftSources() {
 
 await waitTcp(5173)
 
-const sidecarJs = path.join(root, 'dist-sidecar/bridgeSidecar.cjs')
-const legacySidecar = path.join(root, 'dist-electron/bridgeSidecar.js')
-if (!fs.existsSync(sidecarJs)) {
-  console.log('[dev:native] building sidecar…')
-  await run('npm', ['run', 'build:sidecar'])
-}
-const sidecarPath = fs.existsSync(sidecarJs)
-  ? sidecarJs
-  : fs.existsSync(legacySidecar)
-    ? legacySidecar
-    : null
-if (!sidecarPath) {
-  throw new Error(`missing ${sidecarJs} after build:sidecar`)
-}
+await run('cargo', ['build', '--bin', 'handcash-sidecar'], {
+  cwd: path.join(root, 'native-desktop'),
+})
+const sidecarPath = path.join(root, 'native-desktop/target/debug/handcash-sidecar')
 
 fs.mkdirSync(outDir, { recursive: true })
 const sdk = pickSdk()
@@ -161,7 +151,7 @@ await run('swiftc', [
   '-sdk',
   sdk,
   '-target',
-  'arm64-apple-macosx13.0',
+  `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx13.0`,
   '-F',
   path.join(sdk, 'System/Library/Frameworks'),
   '-framework',
@@ -184,7 +174,6 @@ await run(outBin, [], {
     ...process.env,
     HANDCASH_SHELL_PAGE_JS: pageJs,
     HANDCASH_BRIDGE_SIDECAR: sidecarPath,
-    HANDCASH_NODE: process.execPath,
     HANDCASH_APP_VERSION: JSON.parse(
       fs.readFileSync(path.join(root, 'package.json'), 'utf8'),
     ).version,

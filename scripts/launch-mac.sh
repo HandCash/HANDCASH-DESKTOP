@@ -22,12 +22,9 @@ esac
 
 APP="$APP_DIR/HandCash.app"
 
-echo "==> Building renderer + electron…"
-npm run build
-
-echo "==> Packaging Mac .app ($ARCH)…"
-# Local launch builds are unsigned on purpose; releases are signed in CI.
-HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac dir --publish never
+echo "==> Packaging native Mac .app ($ARCH)…"
+# Node runs build tooling only; the packaged app uses Rust transport services.
+HANDCASH_ALLOW_UNSIGNED=1 CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac
 
 if [[ ! -d "$APP" ]]; then
   # electron-builder layout can vary by version — search once
@@ -37,13 +34,6 @@ fi
 if [[ -z "${APP:-}" || ! -d "$APP" ]]; then
   echo "HandCash.app not found under release/" >&2
   exit 1
-fi
-
-# electron-builder --mac dir often skips embedding app-update.yml on arm64
-UPDATE_YML="$APP/Contents/Resources/app-update.yml"
-if [[ ! -f "$UPDATE_YML" ]]; then
-  echo "==> Writing app-update.yml (missing from dir package)…"
-  cp "$ROOT/build/app-update.yml" "$UPDATE_YML"
 fi
 
 echo "==> Quitting any running HandCash…"

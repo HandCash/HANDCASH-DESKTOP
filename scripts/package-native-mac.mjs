@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Package HandCash Desktop as a thin Mac .app (no Electron).
- * Layout: HandCash.app/Contents/{MacOS/HandCash, Resources/{app,node,*.cjs,…}}
+ * Layout: HandCash.app/Contents/{MacOS/HandCash, Resources/{app,handcash-sidecar,…}}
  */
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -103,8 +103,10 @@ if (process.env.HANDCASH_SKIP_RENDERER !== '1') {
   run('npm', ['run', 'build:renderer'])
 }
 
-console.log('==> build:sidecar')
-run('npm', ['run', 'build:sidecar'])
+console.log('==> Rust host services')
+run('cargo', ['build', '--release', '--bin', 'handcash-sidecar'], {
+  cwd: path.join(root, 'native-desktop'),
+})
 
 const sourcesDir = path.join(root, 'native-macos/Sources/HandCashShell')
 const sources = fs
@@ -144,20 +146,12 @@ fs.mkdirSync(resources, { recursive: true })
 copyFile(binOut, path.join(macos, 'HandCash'))
 fs.chmodSync(path.join(macos, 'HandCash'), 0o755)
 
-copyFile(path.join(root, 'dist-sidecar/bridgeSidecar.cjs'), path.join(resources, 'bridgeSidecar.cjs'))
-copyFile(path.join(root, 'dist-sidecar/uiSidecar.cjs'), path.join(resources, 'uiSidecar.cjs'))
-// Sourcemaps optional
-for (const map of ['bridgeSidecar.cjs.map', 'uiSidecar.cjs.map']) {
-  const src = path.join(root, 'dist-sidecar', map)
-  if (fs.existsSync(src)) copyFile(src, path.join(resources, map))
-}
+copyFile(path.join(root, 'native-desktop/target/release/handcash-sidecar'), path.join(resources, 'handcash-sidecar'))
+fs.chmodSync(path.join(resources, 'handcash-sidecar'), 0o755)
 copyFile(path.join(sourcesDir, 'handcash-page.js'), path.join(resources, 'handcash-page.js'))
 copyDir(path.join(root, 'dist'), path.join(resources, 'app'))
 
-// Bundle the Node used to build (CI / local).
-const nodeSrc = process.execPath
-copyFile(nodeSrc, path.join(resources, 'node'))
-fs.chmodSync(path.join(resources, 'node'), 0o755)
+// Node is a build tool only; no Node executable or JS sidecar ships in the app.
 
 const icns = path.join(root, 'build/icon.icns')
 if (fs.existsSync(icns)) copyFile(icns, path.join(resources, 'AppIcon.icns'))
@@ -167,6 +161,7 @@ writeInfoPlist()
 const entitlements = path.join(root, 'build/entitlements.mac.plist')
 if (process.env.HANDCASH_ALLOW_UNSIGNED === '1' || !process.env.CSC_LINK) {
   console.log('==> ad-hoc codesign')
+  run('codesign', ['--force', '--sign', '-', path.join(resources, 'handcash-sidecar')])
   run('codesign', [
     '--force',
     '--deep',
@@ -180,6 +175,7 @@ if (process.env.HANDCASH_ALLOW_UNSIGNED === '1' || !process.env.CSC_LINK) {
   console.log('==> codesign (identity from env)')
   const identity = process.env.CSC_NAME || process.env.APPLE_IDENTITY
   if (!identity) throw new Error('set CSC_NAME / APPLE_IDENTITY for signed builds')
+  run('codesign', ['--force', '--options', 'runtime', '--sign', identity, path.join(resources, 'handcash-sidecar')])
   run('codesign', [
     '--force',
     '--deep',

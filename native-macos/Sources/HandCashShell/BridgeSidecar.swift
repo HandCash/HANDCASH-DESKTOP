@@ -1,6 +1,6 @@
 import Foundation
 
-/// Launches the Node sidecar (BRC-100 + device-peer :3340) and mediates stdio JSON ↔ WKWebView.
+/// Launches Rust transport services (BRC-100 + device-peer :3340); custody stays in the host.
 final class BridgeSidecar {
     typealias PushHandler = (_ channel: String, _ payload: Any) -> Void
     typealias StatusHandler = (_ online: Bool, _ httpUrl: String, _ httpsUrl: String, _ error: String?) -> Void
@@ -71,19 +71,18 @@ final class BridgeSidecar {
     private func startLocked() {
         if process?.isRunning == true { return }
 
-        guard let node = Self.resolveNode(),
-              let script = Self.resolveSidecarScript()
+        guard let binary = Self.resolveBinary()
         else {
             online = false
             lastError =
-                "thin shell: bridge sidecar missing (npm run build:sidecar → dist-sidecar/bridgeSidecar.cjs)"
+                "Rust bridge missing (cargo build --release --bin handcash-sidecar)"
             emitStatus()
             return
         }
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: node)
-        proc.arguments = [script]
+        proc.executableURL = URL(fileURLWithPath: binary)
+        proc.arguments = []
         var env = ProcessInfo.processInfo.environment
         if env["HANDCASH_USER_DATA"] == nil {
             let support = FileManager.default.urls(
@@ -215,44 +214,23 @@ final class BridgeSidecar {
         return obj
     }
 
-    private static func resolveNode() -> String? {
-        if let env = ProcessInfo.processInfo.environment["HANDCASH_NODE"],
-           FileManager.default.isExecutableFile(atPath: env)
-        {
-            return env
-        }
-        // Packaged .app: Resources/node
-        if let res = Bundle.main.resourceURL?.appendingPathComponent("node").path,
-           FileManager.default.isExecutableFile(atPath: res)
-        {
-            return res
-        }
-        for candidate in ["/usr/local/bin/node", "/opt/homebrew/bin/node"] {
-            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
-        }
-        return nil
-    }
-
-    private static func resolveSidecarScript() -> String? {
+    static func resolveBinary() -> String? {
         if let env = ProcessInfo.processInfo.environment["HANDCASH_BRIDGE_SIDECAR"],
-           FileManager.default.fileExists(atPath: env)
-        {
+           FileManager.default.isExecutableFile(atPath: env) {
             return env
         }
-        // Packaged .app: Resources/bridgeSidecar.cjs
-        if let res = Bundle.main.resourceURL?.appendingPathComponent("bridgeSidecar.cjs").path,
-           FileManager.default.fileExists(atPath: res)
-        {
-            return res
+        if let path = Bundle.main.resourceURL?.appendingPathComponent("handcash-sidecar").path,
+           FileManager.default.isExecutableFile(atPath: path) {
+            return path
         }
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // HandCashShell
-            .deletingLastPathComponent() // Sources
-            .deletingLastPathComponent() // native-macos
-            .deletingLastPathComponent() // HANDCASH-DESKTOP
-        for rel in ["dist-sidecar/bridgeSidecar.cjs", "dist-electron/bridgeSidecar.js"] {
-            let path = repoRoot.appendingPathComponent(rel).path
-            if FileManager.default.fileExists(atPath: path) { return path }
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        for rel in ["native-desktop/target/debug/handcash-sidecar", "native-desktop/target/release/handcash-sidecar"] {
+            let path = root.appendingPathComponent(rel).path
+            if FileManager.default.isExecutableFile(atPath: path) { return path }
         }
         return nil
     }

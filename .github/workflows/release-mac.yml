@@ -40,6 +40,13 @@ jobs:
           node-version: '22'
           cache: npm
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Rust transport services
+        working-directory: native-desktop
+        run: cargo test --bin handcash-sidecar
+
       - name: Install dependencies
         run: npm ci
 
@@ -103,8 +110,11 @@ jobs:
           [[ "$ID" == "io.handcash.brc100" ]] || { echo "bad bundle id" >&2; fail=1; }
           [[ "$VER" == "${{ steps.meta.outputs.version }}" ]] || { echo "bundle version $VER != ${{ steps.meta.outputs.version }}" >&2; fail=1; }
           [[ -x "$APP/Contents/MacOS/HandCash" ]] || { echo "missing binary" >&2; fail=1; }
-          [[ -x "$RES/node" ]] || { echo "missing bundled node" >&2; fail=1; }
-          for f in bridgeSidecar.cjs uiSidecar.cjs handcash-page.js app/index.html; do
+          [[ -x "$RES/handcash-sidecar" ]] || { echo "missing Rust host services" >&2; fail=1; }
+          for f in node bridgeSidecar.cjs uiSidecar.cjs; do
+            [[ ! -e "$RES/$f" ]] || { echo "legacy runtime shipped: $f" >&2; fail=1; }
+          done
+          for f in handcash-page.js app/index.html; do
             [[ -f "$RES/$f" ]] || { echo "missing Resources/$f" >&2; fail=1; }
           done
           # A linker-only signature (Identifier=Electron, no sealed resources)

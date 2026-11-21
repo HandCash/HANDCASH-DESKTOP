@@ -21,7 +21,7 @@
     "dev:native-desktop": "node scripts/dev-native-desktop.mjs",
     "dev:electron": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron-only\"",
     "dev:electron-only": "wait-on tcp:5173 && npm run build:electron && env -u ELECTRON_RUN_AS_NODE electron .",
-    "build": "npm run build:renderer && npm run build:sidecar",
+    "build": "npm run build:renderer",
     "build:wallet-engine": "node scripts/build-wallet-engine.mjs",
     "build:renderer": "npm run build:wallet-engine && tsc -p tsconfig.json --noEmit && vite build",
     "build:sidecar": "node scripts/build-sidecar.mjs",
