@@ -12,6 +12,7 @@ pub mod durable;
 pub mod durable_cache;
 pub mod host_log;
 pub mod http_wire;
+pub mod log_privacy;
 pub mod omarchy_theme;
 pub mod paths;
 pub mod release_update;

@@ -17,7 +17,7 @@ const FONTS = {
   radius: '0.5rem',
 } as const
 
-/** Mirrors electron/omarchyTheme.ts OmarchyColors (renderer-safe). */
+/** Mirrors native-desktop/src/omarchy_theme.rs OmarchyColors (renderer-safe). */
 export type OmarchyColors = {
   mode: 'light' | 'dark'
   name: string

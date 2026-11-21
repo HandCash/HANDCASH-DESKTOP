@@ -184,7 +184,7 @@ function featureName(file) {
 }
 
 function moduleFacts(catalog) {
-  const files = ['src/wallet', 'src/contracts', 'src/ports', 'electron'].flatMap((d) => (fs.existsSync(path.join(root, d)) ? walk(path.join(root, d)) : []))
+  const files = ['src/wallet', 'src/contracts', 'src/ports', 'native-desktop/src'].flatMap((d) => (fs.existsSync(path.join(root, d)) ? walk(path.join(root, d)) : []))
   return files.sort().map((abs) => {
     const src = fs.readFileSync(abs, 'utf8')
     const rel = path.relative(root, abs)

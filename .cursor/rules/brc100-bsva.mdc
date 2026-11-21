@@ -1,6 +1,6 @@
 ---
 description: BSVA BRC-100 bridge and HandCash migration contract — do not invent alternate protocols
-globs: ["**/wallet/**", "**/electron/**", "**/brc100/**", "**/*migration*", "**/*permission*"]
+globs: ["**/wallet/**", "**/native-desktop/src/**", "**/brc100/**", "**/*migration*", "**/*permission*"]
 alwaysApply: true
 ---
 
@@ -14,7 +14,7 @@ Desktop is a **BRC-100** wallet bridge (BSVA / Babbage-style local HTTP). Follow
 |---------|-----------------|
 | HTTPS | `127.0.0.1:2121` |
 | HTTP fallback | `127.0.0.1:3321` |
-| Server | `electron/httpServer.ts` |
+| Server | `native-desktop/src/brc100_server.rs` |
 | Dispatch | `src/wallet/brc100Handler.ts` |
 | Permissions | `src/wallet/permissions.ts` |
 | Migrate extensions | `src/wallet/migration.ts` |

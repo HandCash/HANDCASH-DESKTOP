@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { createLogScrubber as createMainScrubber } from '../../electron/logPrivacy'
 import { createLogScrubber, type LogKey } from './logPrivacy'
 
 const KEY: LogKey = Array.from({ length: 32 }, (_, i) => i * 7 + 3)
@@ -73,10 +72,5 @@ describe('log privacy scrubber', () => {
     expect(twice).toEqual(CORPUS.map(scrub).map(scrub))
     expect(twice.join('\n')).not.toContain('alice')
     expect(twice.join('\n')).toContain('[amt]')
-  })
-
-  it('the Electron main-process copy scrubs identically', () => {
-    const main = createMainScrubber(KEY)
-    expect(CORPUS.map(main)).toEqual(CORPUS.map(scrub))
   })
 })

@@ -144,8 +144,6 @@ export default defineConfig({
       ignored: [
         '**/release/**',
         '**/dist/**',
-        '**/dist-electron/**',
-        '**/dist-sidecar/**',
         '**/native-desktop/target/**',
         '**/.cursor/**',
         '**/docs/**',

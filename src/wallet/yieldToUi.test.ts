@@ -21,4 +21,14 @@ describe('yieldToUi', () => {
     await yieldToUi()
     expect(schedYield).not.toHaveBeenCalled()
   })
+
+  it('uses setTimeout on a visible browser page without scheduler.yield (WebKit)', async () => {
+    const mc = vi.fn()
+    vi.stubGlobal('scheduler', undefined)
+    vi.stubGlobal('window', {})
+    vi.stubGlobal('document', { visibilityState: 'visible' })
+    vi.stubGlobal('MessageChannel', mc)
+    await yieldToUi()
+    expect(mc).not.toHaveBeenCalled()
+  })
 })

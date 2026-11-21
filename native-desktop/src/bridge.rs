@@ -233,6 +233,30 @@ pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> 
                 value: state.host_log.read_logs(max_bytes),
             }
         }
+        "storageSetAsync" => {
+            let key = params
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let value = params
+                .get("value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let allow = params
+                .get("allow")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let store = Arc::clone(&state.store);
+            std::thread::spawn(move || {
+                let _ = store.set(&key, &value, allow);
+            });
+            HostReply::Ok {
+                id,
+                value: Value::Bool(true),
+            }
+        }
         "uploadLogs" => HostReply::Ok {
             id,
             value: HostLog::upload_logs_denied(),

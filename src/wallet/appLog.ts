@@ -1,6 +1,6 @@
 /**
  * In-app log ring buffer (Mobile + Desktop renderer).
- * Desktop also tails electron-log via IPC when available.
+ * Desktop also tails the native host log via IPC when available.
  *
  * A crashed WebView takes the buffer with it, so the tail is mirrored to durable
  * storage and reloaded on the next start as the previous session — that is the

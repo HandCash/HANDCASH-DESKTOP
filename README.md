@@ -32,7 +32,7 @@ codesign --force --deep --sign - /Applications/HandCash.app
 - Self-custodial vault (AES-GCM + PBKDF2) stored on device
 - HandCash UI driven by **Aeon UI / XState** machines (`UI = f(state)`)
 - Local BRC-100 HTTPS bridge on `https://127.0.0.1:2121` (+ HTTP `:3321`) for compliant apps
-- Installers via **electron-builder**: AppImage, deb, NSIS, DMG, portable
+- Native Rust shell (Windows/Linux, OS WebView) and Swift host + Rust sidecar (Mac): zip on Windows/Linux, DMG + zip on Mac
 
 ## Develop
 
@@ -48,17 +48,16 @@ npm run dev
 npm run package
 
 # explicit targets
-npm run package:linux      # AppImage → release/ (primary Linux ship format)
-npm run package:electron:linux:all  # AppImage + deb (deb needs host fpm/libcrypt)
+npm run package:linux      # Linux zip → release/
 npm run package:mac        # DMG + zip
-npm run package:win        # NSIS installer + portable
+npm run package:win        # Windows zip
 ```
 
-Artifacts land in `release/`. On Linux, ship the AppImage the way Exodus ships a single downloadable binary.
+Artifacts land in `release/`. Linux and Windows ship the native shell zip.
 
 ### Releases / auto-update
 
-Installers publish to **GitHub Releases** on `HandCash/HANDCASH-DESKTOP` (electron-builder `publish.provider = github`). Migrate page download buttons default to:
+Installers publish to **GitHub Releases** on `HandCash/HANDCASH-DESKTOP` (tag-triggered release workflows). Migrate page download buttons default to:
 
 `https://github.com/HandCash/HANDCASH-DESKTOP/releases/latest/download/…`
 
@@ -82,31 +81,15 @@ export APPLE_ID=...
 export APPLE_APP_SPECIFIC_PASSWORD=...
 export APPLE_TEAM_ID=...
 
-# package.json build.mac — remove identity: null, set hardenedRuntime: true
-# then remove macShipItUnsafe() guard in electron/autoUpdate.ts
+# scripts/package-native-mac.mjs signs with the Developer ID when present
 ```
-
-### Fedora Atomic / Wayblue (no FUSE)
-
-If you see `error loading libfuse.so.2`, skip mounting the AppImage:
-
-```bash
-# easiest — unpacked Electron binary
-/home/spidercorp/Projects/handcash-brc100/release/linux-unpacked/handcash-brc100
-
-# or AppImage without FUSE
-APPIMAGE_EXTRACT_AND_RUN=1 /home/spidercorp/Projects/handcash-brc100/release/HandCash-1.0.0-x86_64.AppImage
-
-# or the helper script
-/home/spidercorp/Projects/handcash-brc100/release/run-handcash.sh
-```
-
 
 ## Architecture
 
 | Layer | Role |
 |-------|------|
-| `electron/` | Window, auto-updater hooks, SSL cert, BRC-100 HTTP(S) server (BSVA pattern) |
+| `native-desktop/` | Rust shell (Windows/Linux) and `handcash-sidecar` (Mac host services): window, updater, BRC-100 HTTP(S) bridge (BSVA pattern) |
+| `native-macos/` | Swift AppKit host for Mac; runs the Rust sidecar |
 | `src/machines/` | Named statecharts before JSX |
 | `src/wallet/` | Layers: custody → localState (IDB) → chainIngest (Refresh) → historyReplica (BRC-39). SSoT: `src/wallet/layers.ts` |
 | `src/components/` | Surfaces that project `data-aeon-state` |
