@@ -47,8 +47,10 @@ vi.mock('./oneSatGenesisProof', async (importOriginal) => {
     proveGenesisLineage: () => new Promise<never>(() => {}),
     walkGenesisLineage: async (args: { tipOutpoint: string; getBeef: (txid: string) => Promise<unknown> }) => {
       walks.tips.push(args.tipOutpoint)
-      await args.getBeef(args.tipOutpoint.slice(0, 64))
+      // Snapshot before yielding: a simulated restart must not change the old
+      // process's hanging walk into a successful write to shared durable storage.
       const outcome = walks.outcome(args.tipOutpoint)
+      await args.getBeef(args.tipOutpoint.slice(0, 64))
       if (outcome === 'hang') return new Promise<never>(() => {})
       if (outcome === 'invalid') return { kind: 'invalid' as const, reason: 'missing ancestor', hops: 2 }
       if (outcome === 'unavailable') return { kind: 'unavailable' as const, reason: 'offline', hops: 1 }
@@ -138,6 +140,16 @@ describe('imported item proof verification (packet D)', () => {
   beforeAll(async () => {
     await import('./collectables')
   }, 60_000)
+
+  it('drains a receipt batch without per-card Toolbox remittance reads', async () => {
+    walks.outcome = () => 'invalid'
+    const collectables = await import('./collectables')
+    active.wallet.listOutputs.mockClear()
+    collectables.noteIngestedItems(TIPS.map((outpoint) => ({ outpoint, chain: 'main' as const })))
+    await vi.waitFor(() => expect(new Set(walks.tips)).toEqual(new Set(TIPS)), { timeout: 4_000 })
+    expect(active.wallet.listOutputs).not.toHaveBeenCalled()
+    expect(collectables.getCachedCollectables().every((item) => !item.proven)).toBe(true)
+  })
 
   it('walks import receipts again after a restart that cut their walk short', async () => {
     walks.outcome = () => 'hang'

@@ -1699,8 +1699,18 @@ export function noteIngestedItems(items: readonly IngestedItem[]): void {
   // Start the inventory walk directly: per-card remittance checks may still be
   // waiting for the just-broadcast output to appear in Toolbox.
   const wallet = getActiveWallet()
+  if (verify.length === 1) {
+    if (wallet) void proveHeldGenesis(wallet, listInFlight)
+    requestCollectableVerification(verify[0])
+    return
+  }
+  // A batch (pending-items import) must not queue one full BEEF card check per
+  // tip: repeated large BEEF parses and a preferred tip that churns every call
+  // compete with the WebView. Mark each as awaiting, prefer only the first,
+  // and let the single seeded walk prove them in order with its yields/budget.
+  for (const target of verify) noteAwaitingVerification(target)
+  preferCollectableVerification(verify[0])
   if (wallet) void proveHeldGenesis(wallet, listInFlight)
-  for (const target of verify) requestCollectableVerification(target)
 }
 
 /** Record one ingested tip as a seed; `paint` builds its card for the grid. */
