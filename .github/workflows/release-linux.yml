@@ -1,5 +1,5 @@
 # Build the thin Linux shell zip and publish to the matching GitHub Release.
-# (handcash-shell + Node sidecar + UI — not Electron AppImage.)
+# (pure-Rust handcash-shell + packaged UI — zero Electron, zero Node sidecar.)
 #
 # Triggers:
 #   - push of tag v* (after `npm run version:*` + `git push origin vX.Y.Z`)

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { PrivateKey } from '@bsv/sdk'
-import { writeFileExclusive } from '../../electron/atomicFile'
+import { writeFileExclusive } from './atomicFile'
 import type { Chain } from './vault'
 
 export const LIVE_WALLETS_PATH = resolve(process.cwd(), '.live-wallets.json')

@@ -1,17 +1,7 @@
 //! Headless Mac host services. The Swift WebView owns custody and UI IPC;
 //! this process owns only BRC-100 transport or the packaged static UI server.
-#![allow(dead_code)]
-#[path = "../brc100_server.rs"] mod brc100_server;
-#[path = "../bridge_protocol.rs"] mod bridge_protocol;
-#[path = "../device_auth.rs"] mod device_auth;
-#[path = "../host_log.rs"] mod host_log;
-#[path = "../http_wire.rs"] mod http_wire;
-#[path = "../paths.rs"] mod paths;
-#[path = "../spend_ledger.rs"] mod spend_ledger;
-#[path = "../tls_cert.rs"] mod tls_cert;
-#[path = "../ui_server.rs"] mod ui_server;
-
-use brc100_server::Brc100Bridge;
+use handcash_shell::brc100_server::Brc100Bridge;
+use handcash_shell::{host_log, paths, ui_server};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;

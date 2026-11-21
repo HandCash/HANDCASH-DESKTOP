@@ -153,6 +153,9 @@
     getAppInfo: function () {
       return call('getAppInfo');
     },
+    walletCoreInfo: function () { return call('walletCoreInfo'); },
+    walletCoreStrictHex: function (hex) { return call('walletCoreStrictHex', { hex: hex }); },
+    walletCoreValidateRequest: function (payload) { return call('walletCoreValidateRequest', payload); },
     getUpdateStatus: function () { return call('getUpdateStatus'); },
     checkForUpdates: function () { return call('checkForUpdates'); },
     downloadUpdate: function () { return call('downloadUpdate'); },

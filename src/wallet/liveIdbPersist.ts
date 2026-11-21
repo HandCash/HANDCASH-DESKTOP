@@ -7,7 +7,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { writeFileAtomic } from '../../electron/atomicFile'
+import { writeFileAtomic } from './atomicFile'
 
 export const LIVE_IDB_PATH = resolve(process.cwd(), '.live-idb.json')
 

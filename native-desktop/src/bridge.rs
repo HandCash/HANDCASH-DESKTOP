@@ -10,8 +10,9 @@ use crate::dialogs::{self, ParsedBackup, ParsedImage};
 use crate::durable::DurableStore;
 use crate::host_log::HostLog;
 use crate::omarchy_theme;
+use crate::wallet_core;
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 pub struct HostState {
     pub updater: Arc<crate::release_update::ReleaseUpdater>,
@@ -21,6 +22,7 @@ pub struct HostState {
     pub brc39_archive: Arc<Brc39Archive>,
     pub call_recordings: Arc<CallRecordings>,
     pub clipboard: Arc<ClipboardState>,
+    pub request_guard: Mutex<wallet_core::contract::RequestGuard>,
     pub platform: String,
     pub app_version: String,
     pub is_packaged: bool,
@@ -47,6 +49,7 @@ impl HostState {
             brc39_archive,
             call_recordings,
             clipboard,
+            request_guard: Mutex::new(wallet_core::contract::RequestGuard::default()),
             platform,
             app_version,
             is_packaged,
@@ -480,6 +483,88 @@ pub fn dispatch(state: &HostState, id: String, method: &str, params: &Value) -> 
             id,
             value: device_auth::clear(),
         },
+        "walletCoreInfo" => HostReply::Ok {
+            id,
+            value: wallet_core::core_info(),
+        },
+        "walletCoreStrictHex" => {
+            let Some(input) = params.get("hex").and_then(|v| v.as_str()) else {
+                return HostReply::Err {
+                    id,
+                    error: "missing hex string".into(),
+                };
+            };
+            match wallet_core::encoding::decode_hex(input) {
+                Ok(bytes) => HostReply::Ok {
+                    id,
+                    value: json!({
+                        "ok": true,
+                        "byteLength": bytes.len(),
+                        "canonicalHex": wallet_core::encoding::encode_hex(&bytes),
+                        "sha256": wallet_core::encoding::encode_hex(&wallet_core::encoding::sha256(&bytes)),
+                    }),
+                },
+                Err(err) => HostReply::Ok {
+                    id,
+                    value: json!({ "ok": false, "error": err.to_string() }),
+                },
+            }
+        },
+        "walletCoreValidateRequest" => {
+            let req: wallet_core::contract::ScopedRequest =
+                match serde_json::from_value(params.get("request").cloned().unwrap_or(Value::Null))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return HostReply::Ok {
+                            id,
+                            value: json!({ "ok": false, "reason": "invalid_schema", "detail": e.to_string() }),
+                        };
+                    }
+                };
+            let session: wallet_core::contract::AuthenticatedSession =
+                match serde_json::from_value(params.get("session").cloned().unwrap_or(Value::Null))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return HostReply::Ok {
+                            id,
+                            value: json!({ "ok": false, "reason": "invalid_session", "detail": e.to_string() }),
+                        };
+                    }
+                };
+            let grant: wallet_core::contract::PermissionGrant =
+                match serde_json::from_value(params.get("grant").cloned().unwrap_or(Value::Null))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return HostReply::Ok {
+                            id,
+                            value: json!({ "ok": false, "reason": "invalid_grant", "detail": e.to_string() }),
+                        };
+                    }
+                };
+            let Some(now_ms) = params.get("nowMs").and_then(|v| v.as_u64()) else {
+                return HostReply::Err {
+                    id,
+                    error: "missing nowMs".into(),
+                };
+            };
+            let mut guard = state
+                .request_guard
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            match guard.validate(&req, &session, &grant, now_ms) {
+                Ok(()) => HostReply::Ok {
+                    id,
+                    value: json!({ "ok": true }),
+                },
+                Err(reason) => HostReply::Ok {
+                    id,
+                    value: json!({ "ok": false, "reason": reason }),
+                },
+            }
+        },
         other => HostReply::Err {
             id,
             error: format!("stub: {other} not implemented in thin desktop shell"),
@@ -670,6 +755,73 @@ mod tests {
             HostReply::Err { .. }
         ));
 
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wallet_core_ipc_dispatches_info_hex_and_scoped_request_guard() {
+        let (dir, state) = test_state("wallet-core");
+        match dispatch(&state, "1".into(), "walletCoreInfo", &json!({})) {
+            HostReply::Ok { value, .. } => {
+                assert_eq!(value["contractVersion"], json!(1));
+                assert_eq!(value["license"], json!("Apache-2.0"));
+                assert_eq!(value["maxPageSlice"], json!(100));
+            }
+            _ => panic!("expected Ok"),
+        }
+        match dispatch(&state, "2".into(), "walletCoreStrictHex", &json!({ "hex": "00Ab" })) {
+            HostReply::Ok { value, .. } => {
+                assert_eq!(value["ok"], Value::Bool(true));
+                assert_eq!(value["byteLength"], json!(2));
+                assert_eq!(value["canonicalHex"], json!("00ab"));
+            }
+            _ => panic!("expected Ok"),
+        }
+        match dispatch(&state, "3".into(), "walletCoreStrictHex", &json!({ "hex": " 00" })) {
+            HostReply::Ok { value, .. } => assert_eq!(value["ok"], Value::Bool(false)),
+            _ => panic!("expected Ok"),
+        }
+        let valid_payload = json!({
+            "nowMs": 1000,
+            "session": {
+                "origin": "https://app.example",
+                "sessionId": "s1",
+                "activeAccountId": "a1",
+                "activeGeneration": 3
+            },
+            "grant": {
+                "origin": "https://app.example",
+                "accountId": "a1",
+                "chainNetwork": "bsv:mainnet",
+                "allowedCapabilities": ["readBalanceView"],
+                "maxAmountUnits": null,
+                "expiresAtMs": 5000,
+                "revoked": false
+            },
+            "request": {
+                "v": 1,
+                "requestId": "req-1",
+                "origin": "https://app.example",
+                "sessionId": "s1",
+                "accountId": "a1",
+                "generation": 3,
+                "chainNetwork": "bsv:mainnet",
+                "capability": "readBalanceView",
+                "amountUnits": null,
+                "expiresAtMs": 4000
+            }
+        });
+        match dispatch(&state, "4".into(), "walletCoreValidateRequest", &valid_payload) {
+            HostReply::Ok { value, .. } => assert_eq!(value["ok"], Value::Bool(true)),
+            _ => panic!("expected Ok"),
+        }
+        match dispatch(&state, "5".into(), "walletCoreValidateRequest", &valid_payload) {
+            HostReply::Ok { value, .. } => {
+                assert_eq!(value["ok"], Value::Bool(false));
+                assert_eq!(value["reason"], json!("replay_detected"));
+            }
+            _ => panic!("expected Ok"),
+        }
         let _ = fs::remove_dir_all(dir);
     }
 }

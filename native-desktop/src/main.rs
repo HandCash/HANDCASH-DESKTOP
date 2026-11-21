@@ -8,29 +8,18 @@
 )]
 
 mod app_browser;
-mod brc100_server;
-mod brc39_archive;
 mod bridge;
-mod bridge_protocol;
-mod call_recordings;
 mod clipboard;
-mod device_auth;
 mod dialogs;
-mod durable;
-mod durable_cache;
 #[cfg(target_os = "linux")]
 mod file_chooser;
-mod host_log;
-mod http_wire;
 #[cfg(target_os = "linux")]
 mod media;
-mod omarchy_theme;
-mod paths;
-mod release_update;
-mod seal;
-mod spend_ledger;
-mod tls_cert;
-mod ui_server;
+
+use handcash_shell::{
+    brc100_server, brc39_archive, call_recordings, device_auth, durable, host_log, omarchy_theme,
+    paths, release_update, ui_server, wallet_core,
+};
 
 use app_browser::GuestBounds;
 use brc100_server::Brc100Bridge;
@@ -273,27 +262,21 @@ fn main() -> wry::Result<()> {
             match reply {
                 HostReply::FocusWindow { id } => {
                     let _ = proxy_ipc.send_event(UserEvent::Focus { id });
-                    return;
                 }
                 HostReply::ReleasePromptFocus { id } => {
                     let _ = proxy_ipc.send_event(UserEvent::ReleasePromptFocus { id });
-                    return;
                 }
                 HostReply::StartWindowDrag { id } => {
                     let _ = proxy_ipc.send_event(UserEvent::StartWindowDrag { id });
-                    return;
                 }
                 HostReply::CopyScreenshot { id } => {
                     let _ = proxy_ipc.send_event(UserEvent::CopyScreenshot { id: Some(id) });
-                    return;
                 }
                 HostReply::SaveBackupFile { id, backup } => {
                     let _ = proxy_ipc.send_event(UserEvent::SaveBackupFile { id, backup });
-                    return;
                 }
                 HostReply::SaveImageFile { id, image } => {
                     let _ = proxy_ipc.send_event(UserEvent::SaveImageFile { id, image });
-                    return;
                 }
                 HostReply::AppBrowserCreate {
                     id,
@@ -307,7 +290,6 @@ fn main() -> wry::Result<()> {
                         url,
                         bounds,
                     });
-                    return;
                 }
                 HostReply::AppBrowserSetBounds {
                     id,
@@ -319,7 +301,6 @@ fn main() -> wry::Result<()> {
                         guest_id,
                         bounds,
                     });
-                    return;
                 }
                 HostReply::AppBrowserNavigate {
                     id,
@@ -331,7 +312,6 @@ fn main() -> wry::Result<()> {
                         guest_id,
                         action,
                     });
-                    return;
                 }
                 HostReply::AppBrowserCapture {
                     id,
@@ -343,11 +323,9 @@ fn main() -> wry::Result<()> {
                         guest_id,
                         width,
                     });
-                    return;
                 }
                 HostReply::AppBrowserDestroy { id, guest_id } => {
                     let _ = proxy_ipc.send_event(UserEvent::AppBrowserDestroy { id, guest_id });
-                    return;
                 }
                 other => {
                     if let Some(script) = reply_script(&other) {
@@ -416,7 +394,6 @@ fn main() -> wry::Result<()> {
         (webview, host)
     };
 
-    let webview = Arc::new(webview);
     let state_loop = Arc::clone(&state);
     let proxy_loop = proxy.clone();
     let mut prompt_stole_focus_at: Option<Instant> = None;

@@ -124,10 +124,9 @@ fn wl_copy(mime: &str, data: &[u8]) -> Result<(), String> {
     }
 }
 
-fn decode_image_to_rgba_and_png(
-    mime: &str,
-    raw: &[u8],
-) -> Result<(usize, usize, Vec<u8>, Option<Vec<u8>>), String> {
+type DecodedImage = (usize, usize, Vec<u8>, Option<Vec<u8>>);
+
+fn decode_image_to_rgba_and_png(mime: &str, raw: &[u8]) -> Result<DecodedImage, String> {
     // Fast path: PNG bytes via `image` crate (works on both Windows and Linux).
     if let Ok(img) = image::load_from_memory_with_format(raw, image::ImageFormat::Png) {
         let rgba = img.to_rgba8();
@@ -212,7 +211,7 @@ pub fn cairo_argb32_to_rgba(width: usize, height: usize, stride: usize, src: &[u
     let mut rgba = Vec::with_capacity(width * height * 4);
     for y in 0..height {
         let row = &src[y * stride..y * stride + width * 4];
-        for px in row.chunks_exact(4) {
+        for px in row.as_chunks::<4>().0 {
             // On little-endian CPUs, Cairo ARGB32 is stored in memory as [B, G, R, A].
             let b = px[0];
             let g = px[1];

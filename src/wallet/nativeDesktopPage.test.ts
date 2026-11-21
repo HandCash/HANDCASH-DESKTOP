@@ -81,6 +81,9 @@ describe('native-desktop handcash-page.js facade', () => {
 
     // Release checks are owned by the Rust host, not a renderer fallback.
     expect(typeof handcash.checkForUpdates).toBe('function')
+    expect(typeof handcash.walletCoreInfo).toBe('function')
+    expect(typeof handcash.walletCoreStrictHex).toBe('function')
+    expect(typeof handcash.walletCoreValidateRequest).toBe('function')
     // Keep screen share unset so screenShareAvailable() truthfully reports false.
     expect(handcash.listScreenSources).toBeUndefined()
     expect(handcash.chooseScreenSource).toBeUndefined()
@@ -143,5 +146,19 @@ describe('native-desktop handcash-page.js facade', () => {
     offTheme()
     offShot()
     offGuest()
+  })
+
+  it('dispatches read-only Rust walletCore IPC methods', async () => {
+    const { handcash, posted, reply } = loadNativeDesktopFacade('linux')
+    const infoPromise = (handcash.walletCoreInfo as () => Promise<unknown>)()
+    expect(posted[0]!.method).toBe('walletCoreInfo')
+    reply({ id: posted[0]!.id, ok: true, value: { contractVersion: 1, license: 'Apache-2.0' } })
+    await expect(infoPromise).resolves.toEqual({ contractVersion: 1, license: 'Apache-2.0' })
+
+    const hexPromise = (handcash.walletCoreStrictHex as (h: string) => Promise<unknown>)('00Ab')
+    expect(posted[1]!.method).toBe('walletCoreStrictHex')
+    expect(posted[1]!.params).toEqual({ hex: '00Ab' })
+    reply({ id: posted[1]!.id, ok: true, value: { ok: true, byteLength: 2, canonicalHex: '00ab' } })
+    await expect(hexPromise).resolves.toEqual({ ok: true, byteLength: 2, canonicalHex: '00ab' })
   })
 })

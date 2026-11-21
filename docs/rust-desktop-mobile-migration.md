@@ -18,10 +18,33 @@ Do not describe this slice as an all-Rust wallet or an all-Rust Mac shell.
 The user deferred Mac verification: "idc about mac atm keep going on this machine".
 Mac work remains staged and unverified, not a prerequisite for Linux development.
 Upstream aeon-ui already contains Rust aeon-core, aeon-primitives, aeon-dioxus
-and aeon-ui crates (inspected locally); absence of a Rust UI library is not a
-blocker. The existing Meridian provenance plan still leaves the user's license
-choice for newly authored, verified-original core code open. That choice cannot
-relicense existing code or replace independent signing/security review.
+and aeon-ui crates (inspected locally, MIT-licensed, Dioxus 0.7); absence of a
+Rust UI library is not a blocker. On 2026-11-21 the user directed dropping
+Open BSV on HandCash's own code and choosing Apache-2.0 or MIT based on
+strategic value; **Apache-2.0** was selected (decision `a5a9844b`) for newly
+authored Rust code (`native-desktop/Cargo.toml`) for its explicit patent grant,
+retaliation clause, and alignment with BSVA's 2026-11-11 Apache-2.0 relicense
+of `bsv-blockchain/ts-stack`. Existing upstream third-party notices
+(`packages/wallet-engine/LICENSE.upstream.txt`, `THIRD_PARTY_NOTICES.md`, and
+installed `@bsv/sdk@2.8.11` / `@bsv/verifast@0.3.6` / `@bsv/webrtpay@0.2.1`)
+remain intact until those JS dependencies are replaced or upgraded to Apache-2.0
+npm releases; this does not replace independent signing/security review.
+
+Platform-neutral Rust services now live in a shared library crate
+(`native-desktop/src/lib.rs`, `handcash_shell`), imported directly by both
+`handcash-shell` and `handcash-sidecar` without `#[path]` duplication.
+`native-desktop/src/wallet_core/` adds the read-only Meridian foundation:
+M1 strict lowercase hex and SHA-256/HMAC-SHA-256 (`encoding.rs`), the frozen
+versioned scoped request language v1 with fail-closed origin/session/account/
+generation/network/capability/cap/expiry/replay enforcement (`contract.rs`),
+and type-level wallet layers, BRC-150 authenticity, 15s holding-freshness gap
+tracking and 100-row generation-fenced display projections (`layers.rs`).
+Read-only `walletCoreInfo`, `walletCoreStrictHex` and `walletCoreValidateRequest`
+IPC methods are wired in `bridge.rs` and `handcash-page.js`. All 19 prior host
+Clippy warnings are fixed (`cargo clippy --all-targets --no-deps -- -D warnings`
+passes cleanly). `src/wallet/liveIdbPersist.ts` and
+`src/wallet/liveSendReceiveEnv.ts` now import `src/wallet/atomicFile.ts`,
+leaving no runtime `src/` imports from `electron/`.
 
 Linux/Windows release checks, native architecture selection, persisted update
 mode, scheduling and release status now run in Rust. HTTPS has a 25-second
@@ -118,16 +141,16 @@ fatal contracts using a temporary user-data directory, without wallet state.
 read_lints reported no TypeScript errors in touched files; this is not a Swift
 compiler check. Mac compilation, signing and startup remain unverified.
 
-Linux-first continuation: job j1d8 passed 43 host and 16 sidecar Rust tests.
-Its strict Clippy gate failed on 19 existing warnings in clipboard, durable,
-seal and main (not the new updater); subsequent job j1ei passed ordinary
-Clippy, native Linux build, 21 focused TS tests, tsc, package script syntax and
-diff checks. Final job j1h5 passed 44 host Rust tests (including native update IPC),
-ordinary Clippy (same 19 pre-existing warnings), Linux build, 21 focused TS tests,
-tsc and diff checks. read_lints is clean. Current HEAD at final inspection is
-a2f31445; updater changes remain local and uncommitted. No live update download,
-installation or device verification was performed. The new updater tests use synthetic metadata and temporary preference
-directories only.
+Shared library + wallet-core foundation continuation (2026-11-21): job j1rs
+passed `cargo test --offline --all-targets` (61 passed: 47 lib including 12 new
+wallet_core tests, 10 host binary, 4 sidecar binary), strict
+`cargo clippy --offline --all-targets --no-deps -- -D warnings` (0 warnings),
+`cargo build --offline`, 5 focused Vitest files / 21 tests (including new
+`walletCore*` IPC facade tests and `atomicFile` tests), `tsc -p tsconfig.json --noEmit`,
+`tsc -p tsconfig.electron.json --noEmit`, and `git diff --check`. `read_lints`
+is clean on touched TypeScript files. Changes remain local and uncommitted on
+HEAD e4d5d207; no live download, install, push, signing cutover or device
+verification was performed.
 
 ## Verification and cleanup gates
 

@@ -2,8 +2,8 @@
 name = "handcash-shell"
 version = "0.1.0"
 edition = "2021"
-description = "Pure-Rust Win/Linux WebView host for HandCash Desktop (tao + wry + built-in BRC-100/UI servers, zero Node)"
-license = "Open BSV License"
+description = "Pure-Rust HandCash Desktop host, headless sidecar, and platform-neutral wallet core foundation (zero Node)"
+license = "Apache-2.0"
 publish = false
 
 [dependencies]

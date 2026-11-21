@@ -45,7 +45,7 @@ pub fn unseal(value: &str) -> Result<String, String> {
     let key = master_key()?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| e.to_string())?;
     let raw = B64
-        .decode(value[SEALED_PREFIX.len()..].as_bytes())
+        .decode(&value.as_bytes()[SEALED_PREFIX.len()..])
         .map_err(|e| format!("bad sealed blob: {e}"))?;
     if raw.len() < 13 {
         return Err("sealed blob too short".into());

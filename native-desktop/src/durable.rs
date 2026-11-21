@@ -211,7 +211,7 @@ impl DurableStore {
             Ok(got) if got == stored => {}
             _ => return false,
         }
-        if key.as_bytes().len() > MAX_PLAIN_NAME || !is_plain_name(key) {
+        if key.len() > MAX_PLAIN_NAME || !is_plain_name(key) {
             let side = self.sidecar_path(key);
             let _ = fs::write(side, key);
         }
@@ -229,7 +229,7 @@ impl DurableStore {
     }
 
     fn file_path(&self, key: &str) -> PathBuf {
-        if key.as_bytes().len() <= MAX_PLAIN_NAME && is_plain_name(key) {
+        if key.len() <= MAX_PLAIN_NAME && is_plain_name(key) {
             self.dir.join(key)
         } else {
             let mut h = Sha256::new();
@@ -266,8 +266,8 @@ fn vault_replace_allowed(previous: &str, next: &str, allow: bool) -> bool {
     if !allow {
         eprintln!(
             "[DurableStore] blocked vault identity overwrite {} → {}",
-            &before.chars().take(12).collect::<String>(),
-            &after.chars().take(12).collect::<String>()
+            before.chars().take(12).collect::<String>(),
+            after.chars().take(12).collect::<String>()
         );
         return false;
     }
