@@ -18,6 +18,11 @@ import type { SpendVerifierInterface } from '@bsv/sdk'
 import { KeyPairAddress, SetupClientWalletArgs, SetupWallet, SetupWalletClient } from './SetupWallet'
 import { fundWalletFromP2PKHOutpoints as _fundWalletFromP2PKHOutpoints } from './fundWalletP2PKH'
 import { StorageIdb } from './storage/StorageIdb'
+import {
+  StorageRustSqlite,
+  getGlobalToolboxDbBridge,
+  migrateLegacyIdbToRustSqlite
+} from './storage/StorageRustSqlite'
 import { WalletStorageManager } from './storage/WalletStorageManager'
 import { Services } from './services/Services'
 import { Monitor } from './monitor/Monitor'
@@ -278,9 +283,27 @@ export abstract class SetupClient {
   }
 
   /**
-   * @returns {StorageIdb} - `Knex` based storage provider for a wallet. May be used for either active storage or backup storage.
+   * @returns {StorageIdb} - Local storage provider for a wallet. Uses native Rust SQLite WAL
+   * (`StorageRustSqlite`) on HandCash Desktop when the host bridge is present, with automatic
+   * non-destructive one-time migration from legacy IndexedDB; falls back to `StorageIdb` elsewhere.
    */
   static async createStorageIdb(args: SetupWalletIdbArgs): Promise<StorageIdb> {
+    const nativeBridge = getGlobalToolboxDbBridge()
+    if (nativeBridge != null) {
+      const sqlite = new StorageRustSqlite({
+        chain: args.chain,
+        commissionSatoshis: 0,
+        commissionPubKeyHex: undefined,
+        feeModel: { model: 'sat/kb', value: 100 },
+        managedChangePolicy: args.managedChangePolicy,
+        scriptVerifier: args.scriptVerifier,
+        bridge: nativeBridge
+      })
+      await sqlite.migrate(args.databaseName, randomBytesHex(33))
+      await migrateLegacyIdbToRustSqlite(sqlite, args.databaseName)
+      await sqlite.makeAvailable()
+      return sqlite as unknown as StorageIdb
+    }
     const storage = new StorageIdb({
       chain: args.chain,
       commissionSatoshis: 0,

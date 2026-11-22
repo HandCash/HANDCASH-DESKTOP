@@ -317,6 +317,156 @@ interface HandCashBridge {
         | { ok: false; error: string },
     ) => void,
   ) => () => void
+  toolboxDb?: {
+    call: <T = unknown>(
+      dbName: string,
+      op: string,
+      params?: Record<string, unknown>,
+    ) => Promise<T>
+  }
+  engine?: {
+    status: () => Promise<Record<string, unknown>>
+    activateAccount: (accountId: string) => Promise<{
+      accountId: string
+      generation: number
+      balance: {
+        spendableSats: number
+        pendingChangeSats: number
+        displayedSats: number
+        spendableUtxoCount: number
+        itemCount: number
+      }
+    }>
+    lock: () => Promise<boolean>
+    importBrc38: (
+      accountId: string,
+      generation: number,
+      json: string,
+    ) => Promise<{
+      transactions: number
+      utxos: number
+      items: number
+      blobsWritten: number
+      skippedRetiredProofReqs: number
+    }>
+    readBalance: (
+      accountId: string,
+      generation: number,
+    ) => Promise<{
+      spendableSats: number
+      pendingChangeSats: number
+      displayedSats: number
+      spendableUtxoCount: number
+      itemCount: number
+    }>
+    readItemsPage: (payload: {
+      accountId: string
+      generation: number
+      basket?: string
+      cursor?: [number, string]
+      limit?: number
+    }) => Promise<{
+      items: Array<Record<string, unknown>>
+      nextCursor: [number, string] | null
+      total: number
+    }>
+    readActivityPage: (payload: {
+      accountId: string
+      generation: number
+      cursor?: [number, string]
+      limit?: number
+    }) => Promise<{
+      rows: Array<Record<string, unknown>>
+      nextCursor: [number, string] | null
+      total: number
+    }>
+    encryptBrc39: (json: string, password: string) => Promise<Uint8Array>
+    decryptBrc39: (bytes: Uint8Array, password: string) => Promise<string>
+    hydrateInputs: (payload: {
+      accountId: string
+      generation: number
+      txids: string[]
+      allowRaw?: boolean
+    }) => Promise<{
+      found: Record<string, { kind: string; bytesBase64: string; fromCache: boolean }>
+      missing: string[]
+    }>
+    verifyBeef: (payload: {
+      accountId: string
+      generation: number
+      beefBytes?: Uint8Array
+      beefBase64?: string
+      subjectTxid?: string
+    }) => Promise<{
+      valid: boolean
+      subjectTxid: string | null
+      txCount: number
+      bumpCount: number
+      error: string | null
+    }>
+    verifyBrc150: (payload: {
+      accountId: string
+      generation: number
+      tipOutpoint: string
+      expectedOrigin?: string
+      beefBytes?: Uint8Array
+      beefBase64?: string
+    }) => Promise<
+      | {
+          status: 'proven'
+          originOutpoint: string
+          tipOutpoint: string
+          path: string[]
+          contentType: string
+          name?: string | null
+          issuer?: string | null
+        }
+      | {
+          status: 'unproven'
+          reason: string
+          missingTxid?: string | null
+        }
+    >
+    syncHeaders: (accountId: string, generation: number) => Promise<{ tipHeight: number | null }>
+    runProofPoll: (
+      accountId: string,
+      generation: number,
+    ) => Promise<{
+      tipHeight: number | null
+      broadcastsAccepted: number
+      proofsSettled: number
+    }>
+    runBrc150Pass: (
+      accountId: string,
+      generation: number,
+      maxItems?: number,
+    ) => Promise<{ provenCount: number }>
+    sealDeltaSegment: (
+      accountId: string,
+      generation: number,
+    ) => Promise<{
+      segmentId: string
+      rootHash: string
+      factCount: number
+      sealedAtMs: number
+      uploadedAtMs: number | null
+    } | null>
+    onPatch: (
+      handler: (patch: {
+        accountId: string
+        generation: number
+        seq: number
+        dirty: { balance: boolean; items: boolean; activity: boolean; sync: boolean }
+        balance: {
+          spendableSats: number
+          pendingChangeSats: number
+          displayedSats: number
+          spendableUtxoCount: number
+          itemCount: number
+        } | null
+      }) => void,
+    ) => () => void
+  }
 }
 
 interface Window {

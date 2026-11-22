@@ -416,6 +416,18 @@ html:is(.platform-mobile, .layout-compact) .panel-label-bar {
   margin-bottom: 4px;
 }
 
+/* Section titles and trailing tool pills share the action-bar chrome tokens. */
+html:is(.platform-mobile, .layout-compact) .connected-panel-head:not(.wallet-hero-head) {
+  --wallet-nav-select: color-mix(in srgb, var(--hc-text) 7%, #0a0a0a);
+  --wallet-nav-unselected: #000;
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .connected-panel-head:not(.wallet-hero-head) {
+  --wallet-nav-select: var(--hc-nav-select);
+  --wallet-nav-unselected: var(--hc-nav-unselected, #fff);
+}
+
 /* Section titles match desktop titlebar label chrome (gray pill, xl type). */
 html:is(.platform-mobile, .layout-compact)
   .connected-panel-head
@@ -853,13 +865,9 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar:not([data-permission]
   background-color: var(--hc-bg);
 }
 
-/* Compact panel tools mirror the desktop unselected plate. */
-html:is(.platform-mobile, .layout-compact) .connected-panel-head .wallet-nav-actions-pill {
-  background: var(--wallet-nav-unselected, var(--hc-nav-unselected));
-  box-shadow: none;
-}
-
-/* Compact section labels are separate surfaces from the bottom dock. */
+/* Compact panel tools and section labels share the embossed action-bar chrome. */
+html:is(.platform-mobile, .layout-compact) .connected-panel-head:not(.wallet-hero-head) .wallet-nav-actions-pill,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .connected-panel-head:not(.wallet-hero-head) .wallet-nav-actions-pill,
 html:is(.platform-mobile, .layout-compact) .connected-panel-head > h2:not(.wallet-hero-title):not(.nav-breadcrumb),
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .connected-panel-head > h2:not(.wallet-hero-title):not(.nav-breadcrumb),
 html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-path-pill {
@@ -867,6 +875,11 @@ html:is(.platform-mobile, .layout-compact) .nav-breadcrumb-head .nav-breadcrumb-
   background-image: linear-gradient(180deg, rgb(255 255 255 / 9%), transparent 45%, rgb(0 0 0 / 12%));
   box-shadow: inset 0 1px 1px rgb(255 255 255 / 26%),
     0 1px 2px 0 rgb(0 0 0 / 28%);
+}
+
+html:is(.platform-mobile, .layout-compact) .connected-panel-head:not(.wallet-hero-head) .wallet-nav-chrome-btn svg {
+  width: 17px;
+  height: 17px;
 }
 
 /* Request dock: flush square joins; outer radius lives on the bar/slots. */

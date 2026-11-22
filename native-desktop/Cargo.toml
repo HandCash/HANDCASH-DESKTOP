@@ -1,3 +1,15 @@
+[workspace]
+members = [
+    ".",
+    "crates/handcash-primitives",
+    "crates/handcash-bitcoin",
+    "crates/handcash-storage",
+    "crates/handcash-net",
+    "crates/handcash-engine",
+    "crates/handcash-app",
+]
+resolver = "2"
+
 [package]
 name = "handcash-shell"
 version = "0.1.0"
@@ -6,7 +18,26 @@ description = "Pure-Rust HandCash Desktop host, headless sidecar, and platform-n
 license = "Apache-2.0"
 publish = false
 
+[features]
+default = ["webview"]
+webview = ["dep:tao", "dep:wry", "dep:http", "dep:webkit2gtk", "dep:gtk"]
+
+[[bin]]
+name = "handcash-shell"
+path = "src/main.rs"
+required-features = ["webview"]
+
+[[bin]]
+name = "handcash-sidecar"
+path = "src/bin/handcash-sidecar.rs"
+
 [dependencies]
+handcash-bitcoin = { path = "crates/handcash-bitcoin" }
+handcash-engine = { path = "crates/handcash-engine" }
+handcash-net = { path = "crates/handcash-net" }
+handcash-primitives = { path = "crates/handcash-primitives" }
+handcash-storage = { path = "crates/handcash-storage" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 directories = "5"
@@ -30,14 +61,14 @@ if-addrs = "0.15"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
-tao = "0.30"
-wry = "0.48"
-http = "1"
+tao = { version = "0.30", optional = true }
+wry = { version = "0.48", optional = true }
+http = { version = "1", optional = true }
 
 # Match wry 0.48's webkit2gtk pin so `<input type=file>` can use run-file-chooser.
 [target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = { version = "=2.0.1", features = ["v2_38"] }
-gtk = "0.18"
+webkit2gtk = { version = "=2.0.1", features = ["v2_38"], optional = true }
+gtk = { version = "0.18", optional = true }
 
 [profile.release]
 lto = true

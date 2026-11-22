@@ -19,7 +19,8 @@
     'update-status': new Set(),
     'app-browser-guest': new Set(),
     'screenshot:copied': new Set(),
-    'omarchy:theme': new Set()
+    'omarchy:theme': new Set(),
+    'engine:patch': new Set()
   };
 
   function call(method, params) {
@@ -156,6 +157,99 @@
     walletCoreInfo: function () { return call('walletCoreInfo'); },
     walletCoreStrictHex: function (hex) { return call('walletCoreStrictHex', { hex: hex }); },
     walletCoreValidateRequest: function (payload) { return call('walletCoreValidateRequest', payload); },
+    toolboxDb: {
+      call: function (dbName, op, params) {
+        return call('toolboxDbOp', {
+          dbName: String(dbName || ''),
+          op: String(op || ''),
+          params: params && typeof params === 'object' ? params : {}
+        });
+      }
+    },
+    engine: {
+      status: function () { return call('engineStatus'); },
+      activateAccount: function (accountId) {
+        return call('engineActivateAccount', { accountId: String(accountId || '') });
+      },
+      lock: function () { return call('engineLock'); },
+      importBrc38: function (accountId, generation, json) {
+        return call('engineImportBrc38', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0),
+          json: String(json || '')
+        });
+      },
+      readBalance: function (accountId, generation) {
+        return call('engineReadBalance', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0)
+        });
+      },
+      readItemsPage: function (payload) { return call('engineReadItemsPage', payload || {}); },
+      readActivityPage: function (payload) { return call('engineReadActivityPage', payload || {}); },
+      encryptBrc39: function (json, password) {
+        return call('engineEncryptBrc39', {
+          json: String(json || ''),
+          password: String(password || '')
+        }).then(function (res) {
+          return base64ToBytes(res && res.bytesBase64 ? res.bytesBase64 : '');
+        });
+      },
+      decryptBrc39: function (bytes, password) {
+        return call('engineDecryptBrc39', {
+          bytesBase64: bytesToBase64(bytes),
+          password: String(password || '')
+        }).then(function (res) {
+          return res && typeof res.json === 'string' ? res.json : '';
+        });
+      },
+      hydrateInputs: function (payload) { return call('engineHydrateInputs', payload || {}); },
+      verifyBeef: function (payload) {
+        var opts = payload || {};
+        return call('engineVerifyBeef', {
+          accountId: String(opts.accountId || ''),
+          generation: Number(opts.generation || 0),
+          beefBase64: opts.beefBytes ? bytesToBase64(opts.beefBytes) : String(opts.beefBase64 || ''),
+          subjectTxid: opts.subjectTxid ? String(opts.subjectTxid) : undefined
+        });
+      },
+      verifyBrc150: function (payload) {
+        var opts = payload || {};
+        return call('engineVerifyBrc150', {
+          accountId: String(opts.accountId || ''),
+          generation: Number(opts.generation || 0),
+          tipOutpoint: String(opts.tipOutpoint || ''),
+          expectedOrigin: opts.expectedOrigin ? String(opts.expectedOrigin) : undefined,
+          beefBase64: opts.beefBytes ? bytesToBase64(opts.beefBytes) : (opts.beefBase64 ? String(opts.beefBase64) : undefined)
+        });
+      },
+      syncHeaders: function (accountId, generation) {
+        return call('engineSyncHeaders', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0)
+        });
+      },
+      runProofPoll: function (accountId, generation) {
+        return call('engineRunProofPoll', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0)
+        });
+      },
+      runBrc150Pass: function (accountId, generation, maxItems) {
+        return call('engineRunBrc150Pass', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0),
+          maxItems: Number(maxItems || 2)
+        });
+      },
+      sealDeltaSegment: function (accountId, generation) {
+        return call('engineSealDeltaSegment', {
+          accountId: String(accountId || ''),
+          generation: Number(generation || 0)
+        });
+      },
+      onPatch: function (handler) { return subscribe('engine:patch', handler); }
+    },
     getUpdateStatus: function () { return call('getUpdateStatus'); },
     checkForUpdates: function () { return call('checkForUpdates'); },
     downloadUpdate: function () { return call('downloadUpdate'); },

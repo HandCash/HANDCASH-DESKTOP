@@ -104,7 +104,31 @@ async function databaseNames(): Promise<string[]> {
   return rows.map((row) => row.name).filter((name): name is string => Boolean(name))
 }
 
+async function sqliteIdentitySummary(
+  name: string,
+  identityKey: string,
+): Promise<{ stored: boolean; txCount: number | null } | null> {
+  if (typeof window === 'undefined' || typeof window.handcash?.toolboxDb?.call !== 'function') {
+    return null
+  }
+  try {
+    const res = await window.handcash.toolboxDb.call<{ stored?: boolean; txCount?: number | null }>(
+      name,
+      'identitySummary',
+      { identityKey },
+    )
+    if (res?.stored === true) {
+      return { stored: true, txCount: typeof res.txCount === 'number' ? res.txCount : 0 }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 async function identityIsStored(name: string, identityKey: string): Promise<boolean> {
+  const sqlite = await sqliteIdentitySummary(name, identityKey)
+  if (sqlite?.stored) return true
   if (!(await databaseNames()).includes(name)) return false
   const db = await new Promise<IDBDatabase | null>((resolve) => {
     const request = indexedDB.open(name)
@@ -132,6 +156,8 @@ async function identityIsStored(name: string, identityKey: string): Promise<bool
  * has no user for it. Counted on the `userId` index, never by reading rows.
  */
 async function identityTransactionCount(name: string, identityKey: string): Promise<number | null> {
+  const sqlite = await sqliteIdentitySummary(name, identityKey)
+  if (sqlite?.stored) return sqlite.txCount
   if (!(await databaseNames()).includes(name)) return null
   const db = await new Promise<IDBDatabase | null>((resolve) => {
     const request = indexedDB.open(name)

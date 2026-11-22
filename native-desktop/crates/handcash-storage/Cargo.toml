@@ -1,0 +1,16 @@
+# Copyright HandCash. Licensed under the Apache License, Version 2.0.
+[package]
+name = "handcash-storage"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+handcash-primitives = { path = "../handcash-primitives" }
+hex = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

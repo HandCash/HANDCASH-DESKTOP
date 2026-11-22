@@ -571,19 +571,24 @@ function notifyCollectables(items: Collectable[]) {
     }
   }
   if (items.length > 120) {
-    // One pending paint, not one render per background result. The cache and
-    // spend authority update synchronously; only display notification yields.
+    // Coalesce burst background updates (~8 Hz in interactive UI) instead of
+    // firing one React commit per item update (which caused 115-commit/10s storms).
     pendingCollectablesNotify = { items, epoch: collectablesAccountEpoch }
     if (collectablesNotifyScheduled) return
     collectablesNotifyScheduled = true
-    void yieldToUi().then(() => {
+    const flush = () => {
       collectablesNotifyScheduled = false
       const pending = pendingCollectablesNotify
       pendingCollectablesNotify = null
       if (pending && pending.epoch === collectablesAccountEpoch) {
         emit(pending.items, pending.epoch)
       }
-    })
+    }
+    if (typeof window !== 'undefined') {
+      setTimeout(flush, 120)
+    } else {
+      void yieldToUi().then(flush)
+    }
   } else {
     // An immediate clear/small list supersedes an older deferred large list.
     pendingCollectablesNotify = null

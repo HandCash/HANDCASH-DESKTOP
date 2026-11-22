@@ -1,10 +1,13 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
-// Meridian M1 leaf primitives: strict ASCII hex encoding and SHA-256 / HMAC-SHA-256
-// backed by audited permissive Rust crates (`sha2`, `ring`).
+//! Meridian M1 leaf primitives: strict ASCII hex encoding, SHA-256, double SHA-256,
+//! HMAC-SHA-256, and HKDF-SHA-256.
 
-use ring::hmac;
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::fmt;
+
+type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodingError {
@@ -84,11 +87,18 @@ pub fn double_sha256(data: &[u8]) -> [u8; 32] {
 
 /// HMAC-SHA-256 MAC.
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let signing_key = hmac::Key::new(hmac::HMAC_SHA256, key);
-    let tag = hmac::sign(&signing_key, data);
-    let mut out = [0u8; 32];
-    out.copy_from_slice(tag.as_ref());
-    out
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts keys of any size");
+    mac.update(data);
+    mac.finalize().into_bytes().into()
+}
+
+/// HKDF-SHA-256 32-byte key derivation.
+pub fn hkdf_sha256_32(salt: Option<&[u8]>, ikm: &[u8], info: &[u8]) -> [u8; 32] {
+    let hk = Hkdf::<Sha256>::new(salt, ikm);
+    let mut okm = [0u8; 32];
+    hk.expand(info, &mut okm)
+        .expect("32 bytes is always within HKDF-SHA-256 max length");
+    okm
 }
 
 #[cfg(test)]
@@ -100,13 +110,18 @@ mod tests {
         let all: Vec<u8> = (0u8..=255).collect();
         let encoded = encode_hex(&all);
         assert_eq!(encoded.len(), 512);
-        assert!(encoded.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
+        assert!(encoded
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')));
         assert_eq!(decode_hex(&encoded).unwrap(), all);
 
         assert_eq!(encode_hex(&[]), "");
         assert_eq!(decode_hex("").unwrap(), Vec::<u8>::new());
         assert_eq!(decode_hex("0000ff00").unwrap(), vec![0, 0, 255, 0]);
-        assert_eq!(decode_hex("DeAdBeEf").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(
+            decode_hex("DeAdBeEf").unwrap(),
+            vec![0xde, 0xad, 0xbe, 0xef]
+        );
     }
 
     #[test]
@@ -123,15 +138,24 @@ mod tests {
         ));
         assert_eq!(
             decode_hex(" 00 "),
-            Err(EncodingError::InvalidHexByte { index: 0, byte: b' ' })
+            Err(EncodingError::InvalidHexByte {
+                index: 0,
+                byte: b' '
+            })
         );
         assert_eq!(
             decode_hex("0x00"),
-            Err(EncodingError::InvalidHexByte { index: 1, byte: b'x' })
+            Err(EncodingError::InvalidHexByte {
+                index: 1,
+                byte: b'x'
+            })
         );
         assert_eq!(
             decode_hex("00zz"),
-            Err(EncodingError::InvalidHexByte { index: 2, byte: b'z' })
+            Err(EncodingError::InvalidHexByte {
+                index: 2,
+                byte: b'z'
+            })
         );
     }
 
@@ -153,11 +177,19 @@ mod tests {
 
     #[test]
     fn hmac_sha256_matches_rfc4231_test_case_2() {
-        // RFC 4231 Test Case 2: Key = "Jefe", Data = "what do ya want for nothing?"
         let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
         assert_eq!(
             encode_hex(&mac),
             "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
         );
+    }
+
+    #[test]
+    fn hkdf_sha256_is_deterministic_and_domain_separated() {
+        let a = hkdf_sha256_32(Some(b"salt"), b"ikm", b"handcash-delta-v1");
+        let b = hkdf_sha256_32(Some(b"salt"), b"ikm", b"handcash-delta-v1");
+        let c = hkdf_sha256_32(Some(b"salt"), b"ikm", b"handcash-other-v1");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
     }
 }

@@ -1,6 +1,5 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
-// Frozen versioned scoped request language (v1) per docs/meridian-engine.md
-// and docs/rust-desktop-mobile-migration.md Step 1.
+//! Frozen versioned scoped request language (v1) per docs/meridian-engine.md.
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -41,8 +40,6 @@ pub enum Capability {
     BroadcastTransaction,
 }
 
-/// Host-authenticated session context. Adapter-supplied origin is never trusted
-/// without matching this context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticatedSession {
@@ -52,7 +49,6 @@ pub struct AuthenticatedSession {
     pub active_generation: u64,
 }
 
-/// Scoped, expiring permission grant issued to an authenticated origin.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PermissionGrant {
@@ -60,14 +56,11 @@ pub struct PermissionGrant {
     pub account_id: String,
     pub chain_network: ChainNetwork,
     pub allowed_capabilities: Vec<Capability>,
-    /// Optional exact-integer unit cap per request (e.g. satoshis or base units).
     pub max_amount_units: Option<u64>,
     pub expires_at_ms: u64,
     pub revoked: bool,
 }
 
-/// Versioned internal request envelope behind standards adapters.
-/// Rejects floating-point amounts and arbitrary method/script execution by construction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScopedRequest {
@@ -111,7 +104,6 @@ impl fmt::Display for RequestRejection {
 
 impl std::error::Error for RequestRejection {}
 
-/// Bounded replay-tracking request guard. Fails closed on every security invariant.
 #[derive(Debug)]
 pub struct RequestGuard {
     seen_set: HashSet<String>,
@@ -134,8 +126,6 @@ impl RequestGuard {
         }
     }
 
-    /// Validate a request against host-authenticated session context, active grant, and current time.
-    /// Records `request_id` in the replay set only after all checks pass.
     pub fn validate(
         &mut self,
         req: &ScopedRequest,

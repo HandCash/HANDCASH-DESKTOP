@@ -1741,6 +1741,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   padding: 6px 14px 8px;
   flex-shrink: 0;
   min-width: 0;
+  background: var(--hc-bg);
   container-type: inline-size;
   container-name: wallet-hero;
 }
@@ -4754,7 +4755,7 @@ html:not(.platform-mobile):not(.layout-compact) .dashboard .connected-panel-head
   border-bottom-color: color-mix(in srgb, hsl(var(--border)) 40%, hsl(var(--card)));
 }
 
-html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-nav-actions-pill {
+html:not(.platform-mobile):not(.layout-compact) .dashboard .wallet-hero .wallet-nav-actions-pill {
   border-color: color-mix(in srgb, hsl(var(--border)) 45%, hsl(var(--card)));
   background: var(--hc-bg);
 }
@@ -5534,7 +5535,7 @@ html:not(.platform-mobile):not(.layout-compact)
   gap: 0;
   border-radius: 0;
   color: hsl(var(--muted-foreground));
-  background: var(--wallet-nav-unselected);
+  background: transparent;
   box-shadow: none;
   scroll-snap-align: none;
   position: relative;
@@ -5575,14 +5576,16 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav
 }
 
 html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav-chrome-btn {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
+  width: auto;
+  height: auto;
+  min-width: 36px;
+  min-height: 0;
+  padding: 0 9px;
 }
 
 html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav-chrome-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 
 .wallet-nav-titlebar-pill .wallet-nav-tab:hover {
@@ -20527,12 +20530,207 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
     0 1px 2px 0 rgb(0 0 0 / 28%);
 }
 
-/* Right-hand tools share the unselected tab plate, not the raised selection. */
+/* Right-hand tools match the left action bar's embossed pill and track grammar. */
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome),
 .wallet-nav-titlebar-actions .wallet-nav-actions-pill,
+.friends-panel-head > .wallet-nav-actions-pill.friends-panel-head-actions,
+html[data-aeon-mode='light'] .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome),
 html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pill {
-  background: var(--wallet-nav-unselected);
-  background-image: none;
+  align-items: stretch;
+  gap: 0;
+  padding: 2px;
+  border: var(--hc-border-w) solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75));
+  background-color: var(--hc-bg);
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 9%), transparent 45%, rgb(0 0 0 / 12%));
+  box-shadow: inset 0 1px 1px rgb(255 255 255 / 26%),
+    0 1px 2px 0 rgb(0 0 0 / 28%);
+}
+
+/* Keep popover triggers and view toggles flush inside the outer embossed pill. */
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle) {
+  display: inline-flex;
+  align-items: stretch;
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   box-shadow: none;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  > :is(.connected-count, .activity-rebroadcast-failed, .activity-clear-failed) {
+  align-self: center;
+  margin-inline: 2px;
+}
+
+/* Inner action segments mirror .wallet-nav-tab (unselected plates + raised active). */
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome) .wallet-nav-chrome-btn,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome) .connected-app-tabs-button,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome) .collection-view-btn {
+  align-self: stretch;
+  height: auto;
+  min-height: 0;
+  width: auto;
+  min-width: 32px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  background: var(--wallet-nav-unselected, #000);
+  color: hsl(var(--muted-foreground));
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-titlebar
+  .wallet-nav-actions-pill
+  .wallet-nav-chrome-btn {
+  min-width: 36px;
+  padding: 0 9px;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:disabled {
+  opacity: 1;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:disabled
+  > :is(svg, span) {
+  opacity: 0.42;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:hover:not(:disabled),
+html[data-aeon-mode='light']
+  .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:hover:not(:disabled) {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 18%, transparent);
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  outline-offset: -2px;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]):hover {
+  color: #fafafa;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-aeon-mode='light']
+  .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+html[data-aeon-mode='light']
+  .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]):hover {
+  color: hsl(var(--primary));
+  background: transparent;
+  box-shadow: none;
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected])
+  svg {
+  transform: scale(1.11);
+}
+
+.wallet-nav-actions-pill .wallet-nav-chrome-dot {
+  box-shadow: 0 0 0 2px var(--hc-bg);
+}
+
+/* Cap unselected runs at pill ends and next to raised active/selected tools. */
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  > .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]):first-child,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  > :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):first-child
+  > .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]):first-child,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  :is(
+    .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+    :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):has(
+      > .wallet-nav-chrome-btn:last-child:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected])
+    )
+  )
+  + .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]),
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  :is(
+    .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+    :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):has(
+      > .wallet-nav-chrome-btn:last-child:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected])
+    )
+  )
+  + :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle)
+  > .wallet-nav-chrome-btn:first-child:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]) {
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75)) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75)) - 2px);
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  > .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]):last-child,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  > :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):last-child
+  > .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]):last-child,
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  .wallet-nav-chrome-btn:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]):has(
+    + :is(
+      .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+      :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):has(
+        > .wallet-nav-chrome-btn:first-child:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected])
+      )
+    )
+  ),
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome)
+  :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):has(
+    + :is(
+      .wallet-nav-chrome-btn:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected]),
+      :is(.activity-filter-popover, .panel-search-popover, .collection-view-toggle):has(
+        > .wallet-nav-chrome-btn:first-child:is([data-active], [aria-expanded='true'], [aria-pressed='true'], [data-selected])
+      )
+    )
+  )
+  > .wallet-nav-chrome-btn:last-child:not([data-active]):not([aria-expanded='true']):not([aria-pressed='true']):not([data-selected]) {
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75)) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75)) - 2px);
+}
+
+/* Standalone action pills (Back, Filter) expose the continuous embossed bevel directly. */
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome):not(:has(.collection-view-toggle)):is(
+  :has(> :only-child),
+  :has(> .activity-filter-popover)
+) .wallet-nav-chrome-btn {
+  background: transparent;
+  color: var(--hc-text);
+  border-radius: calc(var(--wallet-nav-pill-radius, calc(var(--radius, 0.5rem) * 1.75)) - 2px);
+}
+
+.wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome):not(:has(.collection-view-toggle)):is(
+  :has(> :only-child),
+  :has(> .activity-filter-popover)
+) .wallet-nav-chrome-btn:hover:not(:disabled),
+html[data-aeon-mode='light']
+  .wallet-nav-actions-pill:not(.wallet-hero-metric):not(.wallet-hero-identity-chrome):not(:has(.collection-view-toggle)):is(
+    :has(> :only-child),
+    :has(> .activity-filter-popover)
+  ) .wallet-nav-chrome-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--hc-text) 12%, transparent);
+  color: var(--hc-text);
 }
 
 /* Label/path and selected tab expose one continuous raised surface.
@@ -20545,7 +20743,7 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-actions .wallet-nav-actions-pi
 }
 
 .wallet-nav-actions-pill .wallet-nav-chrome-btn:active {
-  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--hc-text) 18%, transparent);
+  box-shadow: none;
 }
 
 /* Open panel: label on top, two wide labelled buttons below. It floats over the

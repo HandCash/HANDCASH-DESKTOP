@@ -35,6 +35,7 @@ const DEVICE_PEER_TIMEOUT: Duration = Duration::from_secs(30);
 const DEVICE_PEER_SCAN_LOGIN_TIMEOUT: Duration = Duration::from_secs(100);
 
 type PushFn = Arc<dyn Fn(&str, Value) + Send + Sync>;
+type DirectHandlerFn = Arc<dyn Fn(&str, &str, &HashMap<String, String>, &str) -> BridgeReply + Send + Sync>;
 
 #[derive(Clone, Debug, Default)]
 struct BridgeStatusState {
@@ -63,6 +64,7 @@ pub struct Brc100Bridge {
     user_data_dir: PathBuf,
     log: Arc<HostLog>,
     push: Mutex<Option<PushFn>>,
+    direct_handler: Mutex<Option<DirectHandlerFn>>,
     status: Mutex<BridgeStatusState>,
     servers: Mutex<Option<RunningServers>>,
     renderer_ready: Mutex<bool>,
@@ -81,6 +83,7 @@ impl Brc100Bridge {
             user_data_dir,
             log,
             push: Mutex::new(None),
+            direct_handler: Mutex::new(None),
             status: Mutex::new(BridgeStatusState {
                 device_peer_port: DEVICE_PEER_PORT,
                 ..Default::default()
@@ -102,6 +105,15 @@ impl Brc100Bridge {
         F: Fn(&str, Value) + Send + Sync + 'static,
     {
         *self.push.lock().unwrap() = Some(Arc::new(f));
+    }
+
+    /// Install an in-process Rust BRC-100 request handler (used by the pure-Rust
+    /// `handcash-native` desktop app so requests never round-trip through a WebView).
+    pub fn set_direct_handler<F>(&self, f: F)
+    where
+        F: Fn(&str, &str, &HashMap<String, String>, &str) -> BridgeReply + Send + Sync + 'static,
+    {
+        *self.direct_handler.lock().unwrap() = Some(Arc::new(f));
     }
 
     fn emit(&self, channel: &str, payload: Value) {
@@ -614,6 +626,25 @@ impl Brc100Bridge {
                 }
                 SpendBegin::Dispatch => {}
             }
+        }
+
+        if let Some(handler) = self.direct_handler.lock().unwrap().clone() {
+            let reply = handler(&req.method, &req.path, &req.headers, &body_str);
+            self.spend_ledger.settle(request_id, reply.clone());
+            self.spend_ledger.done(request_id);
+            if reply.status >= 400 {
+                self.log.append(
+                    "warn",
+                    "brc100",
+                    &format!(
+                        "[HTTP] ← native request_id={request_id} {} {} error: {}",
+                        req.method,
+                        req.path,
+                        summarize_error_body(&reply.body)
+                    ),
+                );
+            }
+            return reply;
         }
 
         if let Err(msg) = self.wait_renderer_ready() {

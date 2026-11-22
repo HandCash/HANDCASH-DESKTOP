@@ -62,20 +62,36 @@ if (process.platform === 'darwin' && !process.env.HANDCASH_ALLOW_CROSS) {
   )
 }
 
-if (process.env.HANDCASH_SKIP_RENDERER !== '1') {
+const useWebview =
+  process.argv.includes('--webview') || process.env.HANDCASH_USE_WEBVIEW === '1'
+const useDioxusNative = target === 'linux' && !useWebview
+
+if (!useDioxusNative && process.env.HANDCASH_SKIP_RENDERER !== '1') {
   console.log('==> build:renderer')
   run('npm', ['run', 'build:renderer'])
 }
 
 // Keep artifacts in-tree (Cursor sandboxes otherwise redirect CARGO_TARGET_DIR).
 const cargoTargetDir = path.join(crate, 'target')
-console.log('==> cargo build --release (native-desktop)')
-run('cargo', ['build', '--release'], {
-  cwd: crate,
-  env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
-})
+if (useDioxusNative) {
+  console.log('==> cargo build --release -p handcash-app --bin handcash-native (pure Rust Dioxus Native, zero WebKitGTK)')
+  run('cargo', ['build', '--release', '-p', 'handcash-app', '--bin', 'handcash-native'], {
+    cwd: crate,
+    env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+  })
+} else {
+  console.log('==> cargo build --release (native-desktop)')
+  run('cargo', ['build', '--release'], {
+    cwd: crate,
+    env: { ...process.env, CARGO_TARGET_DIR: cargoTargetDir },
+  })
+}
 
-const binName = target === 'win' ? 'handcash-shell.exe' : 'handcash-shell'
+const binName = useDioxusNative
+  ? 'handcash-native'
+  : target === 'win'
+    ? 'handcash-shell.exe'
+    : 'handcash-shell'
 const binSrc = path.join(cargoTargetDir, 'release', binName)
 if (!fs.existsSync(binSrc)) {
   throw new Error(`missing ${binSrc} — build on ${target} (or install the Rust target)`)
@@ -87,8 +103,10 @@ fs.mkdirSync(outDir, { recursive: true })
 copyFile(binSrc, path.join(outDir, binName))
 if (target !== 'win') fs.chmodSync(path.join(outDir, binName), 0o755)
 
-copyFile(path.join(crate, 'handcash-page.js'), path.join(outDir, 'handcash-page.js'))
-copyDir(path.join(root, 'dist'), path.join(outDir, 'app'))
+if (!useDioxusNative) {
+  copyFile(path.join(crate, 'handcash-page.js'), path.join(outDir, 'handcash-page.js'))
+  copyDir(path.join(root, 'dist'), path.join(outDir, 'app'))
+}
 
 if (target === 'win') {
   const cmd = `@echo off
@@ -101,6 +119,16 @@ set "HANDCASH_APP_VERSION=${version}"
 "%DIR%${binName}" %*
 `
   fs.writeFileSync(path.join(outDir, 'HandCash.cmd'), cmd)
+} else if (useDioxusNative) {
+  const sh = `#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"
+export HANDCASH_APP_VERSION=${version}
+exec "$DIR/${binName}" "$@"
+`
+  const startPath = path.join(outDir, 'HandCash')
+  fs.writeFileSync(startPath, sh)
+  fs.chmodSync(startPath, 0o755)
 } else {
   const sh = `#!/usr/bin/env bash
 set -euo pipefail

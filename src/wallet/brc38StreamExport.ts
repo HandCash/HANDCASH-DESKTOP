@@ -92,8 +92,16 @@ function rejectNulls(value: unknown, path: string): void {
 }
 
 function toBase64(value: unknown): string {
-  if (value instanceof Uint8Array) return Utils.toBase64(Array.from(value))
-  return Utils.toBase64(value as number[])
+  const bytes = value instanceof Uint8Array ? value : Uint8Array.from(value as number[])
+  if (typeof btoa !== 'function') return Utils.toBase64(Array.from(bytes))
+  const chunk = 0x8000
+  const parts: string[] = []
+  for (let i = 0; i < bytes.length; i += chunk) {
+    parts.push(
+      String.fromCharCode.apply(null, bytes.subarray(i, i + chunk) as unknown as number[]),
+    )
+  }
+  return btoa(parts.join(''))
 }
 
 function portableRow(kind: string, row: Row): Row {

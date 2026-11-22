@@ -109,6 +109,11 @@ fn main() -> wry::Result<()> {
             .expect("durable sync http");
 
     let brc100_bridge = Brc100Bridge::new(paths::user_data_dir(), Arc::clone(&host_log));
+    let wallet_engine = handcash_engine::WalletEngine::open(paths::user_data_dir(), false)
+        .expect("wallet engine");
+    let toolbox_db = Arc::new(handcash_storage::ToolboxDbManager::new(
+        paths::user_data_dir(),
+    ));
     let state = Arc::new(HostState::new(
         Arc::clone(&store),
         Arc::clone(&brc100_bridge),
@@ -116,6 +121,8 @@ fn main() -> wry::Result<()> {
         Arc::clone(&brc39_archive),
         Arc::clone(&call_recordings),
         Arc::clone(&clipboard),
+        Arc::clone(&wallet_engine),
+        Arc::clone(&toolbox_db),
         platform.clone(),
         app_version,
         is_packaged,
@@ -176,6 +183,18 @@ fn main() -> wry::Result<()> {
             });
         });
         brc100_bridge.start_if_needed();
+    }
+
+    {
+        let proxy = proxy.clone();
+        wallet_engine.set_push_handler(move |patch| {
+            if let Ok(payload) = serde_json::to_value(patch) {
+                let _ = proxy.send_event(UserEvent::Push {
+                    channel: "engine:patch".into(),
+                    payload,
+                });
+            }
+        });
     }
 
     {
@@ -244,17 +263,17 @@ fn main() -> wry::Result<()> {
             if id.is_empty() || method.is_empty() {
                 return;
             }
-            // Network checks and browser launch must never block the WebView event loop.
-            if matches!(method.as_str(), "checkForUpdates" | "downloadUpdate" | "installUpdate") {
+            // Engine, network, crypto, and archive ops run on the background Tokio
+            // runtime and never block the WebView/GTK event loop.
+            if bridge::is_async_method(&method) {
                 let state = Arc::clone(&state_ipc);
                 let proxy = proxy_ipc.clone();
-                std::thread::spawn(move || {
-                    let result = match dispatch(&state, id.clone(), &method, &params) {
-                        HostReply::Ok { value, .. } => json!({"id":id,"ok":true,"value":value}),
-                        HostReply::Err { error, .. } => json!({"id":id,"ok":false,"error":error}),
-                        _ => return,
-                    };
-                    let _ = proxy.send_event(UserEvent::Eval(format!("window.__handcashNativeReply({result});")));
+                let handle = state.engine.runtime_handle().clone();
+                handle.spawn(async move {
+                    let reply = bridge::dispatch_async(state, id, method, params).await;
+                    if let Some(script) = bridge::reply_script(&reply) {
+                        let _ = proxy.send_event(UserEvent::Eval(script));
+                    }
                 });
                 return;
             }

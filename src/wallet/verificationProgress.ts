@@ -51,23 +51,33 @@ function normalize(outpoint: string): string {
 
 /** Longest a progress repaint waits behind scrolling. */
 const EMIT_INPUT_WAIT_MS = 600
+/** Minimum interval between background verification paints so batch loops do not storm React. */
+const EMIT_COALESCE_MS = 120
 let emitScheduled = false
+let emitTimer: ReturnType<typeof setTimeout> | null = null
 
 /**
  * Activity and Collect re-render every row on a progress change, and a batch
- * import changes progress per item. One repaint per frame carries the latest
- * state; while the user scrolls it waits (bounded) for the fling to end.
+ * import changes progress per item. Coalesce updates to at most ~8 Hz while
+ * active, and while the user scrolls wait (bounded) for the fling to end.
  */
 function emit(): void {
   if (emitScheduled) return
   emitScheduled = true
   const flush = () => {
     emitScheduled = false
+    emitTimer = null
     for (const listener of listeners) listener(progress)
   }
   void whenInputQuiet(EMIT_INPUT_WAIT_MS).then(() => {
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush)
-    else setTimeout(flush, 0)
+    if (typeof window === 'undefined') {
+      setTimeout(flush, 0)
+      return
+    }
+    emitTimer = setTimeout(() => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(flush)
+      else flush()
+    }, EMIT_COALESCE_MS)
   })
 }
 
@@ -81,20 +91,31 @@ export function setVerificationProgress(
   detail?: string | null,
 ): void {
   if (phase === 'idle') {
+    if (progress.phase === 'idle' && progress.outpoint === null) return
     progress = { outpoint: null, phase: 'idle', label: null, detail: null }
     emit()
     return
   }
   const op = outpoint ? normalize(outpoint) : null
+  const nextLabel = phase === 'verifying' ? 'Verifying…' : 'Identifying…'
+  const nextDetail =
+    detail?.trim() ||
+    (phase === 'verifying'
+      ? 'Proving tip-to-origin lineage (BRC-150)'
+      : 'Fetching name and traits from the indexer')
+  if (
+    progress.phase === phase &&
+    progress.outpoint === op &&
+    progress.label === nextLabel &&
+    progress.detail === nextDetail
+  ) {
+    return
+  }
   progress = {
     outpoint: op,
     phase,
-    label: phase === 'verifying' ? 'Verifying…' : 'Identifying…',
-    detail:
-      detail?.trim() ||
-      (phase === 'verifying'
-        ? 'Proving tip-to-origin lineage (BRC-150)'
-        : 'Fetching name and traits from the indexer'),
+    label: nextLabel,
+    detail: nextDetail,
   }
   emit()
 }
@@ -227,6 +248,11 @@ export function isOutpointVerifying(
 
 /** Test helper — drop in-memory verify state between cases. */
 export function resetVerificationProgressForTests(): void {
+  if (emitTimer !== null) {
+    clearTimeout(emitTimer)
+    emitTimer = null
+  }
+  emitScheduled = false
   awaitingVerify.clear()
   preferredOutpoint = null
   progress = { outpoint: null, phase: 'idle', label: null, detail: null }

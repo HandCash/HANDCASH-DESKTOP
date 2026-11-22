@@ -105,6 +105,21 @@ export async function encryptBrc39Document(
   json: string,
   password: string,
 ): Promise<Uint8Array> {
+  // Tier 1 Rust engine runs native Argon2id + AES-256-GCM on a background OS thread:
+  // ~10x faster than WASM and zero main-thread UI freeze.
+  const nativeEncrypt = typeof window !== 'undefined' ? window.handcash?.engine?.encryptBrc39 : undefined
+  if (typeof nativeEncrypt === 'function') {
+    try {
+      const bytes = await nativeEncrypt(json, password)
+      if (bytes instanceof Uint8Array && bytes.length >= 51) return bytes
+    } catch (err) {
+      appendAppLog(
+        'warn',
+        `[cloud-backup] native Rust BRC-39 encrypt fallback — ${errorText(err)}`,
+      )
+    }
+  }
+
   if (workersUsable) {
     try {
       const reply = await requestWorker<Brc39EncryptResponse>(
@@ -157,6 +172,19 @@ export function resetBrc39WorkerForTests(): void {
 
 /** Validate the entire authenticated document off the UI thread before recovery. */
 export async function decryptBrc39Document(bytes: Uint8Array, password: string) {
+  const nativeDecrypt = typeof window !== 'undefined' ? window.handcash?.engine?.decryptBrc39 : undefined
+  if (typeof nativeDecrypt === 'function') {
+    try {
+      const json = await nativeDecrypt(bytes, password)
+      const { parseBRC38Json } = await import('@handcash/wallet-engine')
+      return parseBRC38Json(json)
+    } catch (err) {
+      const msg = errorText(err)
+      // Authentication / tamper failures are definitive — never retry inline.
+      if (/authentication failed|invalid brc-39|unsupported brc-39/i.test(msg)) throw err
+      appendAppLog('warn', `[cloud-backup] native Rust BRC-39 decrypt fallback — ${msg}`)
+    }
+  }
   const reply = await requestWorker<Brc39DocumentResponse>(
     { kind: 'document', bytes, password }, 'document validation', { abortable: false },
   )

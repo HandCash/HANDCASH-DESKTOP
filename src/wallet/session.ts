@@ -306,6 +306,7 @@ export function clearActiveWallet(): void {
   clearWarmWallets()
   active = null
   forgetVaultMasterCache()
+  void import('./rustEngineBridge').then(({ lockRustEngine }) => lockRustEngine())
   void import('./vaultAccountHolding').then(({ stopHoldingWatch }) => stopHoldingWatch())
   void import('./accountMove').then(({ stopHoldingService }) => stopHoldingService())
   void import('./brc250/deviceService').then(({ stopBrc250DeviceService }) =>
@@ -528,6 +529,9 @@ async function selectWallet(wallet: ActiveWallet, preloadActivity = true): Promi
   lastBalanceBreakdown = ''
   startDurablePropagationRecovery(runtime)
   startMonitorOnce(wallet)
+  void import('./rustEngineBridge').then(({ activateRustEngineAccount }) =>
+    activateRustEngineAccount(wallet.identityKey),
+  )
   // A newly selected account was not served before now: its first spend checks it.
   void import('./accountMove').then(({ startHoldingService }) => startHoldingService())
   void import('./brc250/deviceService').then(({ startBrc250DeviceService }) =>
@@ -551,44 +555,17 @@ async function selectWallet(wallet: ActiveWallet, preloadActivity = true): Promi
 }
 
 const PREWARM_DELAY_MS = 5_000
-/** The foreground must stay idle this long before an account warms. */
-const PREWARM_QUIET_MS = 15_000
-const PREWARM_QUIET_PHONE_MS = 30_000
-
-/**
- * Wait until the foreground wallet has been idle — no ingest, spend, history
- * or recompose, and no spend waiting — for a full quiet window. Building an
- * account is tens of seconds of main-thread work; it must never overlap the
- * startup recompose or a send. False once the warm pool moved on.
- */
-async function prewarmQuietWindow(generation: number): Promise<boolean> {
-  const { waitForWalletRegionsIdle, walletRegionsGeneration, walletRegionsIdleSince } =
-    await import('./walletCoordinator')
-  const quietMs = isPhoneShell() ? PREWARM_QUIET_PHONE_MS : PREWARM_QUIET_MS
-  for (;;) {
-    if (warmPoolGeneration() !== generation) return false
-    if (!(await waitForWalletRegionsIdle(60_000))) continue
-    const since = walletRegionsGeneration()
-    await sleep(quietMs)
-    if (warmPoolGeneration() !== generation) return false
-    if (walletRegionsIdleSince(since)) return true
-  }
-}
 
 /**
  * Find accounts this device has not listed yet (a restored vault lists only
- * the primary), then open the vault's other accounts in the background, one
- * at a time, so the first switch to each is as fast as every later one. Each waits for a quiet
- * foreground (`prewarmQuietWindow`). Prewarmed units start no monitor until
- * they are selected.
+ * the primary) and verify holding ownership. Inactive accounts stay lazy until
+ * switched to so launch never builds 4–5 extra Wallet/StorageIdb instances.
  */
-function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): void {
+function prewarmVaultAccounts(selected: ActiveWallet, _args: WalletBootArgs): void {
   if (import.meta.env?.MODE === 'test' || typeof window === 'undefined') return
   const vaultMaster = selected.vaultMaster
   const generation = warmPoolGeneration()
   const run = async () => {
-    const { isHeldHere, readVaultAccounts, rootKeyHexForAccount } = await import('./vaultAccounts')
-    const masterIdentityKey = vaultIdentityKey(vaultMaster)
     try {
       const { discoverVaultAccounts, probeAccountUse } = await import('./vaultAccountDiscovery')
       await discoverVaultAccounts({ master: vaultMaster, probe: probeAccountUse })
@@ -604,35 +581,6 @@ function prewarmVaultAccounts(selected: ActiveWallet, args: WalletBootArgs): voi
       )
     } catch (error) {
       console.warn('[account-holding] check failed', errorText(error))
-    }
-    for (const account of readVaultAccounts(masterIdentityKey).accounts) {
-      if (warmPoolGeneration() !== generation) return
-      if (account.index === selected.accountIndex) continue
-      // Another install's account is never opened here, not even to warm it.
-      if (!isHeldHere(account)) continue
-      const accountArgs: WalletBootArgs = {
-        ...args,
-        rootKeyHex: rootKeyHexForAccount(vaultMaster, account.index),
-        vaultMaster,
-        accountIndex: account.index,
-      }
-      const unit = await walletUnitFor(accountArgs)
-      if (hasWarmWallet(unit)) continue
-      const waitStarted = Date.now()
-      if (!(await prewarmQuietWindow(generation))) return
-      const waited = Date.now() - waitStarted
-      if (waited > 250) console.info(`[vault-account] prewarm a${account.index} quiet wait ${waited}ms`)
-      const started = Date.now()
-      try {
-        await warmWallet(unit, () => buildWallet(accountArgs, unit.databaseName))
-        const ms = Date.now() - started
-        if (ms > 250) console.info(`[vault-account] prewarm a${account.index} done ${ms}ms`)
-      } catch (error) {
-        console.warn(
-          `[vault-account] prewarm a${account.index} skipped`,
-          errorText(error),
-        )
-      }
     }
   }
   const start = () => void run()

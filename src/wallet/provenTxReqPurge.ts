@@ -16,8 +16,8 @@
  */
 import { appendAppLog } from './appLog'
 
-/** Old enough that the monitor and every Activity projection have settled. */
-export const PROOF_REQUEST_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
+/** Old enough that the monitor and every Activity projection have settled (1 hour). */
+export const PROOF_REQUEST_RETENTION_MS = 60 * 60 * 1000
 
 type IdbCursor = {
   value: Record<string, unknown>
@@ -33,8 +33,9 @@ type IdbTrx = {
   done: Promise<void>
 }
 
-/** The toolbox `StorageIdb` surface this purge needs. */
+/** The toolbox storage surface this purge needs (native Rust SQLite or legacy IndexedDB). */
 export type ProofRequestStore = {
+  purgeRetiredProofRequestsNative?: (cutoffMs: number) => Promise<ProofRequestPurge>
   toDbTrx?: (stores: string[], mode: 'readwrite') => IdbTrx
 }
 
@@ -71,6 +72,17 @@ export async function purgeRetiredProofRequests(
   now = Date.now(),
 ): Promise<ProofRequestPurge> {
   const out: ProofRequestPurge = { purged: 0, bytes: 0 }
+  if (typeof storage.purgeRetiredProofRequestsNative === 'function') {
+    const started = Date.now()
+    const nativeRes = await storage.purgeRetiredProofRequestsNative(now - PROOF_REQUEST_RETENTION_MS)
+    if (nativeRes.purged > 0) {
+      appendAppLog(
+        'info',
+        `[proof-purge] sqlite purge done ${Date.now() - started}ms — ${nativeRes.purged} completed proof request(s), ${Math.round(nativeRes.bytes / 1024)}KB`,
+      )
+    }
+    return nativeRes
+  }
   if (typeof storage.toDbTrx !== 'function') return out
 
   const started = Date.now()

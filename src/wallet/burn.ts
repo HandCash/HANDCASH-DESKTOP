@@ -306,24 +306,34 @@ async function executeBurnPlan(args: {
   const spendOutpoints = args.plan.inputs.map((input) =>
     wireOutpoint(input.outpoint),
   )
-  const knownTxids = [
-    ...new Set(
+  const { buildMergedInputBeef } = await import('./beefCache')
+  // Hydrate every input's source transaction before calling createAction.
+  // Swallowing hydration failure and falling through with `trustSelf: 'known'`
+  // + `knownTxids` + empty `inputBEEF` caused `Every signableTransaction input
+  // must have a sourceTransaction`.
+  const inputBEEF = await buildMergedInputBeef(
+    args.active,
+    spendOutpoints,
+    wireOutpoint,
+    { needProof: true, allowUnprovenRawTx: true },
+  )
+  const knownTxids = (() => {
+    const ids = new Set<string>(
       spendOutpoints
         .map((op) => op.split('.')[0]?.toLowerCase())
         .filter((txid): txid is string => Boolean(txid)),
-    ),
-  ]
-  let inputBEEF: number[] | undefined
-  try {
-    const { buildMergedInputBeef } = await import('./beefCache')
-    inputBEEF = await buildMergedInputBeef(
-      args.active,
-      spendOutpoints,
-      wireOutpoint,
     )
-  } catch (err) {
-    console.warn('[burn] inputBEEF hydrate failed — createAction may stall', err)
-  }
+    try {
+      const parsed = Beef.fromBinary(inputBEEF)
+      for (const btx of parsed.txs) {
+        const txid = btx.txid?.trim().toLowerCase()
+        if (txid) ids.add(txid)
+      }
+    } catch {
+      /* keep spend txids */
+    }
+    return [...ids]
+  })()
 
   const result = await executeBurnLifecycle(args.plan, {
     build: async () => {

@@ -286,6 +286,68 @@ export class WalletStorageManager implements sdk.WalletStorage {
   private readonly syncLocks: Array<(value: void | PromiseLike<void>) => void> = []
   private readonly spLocks: Array<(value: void | PromiseLike<void>) => void> = []
 
+  // Writer-preferred RWLock for WAL-backed providers (`StorageRustSqlite`) that
+  // support concurrent read-only queries on a native ReadPool without blocking
+  // each other, while still giving foreground writes exclusive priority.
+  private rwActiveReaders = 0
+  private rwWriterActive = false
+  private rwWaitingWriters = 0
+  private readonly rwWaiters: Array<{ kind: 'read' | 'write'; resolve: () => void }> = []
+
+  private usesConcurrentReadLock(): boolean {
+    return (this._active?.storage as { supportsConcurrentReads?: boolean } | undefined)?.supportsConcurrentReads === true
+  }
+
+  private pumpRwLock(): void {
+    if (this.rwWriterActive) return
+    const nextWriterIdx = this.rwWaiters.findIndex(w => w.kind === 'write')
+    if (nextWriterIdx >= 0) {
+      if (this.rwActiveReaders === 0) {
+        const [waiter] = this.rwWaiters.splice(nextWriterIdx, 1)
+        this.rwWaitingWriters--
+        this.rwWriterActive = true
+        waiter.resolve()
+      }
+      return
+    }
+    while (this.rwWaiters.length > 0 && this.rwWaiters[0].kind === 'read') {
+      const waiter = this.rwWaiters.shift()!
+      this.rwActiveReaders++
+      waiter.resolve()
+    }
+  }
+
+  private async acquireRwRead(): Promise<void> {
+    if (!this.rwWriterActive && this.rwWaitingWriters === 0) {
+      this.rwActiveReaders++
+      return
+    }
+    await new Promise<void>(resolve => {
+      this.rwWaiters.push({ kind: 'read', resolve })
+    })
+  }
+
+  private releaseRwRead(): void {
+    this.rwActiveReaders--
+    this.pumpRwLock()
+  }
+
+  private async acquireRwWrite(): Promise<void> {
+    if (!this.rwWriterActive && this.rwActiveReaders === 0) {
+      this.rwWriterActive = true
+      return
+    }
+    this.rwWaitingWriters++
+    await new Promise<void>(resolve => {
+      this.rwWaiters.push({ kind: 'write', resolve })
+    })
+  }
+
+  private releaseRwWrite(): void {
+    this.rwWriterActive = false
+    this.pumpRwLock()
+  }
+
   private async getActiveLock(lockQueue: Array<(value: void | PromiseLike<void>) => void>): Promise<void> {
     if (!this.isAvailable()) await this.makeAvailable()
 
@@ -307,55 +369,99 @@ export class WalletStorageManager implements sdk.WalletStorage {
     }
   }
 
-  private async getActiveForReader(): Promise<sdk.WalletStorageReader> {
+  private async getActiveForReader(): Promise<{ active: sdk.WalletStorageReader; rw: boolean }> {
+    if (!this.isAvailable()) await this.makeAvailable()
+    if (this.usesConcurrentReadLock()) {
+      await this.acquireRwRead()
+      return { active: this.getActive(), rw: true }
+    }
     await this.getActiveLock(this.readerLocks)
-    return this.getActive()
+    return { active: this.getActive(), rw: false }
   }
 
-  private releaseActiveForReader(): void {
+  private releaseActiveForReader(rw: boolean): void {
+    if (rw) {
+      this.releaseRwRead()
+      return
+    }
     this.releaseActiveLock(this.readerLocks)
   }
 
-  private async getActiveForWriter(): Promise<sdk.WalletStorageWriter> {
+  private async getActiveForWriter(): Promise<{ active: sdk.WalletStorageWriter; rw: boolean }> {
+    if (!this.isAvailable()) await this.makeAvailable()
+    if (this.usesConcurrentReadLock()) {
+      await this.acquireRwWrite()
+      return { active: this.getActive(), rw: true }
+    }
     await this.getActiveLock(this.readerLocks)
     await this.getActiveLock(this.writerLocks)
-    return this.getActive()
+    return { active: this.getActive(), rw: false }
   }
 
-  private releaseActiveForWriter(): void {
+  private releaseActiveForWriter(rw: boolean): void {
+    if (rw) {
+      this.releaseRwWrite()
+      return
+    }
     this.releaseActiveLock(this.writerLocks)
     this.releaseActiveLock(this.readerLocks)
   }
 
-  private async getActiveForSync(): Promise<sdk.WalletStorageSync> {
+  private async getActiveForSync(): Promise<{ active: sdk.WalletStorageSync; rw: boolean }> {
+    if (!this.isAvailable()) await this.makeAvailable()
+    if (this.usesConcurrentReadLock()) {
+      await this.acquireRwWrite()
+      return { active: this.getActive(), rw: true }
+    }
     await this.getActiveLock(this.readerLocks)
     await this.getActiveLock(this.writerLocks)
     await this.getActiveLock(this.syncLocks)
-    return this.getActive()
+    return { active: this.getActive(), rw: false }
   }
 
-  private releaseActiveForSync(): void {
+  private releaseActiveForSync(rw: boolean): void {
+    if (rw) {
+      this.releaseRwWrite()
+      return
+    }
     this.releaseActiveLock(this.syncLocks)
     this.releaseActiveLock(this.writerLocks)
     this.releaseActiveLock(this.readerLocks)
   }
 
-  private async getActiveForStorageProvider(): Promise<StorageProvider> {
-    await this.getActiveLock(this.readerLocks)
-    await this.getActiveLock(this.writerLocks)
-    await this.getActiveLock(this.syncLocks)
-    await this.getActiveLock(this.spLocks)
+  private async getActiveForStorageProvider(): Promise<{ active: StorageProvider; rw: boolean }> {
+    if (!this.isAvailable()) await this.makeAvailable()
+    const rw = this.usesConcurrentReadLock()
+    if (rw) {
+      await this.acquireRwWrite()
+    } else {
+      await this.getActiveLock(this.readerLocks)
+      await this.getActiveLock(this.writerLocks)
+      await this.getActiveLock(this.syncLocks)
+      await this.getActiveLock(this.spLocks)
+    }
 
     const active = this.getActive()
     // We can finally confirm that active storage is still able to support `StorageProvider`
     if (!active.isStorageProvider()) {
+      if (rw) this.releaseRwWrite()
+      else {
+        this.releaseActiveLock(this.spLocks)
+        this.releaseActiveLock(this.syncLocks)
+        this.releaseActiveLock(this.writerLocks)
+        this.releaseActiveLock(this.readerLocks)
+      }
       throw new WERR_INVALID_OPERATION('Active "WalletStorageProvider" does not support "StorageProvider" interface.')
     }
     // Allow the sync to proceed on the active store.
-    return active as unknown as StorageProvider
+    return { active: active as unknown as StorageProvider, rw }
   }
 
-  private releaseActiveForStorageProvider(): void {
+  private releaseActiveForStorageProvider(rw: boolean): void {
+    if (rw) {
+      this.releaseRwWrite()
+      return
+    }
     this.releaseActiveLock(this.spLocks)
     this.releaseActiveLock(this.syncLocks)
     this.releaseActiveLock(this.writerLocks)
@@ -368,24 +474,26 @@ export class WalletStorageManager implements sdk.WalletStorage {
   }
 
   async runAsWriter<R>(writer: (active: sdk.WalletStorageWriter) => Promise<R>): Promise<R> {
+    let lock: { active: sdk.WalletStorageWriter; rw: boolean } | undefined
     try {
-      const active = await this.getActiveForWriter()
-      await this.ensureConnectionReady(active)
-      const r = await writer(active)
+      lock = await this.getActiveForWriter()
+      await this.ensureConnectionReady(lock.active)
+      const r = await writer(lock.active)
       return r
     } finally {
-      this.releaseActiveForWriter()
+      if (lock != null) this.releaseActiveForWriter(lock.rw)
     }
   }
 
   async runAsReader<R>(reader: (active: sdk.WalletStorageReader) => Promise<R>): Promise<R> {
+    let lock: { active: sdk.WalletStorageReader; rw: boolean } | undefined
     try {
-      const active = await this.getActiveForReader()
-      await this.ensureConnectionReady(active)
-      const r = await reader(active)
+      lock = await this.getActiveForReader()
+      await this.ensureConnectionReady(lock.active)
+      const r = await reader(lock.active)
       return r
     } finally {
-      this.releaseActiveForReader()
+      if (lock != null) this.releaseActiveForReader(lock.rw)
     }
   }
 
@@ -399,24 +507,29 @@ export class WalletStorageManager implements sdk.WalletStorage {
     sync: (active: sdk.WalletStorageSync) => Promise<R>,
     activeSync?: sdk.WalletStorageSync
   ): Promise<R> {
+    let lock: { active: sdk.WalletStorageSync; rw: boolean } | undefined
     try {
-      const active = activeSync ?? (await this.getActiveForSync())
-      if (activeSync == null) await this.ensureConnectionReady(active)
+      if (activeSync == null) {
+        lock = await this.getActiveForSync()
+        await this.ensureConnectionReady(lock.active)
+      }
+      const active = activeSync ?? lock!.active
       const r = await sync(active)
       return r
     } finally {
-      if (activeSync == null) this.releaseActiveForSync()
+      if (lock != null) this.releaseActiveForSync(lock.rw)
     }
   }
 
   async runAsStorageProvider<R>(sync: (active: StorageProvider) => Promise<R>): Promise<R> {
+    let lock: { active: StorageProvider; rw: boolean } | undefined
     try {
-      const active = await this.getActiveForStorageProvider()
-      await this.ensureConnectionReady(active)
-      const r = await sync(active)
+      lock = await this.getActiveForStorageProvider()
+      await this.ensureConnectionReady(lock.active)
+      const r = await sync(lock.active)
       return r
     } finally {
-      this.releaseActiveForStorageProvider()
+      if (lock != null) this.releaseActiveForStorageProvider(lock.rw)
     }
   }
 

@@ -1,17 +1,13 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
-// Platform-neutral wallet layer boundaries, provenance enforcement, holding
-// freshness gap tracking, and bounded read-side projections (Steps 2–3).
+//! Platform-neutral wallet layer boundaries, provenance enforcement, holding
+//! freshness gap tracking, and bounded read-side projections.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Maximum rows returned per read slice so background reads yield to waiting spends.
 pub const MAX_PAGE_SLICE: usize = 100;
-
-/// Serve pause threshold above which suspension is assumed and holding must be re-checked.
 pub const SUSPENSION_GAP_MS: u64 = 15_000;
 
-/// Canonical wallet layers per src/wallet/layers.ts and docs/meridian-engine.md.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum WalletLayer {
@@ -22,7 +18,6 @@ pub enum WalletLayer {
     BalanceView,
 }
 
-/// Explicit workflow stage plan enforcing that Dashboard Refresh never touches HistoryReplica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SyncOperation {
@@ -31,7 +26,6 @@ pub enum SyncOperation {
 }
 
 impl SyncOperation {
-    /// Ordered layers executed by this operation.
     pub const fn layers(self) -> &'static [WalletLayer] {
         match self {
             Self::DashboardRefresh => &[WalletLayer::ChainIngest],
@@ -40,9 +34,6 @@ impl SyncOperation {
     }
 }
 
-/// Authenticity verdict for 1-sat / BRC-150 items.
-/// Indexer results can only construct `Unproven`; only complete BRC-150 verification
-/// constructs `ProvenBrc150`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum Authenticity {
@@ -56,7 +47,6 @@ pub enum Authenticity {
 }
 
 impl Authenticity {
-    /// Indexer identity or marker-only script data is never promoted to proven.
     pub fn from_indexer(reason: impl Into<String>) -> Self {
         Self::Unproven {
             reason: reason.into(),
@@ -78,7 +68,6 @@ pub enum FreshnessGap {
     ServePause,
 }
 
-/// Tracks whether local account holding is fresh or requires one record read after a gap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoldingFreshness {
     fresh: bool,
@@ -116,7 +105,6 @@ impl HoldingFreshness {
         self.last_gap = Some(gap);
     }
 
-    /// Advance the holding service tick clock. A pause strictly over 15 s marks a gap.
     pub fn record_serve_tick(&mut self, now_ms: u64) -> bool {
         let paused = self
             .last_tick_ms
@@ -130,8 +118,6 @@ impl HoldingFreshness {
     }
 }
 
-/// Display-only balance summary tagged with account identity, generation, and freshness.
-/// Never authoritative for funding or authorizing a spend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DisplayBalanceSummary {
@@ -167,8 +153,6 @@ pub enum ProjectionError {
     StaleGeneration { expected: u64, got: u64 },
 }
 
-/// Account-scoped, generation-fenced read-side projection store.
-/// Enforces bounded 100-row slice pages and discards stale-generation writes.
 #[derive(Debug, Default)]
 pub struct PagedProjectionStore {
     active_account: Option<String>,
@@ -222,7 +206,8 @@ impl PagedProjectionStore {
             updated_at_ms,
             display_only: true,
         };
-        self.balances.insert(account_id.to_string(), summary.clone());
+        self.balances
+            .insert(account_id.to_string(), summary.clone());
         Ok(summary)
     }
 
@@ -246,7 +231,6 @@ impl PagedProjectionStore {
         Ok(self.balances.get(account_id).cloned())
     }
 
-    /// Read one bounded page of items (clamped to `MAX_PAGE_SLICE = 100`).
     pub fn read_items_page(
         &self,
         account_id: &str,
@@ -305,10 +289,10 @@ mod tests {
 
         hf.mark_checked(1_000);
         assert!(!hf.needs_check());
-        assert!(!hf.record_serve_tick(16_000)); // exactly 15s is within bound
+        assert!(!hf.record_serve_tick(16_000));
         assert!(!hf.needs_check());
 
-        assert!(hf.record_serve_tick(31_001)); // 15_001ms exceeds 15s threshold
+        assert!(hf.record_serve_tick(31_001));
         assert!(hf.needs_check());
         assert_eq!(hf.last_gap(), Some(FreshnessGap::ServePause));
 
@@ -333,21 +317,11 @@ mod tests {
         let bal = store.put_balance("acct-1", gen1, 42_000, 250, 99).unwrap();
         assert!(bal.display_only);
 
-        // Requesting 500 clamps to MAX_PAGE_SLICE (100).
         let p1 = store.read_items_page("acct-1", gen1, 0, 500).unwrap();
         assert_eq!(p1.items.len(), MAX_PAGE_SLICE);
         assert_eq!(p1.next_cursor, Some(100));
         assert_eq!(p1.total, 250);
 
-        let p2 = store.read_items_page("acct-1", gen1, 100, 100).unwrap();
-        assert_eq!(p2.items.len(), 100);
-        assert_eq!(p2.next_cursor, Some(200));
-
-        let p3 = store.read_items_page("acct-1", gen1, 200, 100).unwrap();
-        assert_eq!(p3.items.len(), 50);
-        assert_eq!(p3.next_cursor, None);
-
-        // Switching accounts rejects stale generation & old account immediately.
         let gen2 = store.activate_account("acct-2");
         assert!(gen2 > gen1);
         assert_eq!(

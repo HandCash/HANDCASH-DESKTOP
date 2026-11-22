@@ -164,6 +164,10 @@ async function encryptLiveDocument(rootKeyHex: string, json: string): Promise<Ui
   const secret = historyCryptoSecret(rootKeyHex)
   appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting (root-key)`)
   assertHistoryDocumentEncryptable(json)
+  // Non-destructively mirror the exported BRC-38 snapshot into Rust SQLite WAL off-thread.
+  void import('./rustEngineBridge').then(({ mirrorBrc38ToRustEngine }) =>
+    mirrorBrc38ToRustEngine(json),
+  )
   return asArrayBufferBytes(await encryptBrc39Document(json, secret))
 }
 

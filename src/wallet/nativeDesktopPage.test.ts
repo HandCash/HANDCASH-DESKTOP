@@ -84,6 +84,7 @@ describe('native-desktop handcash-page.js facade', () => {
     expect(typeof handcash.walletCoreInfo).toBe('function')
     expect(typeof handcash.walletCoreStrictHex).toBe('function')
     expect(typeof handcash.walletCoreValidateRequest).toBe('function')
+    expect(typeof (handcash.toolboxDb as Record<string, unknown>).call).toBe('function')
     // Keep screen share unset so screenShareAvailable() truthfully reports false.
     expect(handcash.listScreenSources).toBeUndefined()
     expect(handcash.chooseScreenSource).toBeUndefined()
@@ -160,5 +161,39 @@ describe('native-desktop handcash-page.js facade', () => {
     expect(posted[1]!.params).toEqual({ hex: '00Ab' })
     reply({ id: posted[1]!.id, ok: true, value: { ok: true, byteLength: 2, canonicalHex: '00ab' } })
     await expect(hexPromise).resolves.toEqual({ ok: true, byteLength: 2, canonicalHex: '00ab' })
+  })
+
+  it('exposes Rust SQLite WAL engine IPC methods and engine:patch subscription', async () => {
+    const { handcash, posted, reply, push } = loadNativeDesktopFacade('linux')
+    const engine = handcash.engine as Record<string, (...args: unknown[]) => unknown>
+    expect(typeof engine.activateAccount).toBe('function')
+    expect(typeof engine.readBalance).toBe('function')
+    expect(typeof engine.readItemsPage).toBe('function')
+    expect(typeof engine.readActivityPage).toBe('function')
+    expect(typeof engine.encryptBrc39).toBe('function')
+    expect(typeof engine.decryptBrc39).toBe('function')
+    expect(typeof engine.hydrateInputs).toBe('function')
+    expect(typeof engine.verifyBeef).toBe('function')
+    expect(typeof engine.verifyBrc150).toBe('function')
+    expect(typeof engine.syncHeaders).toBe('function')
+    expect(typeof engine.runProofPoll).toBe('function')
+    expect(typeof engine.runBrc150Pass).toBe('function')
+    expect(typeof engine.sealDeltaSegment).toBe('function')
+
+    const encPromise = engine.encryptBrc39('{"brc":38,"tables":{}}', 'pw') as Promise<Uint8Array>
+    expect(posted[0]!.method).toBe('engineEncryptBrc39')
+    reply({
+      id: posted[0]!.id,
+      ok: true,
+      value: { bytesBase64: Buffer.from([0x57, 0x44, 0x41, 0x54]).toString('base64'), byteLength: 4 },
+    })
+    const out = await encPromise
+    expect(Array.from(out)).toEqual([0x57, 0x44, 0x41, 0x54])
+
+    const patches: unknown[] = []
+    const off = (engine.onPatch as (fn: (v: unknown) => void) => () => void)((p) => patches.push(p))
+    push({ channel: 'engine:patch', payload: { accountId: 'a1', generation: 1, seq: 1 } })
+    expect(patches).toEqual([{ accountId: 'a1', generation: 1, seq: 1 }])
+    off()
   })
 })

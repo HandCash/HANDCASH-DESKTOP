@@ -1490,15 +1490,58 @@ export async function buildMergedInputBeef(
     ...(opts?.allowUnprovenRawTx ? { allowUnprovenRawTx: true } : {}),
   }
 
-  const fetched = await Promise.all(
-    txids.map(async (txid) => {
+  // When the pure-Rust SQLite WAL + rate-limited ChainFetcher is active, pre-hydrate
+  // cold txids off the UI thread so multi-input burns/sends never starve on JS stalls
+  // or burst WhatsOnChain's rate limit.
+  const coldTxids = txids.filter((txid) => !read(txid))
+  if (coldTxids.length > 0 && typeof window !== 'undefined' && window.handcash?.engine?.hydrateInputs) {
+    try {
+      const { hydrateTxidsViaRustEngine } = await import('./rustEngineBridge')
+      const hydrated = await hydrateTxidsViaRustEngine(
+        coldTxids,
+        Boolean(opts?.allowUnprovenRawTx),
+      )
+      for (const [txid, entry] of hydrated.entries()) {
+        try {
+          if (entry.kind === 'beef') {
+            const parsed = Beef.fromBinary(Array.from(entry.bytes))
+            if (beefHasSubjectTx(parsed, txid)) write(txid, parsed)
+          } else if (opts?.allowUnprovenRawTx) {
+            const parsed = new Beef()
+            parsed.mergeRawTx(Array.from(entry.bytes))
+            if (beefHasSubjectTx(parsed, txid)) write(txid, parsed)
+          }
+        } catch {
+          /* fall back to JS fetch path for this txid */
+        }
+      }
+    } catch {
+      /* fall back cleanly */
+    }
+  }
+
+  // Bound concurrent fetches to 3 so multi-input burns/sends do not burst WoC 429s.
+  const MAX_CONCURRENT_INPUT_BEEF_FETCHES = 3
+  const fetched: (Beef | null)[] = new Array(txids.length).fill(null)
+  let nextIdx = 0
+  const worker = async () => {
+    while (nextIdx < txids.length) {
+      const idx = nextIdx
+      nextIdx += 1
+      const txid = txids[idx]!
       try {
-        return await getBeefForTxidCached(wallet, txid, fetchOpts)
+        fetched[idx] = await getBeefForTxidCached(wallet, txid, fetchOpts)
       } catch (err) {
         console.warn('[beef] inputBEEF fetch failed', txid, err)
-        return null
+        fetched[idx] = null
       }
-    }),
+    }
+  }
+  await Promise.all(
+    Array.from(
+      { length: Math.min(MAX_CONCURRENT_INPUT_BEEF_FETCHES, txids.length) },
+      () => worker(),
+    ),
   )
 
   const merged = new Beef()

@@ -164,6 +164,34 @@ export async function walkGenesisLineage(
   const maxBeefBytes = args.maxBeefBytes
   const mustSerialize = args.includeBeef === true || maxBeefBytes != null
 
+  // Phase 2 Rust engine: offload background BRC-150 lineage verification completely
+  // off the UI thread (SQLite cold blobs + rate-limited singleflight ChainFetcher).
+  if (
+    !mustSerialize &&
+    args.serializeIfUnder == null &&
+    typeof window !== 'undefined' &&
+    window.handcash?.engine?.verifyBrc150
+  ) {
+    try {
+      const { verifyBrc150ViaRustEngine } = await import('./rustEngineBridge')
+      const verdict = await verifyBrc150ViaRustEngine(tip)
+      if (verdict?.status === 'proven') {
+        const path = verdict.path.map(toPoint)
+        return {
+          kind: 'proven',
+          proof: {
+            origin: toPoint(verdict.originOutpoint),
+            path,
+            hops: Math.max(0, path.length - 1),
+            beef: [],
+          },
+        }
+      }
+    } catch {
+      /* fall through to JS walk */
+    }
+  }
+
   const merged = new Beef()
   const fetched = new Set<string>()
   let fetchedBytes = 0
