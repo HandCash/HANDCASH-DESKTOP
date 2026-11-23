@@ -64,10 +64,19 @@ const ALPHA_SHEENS: [&str; 2] = [
     "linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 45%, rgb(0 0 0 / 16%))",
 ];
 
+/// White inset emboss shadows, which Blitz fills across the whole box (black becomes ~#424242).
+const INSET_HIGHLIGHTS: [&str; 2] = [
+    "inset 0 1px 1px rgb(255 255 255 / 26%),",
+    "inset 0 1px 1px rgb(255 255 255 / 30%),",
+];
+
 fn strip_alpha_sheens(css: &str) -> String {
-    ALPHA_SHEENS
+    let css = ALPHA_SHEENS
         .iter()
-        .fold(css.to_string(), |acc, sheen| acc.replace(sheen, "none"))
+        .fold(css.to_string(), |acc, sheen| acc.replace(sheen, "none"));
+    INSET_HIGHLIGHTS
+        .iter()
+        .fold(css, |acc, inset| acc.replace(inset, ""))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

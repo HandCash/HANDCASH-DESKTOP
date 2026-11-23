@@ -170,19 +170,19 @@ fn shell_gradient_css(_t: &ResolvedTheme) -> String {
 .app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
   background-image: none;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
   background-image: none;
   border-bottom-color: hsl(var(--border));
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .wallet-nav-titlebar-pill,
 .wallet-nav-actions-pill {
   background-color: var(--hc-bg);
   background-image: none;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 "#
     .to_string()
