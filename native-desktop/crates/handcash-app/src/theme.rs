@@ -161,27 +161,27 @@ fn hex_to_rgb_channels(hex: &str) -> String {
 
 /// Embossed outer shell, stage, and titlebar sheen matching `src/styles/handcash.css`
 /// (`.app-shell[data-aeon-scope='app']`, `.app-shell > .stage`, `.app-shell > .titlebar.aeon-titlebar`).
-/// Same subtle sheen over `--hc-bg` as TS (white 9% -> transparent 45% -> black 12%) in both modes,
-/// written with comma `rgba()` so Stylo/Blitz parses it; no opaque replacement colours.
+/// Solid `--hc-bg` with the TS emboss shadows. TS layers a translucent sheen here, but Blitz/Vello
+/// paints translucent gradient stops as a mid-gray wash, so no gradient is drawn.
 fn shell_gradient_css(_t: &ResolvedTheme) -> String {
     let _ = hex_to_rgb_channels;
     r#"
 .app-shell[data-aeon-scope="app"],
 .app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
+  background-image: none;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
+  background-image: none;
   border-bottom-color: hsl(var(--border));
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .wallet-nav-titlebar-pill,
 .wallet-nav-actions-pill {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
+  background-image: none;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 "#
@@ -1148,7 +1148,7 @@ mod tests {
     #[test]
     fn shell_and_titlebar_carry_brand_gradients() {
         let css = build_theme_override_css(&ResolvedTheme::dark_handcash());
-        assert!(css.contains("> .titlebar.aeon-titlebar {\n  background-color: var(--hc-bg);\n  background-image: linear-gradient("));
+        assert!(css.contains("> .titlebar.aeon-titlebar {\n  background-color: var(--hc-bg);\n  background-image: none;"));
         assert!(css.contains(".app-shell[data-aeon-scope=\"app\"] > .stage {\n  background-color: var(--hc-bg);"));
         assert_eq!(hex_to_rgb_channels("#0a3d22"), "10, 61, 34");
         assert_eq!(hex_to_rgb_channels("oops"), "87, 255, 151");

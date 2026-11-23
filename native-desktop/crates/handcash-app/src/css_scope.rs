@@ -54,8 +54,21 @@ pub static SCOPED_SHEETS: LazyLock<String> = LazyLock::new(|| {
     all.push_str(HANDCASH_CSS);
     all.push('\n');
     all.push_str(LAYOUT_COMPACT_CSS);
-    scope_html_css(&all)
+    scope_html_css(&strip_alpha_sheens(&all))
 });
+
+/// Embossed sheen gradients with translucent stops (white 9-12% -> transparent -> black 12-16%).
+/// Blitz/Vello paints them as an opaque mid-gray wash, so they become `none` (solid `--hc-bg`).
+const ALPHA_SHEENS: [&str; 2] = [
+    "linear-gradient(180deg, rgb(255 255 255 / 9%), transparent 45%, rgb(0 0 0 / 12%))",
+    "linear-gradient(180deg, rgb(255 255 255 / 12%), transparent 45%, rgb(0 0 0 / 16%))",
+];
+
+fn strip_alpha_sheens(css: &str) -> String {
+    ALPHA_SHEENS
+        .iter()
+        .fold(css.to_string(), |acc, sheen| acc.replace(sheen, "none"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cond {
