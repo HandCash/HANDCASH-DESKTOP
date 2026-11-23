@@ -10,6 +10,7 @@ pub mod collectables;
 pub mod dashboard;
 pub mod friends;
 pub mod panels;
+pub mod primitives;
 pub mod send;
 pub mod side;
 

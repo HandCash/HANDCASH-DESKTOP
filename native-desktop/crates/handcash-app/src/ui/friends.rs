@@ -4,10 +4,11 @@
 //! - `src/components/AddFriendPanel.tsx`
 //! - `src/components/FriendDetailsPanel.tsx`
 
-use crate::icons::{CopyIcon, FriendsIcon, PersonAddIcon};
+use crate::icons::{CopyIcon, PersonAddIcon};
 use crate::machines::{classify_recipient, CollectionView, NavChild, ToastNotice};
 use crate::state::{copy_to_clipboard, truncate_mid, AppServices, FriendRecord};
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
+use crate::ui::primitives::PeerAvatar;
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -87,9 +88,7 @@ pub fn FriendsPanel(
                                                 r#type: "button",
                                                 class: "collection-grid-main",
                                                 onclick: move |_| nav_child.set(Some(NavChild::FriendDetails(fid.clone()))),
-                                                span { class: "friend-avatar friend-avatar-lg",
-                                                    FriendsIcon { size: 22 }
-                                                }
+                                                PeerAvatar { label: friend.label.clone(), class: "friend-avatar friend-avatar-lg" }
                                                 strong { class: "collection-grid-name", "{friend.label}" }
                                                 span { class: "collection-grid-host friend-key mono",
                                                     "{truncate_mid(&friend.identity_key, 8)}"
@@ -111,9 +110,7 @@ pub fn FriendsPanel(
                                                 r#type: "button",
                                                 class: "friend-row-main",
                                                 onclick: move |_| nav_child.set(Some(NavChild::FriendDetails(fid.clone()))),
-                                                span { class: "friend-avatar",
-                                                    FriendsIcon { size: 18 }
-                                                }
+                                                PeerAvatar { label: friend.label.clone() }
                                                 div { class: "friend-row-body",
                                                     strong { class: "friend-label", "{friend.label}" }
                                                     span { class: "friend-key mono",
@@ -384,9 +381,7 @@ pub fn FriendDetailsPanel(
     rsx! {
         div { class: "nav-child-panel friend-details", "data-aeon-scope": "friend-details",
             section { class: "friend-details-overview",
-                span { class: "friend-avatar friend-avatar-lg",
-                    FriendsIcon { size: 22 }
-                }
+                PeerAvatar { label: friend.label.clone(), class: "friend-avatar friend-avatar-lg" }
                 div {
                     h3 { "{friend.label}" }
                     if handle_fixed {

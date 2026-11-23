@@ -15,6 +15,7 @@ use crate::state::{
     copy_to_clipboard, format_bsv, format_relative_time, now_ms, open_external_url, truncate_mid,
     tx_explorer_url, FxRates, WalletSnapshot,
 };
+use crate::ui::primitives::LoadingSpinner;
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -57,6 +58,25 @@ fn action_mark(row: &ActivityRow) -> Option<&'static str> {
         return Some("mint");
     }
     Some(if is_spent(row) { "send" } else { "receive" })
+}
+
+fn is_pending(row: &ActivityRow) -> bool {
+    let s = row.status.to_ascii_lowercase();
+    s.contains("pending") || s.contains("unconfirmed") || s.contains("unproven")
+}
+
+/// TS `showSending` label in `HistoryIconCluster`.
+fn pending_mark_label(row: &ActivityRow, mark: Option<&str>) -> Option<&'static str> {
+    if !is_pending(row) || is_failed(row) {
+        return None;
+    }
+    match mark {
+        Some("burn") => Some("Burning"),
+        Some("list") => Some("Listing"),
+        Some("cancel") => Some("Cancelling"),
+        _ if is_spent(row) && !is_event(row) => Some("Sending"),
+        _ => None,
+    }
 }
 
 /// A wallet event (connect, approve, …) moves no money.
@@ -113,8 +133,18 @@ pub fn HistoryIconCluster(row: ActivityRow) -> Element {
         .clone()
         .filter(|o| !o.is_empty() && o != "wallet");
     let bsv = bsv_logo_png_data_uri();
+    let pending_label = pending_mark_label(&row, mark);
     rsx! {
         div { class: "history-icon-wrap",
+            if let Some(label) = pending_label {
+                span {
+                    class: "history-pending-mark",
+                    aria_live: "polite",
+                    aria_label: "{label}",
+                    title: "{label}",
+                    LoadingSpinner { size: "sm" }
+                }
+            }
             div { class: "history-icon",
                 if event {
                     span { class: "history-item-thumb-icon", aria_hidden: true,

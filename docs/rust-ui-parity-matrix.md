@@ -21,7 +21,8 @@ Last audited: 2026-11-22.
 | ScreenshotToast | — | missing | needs native window capture |
 | CallDock (calls/) | — | missing | needs calls service |
 | EmptyState, BrandLogo | ui/mod.rs | match | |
-| Skeleton, LoadingSpinner, FitSlot, KeepAliveSlot, ModalPortal, ExclusiveActionRegion, RenderProbe, MermaidDiagram | — | missing | layout primitives; port as surfaces need them |
+| Skeleton (all variants), LoadingSpinner | ui/primitives.rs | match | spinner wired into activity pending mark |
+| FitSlot, KeepAliveSlot, ModalPortal, ExclusiveActionRegion, RenderProbe, MermaidDiagram | — | missing | layout primitives; port as surfaces need them |
 
 ## Send / receive / activity
 
@@ -41,7 +42,7 @@ Last audited: 2026-11-22.
 |---|---|---|---|
 | InventoryPanel, CollectionViewToggle, CollectableVerifyMark, CollectableDetailsPanel | ui/collectables.rs | partial | DeferredModelViewer, AssetHistoryList, CollectFacepile, BntShelf |
 | SendCollectablePanel, BurnAssetPanel | ui/collectables.rs | partial | broadcast gated (crypto review) |
-| CollectableSendingMark, FungibleTokenFace, AssetIssuers, IssuerIdentityMark, DeferredImage, DeferredModelViewer, AssetHistoryList, BntShelf, CollectFacepile, MiddleEllipsisName | — | missing | |
+| CollectableSendingMark, FungibleTokenFace, AssetIssuers, IssuerIdentityMark, DeferredImage, DeferredModelViewer, AssetHistoryList, BntShelf, CollectFacepile | — | missing | MiddleEllipsisName ported in ui/primitives.rs (not yet wired into collectables) |
 
 ## Friends / identity / messages
 
@@ -49,7 +50,7 @@ Last audited: 2026-11-22.
 |---|---|---|---|
 | FriendsPanel, AddFriendPanel, FriendDetailsPanel | ui/friends.rs | match | |
 | IdentityPanel | panels.rs | partial | IdentityCards, IdentityPublishReview, PublicIdentitiesPanel |
-| ProfileAvatar, ProfileIdenticon, PeerIdentity | — | missing | |
+| ProfileAvatar, ProfileIdenticon, ProfileFingerprint, PeerAvatar | ui/primitives.rs | partial | PeerAvatar (initial) wired into friends; presented-profile images and PeerIdentityLine pending |
 | MessagesPanel, messages/ChatComposer, ChatSidebar, ChatThread, MessageBubble | — | missing | needs messagebox service (≠ custody) |
 | NotesPanel | — | missing | |
 
