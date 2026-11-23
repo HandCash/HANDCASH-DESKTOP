@@ -2,7 +2,11 @@
 //! 1:1 port of `src/components/RecentActivity.tsx`, `src/components/PaymentFiltersPanel.tsx`,
 //! and `src/components/PaymentDetailsPanel.tsx`.
 
-use crate::icons::{ActivityIcon, CopyIcon, FilterIcon, LaunchIcon, ReceiveIcon, SendIcon};
+use crate::icons::{
+    bsv_logo_png_data_uri, ActivityIcon, AppsIcon, CancelListingIcon, CopyIcon, FilterIcon,
+    FireIcon, LaunchIcon, ListingIcon, MintIcon, PurchaseIcon, ReceiveIcon, SendIcon, SoldIcon,
+    WarningIcon,
+};
 use crate::machines::{
     DisplayCurrency, FiatCode, NavChild, NavSection, PaymentFilters, PaymentKindFilter,
     PaymentStatusFilter, PaymentTimeFilter, ToastNotice,
@@ -25,6 +29,129 @@ fn is_spent(row: &ActivityRow) -> bool {
 fn is_failed(row: &ActivityRow) -> bool {
     let s = row.status.to_ascii_lowercase();
     s.contains("fail") || s.contains("error") || s.contains("reject")
+}
+
+/// TS `activityActionMark` (`src/wallet/activityActionMark.ts`).
+fn action_mark(row: &ActivityRow) -> Option<&'static str> {
+    let kind = row.kind.to_ascii_lowercase();
+    let named = match kind.as_str() {
+        "market-list" | "direct-offer-list" => Some("list"),
+        "market-cancel" | "direct-offer-cancel" => Some("cancel"),
+        "market-sale" | "market-sale-proceeds" | "direct-offer-sale" => Some("sale"),
+        "market-purchase" | "market-purchase-receive" | "direct-offer-buy" => Some("purchase"),
+        _ => None,
+    };
+    if named.is_none() && is_event(row) {
+        return None;
+    }
+    if is_failed(row) {
+        return Some("failed");
+    }
+    if named.is_some() {
+        return named;
+    }
+    if kind.contains("burn") {
+        return Some("burn");
+    }
+    if kind.contains("mint") {
+        return Some("mint");
+    }
+    Some(if is_spent(row) { "send" } else { "receive" })
+}
+
+/// A wallet event (connect, approve, …) moves no money.
+fn is_event(row: &ActivityRow) -> bool {
+    row.satoshis == 0 && !is_spent(row)
+}
+
+fn action_mark_label(mark: &str) -> &'static str {
+    match mark {
+        "failed" => "Failed",
+        "list" => "Listing",
+        "cancel" => "Cancel listing",
+        "sale" => "Sold",
+        "purchase" => "Purchase",
+        "burn" => "Burn",
+        "mint" => "Mint",
+        "send" => "Send",
+        _ => "Receive",
+    }
+}
+
+/// TS `HistoryActionMarkBadge` (overlay size: glyph 9px).
+#[component]
+pub fn HistoryActionMarkBadge(mark: String) -> Element {
+    let label = action_mark_label(&mark);
+    let glyph = match mark.as_str() {
+        "failed" => rsx! { WarningIcon { size: 9 } },
+        "list" => rsx! { ListingIcon { size: 8 } },
+        "cancel" => rsx! { CancelListingIcon { size: 9 } },
+        "sale" => rsx! { SoldIcon { size: 10 } },
+        "purchase" => rsx! { PurchaseIcon { size: 9 } },
+        "burn" => rsx! { FireIcon { size: 8 } },
+        "mint" => rsx! { MintIcon { size: 8 } },
+        "send" => rsx! { SendIcon { size: 7 } },
+        _ => rsx! { ReceiveIcon { size: 9 } },
+    };
+    rsx! {
+        span {
+            class: "history-action-badge is-{mark}",
+            aria_label: "{label}",
+            title: "{label}",
+            {glyph}
+        }
+    }
+}
+
+/// TS `HistoryIconCluster`: subject mark plus the corner subscripts.
+#[component]
+pub fn HistoryIconCluster(row: ActivityRow) -> Element {
+    let event = is_event(&row);
+    let mark = action_mark(&row);
+    let origin = row
+        .app_origin
+        .clone()
+        .filter(|o| !o.is_empty() && o != "wallet");
+    let bsv = bsv_logo_png_data_uri();
+    rsx! {
+        div { class: "history-icon-wrap",
+            div { class: "history-icon",
+                if event {
+                    span { class: "history-item-thumb-icon", aria_hidden: true,
+                        if origin.is_some() { AppsIcon { size: 18 } } else { ActivityIcon { size: 18 } }
+                    }
+                } else {
+                    img {
+                        class: "history-asset-logo",
+                        src: "{bsv}",
+                        alt: "",
+                        width: "32",
+                        height: "32",
+                        draggable: "false",
+                    }
+                }
+            }
+            if !event {
+                if let Some(ref name) = origin {
+                    span {
+                        class: "history-app-badge",
+                        aria_label: "App: {name}",
+                        title: "{name}",
+                        div {
+                            class: "app-avatar app-avatar-sm app-avatar-embedded",
+                            "data-aeon-part": "avatar",
+                            "data-aeon-state": "fallback",
+                            title: "{name}",
+                            span { class: "app-avatar-fallback", AppsIcon { size: 8 } }
+                        }
+                    }
+                }
+            }
+            if let Some(m) = mark {
+                HistoryActionMarkBadge { mark: m.to_string() }
+            }
+        }
+    }
 }
 
 fn signed_amount_label(
@@ -248,7 +375,6 @@ pub fn ActivityFeed(
                     {
                         let aid = row.activity_id.clone();
                         let failed = is_failed(row);
-                        let spent = is_spent(row);
                         let amount_str = signed_amount_label(row, currency, fiat_code, &fx_rates);
                         let rel_time = format_relative_time(row.sort_ts_ms, now);
                         let when_str = if row.sort_ts_ms > 0 {
@@ -258,36 +384,18 @@ pub fn ActivityFeed(
                         } else {
                             "Confirmed".into()
                         };
-                        let subtitle = row
-                            .counterparty
+                        // TS `HistoryRow` subtitle: failure reason, else a non-wallet app origin.
+                        let origin = row
+                            .app_origin
                             .clone()
-                            .or_else(|| {
-                                row.app_origin.as_ref().map(|o| {
-                                    if o == "wallet" {
-                                        "HandCash".to_string()
-                                    } else {
-                                        o.clone()
-                                    }
-                                })
-                            })
-                            .or_else(|| row.txid.as_ref().map(|t| truncate_mid(t, 8)))
-                            .unwrap_or_else(|| {
-                                if row.status.trim().is_empty() {
-                                    "HandCash".into()
-                                } else {
-                                    row.status.clone()
-                                }
-                            });
-                        let secondary_amount = if embedded
-                            && currency == DisplayCurrency::Usd
-                            && !failed
-                            && row.satoshis != 0
-                        {
-                            Some(format!("{} · {} sats", when_str, row.satoshis.unsigned_abs()))
+                            .filter(|o| !o.is_empty() && o != "wallet");
+                        let subtitle: Option<String> = if failed {
+                            Some(row.status.clone()).filter(|s| !s.trim().is_empty())
                         } else {
-                            None
+                            origin
                         };
-                        let right_sub = secondary_amount.unwrap_or(when_str);
+                        let right_sub = when_str;
+                        let row_clone = (*row).clone();
                         rsx! {
                             li {
                                 key: "{row.activity_id}",
@@ -300,20 +408,12 @@ pub fn ActivityFeed(
                                     onclick: move |_| {
                                         nav_child.set(Some(NavChild::PaymentDetails(aid.clone())));
                                     },
-                                    div { class: "history-icon-wrap",
-                                        div { class: "history-icon",
-                                            if spent {
-                                                SendIcon { size: 15 }
-                                            } else if row.satoshis > 0 {
-                                                ReceiveIcon { size: 15 }
-                                            } else {
-                                                ActivityIcon { size: 15 }
-                                            }
-                                        }
-                                    }
+                                    HistoryIconCluster { row: row_clone }
                                     div { class: "history-body history-progress-body",
                                         strong { class: "history-title", "{row.title}" }
-                                        span { class: "history-when", "{subtitle}" }
+                                        if let Some(ref sub) = subtitle {
+                                            span { class: "history-when", title: "{sub}", "{sub}" }
+                                        }
                                     }
                                     div { class: "history-amount-block",
                                         span {
@@ -470,17 +570,7 @@ pub fn PaymentDetailsPanel(
             "data-aeon-state": if failed { "failed" } else { "{row.status}" },
 
             div { class: "payment-details-hero",
-                div { class: "history-icon-wrap",
-                    div { class: "history-icon",
-                        if spent {
-                            SendIcon { size: 16 }
-                        } else if row.satoshis > 0 {
-                            ReceiveIcon { size: 16 }
-                        } else {
-                            ActivityIcon { size: 16 }
-                        }
-                    }
-                }
+                HistoryIconCluster { row: row.clone() }
                 div { class: "payment-details-copy",
                     div { class: "payment-details-title-row",
                         strong { class: "payment-details-title", "{row.title}" }

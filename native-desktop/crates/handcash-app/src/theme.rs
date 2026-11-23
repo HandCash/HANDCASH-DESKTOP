@@ -170,16 +170,16 @@ fn shell_gradient_css(t: &ResolvedTheme) -> String {
 .app-shell[data-aeon-scope="app"],
 .app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
-  background: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
-  background-image: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7), 0 1px 2px 0 rgba(0, 0, 0, 0.08);
+  background: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
+  background-image: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
-  background: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
-  background-image: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
+  background: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
+  background-image: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
   border-bottom-color: hsl(var(--border));
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7), 0 1px 2px 0 rgba(0, 0, 0, 0.08);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 "#
         .to_string()
@@ -188,14 +188,14 @@ fn shell_gradient_css(t: &ResolvedTheme) -> String {
 .app-shell[data-aeon-scope="app"],
 .app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
-  background: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  background-image: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
+  background: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
-  background: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  background-image: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
+  background: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
   border-bottom-color: hsl(var(--border));
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
@@ -224,11 +224,12 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-field: #080808;
   --hc-deep: {bg};
   --hc-glow: {bg};
-  --hc-nav-select: #222224;
-  --hc-nav-unselected: #1c1c1e;
-  --hc-nav-chrome: #222224;
-  --wallet-nav-select: #222224;
+  --hc-nav-select: #1a1a1a;
+  --hc-nav-unselected: #000000;
+  --hc-nav-chrome: #1a1a1a;
+  --wallet-nav-select: #1a1a1a;
   --wallet-nav-unselected: #000000;
+  --hc-nav-selected-ink: #fafafa;
   --wallet-nav-pill-radius: 999px;
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
   --hc-sunken: rgba(0, 0, 0, 0.28);
@@ -423,13 +424,13 @@ html, body {{
 .wallet-nav-bar-track .wallet-nav-tab[data-selected],
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] {{
   background-color: transparent;
-  color: var(--hc-text);
+  color: var(--hc-nav-selected-ink, var(--hc-text));
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] > svg,
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"] > svg,
 .wallet-nav-bar-track .wallet-nav-tab[data-selected] > svg,
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] > svg {{
-  color: var(--hc-accent);
+  color: inherit;
 }}
 /* Docked WalletActionBar slots inside the unified pill */
 .wallet-action-bar.wallet-action-bar--nav {{

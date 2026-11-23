@@ -7,8 +7,20 @@ use std::sync::OnceLock;
 
 pub const HANDCASH_MARK_SVG: &str =
     include_str!("../../../../public/brand/handcash-mark-green.svg");
+/// Same file `src/assets/brand/index.ts` ships as `markGreenPng` (handcash_v6_icon.png).
 const HANDCASH_MARK_GREEN_PNG: &[u8] =
-    include_bytes!("../../../../public/brand/handcash-mark-green.png");
+    include_bytes!("../../../../src/assets/brand/handcash-mark-green.png");
+
+/// `src/assets/brand/bsv-logo.png` — TS `bsvLogoDefault`.
+const BSV_LOGO_PNG: &[u8] = include_bytes!("../../../../src/assets/brand/bsv-logo.png");
+
+pub fn bsv_logo_png_data_uri() -> &'static str {
+    static URI: OnceLock<String> = OnceLock::new();
+    URI.get_or_init(|| {
+        let b64 = base64::engine::general_purpose::STANDARD.encode(BSV_LOGO_PNG);
+        format!("data:image/png;base64,{b64}")
+    })
+}
 
 fn handcash_mark_png_data_uri() -> &'static str {
     static URI: OnceLock<String> = OnceLock::new();
@@ -20,23 +32,15 @@ fn handcash_mark_png_data_uri() -> &'static str {
 
 #[component]
 pub fn HandCashBrandMark(#[props(default = 28)] size: u32) -> Element {
-    let _ = handcash_mark_png_data_uri;
+    let src = handcash_mark_png_data_uri();
     rsx! {
-        svg {
+        img {
             class: "brand-logo-mark",
-            view_box: "0 0 128 128",
+            src: "{src}",
             width: "{size}",
             height: "{size}",
-            fill: "none",
-            role: "img",
-            "aria-label": "HandCash",
-            rect { x: "0", y: "0", width: "128", height: "128", rx: "24", fill: "#000000" }
-            g { fill: "#38E58B",
-                path { d: "M64 20 A44 44 0 0 0 64 108 L64 96 A32 32 0 0 1 64 32 Z" }
-                path { d: "M64 20 A44 44 0 0 1 64 108 L64 96 A32 32 0 0 0 64 32 Z" }
-                circle { cx: "64", cy: "64", r: "12" }
-                rect { x: "64", y: "57", width: "36", height: "14", rx: "1" }
-            }
+            alt: "HandCash",
+            draggable: "false",
         }
     }
 }
@@ -75,18 +79,65 @@ pub fn HandCashWordmarkSvg() -> Element {
 
 #[component]
 pub fn BsvLogoMark(#[props(default = 32)] size: u32) -> Element {
+    let src = bsv_logo_png_data_uri();
     rsx! {
-        svg {
+        img {
             class: "bsv-logo is-shown",
-            view_box: "0 0 32 32",
+            src: "{src}",
             width: "{size}",
             height: "{size}",
-            fill: "none",
-            circle { cx: "16", cy: "16", r: "15", fill: "#EAB300" }
-            path {
-                d: "M17.3 9.2V7h-1.8v2.1h-1.4V7h-1.8v2.2H9.6v1.9h1.2c.6 0 .8.3.8.8v8.2c0 .5-.2.8-.8.8H9.6v1.9h2.7V25h1.8v-2.1h1.4V25h1.8v-2.2c2.5-.2 4.1-1.4 4.1-3.6 0-1.6-.9-2.8-2.4-3.3 1.1-.5 1.8-1.5 1.8-2.8 0-2-1.4-3.5-3.5-3.9zm-3.2 2h2.1c1.1 0 1.8.6 1.8 1.6s-.7 1.6-1.8 1.6h-2.1v-3.2zm2.5 9.6h-2.5v-3.5h2.5c1.3 0 2.1.7 2.1 1.8 0 1.1-.8 1.7-2.1 1.7z",
-                fill: "#111111",
-            }
+            alt: "",
+            draggable: "false",
+        }
+    }
+}
+
+/// Material `add` — TS `MintIcon`.
+#[component]
+pub fn MintIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor",
+            path { d: "M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" }
+        }
+    }
+}
+
+/// Material `local_offer` — TS `ListingIcon`.
+#[component]
+pub fn ListingIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor",
+            path { d: "M21.41 11.58 12.41 2.58A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 .59 1.41l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.83zM6.5 8A1.5 1.5 0 1 1 6.5 5a1.5 1.5 0 0 1 0 3z" }
+        }
+    }
+}
+
+/// Material `label_off` — TS `CancelListingIcon`.
+#[component]
+pub fn CancelListingIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor",
+            path { d: "m3.25 2.75 17 17L19 21l-2-2H5c-1.1 0-2-.9-2-2V7c0-.55.23-1.05.59-1.41L2 4l1.25-1.25zM22 12l-4.37-6.16C17.27 5.33 16.67 5 16 5H8l11 11 3-4z" }
+        }
+    }
+}
+
+/// Material `local_atm` — TS `SoldIcon`.
+#[component]
+pub fn SoldIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor",
+            path { d: "M11 17h2v-1h1c.55 0 1-.45 1-1v-3c0-.55-.45-1-1-1h-3v-1h4V8h-2V7h-2v1h-1c-.55 0-1 .45-1 1v3c0 .55.45 1 1 1h3v1H9v2h2v1zm9-13H4c-1.11 0-1.99.89-1.99 2L2 18c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4V6h16v12z" }
+        }
+    }
+}
+
+/// Material `attach_money` — TS `PurchaseIcon`.
+#[component]
+pub fn PurchaseIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor",
+            path { d: "M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1H5.32c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z" }
         }
     }
 }
