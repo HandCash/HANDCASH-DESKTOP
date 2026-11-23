@@ -161,47 +161,31 @@ fn hex_to_rgb_channels(hex: &str) -> String {
 
 /// Embossed outer shell, stage, and titlebar sheen matching `src/styles/handcash.css`
 /// (`.app-shell[data-aeon-scope='app']`, `.app-shell > .stage`, `.app-shell > .titlebar.aeon-titlebar`).
-/// Uses opaque gray-to-black stops (`#1b1b1d 0% -> #050505 45% -> #000000 100%`) so Vello/Blitz
-/// always renders the vertical gray-to-black gradient behind all containers and on the top bar.
-fn shell_gradient_css(t: &ResolvedTheme) -> String {
+/// Same subtle sheen over `--hc-bg` as TS (white 9% -> transparent 45% -> black 12%) in both modes,
+/// written with comma `rgba()` so Stylo/Blitz parses it; no opaque replacement colours.
+fn shell_gradient_css(_t: &ResolvedTheme) -> String {
     let _ = hex_to_rgb_channels;
-    if t.mode == AeonMode::Light {
-        r#"
+    r#"
 .app-shell[data-aeon-scope="app"],
 .app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
-  background: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
-  background-image: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 .app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
-  background: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
-  background-image: linear-gradient(180deg, #fafbfa 0%, #fafbfa 45%, #dcdddc 100%) !important;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
   border-bottom-color: hsl(var(--border));
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
-"#
-        .to_string()
-    } else {
-        r#"
-.app-shell[data-aeon-scope="app"],
-.app-shell[data-aeon-scope="app"] > .stage {
+.wallet-nav-titlebar-pill,
+.wallet-nav-actions-pill {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
-  background: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
-}
-.app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
-  background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
-  background: linear-gradient(180deg, #171717 0%, #000000 45%, #000000 100%) !important;
-  border-bottom-color: hsl(var(--border));
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
   box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
 "#
-        .to_string()
-    }
+    .to_string()
 }
 
 /// Generates `:root` + `[data-aeon-theme]` token overrides matching `applyBrandPalette`
@@ -405,13 +389,8 @@ html, body {{
   color: var(--hc-text);
 }}
 /* Unified navigation pill & action bar (`src/styles/handcash.css` + unified-navigation-pill insight) */
-.wallet-nav-titlebar-pill,
 .wallet-nav-bar-track {{
   background-color: var(--hc-nav-select);
-  background-image: none;
-}}
-.wallet-nav-actions-pill {{
-  background-color: var(--hc-nav-chrome);
   background-image: none;
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]),
