@@ -4,14 +4,15 @@
 //! `ConnectedAppsPanel`, `InventoryPanel`, `FriendsPanel`, `IdentityPanel`, `SettingsPanel`.
 
 use crate::icons::{
-    ActivityIcon, AppsIcon, CodeIcon, CoinGlyphIcon, DarkModeIcon, DevicesIcon, DownloadIcon,
+    ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, ExpandMoreIcon, DarkModeIcon, DevicesIcon, DownloadIcon,
     EncryptIcon, FileIcon, InfoIcon, LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon,
-    MonitorIcon, PaletteIcon, RefreshIcon, ScanQrIcon, SwapIcon, WarningIcon,
+    MonitorIcon, PaletteIcon, RefreshIcon, ScanQrIcon, SwapIcon, SystemUpdateIcon, WarningIcon,
 };
-use crate::machines::{NavChild, SettingSubpage, ToastNotice};
+use crate::health::{dependency_health_alert, DependencyHealthSnapshot, HealthAlert};
+use crate::machines::{FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
     copy_to_clipboard, render_qr_svg, truncate_mid, AcceptedCoins, AppServices, LabFeature,
-    SessionSummary, WalletSnapshot, APP_VERSION,
+    RecoverScan, SessionSummary, WalletSnapshot, APP_VERSION,
 };
 use crate::theme::AppearancePreference;
 use crate::ui::auth::PasswordField;
@@ -350,12 +351,26 @@ pub fn SettingsPanel(
     snap: WalletSnapshot,
     mut appearance: Signal<AppearancePreference>,
     mut nav_child: Signal<Option<NavChild>>,
+    fiat_code: Signal<FiatCode>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let app_pref = *appearance.read();
     let mut accepted = use_signal(|| services.load_accepted_coins());
     let accepted_now = *accepted.read();
     let mut open = move |sub: SettingSubpage| nav_child.set(Some(NavChild::Setting(sub)));
+    let health = use_dependency_health();
+    {
+        let svc = Arc::clone(&services);
+        use_hook(move || spawn_health_refresh(&svc, None));
+    }
+    let health_view = health.read().clone();
+    let health_alert = dependency_health_alert(&health_view);
+    let alerting = matches!(health_alert, HealthAlert::Warn | HealthAlert::Error);
+    let health_desc = if health_view.at == 0 {
+        "Checking…".to_string()
+    } else {
+        health_view.summary.clone()
+    };
 
     rsx! {
         div {
@@ -499,6 +514,21 @@ pub fn SettingsPanel(
                             list_row::Root { "data-aeon-layout": "control",
                                 list_row::Leading {
                                     span { class: "settings-row-icon", "data-tone": "default",
+                                        ArcUsdGlyphIcon { size: 20 }
+                                    }
+                                }
+                                list_row::Label { "Currency" }
+                                list_row::Description { "Currency for balances and totals." }
+                                list_row::Trailing {
+                                    SettingsFiatDropdown { fiat_code }
+                                }
+                            }
+                        }
+
+                        li {
+                            list_row::Root { "data-aeon-layout": "control",
+                                list_row::Leading {
+                                    span { class: "settings-row-icon", "data-tone": "default",
                                         InfoIcon { size: 20 }
                                     }
                                 }
@@ -530,9 +560,16 @@ pub fn SettingsPanel(
                     ul { class: "settings-list",
                         SettingsNavRow {
                             label: "Wallet health",
-                            description: "SQLite WAL, UTXOs, and BRC-100 bridge status",
+                            description: if alerting { String::new() } else { health_desc.clone() },
+                            status: if alerting { Some(health_desc.clone()) } else { None },
+                            status_tone: "warn",
                             icon: setting_icon(SettingSubpage::WalletHealth),
                             onclick: move |_| open(SettingSubpage::WalletHealth),
+                            trailing_end: if alerting {
+                                Some(rsx! { WalletHealthAlertBadge { tone: health_alert.as_str() } })
+                            } else {
+                                None
+                            },
                         }
                         SettingsNavRow {
                             label: "Recover from transaction",
@@ -577,6 +614,96 @@ pub fn SettingsPanel(
                             description: "Desktop wallet",
                             icon: setting_icon(SettingSubpage::About),
                             onclick: move |_| open(SettingSubpage::About),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/SettingsFiatDropdown.tsx`. Shares the
+/// durable `fiat_code` signal with the hero `FiatCurrencyMenu`.
+#[component]
+fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut open = use_signal(|| false);
+    let is_open = *open.read();
+    let current = *fiat_code.read();
+
+    rsx! {
+        div {
+            class: "wallet-account-menu settings-fiat-menu",
+            "data-aeon-scope": "wallet-account-menu",
+            "data-aeon-state": if is_open { "open" } else { "closed" },
+            onkeydown: move |e: KeyboardEvent| {
+                if e.key() == Key::Escape {
+                    open.set(false);
+                }
+            },
+            button {
+                r#type: "button",
+                class: "wallet-hero-identity settings-fiat-trigger",
+                "data-aeon-part": "trigger",
+                aria_controls: "settings-fiat-dropdown",
+                aria_expanded: is_open,
+                aria_haspopup: "listbox",
+                aria_label: "Currency: {current.iso()}",
+                onclick: move |_| open.set(!is_open),
+                span { class: "settings-fiat-flag", aria_hidden: true, "{current.flag()}" }
+                span { "{current.iso()}" }
+                ExpandMoreIcon {
+                    size: 16,
+                    class: if is_open { "wallet-account-caret is-open" } else { "wallet-account-caret" },
+                }
+            }
+            if is_open {
+                section {
+                    id: "settings-fiat-dropdown",
+                    class: "wallet-account-dropdown settings-fiat-dropdown",
+                    "data-aeon-part": "content",
+                    aria_label: "Choose currency",
+                    header { class: "wallet-account-heading",
+                        div { strong { "Choose currency" } }
+                        span { class: "wallet-account-count", "{FiatCode::ALL.len()}" }
+                    }
+                    ul { class: "wallet-account-list", role: "listbox", aria_label: "Government currency",
+                        for opt in FiatCode::ALL {
+                            {
+                                let selected = opt == current;
+                                let svc = Arc::clone(&services);
+                                rsx! {
+                                    li { key: "{opt.as_str()}", role: "none",
+                                        button {
+                                            r#type: "button",
+                                            role: "option",
+                                            aria_selected: selected,
+                                            class: if selected { "wallet-account-option is-selected" } else { "wallet-account-option" },
+                                            onclick: move |_| {
+                                                fiat_code.set(opt);
+                                                svc.save_fiat_currency(opt);
+                                                if svc.current_fx_rates().rate_for(opt).is_none() {
+                                                    let svc_bg = Arc::clone(&svc);
+                                                    svc.engine.runtime_handle().spawn(async move {
+                                                        svc_bg.refresh_fx_rates_async().await;
+                                                    });
+                                                }
+                                                open.set(false);
+                                            },
+                                            span { class: "wallet-account-option-lead",
+                                                span { class: "settings-fiat-flag", aria_hidden: true, "{opt.flag()}" }
+                                                span { class: "wallet-account-option-copy",
+                                                    strong { "{opt.iso()}" }
+                                                    span { "{opt.name()}" }
+                                                }
+                                            }
+                                            if selected {
+                                                CheckIcon { size: 17, class: "wallet-account-option-check" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -662,11 +789,17 @@ fn setting_icon(sub: SettingSubpage) -> Element {
 #[component]
 fn SettingsNavRow(
     label: &'static str,
-    description: &'static str,
+    #[props(into, default)] description: String,
+    /// Live status replaces the description (`status || description` in TS).
+    #[props(default)] status: Option<String>,
+    #[props(default = "muted")] status_tone: &'static str,
     #[props(default = "default")] tone: &'static str,
     icon: Element,
     onclick: EventHandler<MouseEvent>,
+    #[props(default)] trailing_end: Option<Element>,
 ) -> Element {
+    let desc_state = if status.is_some() { status_tone } else { "idle" };
+    let desc = status.unwrap_or(description);
     rsx! {
         li { class: "settings-nav-item",
             list_row::Root {
@@ -676,7 +809,152 @@ fn SettingsNavRow(
                     span { class: "settings-row-icon", "data-tone": "{tone}", {icon} }
                 }
                 list_row::Label { "{label}" }
-                list_row::Description { "data-aeon-state": "idle", "{description}" }
+                if !desc.is_empty() {
+                    list_row::Description { "data-aeon-state": "{desc_state}", "{desc}" }
+                }
+                if let Some(end) = trailing_end {
+                    list_row::Trailing { {end} }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/WalletHealthAlertBadge.tsx`.
+#[component]
+fn WalletHealthAlertBadge(tone: &'static str) -> Element {
+    rsx! {
+        div { class: "settings-icon-toggle wallet-health-trailing", aria_hidden: "true",
+            span {
+                class: "settings-icon-toggle-btn wallet-health-alert",
+                "data-tone": "{tone}",
+                "data-selected": "",
+                WarningIcon { size: 16 }
+            }
+        }
+    }
+}
+
+/// Live dependency-health snapshot (`subscribeDependencyHealth`).
+fn use_dependency_health() -> Signal<DependencyHealthSnapshot> {
+    let services = use_context::<Arc<AppServices>>();
+    let mut snap = use_signal(|| services.dependency_health());
+    use_future(move || {
+        let svc = Arc::clone(&services);
+        async move {
+            let mut rx = svc.subscribe_dependency_health();
+            while rx.changed().await.is_ok() {
+                snap.set(rx.borrow().clone());
+            }
+        }
+    });
+    snap
+}
+
+/// Fire one probe pass on the engine runtime; `done` flips back when it lands.
+fn spawn_health_refresh(services: &Arc<AppServices>, mut running: Option<Signal<bool>>) {
+    if let Some(r) = running.as_mut() {
+        r.set(true);
+    }
+    let svc = Arc::clone(services);
+    let handle = svc.engine.runtime_handle().clone();
+    let task = handle.spawn(async move {
+        svc.refresh_dependency_health_async().await;
+    });
+    if let Some(mut r) = running {
+        spawn(async move {
+            let _ = task.await;
+            r.set(false);
+        });
+    }
+}
+
+/// 1:1 port of `src/components/settings/WalletHealthPanel.tsx`.
+#[component]
+fn WalletHealthPanel() -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let snap = use_dependency_health();
+    let checking = use_signal(|| false);
+    {
+        let svc = Arc::clone(&services);
+        use_hook(move || spawn_health_refresh(&svc, Some(checking)));
+    }
+    let is_checking = *checking.read();
+    let view = snap.read().clone();
+    let svc_btn = Arc::clone(&services);
+
+    rsx! {
+        div { class: "nav-section-body settings-nav", "data-aeon-scope": "wallet-health",
+            div { class: "connected-panel-head settings-panel-head",
+                h2 { "Wallet health" }
+                div {
+                    class: "connected-panel-head-actions",
+                    "data-aeon-part": "health-actions",
+                    "data-aeon-state": if is_checking { "running" } else { "idle" },
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary settings-action-btn",
+                        disabled: is_checking,
+                        onclick: move |_| spawn_health_refresh(&svc_btn, Some(checking)),
+                        button::Label { if is_checking { "Checking…" } else { "Refresh" } }
+                    }
+                }
+            }
+
+            ul { class: "settings-list",
+                for probe in view.probes.iter() {
+                    li { key: "{probe.id}",
+                        list_row::Root { "data-aeon-layout": "control",
+                            list_row::Label { "{probe.label}" }
+                            list_row::Description {
+                                if is_checking && view.at == 0 { "…" } else { "{probe.detail}" }
+                            }
+                            list_row::Trailing {
+                                span {
+                                    class: "status-pill status-pill-compact",
+                                    "data-tone": "{probe.status.tone()}",
+                                    "data-aeon-state": "{probe.status.as_str()}",
+                                    "{probe.status.label()}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "utxo-heal",
+                h3 { class: "settings-group-title", "Local recovery" }
+                ul { class: "settings-list",
+                    li {
+                        list_row::Root { "data-aeon-layout": "control",
+                            list_row::Leading {
+                                span { class: "settings-row-icon", "data-tone": "default",
+                                    SystemUpdateIcon { size: 20 }
+                                }
+                            }
+                            list_row::Label { "Heal wallet UTXOs" }
+                            list_row::Description {
+                                "UTXO heal is not available in the native Rust build yet."
+                            }
+                            list_row::Trailing {
+                                span {
+                                    class: "status-pill status-pill-compact",
+                                    "data-tone": "muted",
+                                    "data-aeon-state": "unavailable",
+                                    "—"
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary settings-action-btn",
+                                    disabled: true,
+                                    "data-aeon-part": "heal-action",
+                                    "data-aeon-state": "unavailable",
+                                    button::Label { "Heal" }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -847,33 +1125,7 @@ pub fn SettingSubpagePanel(
                 }
             }
         }
-        SettingSubpage::WalletHealth => rsx! {
-            div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 12px;",
-                h3 { "Wallet health" }
-                ul { class: "identity-list",
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "Spendable UTXOs" }
-                        strong { "{snap.balance.spendable_utxo_count}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "1Sat items" }
-                        strong { "{snap.balance.item_count}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "Engine phase" }
-                        strong { "Phase {snap.engine_phase} · gen {snap.engine_generation}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "BRC-100 HTTP" }
-                        strong { class: "mono", "{snap.bridge_http_url}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "BRC-100 HTTPS" }
-                        strong { class: "mono", "{snap.bridge_https_url}" }
-                    }
-                }
-            }
-        },
+        SettingSubpage::WalletHealth => rsx! { WalletHealthPanel {} },
         SettingSubpage::About => rsx! {
             div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 12px;",
                 h3 { "HandCash Desktop v{APP_VERSION}" }
@@ -1034,13 +1286,13 @@ pub fn SettingSubpagePanel(
                 }
             }
         },
+        SettingSubpage::RecoverTx => rsx! { RecoverTxPanel {} },
         // Not ported yet (Slice 5 remainder): say so plainly rather than fake a control.
         SettingSubpage::HandCashRecovery
         | SettingSubpage::HistoryBackup
         | SettingSubpage::DeviceHandoff
         | SettingSubpage::SigninEmail
         | SettingSubpage::WipeWallet
-        | SettingSubpage::RecoverTx
         | SettingSubpage::ChartApps => rsx! {
             div { class: "nav-child-panel", "data-aeon-state": "unavailable", style: "display: flex; flex-direction: column; gap: 12px;",
                 h3 { "{subpage.label()}" }
@@ -1049,5 +1301,92 @@ pub fn SettingSubpagePanel(
                 }
             }
         },
+    }
+}
+
+/// Recover from a transaction (scan step of `RecoverFromTxPanel.tsx`): lists
+/// the 1-sat outputs of a txid that pay this wallet. Read-only; claiming the
+/// items into the wallet is still done by the TS app, and the page says so.
+#[component]
+fn RecoverTxPanel() -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut txid = use_signal(String::new);
+    let mut busy = use_signal(|| false);
+    let mut result = use_signal(|| None::<Result<RecoverScan, String>>);
+    let state = if *busy.read() { "scanning" } else { "idle" };
+    let current = result.read().clone();
+    rsx! {
+        div {
+            class: "nav-child-panel",
+            "data-aeon-scope": "settings-recover-tx",
+            "data-aeon-state": state,
+            style: "display: flex; flex-direction: column; gap: 12px;",
+            h3 { "Recover from transaction" }
+            p { class: "settings-row-desc",
+                "Paste the sender's transaction id to find the items in it that were sent to this wallet. Scanning only reads the chain; it does not move anything."
+            }
+            input {
+                class: "mono",
+                placeholder: "64-character transaction id",
+                value: "{txid}",
+                oninput: move |e| {
+                    result.set(None);
+                    txid.set(e.value());
+                },
+            }
+            div { class: "actions", style: "display: flex; gap: 8px;",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary",
+                    disabled: *busy.read() || txid.read().trim().is_empty(),
+                    onclick: move |_| {
+                        let svc = Arc::clone(&services);
+                        let raw = txid.read().clone();
+                        busy.set(true);
+                        result.set(None);
+                        spawn(async move {
+                            let handle = svc.engine.runtime_handle().clone();
+                            let svc_bg = Arc::clone(&svc);
+                            let out = handle
+                                .spawn(async move { svc_bg.scan_recover_tx(&raw).await })
+                                .await
+                                .unwrap_or_else(|e| Err(e.to_string()));
+                            result.set(Some(out));
+                            busy.set(false);
+                        });
+                    },
+                    button::Label { if *busy.read() { "Scanning…" } else { "Scan transaction" } }
+                }
+            }
+            match current {
+                None => rsx! {},
+                Some(Err(e)) => rsx! {
+                    p { class: "settings-row-desc", role: "alert", "data-tone": "error", "{e}" }
+                },
+                Some(Ok(scan)) if scan.outputs.is_empty() => rsx! {
+                    p { class: "settings-row-desc",
+                        "No 1-sat outputs in this transaction pay this wallet's address."
+                    }
+                },
+                Some(Ok(scan)) => {
+                    let count = scan.outputs.len();
+                    rsx! {
+                        p { class: "settings-row-desc",
+                            "{count} output(s) in this transaction pay this wallet. Claiming them into your wallet is not available in the native Rust build yet; use Recover from transaction in the HandCash desktop app to claim them."
+                        }
+                        ul { class: "identity-list",
+                            for out in scan.outputs {
+                                li { key: "{out.outpoint}", class: "identity-field",
+                                    span { class: "identity-field-label",
+                                        if out.inscribed { "Inscribed output" } else { "1-sat output" }
+                                    }
+                                    strong { class: "mono", "{truncate_mid(&out.outpoint, 10)}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

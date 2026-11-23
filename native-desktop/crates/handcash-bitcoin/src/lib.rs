@@ -7,6 +7,7 @@ pub mod brc150;
 pub mod bump;
 pub mod header;
 pub mod ord;
+pub mod recover;
 pub mod signer;
 pub mod tx;
 

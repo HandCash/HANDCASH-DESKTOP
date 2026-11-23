@@ -88,6 +88,11 @@ pub fn Dashboard(
     } else {
         None
     };
+    let has_crumbs_attr = if active_child.is_some() {
+        Some("")
+    } else {
+        None
+    };
 
     rsx! {
         section {
@@ -240,14 +245,18 @@ pub fn Dashboard(
 
                     div { class: "wallet-nav",
                         // Desktop titlebar pill: root label (+ / child) then either docked CTAs OR section tabs
-                        div { class: "wallet-nav-titlebar",
-                            div { class: "wallet-nav-titlebar-pill",
+                        div {
+                            class: "wallet-nav-titlebar",
+                            "data-has-crumbs": has_crumbs_attr,
+                            div {
+                                class: "wallet-nav-titlebar-pill",
+                                "data-has-crumbs": has_crumbs_attr,
                                 span { class: "wallet-nav-titlebar-label",
                                     "{active_section.label()}"
                                 }
                                 if let Some(ref child) = active_child {
                                     nav { class: "nav-breadcrumb wallet-nav-titlebar-crumbs",
-                                        span { class: "nav-breadcrumb-sep", "/" }
+                                        span { class: "nav-breadcrumb-sep nav-breadcrumb-sep--leading", "/" }
                                         span { class: "nav-breadcrumb-current", "{child.label()}" }
                                     }
                                 }
@@ -261,14 +270,15 @@ pub fn Dashboard(
                                         class: "wallet-nav-titlebar-tabs",
                                         role: "tablist",
                                         aria_label: "Wallet sections",
-                                        for sec in NavSection::ALL {
+                                        for (idx, sec) in NavSection::ALL.into_iter().enumerate() {
                                             button {
                                                 r#type: "button",
                                                 role: "tab",
                                                 class: "wallet-nav-tab",
                                                 title: "{sec.label()}",
-                                                aria_selected: active_section == sec && active_child.is_none(),
-                                                "data-selected": if active_section == sec && active_child.is_none() { Some("") } else { None },
+                                                aria_selected: active_section == sec && has_crumbs_attr.is_none(),
+                                                "data-selected": if active_section == sec && has_crumbs_attr.is_none() { Some("") } else { None },
+                                                "data-before-selected": if has_crumbs_attr.is_none() && NavSection::ALL.get(idx + 1) == Some(&active_section) { Some("") } else { None },
                                                 onclick: move |_| {
                                                     dock_spec.set(None);
                                                     nav_section.set(sec);
@@ -511,6 +521,7 @@ pub fn Dashboard(
                                                     snap: snap.clone(),
                                                     appearance,
                                                     nav_child,
+                                                    fiat_code,
                                                 }
                                             },
                                         }

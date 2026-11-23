@@ -287,6 +287,7 @@ pub fn HandCashApp() -> Element {
                                     auth_mode,
                                     app_machine,
                                     snapshot,
+                                    fiat_code,
                                     fresh_mnemonic,
                                     toast,
                                 }

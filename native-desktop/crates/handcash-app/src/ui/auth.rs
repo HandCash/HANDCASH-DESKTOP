@@ -1,11 +1,17 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
 //! 1:1 port of `src/components/AuthShell.tsx`, `src/components/OnboardEntryPanel.tsx`,
-//! `src/components/AuthScreen.tsx`, `src/components/PasswordField.tsx`, and
+//! `src/components/AuthScreen.tsx`, `src/components/CreateKeysBackupPanel.tsx`,
+//! `src/components/OnboardAcceptPanel.tsx`, `src/components/OnboardFiatPanel.tsx`,
+//! `src/components/OnboardProtectPanel.tsx`, `src/components/HistoryRecoveryPanel.tsx`,
+//! `src/components/DeviceSignInPanel.tsx`, `src/components/PasswordField.tsx`, and
 //! `src/components/auth/AuthEntryTaglines.tsx`.
 
-use crate::icons::{EyeIcon, EyeOffIcon};
-use crate::machines::{AppSessionEvent, AppSessionMachine, AuthFormMode, ToastNotice, UnlockState};
-use crate::state::{AppServices, WalletSnapshot};
+use crate::icons::{EyeIcon, EyeOffIcon, TickerCoinMark};
+use crate::machines::{
+    AppSessionEvent, AppSessionMachine, AuthFormMode, FiatCode, OnboardStep, RestoreRole,
+    ToastNotice, UnlockState,
+};
+use crate::state::{AcceptedCoins, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::BrandLogo;
 use aeon_ui::{button, field};
 use dioxus::prelude::*;
@@ -22,6 +28,19 @@ const AUTH_ENTRY_TAGLINES: &[&str] = &[
     "Set the terms of your trade.",
     "Present your business your way.",
 ];
+
+const ACCEPT_ALL_COINS: &[&str] = &["bsv", "ltc", "bch", "btc", "doge", "usdc_arc"];
+const NO_KEYSTORE_TEXT: &str = "Needs a system keyring on this computer, or anyone who can read its files could open this wallet.";
+
+#[derive(Clone, Debug)]
+struct PendingOnboard {
+    profile: SessionSummary,
+    balance_sats: u64,
+    wrap_password: String,
+    mnemonic: Option<String>,
+    step: OnboardStep,
+    is_create: bool,
+}
 
 /// 1:1 port of `src/components/AuthShell.tsx` + `AuthMeshBackground.tsx`.
 #[component]
@@ -55,7 +74,6 @@ pub fn AuthShell(
                     height: "100%",
                     preserve_aspect_ratio: "xMidYMid slice",
                     fill: "none",
-                    // Mesh edges
                     g { stroke: "{edge_stroke}", stroke_width: "1",
                         line { x1: "90", y1: "120", x2: "260", y2: "190" }
                         line { x1: "260", y1: "190", x2: "430", y2: "110" }
@@ -84,7 +102,6 @@ pub fn AuthShell(
                         line { x1: "510", y1: "610", x2: "740", y2: "650" }
                         line { x1: "740", y1: "650", x2: "980", y2: "670" }
                     }
-                    // Mesh nodes
                     g { fill: "{node_fill}",
                         circle { cx: "90", cy: "120", r: "2.5" }
                         circle { cx: "260", cy: "190", r: "3" }
@@ -121,6 +138,7 @@ pub fn AuthFlow(
     mut auth_mode: Signal<AuthFormMode>,
     mut app_machine: Signal<AppSessionMachine>,
     mut snapshot: Signal<WalletSnapshot>,
+    mut fiat_code: Signal<FiatCode>,
     mut fresh_mnemonic: Signal<Option<String>>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
@@ -129,12 +147,489 @@ pub fn AuthFlow(
     let mut unlock_state = use_signal(|| UnlockState::Idle);
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut password = use_signal(String::new);
-    let mut confirm_password = use_signal(String::new);
-    let mut handle = use_signal(String::new);
+    let handle = use_signal(String::new);
     let mut mnemonic_input = use_signal(String::new);
+    let mut shares_input = use_signal(String::new);
+    let mut root_key_input = use_signal(String::new);
+    let mut restore_role = use_signal(RestoreRole::default);
+    let mut offer_restore_on_lock = use_signal(|| false);
     let passphrase_input = use_signal(String::new);
-    let mut scheme = use_signal(|| "brc157".to_string());
-    let mut chain = use_signal(|| "main".to_string());
+    let scheme = use_signal(|| "brc157".to_string());
+    let chain = use_signal(|| "main".to_string());
+    let mut pending_onboard = use_signal(|| Option::<PendingOnboard>::None);
+    let mut phrase_copied = use_signal(|| false);
+    let mut accept_choice = use_signal(|| AcceptedCoins::Bitcoin);
+    let mut protect_mode = use_signal(|| {
+        if services.os_key_storage_available() {
+            "none".to_string()
+        } else {
+            "password".to_string()
+        }
+    });
+    let mut protect_pw = use_signal(String::new);
+    let mut protect_confirm = use_signal(String::new);
+    let mut protect_error = use_signal(|| Option::<String>::None);
+
+    // ── Post-create / post-restore onboarding steps (`src/components/AuthScreen.tsx` lines 817-895) ──
+    if let Some(pending) = pending_onboard.read().clone() {
+        match pending.step {
+            OnboardStep::History => {
+                let p_next = pending.clone();
+                let p_skip = pending.clone();
+                return rsx! {
+                    section {
+                        class: "auth-screen",
+                        "data-aeon-scope": "auth",
+                        "data-aeon-state": "history-recovery",
+                        div {
+                            class: "wallet-setup-config",
+                            "data-aeon-scope": "history-recovery",
+                            "data-aeon-state": "missing",
+                            h2 { "Restore your history" }
+                            p { class: "auth-lede",
+                                "Keys are on this device. Activity, UTXOs, friends, and peer apps live in your encrypted history backup — sealed to this wallet’s key, not your unlock password."
+                            }
+                            p { class: "auth-lede", role: "status",
+                                "No history backup on HandCash yet. You can enter with a chain scan only, or check Settings → History later."
+                            }
+                            div {
+                                class: "auth-actions",
+                                style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                                "data-aeon-part": "history-recovery-actions",
+                                "data-aeon-state": "missing",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary primary",
+                                    onclick: move |_| {
+                                        let mut next = p_next.clone();
+                                        next.step = OnboardStep::Protect;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "Restore history" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        let mut next = p_skip.clone();
+                                        next.step = OnboardStep::Protect;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "Continue without history" }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+            OnboardStep::KeysBackup => {
+                let phrase_text = pending.mnemonic.clone().unwrap_or_default();
+                let words: Vec<String> = phrase_text
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect();
+                let can_confirm = *phrase_copied.read();
+                let svc_confirm = Arc::clone(&services);
+                let svc_defer = Arc::clone(&services);
+                let p_confirm = pending.clone();
+                let p_defer = pending.clone();
+                let phrase_for_copy = phrase_text.clone();
+                return rsx! {
+                    section {
+                        class: "auth-screen",
+                        "data-aeon-scope": "auth",
+                        "data-aeon-state": "keys-backup",
+                        div {
+                            class: "wallet-setup-config keys-backup",
+                            "data-aeon-scope": "create-keys-backup",
+                            header { class: "keys-backup-head",
+                                h2 { "Save recovery backup" }
+                                div { class: "keys-backup-tabs", role: "tablist", aria_label: "Backup kind",
+                                    button {
+                                        r#type: "button",
+                                        role: "tab",
+                                        aria_selected: "true",
+                                        class: "btn btn-primary keys-backup-tab",
+                                        "Phrase"
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        role: "tab",
+                                        aria_selected: "false",
+                                        class: "btn btn-ghost keys-backup-tab",
+                                        disabled: true,
+                                        title: "Key slice generation runs in Settings → Recovery backup",
+                                        "Key slices"
+                                    }
+                                }
+                            }
+                            div { class: "keys-backup-body", "data-aeon-scroll": "hover",
+                                div { class: "split-backup-shares",
+                                    ol {
+                                        class: "recovery-phrase-grid",
+                                        "data-words": "{words.len()}",
+                                        for (i, word) in words.iter().enumerate() {
+                                            li { key: "{i}-{word}",
+                                                span { class: "recovery-phrase-index", "{i + 1}" }
+                                                span { class: "recovery-phrase-word", "{word}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            footer { class: "keys-backup-foot",
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        let _ = crate::state::copy_to_clipboard(&phrase_for_copy);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Copied".into(),
+                                            body: Some("Phrase copied to clipboard.".into()),
+                                            tone: "success",
+                                        }));
+                                        phrase_copied.set(true);
+                                    },
+                                    button::Label { "Copy phrase" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: !can_confirm,
+                                    onclick: move |_| {
+                                        svc_confirm.mark_keys_backup_confirmed("phrase");
+                                        toast.set(Some(ToastNotice {
+                                            title: "Recovery backup saved".into(),
+                                            body: None,
+                                            tone: "success",
+                                        }));
+                                        let mut next = p_confirm.clone();
+                                        next.step = OnboardStep::Accept;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "I’ve saved it — continue" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    "data-aeon-part": "backup-later",
+                                    onclick: move |_| {
+                                        svc_defer.mark_keys_backup_deferred();
+                                        let mut next = p_defer.clone();
+                                        next.step = OnboardStep::Accept;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "I’ll do this later" }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+            OnboardStep::Accept => {
+                let choice = *accept_choice.read();
+                let svc_accept = Arc::clone(&services);
+                let p_accept = pending.clone();
+                return rsx! {
+                    section {
+                        class: "auth-screen",
+                        "data-aeon-scope": "auth",
+                        "data-aeon-state": "accept",
+                        div {
+                            class: "wallet-setup-config",
+                            "data-aeon-scope": "onboard-accept",
+                            "data-aeon-state": choice.as_str(),
+                            h2 { "What do you want to accept?" }
+                            p { class: "auth-lede",
+                                "Just Bitcoin SV is the default. You can change this later in Settings."
+                            }
+                            div {
+                                class: "wallet-setup-options onboard-accept-options",
+                                role: "radiogroup",
+                                aria_label: "Accept",
+                                for opt in AcceptedCoins::CHOICES {
+                                    {
+                                        let active = choice == opt;
+                                        let cls = if active {
+                                            "wallet-setup-option onboard-accept-option is-selected"
+                                        } else {
+                                            "wallet-setup-option onboard-accept-option"
+                                        };
+                                        let coins: &[&str] = match opt {
+                                            AcceptedCoins::Bitcoin => &["bsv"],
+                                            AcceptedCoins::All => ACCEPT_ALL_COINS,
+                                        };
+                                        let svc_opt = Arc::clone(&svc_accept);
+                                        rsx! {
+                                            label { key: "{opt.as_str()}", class: "{cls}",
+                                                input {
+                                                    r#type: "radio",
+                                                    name: "onboard-accept",
+                                                    value: opt.as_str(),
+                                                    checked: active,
+                                                    onchange: move |_| {
+                                                        accept_choice.set(opt);
+                                                        svc_opt.save_accepted_coins(opt);
+                                                    },
+                                                }
+                                                span { class: "onboard-accept-icons", aria_hidden: "true",
+                                                    for coin in coins.iter().copied() {
+                                                        span {
+                                                            key: "{coin}",
+                                                            class: "onboard-accept-icon",
+                                                            "data-coin": "{coin}",
+                                                            TickerCoinMark { coin, size: 28 }
+                                                        }
+                                                    }
+                                                }
+                                                span { class: "wallet-setup-option-body",
+                                                    strong { "{opt.title()}" }
+                                                    span { "{opt.description()}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div {
+                                class: "auth-actions",
+                                style: "margin-top: 16px;",
+                                "data-aeon-part": "onboard-accept-actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary auth-submit",
+                                    onclick: move |_| {
+                                        services.save_accepted_coins(*accept_choice.read());
+                                        let mut next = p_accept.clone();
+                                        next.step = OnboardStep::Fiat;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "Continue" }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+            OnboardStep::Fiat => {
+                let current_fiat = *fiat_code.read();
+                let svc_fiat = Arc::clone(&services);
+                let p_fiat = pending.clone();
+                return rsx! {
+                    section {
+                        class: "auth-screen",
+                        "data-aeon-scope": "auth",
+                        "data-aeon-state": "fiat",
+                        div {
+                            class: "wallet-setup-config",
+                            "data-aeon-scope": "onboard-fiat",
+                            "data-aeon-state": current_fiat.as_str(),
+                            h2 { "Show balances in" }
+                            p { class: "auth-lede",
+                                "Government currency for totals on the home screen. You can change this anytime from Activity."
+                            }
+                            div {
+                                class: "onboard-fiat-options",
+                                role: "listbox",
+                                aria_label: "Government currency",
+                                "data-aeon-part": "fiat",
+                                for code in FiatCode::ALL {
+                                    {
+                                        let selected = code == current_fiat;
+                                        let state_attr = if selected { "selected" } else { "idle" };
+                                        let svc_pick = Arc::clone(&svc_fiat);
+                                        rsx! {
+                                            button {
+                                                key: "{code.as_str()}",
+                                                r#type: "button",
+                                                role: "option",
+                                                class: "onboard-fiat-option",
+                                                aria_selected: if selected { "true" } else { "false" },
+                                                aria_label: "{code.iso()} — {code.name()}",
+                                                "data-aeon-state": state_attr,
+                                                onclick: move |_| {
+                                                    fiat_code.set(code);
+                                                    svc_pick.save_fiat_currency(code);
+                                                },
+                                                span { class: "onboard-fiat-flag", aria_hidden: "true", "{code.flag()}" }
+                                                span { class: "onboard-fiat-iso", "{code.iso()}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            div {
+                                class: "auth-actions",
+                                style: "margin-top: 16px;",
+                                "data-aeon-part": "onboard-fiat-actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary auth-submit",
+                                    onclick: move |_| {
+                                        let mut next = p_fiat.clone();
+                                        next.step = OnboardStep::Protect;
+                                        pending_onboard.set(Some(next));
+                                    },
+                                    button::Label { "Continue" }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+            OnboardStep::Protect => {
+                let none_allowed = services.os_key_storage_available();
+                let cur_mode = protect_mode.read().clone();
+                let needs_password = cur_mode == "password" || cur_mode == "both";
+                let svc_protect = Arc::clone(&services);
+                let p_protect = pending.clone();
+                let options: [(&str, &str, &str, bool); 4] = [
+                    ("none", "None", "Open this wallet on this computer without a prompt.", false),
+                    ("password", "Password", "Unlock with a HandCash password you choose.", false),
+                    ("device", "Touch ID", "Unlock with this device’s fingerprint or lock screen.", true),
+                    ("both", "Password + Touch ID", "Either your password or this device can unlock.", true),
+                ];
+                return rsx! {
+                    section {
+                        class: "auth-screen",
+                        "data-aeon-scope": "auth",
+                        "data-aeon-state": "protect",
+                        div {
+                            class: "wallet-setup-config",
+                            "data-aeon-scope": "onboard-protect",
+                            h2 { "Protect this device" }
+                            p { class: "auth-lede",
+                                "Choose how HandCash unlocks on this computer. You can change this later in Settings."
+                            }
+                            div {
+                                class: "wallet-setup-options",
+                                role: "radiogroup",
+                                aria_label: "Device lock",
+                                for (id, title, desc, needs_device) in options {
+                                    {
+                                        let no_keystore = id == "none" && !none_allowed;
+                                        let disabled = needs_device || no_keystore;
+                                        let active = cur_mode == id;
+                                        let cls = match (active, disabled) {
+                                            (true, true) => "wallet-setup-option is-selected is-disabled",
+                                            (true, false) => "wallet-setup-option is-selected",
+                                            (false, true) => "wallet-setup-option is-disabled",
+                                            (false, false) => "wallet-setup-option",
+                                        };
+                                        let sub = if no_keystore {
+                                            NO_KEYSTORE_TEXT
+                                        } else if disabled {
+                                            "Touch ID is not available on this device"
+                                        } else {
+                                            desc
+                                        };
+                                        let id_owned = id.to_string();
+                                        rsx! {
+                                            label { key: "{id}", class: "{cls}",
+                                                input {
+                                                    r#type: "radio",
+                                                    name: "onboard-lock",
+                                                    value: "{id}",
+                                                    checked: active,
+                                                    disabled: disabled,
+                                                    onchange: move |_| {
+                                                        if !disabled {
+                                                            protect_error.set(None);
+                                                            protect_mode.set(id_owned.clone());
+                                                        }
+                                                    },
+                                                }
+                                                span { class: "wallet-setup-option-body",
+                                                    strong { "{title}" }
+                                                    span { "{sub}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if needs_password {
+                                div { class: "auth-form", style: "margin-top: 8px;",
+                                    PasswordField {
+                                        id: "onboard-lock-password",
+                                        label: "HandCash password",
+                                        placeholder: "10+ chars, letter and number",
+                                        value: protect_pw,
+                                    }
+                                    p { class: "password-hint",
+                                        "This password unlocks the wallet on this device. Don’t forget it."
+                                    }
+                                    PasswordField {
+                                        id: "onboard-lock-password-confirm",
+                                        label: "Confirm password",
+                                        placeholder: "Type it again",
+                                        value: protect_confirm,
+                                    }
+                                }
+                            }
+                            if let Some(ref err) = *protect_error.read() {
+                                p { class: "error auth-error", role: "alert", "{err}" }
+                            }
+                            div {
+                                class: "auth-actions",
+                                style: "margin-top: 16px;",
+                                "data-aeon-part": "onboard-protect-actions",
+                                "data-aeon-state": "idle",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary auth-submit",
+                                    onclick: move |_| {
+                                        protect_error.set(None);
+                                        let m = protect_mode.read().clone();
+                                        let pw = protect_pw.read().clone();
+                                        let cpw = protect_confirm.read().clone();
+                                        if (m == "password" || m == "both") && pw != cpw {
+                                            protect_error.set(Some("Passwords do not match".into()));
+                                            return;
+                                        }
+                                        let user_pw = if m == "password" || m == "both" {
+                                            Some(pw.as_str())
+                                        } else {
+                                            None
+                                        };
+                                        match svc_protect.apply_onboard_lock(
+                                            &p_protect.wrap_password,
+                                            &m,
+                                            user_pw,
+                                        ) {
+                                            Ok(()) => {
+                                                protect_pw.set(String::new());
+                                                protect_confirm.set(String::new());
+                                                let sum = p_protect.profile.clone();
+                                                let sats = p_protect.balance_sats;
+                                                let is_create = p_protect.is_create;
+                                                pending_onboard.set(None);
+                                                if is_create {
+                                                    app_machine.write().send(AppSessionEvent::Created {
+                                                        profile: sum,
+                                                        balance_sats: sats,
+                                                    });
+                                                } else {
+                                                    app_machine.write().send(AppSessionEvent::Unlocked {
+                                                        profile: sum,
+                                                        balance_sats: sats,
+                                                    });
+                                                }
+                                            }
+                                            Err(e) => {
+                                                protect_error.set(Some(e));
+                                            }
+                                        }
+                                    },
+                                    button::Label { "Continue" }
+                                }
+                            }
+                        }
+                    }
+                };
+            }
+        }
+    }
 
     let mode = *auth_mode.read();
 
@@ -156,7 +651,7 @@ pub fn AuthFlow(
                         "data-aeon-part": "sign-in",
                         onclick: move |_| {
                             error_msg.set(None);
-                            auth_mode.set(AuthFormMode::Phrase);
+                            auth_mode.set(AuthFormMode::Signin);
                         },
                         button::Label { "Sign in" }
                     }
@@ -178,7 +673,7 @@ pub fn AuthFlow(
                         "data-aeon-part": "migrate",
                         onclick: move |_| {
                             error_msg.set(None);
-                            auth_mode.set(AuthFormMode::Phrase);
+                            auth_mode.set(AuthFormMode::Create);
                         },
                         "Recover an old HandCash wallet"
                     }
@@ -192,33 +687,94 @@ pub fn AuthFlow(
         };
     }
 
-    let title = match mode {
-        AuthFormMode::Phrase => "Restore on this device",
-        AuthFormMode::Create => "Create wallet",
-        AuthFormMode::Unlock | AuthFormMode::Entry => "Welcome back",
+    // ── DeviceSignInPanel (`src/components/DeviceSignInPanel.tsx`) ──
+    if !is_locked && mode == AuthFormMode::Signin {
+        return rsx! {
+            section {
+                class: "auth-screen",
+                "data-aeon-scope": "auth",
+                "data-aeon-state": "signin",
+                div {
+                    class: "auth-copy device-signin",
+                    "data-aeon-scope": "device-signin",
+                    "data-aeon-state": "scan",
+                    h1 { class: "auth-title", "Sign in" }
+                    div { class: "scan-login", "data-aeon-part": "scan",
+                        p { class: "auth-lede", "Scan with a signed-in device." }
+                        div { class: "scan-login-qr", aria_busy: "true" }
+                    }
+                    div { class: "actions", "data-aeon-part": "exits",
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                error_msg.set(None);
+                                auth_mode.set(AuthFormMode::Entry);
+                            },
+                            button::Label { "Back" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                error_msg.set(None);
+                                auth_mode.set(AuthFormMode::Phrase);
+                            },
+                            button::Label { "Other ways" }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    let is_restore = mode.is_restore_method();
+    let title = if is_restore {
+        "Restore on this device"
+    } else if mode == AuthFormMode::Create {
+        "Create wallet"
+    } else {
+        "Welcome back"
     };
 
     let lede = match mode {
         AuthFormMode::Phrase => {
             "Enter your recovery phrase, 12 or 24 words. Same phrase = same identity on Desktop or Mobile."
         }
+        AuthFormMode::Shares => {
+            "Paste every BRC-140 key slice you have, one per line. HandCash finds two from the same set."
+        }
+        AuthFormMode::Key => "Paste your emergency root key (64 hex chars).",
         AuthFormMode::Create => "Your keys stay on this device.",
-        AuthFormMode::Unlock | AuthFormMode::Entry => "Enter your HandCash password to unlock.",
+        AuthFormMode::Unlock | AuthFormMode::Entry | AuthFormMode::Signin => {
+            if (services.should_auto_unlock() || services.is_no_device_lock())
+                && *unlock_state.read() != UnlockState::Failed
+            {
+                "Opening your wallet on this device."
+            } else if services.has_memorable_password() {
+                "Enter your HandCash password to unlock."
+            } else {
+                "Unlock with this device, or restore from a backup."
+            }
+        }
     };
 
-    let primary_label = match mode {
-        AuthFormMode::Phrase => "Restore",
-        AuthFormMode::Create => "Create",
-        AuthFormMode::Unlock | AuthFormMode::Entry => "Unlock",
+    let primary_label = if is_restore {
+        "Restore"
+    } else if mode == AuthFormMode::Create {
+        "Create"
+    } else {
+        "Unlock"
     };
 
     let submitting = *unlock_state.read() == UnlockState::Opening;
-    let submit_label = if submitting {
-        "Working…"
-    } else {
-        primary_label
-    };
+    let submit_label = if submitting { "Working…" } else { primary_label };
     let svc_submit = Arc::clone(&services);
+    let shares_found = shares_input
+        .read()
+        .lines()
+        .filter(|l| l.trim().split('.').count() == 4)
+        .count();
 
     rsx! {
         section {
@@ -240,7 +796,7 @@ pub fn AuthFlow(
                     unlock_state.set(UnlockState::Opening);
 
                     match mode {
-                        AuthFormMode::Unlock | AuthFormMode::Entry => {
+                        AuthFormMode::Unlock | AuthFormMode::Entry | AuthFormMode::Signin => {
                             let pw = password.read().clone();
                             match svc_submit.unlock_with_password(&pw) {
                                 Ok(sum) => {
@@ -256,38 +812,30 @@ pub fn AuthFlow(
                                 }
                                 Err(err) => {
                                     unlock_state.set(UnlockState::Failed);
+                                    offer_restore_on_lock.set(true);
                                     error_msg.set(Some(err));
                                 }
                             }
                         }
                         AuthFormMode::Create => {
                             let h = handle.read().trim().to_string();
-                            let pw = password.read().clone();
-                            let cpw = confirm_password.read().clone();
                             let c = chain.read().clone();
-                            if !cpw.is_empty() && pw != cpw {
-                                unlock_state.set(UnlockState::Failed);
-                                error_msg.set(Some("Passwords do not match.".into()));
-                                return;
-                            }
                             let eff_handle = if h.is_empty() { "wallet".to_string() } else { h };
-                            match svc_submit.create_vault(&eff_handle, &pw, &c) {
-                                Ok((sum, phrase)) => {
-                                    password.set(String::new());
-                                    confirm_password.set(String::new());
-                                    fresh_mnemonic.set(phrase);
+                            match svc_submit.create_vault_onboard(&eff_handle, &c) {
+                                Ok((sum, phrase, wrap_pw)) => {
+                                    fresh_mnemonic.set(phrase.clone());
+                                    phrase_copied.set(false);
                                     unlock_state.set(UnlockState::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
-                                    app_machine.write().send(AppSessionEvent::Created {
+                                    pending_onboard.set(Some(PendingOnboard {
                                         profile: sum,
                                         balance_sats: sats,
-                                    });
-                                    toast.set(Some(ToastNotice {
-                                        title: "Wallet created".into(),
-                                        body: Some("Save your 24-word recovery phrase in Settings → Recovery backup.".into()),
-                                        tone: "success",
+                                        wrap_password: wrap_pw,
+                                        mnemonic: phrase,
+                                        step: OnboardStep::KeysBackup,
+                                        is_create: true,
                                     }));
                                 }
                                 Err(err) => {
@@ -301,25 +849,27 @@ pub fn AuthFlow(
                             let eff_handle = if h.is_empty() { "wallet".to_string() } else { h };
                             let m = mnemonic_input.read().clone();
                             let pass = passphrase_input.read().clone();
-                            let pw = password.read().clone();
                             let c = chain.read().clone();
                             let sch = match scheme.read().as_str() {
                                 "brc75" => MnemonicScheme::Brc75,
                                 "legacy" => MnemonicScheme::LegacyHd,
                                 _ => MnemonicScheme::Brc157,
                             };
-                            match svc_submit.restore_vault(&eff_handle, &m, &pass, &pw, &c, sch) {
-                                Ok(sum) => {
-                                    password.set(String::new());
+                            match svc_submit.restore_vault_onboard(&eff_handle, &m, &pass, &c, sch) {
+                                Ok((sum, wrap_pw)) => {
                                     mnemonic_input.set(String::new());
                                     unlock_state.set(UnlockState::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
-                                    app_machine.write().send(AppSessionEvent::Unlocked {
+                                    pending_onboard.set(Some(PendingOnboard {
                                         profile: sum,
                                         balance_sats: sats,
-                                    });
+                                        wrap_password: wrap_pw,
+                                        mnemonic: None,
+                                        step: OnboardStep::History,
+                                        is_create: false,
+                                    }));
                                 }
                                 Err(err) => {
                                     unlock_state.set(UnlockState::Failed);
@@ -327,11 +877,44 @@ pub fn AuthFlow(
                                 }
                             }
                         }
+                        AuthFormMode::Key => {
+                            let h = handle.read().trim().to_string();
+                            let eff_handle = if h.is_empty() { "wallet".to_string() } else { h };
+                            let rk = root_key_input.read().clone();
+                            let c = chain.read().clone();
+                            match svc_submit.restore_vault_root_key_onboard(&eff_handle, &rk, &c) {
+                                Ok((sum, wrap_pw)) => {
+                                    root_key_input.set(String::new());
+                                    unlock_state.set(UnlockState::Success);
+                                    let snap = svc_submit.read_snapshot();
+                                    let sats = snap.balance.displayed_sats;
+                                    snapshot.set(snap);
+                                    pending_onboard.set(Some(PendingOnboard {
+                                        profile: sum,
+                                        balance_sats: sats,
+                                        wrap_password: wrap_pw,
+                                        mnemonic: None,
+                                        step: OnboardStep::History,
+                                        is_create: false,
+                                    }));
+                                }
+                                Err(err) => {
+                                    unlock_state.set(UnlockState::Failed);
+                                    error_msg.set(Some(err));
+                                }
+                            }
+                        }
+                        AuthFormMode::Shares => {
+                            unlock_state.set(UnlockState::Failed);
+                            error_msg.set(Some(
+                                "BRC-140 slice combination is not yet ported in the native build; restore with your recovery phrase or 64-hex emergency root key.".into(),
+                            ));
+                        }
                     }
                 },
 
                 // Mode switch on locked screen (Unlock / Restore)
-                if is_locked {
+                if is_locked && (*offer_restore_on_lock.read() || is_restore) {
                     div { class: "auth-mode-switch", role: "tablist", aria_label: "Wallet access",
                         button {
                             r#type: "button",
@@ -348,7 +931,7 @@ pub fn AuthFlow(
                             r#type: "button",
                             role: "tab",
                             class: "auth-mode-tab",
-                            "data-aeon-state": if mode == AuthFormMode::Phrase { "selected" } else { "idle" },
+                            "data-aeon-state": if is_restore { "selected" } else { "idle" },
                             onclick: move |_| {
                                 error_msg.set(None);
                                 auth_mode.set(AuthFormMode::Phrase);
@@ -358,85 +941,115 @@ pub fn AuthFlow(
                     }
                 }
 
+                // Restore method tabs (`Phrase | Key slices | Emergency key`)
+                if is_restore {
+                    div { class: "auth-mode-switch", role: "tablist", aria_label: "Restore method",
+                        for (m_id, m_label) in AuthFormMode::RESTORE_METHODS {
+                            button {
+                                key: "{m_label}",
+                                r#type: "button",
+                                role: "tab",
+                                aria_selected: if mode == m_id { "true" } else { "false" },
+                                class: "auth-mode-tab",
+                                "data-aeon-state": if mode == m_id { "selected" } else { "idle" },
+                                onclick: move |_| {
+                                    error_msg.set(None);
+                                    auth_mode.set(m_id);
+                                },
+                                "{m_label}"
+                            }
+                        }
+                    }
+                }
+
                 // Recovery phrase field
                 if mode == AuthFormMode::Phrase {
                     field::Root { class: "field",
                         field::Label { "Recovery phrase" }
                         textarea {
+                            id: "mnemonic",
                             rows: "3",
                             placeholder: "12 or 24 words separated by spaces",
                             value: "{mnemonic_input}",
                             oninput: move |e| mnemonic_input.set(e.value()),
                         }
                     }
+                }
+
+                // Key slices field
+                if mode == AuthFormMode::Shares {
                     field::Root { class: "field",
-                        field::Label { "Handle" }
-                        input {
-                            placeholder: "satoshi",
-                            value: "{handle}",
-                            oninput: move |e| handle.set(e.value()),
+                        field::Label { "BRC-140 key slices" }
+                        textarea {
+                            id: "shares",
+                            rows: "5",
+                            placeholder: "x.y.2.integrity\nx.y.2.integrity",
+                            value: "{shares_input}",
+                            oninput: move |e| shares_input.set(e.value()),
+                        }
+                        p { class: "field-hint", "data-aeon-part": "shares-count",
+                            if shares_found == 0 {
+                                "Slices from different sets of one wallet will not combine — add every one you saved."
+                            } else if shares_found == 1 {
+                                "1 slice found"
+                            } else {
+                                "{shares_found} slices found"
+                            }
                         }
                     }
+                }
+
+                // Emergency root key field
+                if mode == AuthFormMode::Key {
                     field::Root { class: "field",
-                        field::Label { "Derivation scheme" }
-                        select {
-                            value: "{scheme}",
-                            onchange: move |e| scheme.set(e.value()),
-                            option { value: "brc157", "BRC-157 (HandCash Default)" }
-                            option { value: "brc75", "BRC-75 (SHA-256 Seed)" }
-                            option { value: "legacy", "Legacy HD (BIP-32)" }
+                        field::Label { "Emergency root key" }
+                        textarea {
+                            id: "root-key",
+                            rows: "2",
+                            placeholder: "64 hex characters",
+                            value: "{root_key_input}",
+                            oninput: move |e| root_key_input.set(e.value()),
                         }
                     }
+                }
+
+                // Restore role radio group (`Replace old device` | `Keep both`)
+                if is_restore {
+                    div { class: "field", "data-aeon-part": "restore-role",
+                        div { class: "auth-mode-switch", role: "radiogroup", aria_label: "Your other device",
+                            for (r_id, r_label, _) in RestoreRole::ALL {
+                                button {
+                                    key: "{r_label}",
+                                    r#type: "button",
+                                    role: "radio",
+                                    aria_checked: if *restore_role.read() == r_id { "true" } else { "false" },
+                                    class: "auth-mode-tab",
+                                    "data-aeon-state": if *restore_role.read() == r_id { "selected" } else { "idle" },
+                                    onclick: move |_| restore_role.set(r_id),
+                                    "{r_label}"
+                                }
+                            }
+                        }
+                        p { class: "field-hint",
+                            {
+                                let cur = *restore_role.read();
+                                RestoreRole::ALL
+                                    .iter()
+                                    .find(|(id, _, _)| *id == cur)
+                                    .map(|(_, _, hint)| *hint)
+                                    .unwrap_or("")
+                            }
+                        }
+                    }
+                }
+
+                // Password field on Unlock
+                if mode == AuthFormMode::Unlock {
                     PasswordField {
-                        id: "restore-passphrase",
-                        label: "Optional BIP-39 passphrase",
-                        placeholder: "Leave blank if none",
-                        value: passphrase_input,
-                    }
-                }
-
-                // Create handle + network
-                if mode == AuthFormMode::Create {
-                    field::Root { class: "field",
-                        field::Label { "Handle" }
-                        input {
-                            placeholder: "satoshi",
-                            value: "{handle}",
-                            oninput: move |e| handle.set(e.value()),
-                        }
-                    }
-                    field::Root { class: "field",
-                        field::Label { "Network" }
-                        select {
-                            value: "{chain}",
-                            onchange: move |e| chain.set(e.value()),
-                            option { value: "main", "Bitcoin SV Mainnet" }
-                            option { value: "test", "Bitcoin SV Testnet" }
-                        }
-                    }
-                }
-
-                // Password field (Unlock / Create / Restore)
-                PasswordField {
-                    id: "password",
-                    label: "HandCash password",
-                    placeholder: if mode == AuthFormMode::Unlock {
-                        "Your password"
-                    } else {
-                        "8+ characters"
-                    },
-                    value: password,
-                }
-
-                if mode == AuthFormMode::Create {
-                    p { class: "password-hint",
-                        "Encrypts your local vault on this device."
-                    }
-                    PasswordField {
-                        id: "password-confirm",
-                        label: "Confirm password",
-                        placeholder: "Type it again",
-                        value: confirm_password,
+                        id: "password",
+                        label: "HandCash password",
+                        placeholder: "Your password",
+                        value: password,
                     }
                 }
 
@@ -463,16 +1076,25 @@ pub fn AuthFlow(
                             "data-aeon-part": "existing-wallet",
                             onclick: move |_| {
                                 error_msg.set(None);
-                                auth_mode.set(AuthFormMode::Phrase);
+                                auth_mode.set(AuthFormMode::Signin);
                             },
                             "Sign in"
                         }
                     }
                 }
 
-                if !is_locked && mode == AuthFormMode::Phrase {
+                if !is_locked && is_restore {
                     p { class: "auth-alt",
-                        "New here? "
+                        button {
+                            r#type: "button",
+                            class: "auth-alt-link",
+                            onclick: move |_| {
+                                error_msg.set(None);
+                                auth_mode.set(AuthFormMode::Signin);
+                            },
+                            "Sign in with email and your device"
+                        }
+                        " · New here? "
                         button {
                             r#type: "button",
                             class: "auth-alt-link",
@@ -482,6 +1104,12 @@ pub fn AuthFlow(
                             },
                             "Create a wallet"
                         }
+                    }
+                }
+
+                if is_restore {
+                    p { class: "auth-lede auth-restore-note",
+                        "Next you’ll restore history, then choose how this device unlocks."
                     }
                 }
             }

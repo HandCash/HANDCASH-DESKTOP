@@ -58,6 +58,14 @@ are unchanged. A download still opens a zip in the browser; it never installs it
 This does not remove the shared TypeScript wallet or UI. They require the
 ordered replacement and verification gates below, not deletion or renaming.
 
+## Fast path (2026-11-22)
+
+The prioritised plan to cutover is in `docs/rust-settings-parity-plan.md` §0.
+It has four parallel workstreams: A is non-signing Settings, B is native
+signing, C is BRC-100 and media, and D is Mobile. Only one external gate
+remains, the independent crypto review before native signing (step 4 below).
+Start the golden vectors for that review first, because it is the longest pole.
+
 ## Compatibility contract
 
 - BRC-100 HTTP :3321 / HTTPS :2121; device-peer :3340. Existing Rust

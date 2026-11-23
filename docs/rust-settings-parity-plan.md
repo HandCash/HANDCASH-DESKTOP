@@ -6,6 +6,31 @@
 
 ---
 
+## 0. Fast path to cutover (refined 2026-11-22)
+
+The migration finishes when `handcash-native` can replace the TS app for one
+account without losing data or signing anything unreviewed. Everything else is
+parity polish that can land after cutover. Four workstreams run in parallel;
+only B has a hard external gate.
+
+| # | Workstream | Next concrete slice | Gate before "done" |
+|---|------------|---------------------|--------------------|
+| A | Non-signing Settings | 1. Recover from tx: **scan done** (read-only). 2. History backup, merge-only restore and export, using `brc39_archive.rs`. 3. Wipe wallet: port `wipeMachine` (idle, syncing, wiping, then success or failure, typed `DELETE`) **after** A2, because the TS wipe runs the history gate first. 4. Recover-from-tx import: needs the ingest write path. | `cargo test` + clippy clean, merge-only guard unit test, wipe refuses while the history gate is unmet |
+| B | Native signing | 1. Golden vectors: TS `@bsv/sdk` and Rust `build_and_sign_p2pkh_tx` produce byte-identical txs for synthetic keys (P2PKH, 1Sat transfer, burn). 2. Wire Send, transfer and burn confirm to `spend_pipeline` → `post_beef` → `commit_signed_tx` **behind a default-off Labs flag**. 3. Independent crypto review. 4. Flip the default per account. JS and Rust never sign concurrently. | **Independent crypto review (external, blocks the cutover).** Until then the confirm buttons validate only, as they do today. |
+| C | BRC-100 and media | Docked permission sheet over `brc100_native.rs` (connect, action, auto-pay), then the media gaps listed in the roadmap | Permission expiry and origin tests mirrored with `items-market` `/migrate` |
+| D | Mobile | Opt-in read-only Rust adapter (see `rust-desktop-mobile-migration.md`) | Device upgrade evidence; not blocked on A–C |
+
+Can be deferred until after cutover: HandCash Recovery, Device handoff and
+Sign-in email (they need Rust vault-link and cloud recovery), Chart apps, the
+Preferences rows Currency, Sound, Updates and Screenshot, the Import lanes
+beyond BRC-38, and the `src/ui/settings/` module split. Do the split
+opportunistically when a slice touches settings code, not as its own step.
+
+Critical path: B1 → B2 → **review** → B4. Start B1 now, because the review is
+the longest pole. A and C fill the time while the review is pending.
+
+---
+
 ## 1. Current State in Rust (`panels.rs`)
 
 ### Working today
@@ -16,6 +41,13 @@
   - `Unlock` — change vault password (`change_password`).
   - `WalletHealth` — basic counters (spendable UTXOs, 1Sat items, engine phase/gen, HTTP/HTTPS bridge URLs).
   - `About` — static version & description.
+  - `Labs`, `Logs` and `Statecharts`, ported earlier.
+  - `RecoverTx` (scan only). `AppServices::scan_recover_tx` hydrates the tx
+    through the engine cache and fetcher (raw or BEEF), checks that the txid
+    matches, and lists the 1-sat outputs that pay this wallet's P2PKH lock.
+    The pure logic is in `handcash-bitcoin/src/recover.rs`, a port of
+    `scriptPaysAddress` and `recoverFromTx` with 8 tests. Claiming the items
+    still happens in the TS app, and the panel says so.
 
 ### Currently stubbed (`data-aeon-state="unavailable"`)
 1. `HandCashRecovery`
@@ -23,11 +55,7 @@
 3. `DeviceHandoff`
 4. `SigninEmail`
 5. `WipeWallet`
-6. `RecoverTx`
-7. `Logs`
-8. `ChartApps`
-9. `Labs`
-10. `Statecharts`
+6. `ChartApps`
 
 ### Missing on the Settings root list
 - **Sound** toggle in Preferences (`src/wallet/soundPrefs.ts` / `soundService.ts`) using `aeon_ui::switch`.

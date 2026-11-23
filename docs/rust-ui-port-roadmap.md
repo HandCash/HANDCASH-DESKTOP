@@ -71,6 +71,10 @@
 
 ## Remaining Slices & Fidelity Gaps (In Priority Order)
 
+> **Fast path:** the prioritised cutover plan, with workstreams A–D and the
+> crypto-review gate, is in `docs/rust-settings-parity-plan.md` §0. Items
+> below are scoped there.
+
 ### Fidelity Upgrades Needed on Existing Slices
 1. **Native Broadcast**: Wire `SendPanel`, `SendCollectablePanel`, and `BurnAssetPanel` confirm actions into `handcash-engine` ARC broadcast + `CommitSignedTx`.
 2. **Interactive BRC-100 Permission Sheet**: Connect `brc100_native.rs` approval prompts to a docked permission sheet (`ConnectPermissionDialog` / `ActionPermissionDialog` / `AutoPayControls`).
@@ -83,9 +87,10 @@
   - Done:
     - The `SettingsPanel` list matches the TS sections and order: HandCash Recovery, the seven `SECURITY_ITEMS` (Wipe wallet uses the danger tone), Preferences, Apps, Support, Labs and About.
     - Preferences has Appearance, the Accept (BSV only / BSV and crypto) toggle persisted to `handcash.acceptedCoins.v1`, and Version.
-    - Ported subpages: Backup, Import, Unlock, Wallet health and About.
+    - Ported subpages: Backup, Import, Unlock, Wallet health, About, Labs, Session logs and Statecharts.
+    - Recover from tx: the scan works; importing found items does not yet.
   - Remaining:
-    - Subpages: HandCash Recovery, History backup, Device backup, Sign-in email, Wipe wallet, Recover from tx, Session logs, Apps, Labs and Statecharts. Each currently opens an honest "not available in the native Rust build yet" panel.
+    - Subpages: HandCash Recovery, History backup, Device backup, Sign-in email, Wipe wallet and Apps. Each currently opens an honest "not available in the native Rust build yet" panel.
     - Preferences rows: Currency, Sound effects, Updates and Screenshot.
 
 ### Slice 6 — Auth, Onboarding & Device Pairing

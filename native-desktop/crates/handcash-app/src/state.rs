@@ -6,12 +6,15 @@ use crate::theme::{read_resolved_theme, AppearancePreference, ResolvedTheme};
 use base64::Engine as _;
 use handcash_bitcoin::ord::parse_ord_envelope;
 use handcash_bitcoin::signer::{address_to_locking_script, estimate_p2pkh_fee};
-use handcash_bitcoin::tx::TxOutput;
+use handcash_bitcoin::beef::Beef;
+use handcash_bitcoin::recover::{find_recoverable_outputs, parse_recover_txid, RecoverableOutput};
+use handcash_bitcoin::tx::{Transaction, TxOutput};
 use handcash_engine::WalletEngine;
 use handcash_primitives::keys::{KeyDeriver, MnemonicScheme};
 use handcash_primitives::vault::{
-    change_vault_password, create_new_vault, restore_vault_from_mnemonic,
-    unlock_vault_with_password, UnlockedVault, VaultRecord, VAULT_STORAGE_KEY,
+    change_vault_password, create_new_vault, generate_wrap_secret, restore_vault_from_mnemonic,
+    restore_vault_from_root_key, unlock_vault_with_password, UnlockedVault, VaultRecord,
+    VAULT_STORAGE_KEY,
 };
 use handcash_shell::brc100_server::Brc100Bridge;
 use handcash_shell::durable::DurableStore;
@@ -29,6 +32,10 @@ use tokio::sync::watch;
 pub const APP_VERSION: &str = env!("HANDCASH_PACKAGE_VERSION");
 pub const DEVICE_LOCK_MODE_KEY: &str = "handcash.brc100.deviceLock.mode";
 pub const OPEN_UNLOCK_SECRET_KEY: &str = "handcash.brc100.vault.openSecret.v1";
+/// `storageRegistry.backupConfirmed` / `backupDeferred` / `backupFormatsSaved`.
+pub const BACKUP_CONFIRMED_KEY: &str = "handcash.brc100.backupConfirmed";
+pub const BACKUP_DEFERRED_KEY: &str = "handcash.brc100.backupDeferred";
+pub const BACKUP_FORMATS_SAVED_KEY: &str = "handcash.backup.formatsSaved.v1";
 pub const APPEARANCE_STORAGE_KEY: &str = "handcash.appearance";
 pub const FIAT_CURRENCY_STORAGE_KEY: &str = "handcash.brc100.fiatCurrency";
 pub const BSV_USD_STORAGE_KEY: &str = "handcash.brc100.bsvUsd";
@@ -345,6 +352,13 @@ impl From<BalanceBreakdown> for BalanceSummary {
     }
 }
 
+/// Result of [`AppServices::scan_recover_tx`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoverScan {
+    pub txid: String,
+    pub outputs: Vec<RecoverableOutput>,
+}
+
 pub struct ActiveSession {
     pub vault: UnlockedVault,
     pub deriver: KeyDeriver,
@@ -362,6 +376,7 @@ pub struct AppServices {
     patch_tx: watch::Sender<u64>,
     theme_tx: watch::Sender<ResolvedTheme>,
     fx_tx: watch::Sender<FxRates>,
+    health_tx: watch::Sender<crate::health::DependencyHealthSnapshot>,
 }
 
 impl AppServices {
@@ -395,6 +410,7 @@ impl AppServices {
             .and_then(FxRates::from_json_str)
             .unwrap_or_default();
         let (fx_tx, _) = watch::channel(initial_fx);
+        let (health_tx, _) = watch::channel(crate::health::DependencyHealthSnapshot::default());
         {
             let tx = patch_tx.clone();
             engine.set_push_handler(move |_patch| {
@@ -413,6 +429,7 @@ impl AppServices {
             patch_tx,
             theme_tx,
             fx_tx,
+            health_tx,
         });
         crate::brc100_native::install_direct_handler(&services);
         Ok(services)
@@ -424,6 +441,38 @@ impl AppServices {
 
     pub fn subscribe_fx(&self) -> watch::Receiver<FxRates> {
         self.fx_tx.subscribe()
+    }
+
+    pub fn dependency_health(&self) -> crate::health::DependencyHealthSnapshot {
+        self.health_tx.borrow().clone()
+    }
+
+    pub fn subscribe_dependency_health(
+        &self,
+    ) -> watch::Receiver<crate::health::DependencyHealthSnapshot> {
+        self.health_tx.subscribe()
+    }
+
+    /// Run upstream probes once (`refreshDependencyHealth`); logs summary + per-probe lines.
+    pub async fn refresh_dependency_health_async(self: Arc<Self>) -> crate::health::DependencyHealthSnapshot {
+        let probes = crate::health::run_probes().await;
+        let summary = crate::health::summarize(&probes);
+        self.host_log
+            .append("info", "dependency-health", &summary);
+        for p in &probes {
+            self.host_log.append(
+                "info",
+                "dependency-health",
+                &format!("{}: {} — {}", p.label, p.status.as_str(), p.detail),
+            );
+        }
+        let snap = crate::health::DependencyHealthSnapshot {
+            at: now_ms(),
+            probes,
+            summary,
+        };
+        let _ = self.health_tx.send(snap.clone());
+        snap
     }
 
     /// Fetch live BSV/fiat exchange rates for all 12 supported currencies and persist to durable store.
@@ -1124,6 +1173,122 @@ impl AppServices {
             .filter(|s| !s.trim().is_empty())
     }
 
+    /// Mirrors `src/wallet/deviceLockPrefs.ts` (`setDeviceLockMode`).
+    pub fn set_device_lock_mode(&self, mode: &str) -> bool {
+        self.durable.set(DEVICE_LOCK_MODE_KEY, mode, false)
+    }
+
+    /// Mirrors `src/wallet/deviceLockPrefs.ts` (`setOpenUnlockSecret`); the
+    /// key sits under the vault prefix, so the durable store seals it.
+    pub fn set_open_unlock_secret(&self, secret: &str) -> bool {
+        self.durable.set(OPEN_UNLOCK_SECRET_KEY, secret, false)
+    }
+
+    /// Mirrors `src/wallet/deviceLockPrefs.ts` (`clearOpenUnlockSecret`).
+    pub fn clear_open_unlock_secret(&self) {
+        self.durable.remove(OPEN_UNLOCK_SECRET_KEY);
+    }
+
+    /// Mirrors `src/wallet/defaultDeviceLock.ts` (`osKeyStorageAvailable`):
+    /// "None" is only offered when an OS keystore seals the open secret.
+    pub fn os_key_storage_available(&self) -> bool {
+        self.durable.safe_storage_available()
+    }
+
+    /// Mirrors `src/wallet/applyOnboardLock.ts` for the modes this build can
+    /// honour (`none`, `password`). Device unlock has no native port yet, so
+    /// `device` / `both` are refused rather than faked.
+    pub fn apply_onboard_lock(
+        &self,
+        wrap_password: &str,
+        mode: &str,
+        user_password: Option<&str>,
+    ) -> Result<(), String> {
+        if wrap_password.is_empty() {
+            return Err("Missing device wrap".into());
+        }
+        match mode {
+            "none" => {
+                if !self.set_open_unlock_secret(wrap_password) {
+                    return Err("Failed to save the device unlock secret.".into());
+                }
+                self.set_device_lock_mode("none");
+                Ok(())
+            }
+            "password" => {
+                let user_password = user_password.unwrap_or_default();
+                if let Some(err) = handcash_primitives::vault::password_policy_error(user_password) {
+                    return Err(err);
+                }
+                if user_password != wrap_password {
+                    self.change_password(wrap_password, user_password)?;
+                }
+                self.clear_open_unlock_secret();
+                self.set_device_lock_mode("password");
+                Ok(())
+            }
+            _ => Err("Device unlock is not available on this device".into()),
+        }
+    }
+
+    /// Mirrors `src/wallet/vaultLocalKeys.ts` (`vaultLocalKey`): vault-wide
+    /// settings live in the master account's namespace.
+    pub fn vault_local_key(&self, base: &str) -> Option<String> {
+        let record = self.load_vault_record()?;
+        let ik = record.identity_key.trim();
+        if ik.is_empty() {
+            return None;
+        }
+        Some(format!("{base}:wallet:{}:0:{ik}", record.chain))
+    }
+
+    /// Mirrors `src/wallet/backupStatus.ts` (`isKeysBackupConfirmed`).
+    pub fn is_keys_backup_confirmed(&self) -> bool {
+        self.vault_local_key(BACKUP_CONFIRMED_KEY)
+            .and_then(|k| self.durable.get(&k))
+            .as_deref()
+            == Some("1")
+    }
+
+    /// Mirrors `src/wallet/backupStatus.ts` (`markKeysBackupConfirmed`) plus
+    /// `src/wallet/backupFormats.ts` (`markBackupFormatSaved`). The caller
+    /// holds the session handoff evidence (phrase copied) like TS does.
+    pub fn mark_keys_backup_confirmed(&self, format: &str) -> bool {
+        let (Some(confirmed), Some(deferred), Some(formats)) = (
+            self.vault_local_key(BACKUP_CONFIRMED_KEY),
+            self.vault_local_key(BACKUP_DEFERRED_KEY),
+            self.vault_local_key(BACKUP_FORMATS_SAVED_KEY),
+        ) else {
+            return false;
+        };
+        if !self.durable.set(&confirmed, "1", false) {
+            return false;
+        }
+        self.durable.remove(&deferred);
+        let mut saved: Vec<String> = self
+            .durable
+            .get(&formats)
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+            .unwrap_or_default();
+        if !saved.iter().any(|f| f == format) {
+            saved.push(format.to_string());
+            if let Ok(json) = serde_json::to_string(&saved) {
+                self.durable.set(&formats, &json, false);
+            }
+        }
+        true
+    }
+
+    /// Mirrors `src/wallet/backupStatus.ts` (`markKeysBackupDeferred`).
+    pub fn mark_keys_backup_deferred(&self) {
+        if self.is_keys_backup_confirmed() {
+            return;
+        }
+        if let Some(k) = self.vault_local_key(BACKUP_DEFERRED_KEY) {
+            self.durable.set(&k, "1", false);
+        }
+    }
+
     /// Mirrors `src/wallet/deviceLockPrefs.ts` (`isNoDeviceLock`).
     pub fn is_no_device_lock(&self) -> bool {
         self.device_lock_mode().as_deref() == Some("none") && self.open_unlock_secret().is_some()
@@ -1338,6 +1503,61 @@ impl AppServices {
         self.activate_unlocked(unlocked)
     }
 
+    /// Mirrors `src/components/AuthScreen.tsx` create flow: generates a wrap secret,
+    /// sets device lock mode to `none` until `OnboardProtectPanel` completes.
+    pub fn create_vault_onboard(
+        &self,
+        handle: &str,
+        chain: &str,
+    ) -> Result<(SessionSummary, Option<String>, String), String> {
+        let wrap = generate_wrap_secret();
+        let wrap_str = wrap.as_str().to_string();
+        let (sum, phrase) = self.create_vault(handle, &wrap_str, chain)?;
+        self.set_open_unlock_secret(&wrap_str);
+        self.set_device_lock_mode("none");
+        Ok((sum, phrase, wrap_str))
+    }
+
+    /// Mirrors `src/components/AuthScreen.tsx` phrase restore flow with wrap secret.
+    pub fn restore_vault_onboard(
+        &self,
+        handle: &str,
+        mnemonic: &str,
+        passphrase: &str,
+        chain: &str,
+        scheme: MnemonicScheme,
+    ) -> Result<(SessionSummary, String), String> {
+        let wrap = generate_wrap_secret();
+        let wrap_str = wrap.as_str().to_string();
+        let sum = self.restore_vault(handle, mnemonic, passphrase, &wrap_str, chain, scheme)?;
+        self.set_open_unlock_secret(&wrap_str);
+        self.set_device_lock_mode("none");
+        let _ = self.mark_keys_backup_confirmed("phrase");
+        Ok((sum, wrap_str))
+    }
+
+    /// Mirrors `src/components/AuthScreen.tsx` emergency root key restore flow with wrap secret.
+    pub fn restore_vault_root_key_onboard(
+        &self,
+        handle: &str,
+        root_key_hex: &str,
+        chain: &str,
+    ) -> Result<(SessionSummary, String), String> {
+        let wrap = generate_wrap_secret();
+        let wrap_str = wrap.as_str().to_string();
+        let unlocked = restore_vault_from_root_key(handle, root_key_hex, &wrap_str, chain)
+            .map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&unlocked.record).map_err(|e| e.to_string())?;
+        if !self.durable.set(VAULT_STORAGE_KEY, &json, true) {
+            return Err("Failed to save restored vault to durable store.".into());
+        }
+        let sum = self.activate_unlocked(unlocked)?;
+        self.set_open_unlock_secret(&wrap_str);
+        self.set_device_lock_mode("none");
+        let _ = self.mark_keys_backup_confirmed("key");
+        Ok((sum, wrap_str))
+    }
+
     pub fn change_password(
         &self,
         current_password: &str,
@@ -1358,6 +1578,49 @@ impl AppServices {
             }
         }
         Ok(())
+    }
+
+    /// Recover-from-transaction scan (read-only): fetch `raw_txid` (SQLite
+    /// cache first, then the rate-limited chain fetcher) and list its 1-sat
+    /// outputs locked to this wallet's address. Import stays on the TS path.
+    pub async fn scan_recover_tx(&self, raw_txid: &str) -> Result<RecoverScan, String> {
+        let txid = parse_recover_txid(raw_txid)?;
+        let summary = {
+            let guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            guard
+                .as_ref()
+                .map(|a| a.summary.clone())
+                .ok_or_else(|| "Unlock the wallet first.".to_string())?
+        };
+        let lock = address_to_locking_script(&summary.address).map_err(|e| e.to_string())?;
+        let hydrated = self
+            .engine
+            .hydrate_input_txids(&summary.account_id, summary.generation, vec![txid.clone()], true)
+            .await
+            .map_err(|e| e.to_string())?;
+        let entry = hydrated
+            .found
+            .get(&txid)
+            .ok_or_else(|| "Transaction not found on chain.".to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&entry.bytes_base64)
+            .map_err(|e| e.to_string())?;
+        let tx = if entry.kind == "beef" {
+            Beef::from_bytes(&bytes)
+                .map_err(|e| e.to_string())?
+                .find_tx(&txid)
+                .cloned()
+                .ok_or_else(|| "Transaction missing from its BEEF.".to_string())?
+        } else {
+            Transaction::from_bytes(&bytes).map_err(|e| e.to_string())?
+        };
+        if tx.txid_hex().map_err(|e| e.to_string())? != txid {
+            return Err("Fetched transaction does not match the txid.".into());
+        }
+        Ok(RecoverScan {
+            outputs: find_recoverable_outputs(&txid, &tx, &lock),
+            txid,
+        })
     }
 
     pub fn lock(&self) {

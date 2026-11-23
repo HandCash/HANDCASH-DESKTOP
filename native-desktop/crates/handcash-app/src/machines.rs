@@ -166,13 +166,61 @@ impl UnlockState {
     }
 }
 
-/// Mirrors `src/components/auth/authModes.ts` (`entry | unlock | create | phrase`).
+/// Mirrors `src/components/auth/authModes.ts` (`entry | unlock | create | signin | phrase | shares | key`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthFormMode {
     Entry,
+    Signin,
     Unlock,
     Create,
     Phrase,
+    Shares,
+    Key,
+}
+
+impl AuthFormMode {
+    pub const RESTORE_METHODS: [(Self, &'static str); 3] = [
+        (Self::Phrase, "Phrase"),
+        (Self::Shares, "Key slices"),
+        (Self::Key, "Emergency key"),
+    ];
+
+    pub const fn is_restore_method(self) -> bool {
+        matches!(self, Self::Phrase | Self::Shares | Self::Key)
+    }
+}
+
+/// Mirrors `RestoreRole` in `src/components/AuthScreen.tsx`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RestoreRole {
+    #[default]
+    Replace,
+    Keep,
+}
+
+impl RestoreRole {
+    pub const ALL: [(Self, &'static str, &'static str); 2] = [
+        (
+            Self::Replace,
+            "Replace old device",
+            "This device takes over every wallet. Your old device stops spending them when it next connects.",
+        ),
+        (
+            Self::Keep,
+            "Keep both",
+            "Your other device keeps its wallets and this one gets a new wallet. Move a wallet between them from the wallet menu.",
+        ),
+    ];
+}
+
+/// Mirrors `OnboardStep` in `src/wallet/onboardSteps.ts`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnboardStep {
+    KeysBackup,
+    History,
+    Accept,
+    Fiat,
+    Protect,
 }
 
 /// Mirrors `src/machines/walletStatusMachine.ts`.

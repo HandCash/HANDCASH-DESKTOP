@@ -156,6 +156,40 @@ pub fn validate_password(password: &str) -> Result<(), VaultError> {
     Ok(())
 }
 
+/// New create / restore / change-password policy minimum length.
+/// Mirrors `src/wallet/passwordPolicy.ts` (`PASSWORD_MIN_LENGTH`).
+pub const PASSWORD_MIN_LENGTH: usize = 10;
+
+/// Mirrors `src/wallet/passwordPolicy.ts` (`validatePassword`): returns the
+/// user-facing error, or `None` when the password meets the new policy.
+pub fn password_policy_error(password: &str) -> Option<String> {
+    if password.chars().count() < PASSWORD_MIN_LENGTH {
+        return Some(format!(
+            "Password must be at least {PASSWORD_MIN_LENGTH} characters"
+        ));
+    }
+    if !password.chars().any(|c| c.is_ascii_alphabetic()) {
+        return Some("Password must include a letter".into());
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Some("Password must include a number".into());
+    }
+    None
+}
+
+/// Mirrors `src/wallet/deviceLockPrefs.ts` (`generateWrapSecret`): 24 random
+/// bytes, base64 with `+/=` replaced by `x`, prefixed `Hc1` (meets the policy).
+pub fn generate_wrap_secret() -> Zeroizing<String> {
+    let mut bytes = Zeroizing::new([0u8; 24]);
+    rand::rngs::OsRng.fill_bytes(&mut *bytes);
+    let body: String = BASE64
+        .encode(*bytes)
+        .chars()
+        .map(|c| if matches!(c, '+' | '/' | '=') { 'x' } else { c })
+        .collect();
+    Zeroizing::new(format!("Hc1{body}"))
+}
+
 fn derive_pbkdf2_key(password: &str, salt: &[u8]) -> Zeroizing<[u8; 32]> {
     let mut key = Zeroizing::new([0u8; 32]);
     pbkdf2::derive(
@@ -404,6 +438,30 @@ pub fn restore_vault_from_mnemonic(
     })
 }
 
+/// Restore a vault from a 64-hex emergency root key (BRC-42 master).
+pub fn restore_vault_from_root_key(
+    handle: &str,
+    root_key_hex: &str,
+    password: &str,
+    chain: &str,
+) -> Result<UnlockedVault, VaultError> {
+    let trimmed = root_key_hex.trim();
+    let clean = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+    if clean.len() != 64 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(VaultError::InvalidPassword("Emergency key must be 64 hex characters".into()));
+    }
+    let key = crate::keys::SecretKeyBytes::from_hex(clean)?;
+    let master = VaultMaster::Brc42 {
+        key_hex: key.to_hex().to_string(),
+    };
+    let record = encrypt_vault_v3(&master, None, handle, chain, password)?;
+    Ok(UnlockedVault {
+        master,
+        mnemonic: None,
+        record,
+    })
+}
+
 /// Re-encrypt an existing vault under a new password without changing keys or identity.
 pub fn change_vault_password(
     record: &VaultRecord,
@@ -498,5 +556,27 @@ mod tests {
             v75.record.identity_key,
             "026dca6a3f36e46d85b6264267c851d8af1d311f2b1697a73eab898693c0f77b6c"
         );
+    }
+
+    #[test]
+    fn password_policy_and_wrap_secret_and_root_key_restore() {
+        assert_eq!(password_policy_error("short1a").as_deref(), Some("Password must be at least 10 characters"));
+        assert_eq!(password_policy_error("1234567890").as_deref(), Some("Password must include a letter"));
+        assert_eq!(password_policy_error("abcdefghij").as_deref(), Some("Password must include a number"));
+        assert_eq!(password_policy_error("ValidPass123"), None);
+
+        let wrap = generate_wrap_secret();
+        assert!(wrap.starts_with("Hc1"));
+        assert_eq!(password_policy_error(&wrap), None);
+
+        let restored = restore_vault_from_root_key(
+            "wallet",
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            &wrap,
+            "main",
+        )
+        .unwrap();
+        assert_eq!(restored.mnemonic, None);
+        assert_eq!(restored.record.has_mnemonic, Some(false));
     }
 }

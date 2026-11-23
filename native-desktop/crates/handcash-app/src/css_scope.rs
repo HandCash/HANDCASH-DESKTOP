@@ -357,7 +357,226 @@ fn predicate(s: &str) -> Option<[bool; 2]> {
     Some(if neg { [!any[0], !any[1]] } else { any })
 }
 
-pub fn rewrite_selector(sel: &str) -> (Cond, String) {
+/// Normalizes runs of whitespace in a selector and trims spaces inside `(...)`.
+fn normalize_selector_ws(sel: &str) -> String {
+    let mut compact = String::with_capacity(sel.len());
+    let mut prev_ws = false;
+    for ch in sel.chars() {
+        if ch.is_ascii_whitespace() {
+            if !prev_ws {
+                compact.push(' ');
+                prev_ws = true;
+            }
+        } else {
+            if ch == ')' && compact.ends_with(' ') {
+                compact.pop();
+            }
+            compact.push(ch);
+            prev_ws = ch == '(';
+        }
+    }
+    compact.trim().to_string()
+}
+
+/// Rewrites `:has(...)` selectors (unsupported by Stylo 0.8.0 in Blitz) into
+/// equivalent descendant, state-attribute, or structural selectors.
+fn rewrite_has_clauses(sel: &str) -> Option<String> {
+    if !sel.contains(":has(") {
+        return Some(sel.to_string());
+    }
+    let mut s = sel.to_string();
+    const HAS_REWRITES: &[(&str, &str)] = &[
+        (".stage:has(.dashboard) > .dashboard", ".stage > .dashboard"),
+        (
+            ".stage:has(.dashboard)",
+            ".app-shell[data-aeon-state='ready'] > .stage",
+        ),
+        (
+            ".app-shell:has(.auth-shell)",
+            ".app-shell:not([data-aeon-state='ready'])",
+        ),
+        (".stage:has(.auth-shell) > .auth-shell", ".stage > .auth-shell"),
+        (
+            ".stage:has(.auth-shell)",
+            ".app-shell:not([data-aeon-state='ready']) > .stage",
+        ),
+        (
+            ".auth-shell-content:has([data-aeon-scope='create-keys-backup']) .keys-backup",
+            ".auth-shell-content .keys-backup",
+        ),
+        (
+            ".auth-shell-content:has([data-aeon-scope='create-keys-backup'])",
+            ".auth-shell[data-aeon-state='keys-backup'] .auth-shell-content",
+        ),
+        (
+            ".wallet-setup-option:has(.wallet-setup-option-mark)",
+            ".wallet-setup-option[data-has-mark]",
+        ),
+        (":has([data-aeon-part='coin-trigger']:hover)", ":hover"),
+        (
+            ":has([data-aeon-part='coin-trigger']:focus-visible)",
+            ":focus-within",
+        ),
+        (
+            ".wallet-nav-stage:has(.nav-child-stage--browser):has(.permission-request-panel)",
+            ".wallet-nav-stage[data-browser-permission]",
+        ),
+        (
+            ".wallet-nav-stage:has(.app-browser-panel)",
+            ".wallet-nav-stage[data-browser]",
+        ),
+        (
+            ".wallet-nav-stage:has(.chat-shell) > .wallet-nav-panel",
+            ".wallet-nav-stage[data-chat] > .wallet-nav-panel",
+        ),
+        (".nav-section-body:has(> .empty-state)", ".nav-section-body"),
+        (".history-with-filters:has(.empty-state)", ".history-with-filters"),
+        (
+            ".wallet-hero > .wallet-hero-head.connected-panel-head:has(.fiat-currency-dropdown)",
+            ".wallet-hero[data-menu-open] > .wallet-hero-head.connected-panel-head",
+        ),
+        (
+            ".wallet-hero > .wallet-hero-head.connected-panel-head:has(.wallet-account-dropdown)",
+            ".wallet-hero[data-menu-open] > .wallet-hero-head.connected-panel-head",
+        ),
+        (
+            ".wallet-hero:has(.fiat-currency-dropdown)",
+            ".wallet-hero[data-menu-open]",
+        ),
+        (
+            ".wallet-hero:has(.fiat-currency-menu-dropdown)",
+            ".wallet-hero[data-menu-open]",
+        ),
+        (
+            ".wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-label)",
+            ".wallet-nav-titlebar-pill",
+        ),
+        (
+            ".wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs) .wallet-nav-titlebar-label",
+            ".wallet-nav-titlebar-pill[data-has-crumbs] .wallet-nav-titlebar-label",
+        ),
+        (
+            ".wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs)",
+            ".wallet-nav-titlebar-pill",
+        ),
+        (
+            ".wallet-nav-titlebar:has(.wallet-nav-titlebar-crumbs)",
+            ".wallet-nav-titlebar[data-has-crumbs]",
+        ),
+        (
+            ".wallet-nav-titlebar-actions:not(:has(.wallet-nav-actions-pill))",
+            ".wallet-nav-titlebar-actions:empty",
+        ),
+        (
+            ".wallet-nav-titlebar-actions-slot:has(.wallet-nav-actions-pill--child)",
+            ".wallet-nav-titlebar-actions-slot[data-has-child-pill]",
+        ),
+        (
+            ":has(+ :is(.is-active, [aria-selected='true'], [data-selected]))",
+            "[data-before-selected]",
+        ),
+        (
+            ":has(+ :is([aria-selected='true'], [data-selected]))",
+            "[data-before-selected]",
+        ),
+        (":has(+ .is-active)", "[data-before-selected]"),
+        (":has(+ [aria-selected='true'])", "[data-before-selected]"),
+        (":has(+ [data-selected])", "[data-before-selected]"),
+        (
+            ".identity-pill:has(> .identity-pill-lead:first-child)",
+            ".identity-pill[data-has-lead]",
+        ),
+        (".identity-pill:has(> :only-child)", ".identity-pill[data-only-child]"),
+        (
+            ".history-icon:has(> .deferred-image > .history-item-thumb)",
+            ".history-icon[data-has-thumb]",
+        ),
+        (".nav-child-body:has(.send-panel) .send-panel", ".nav-child-body .send-panel"),
+        (".nav-child-body:has(.send-panel) .send-stage", ".nav-child-body .send-stage"),
+        (".nav-child-body:has(.receive-panel)", ".nav-child-body"),
+        (".nav-child-body:has(.send-panel)", ".nav-child-body"),
+        (".nav-child-body:has(.scan-panel)", ".nav-child-body"),
+        (".nav-child-body:has(.chat-with-scroll)", ".nav-child-body"),
+        (".nav-child-stage:has(.chat-shell--nested)", ".nav-child-stage"),
+        (
+            ":has(> [data-aeon-part='description']:not(:empty))",
+            "",
+        ),
+        (":has(> [data-aeon-part='leading'])", ""),
+        (
+            ".connected-panel-head:has(> .panel-filter)",
+            ".connected-panel-head[data-has-filter]",
+        ),
+        (".fungible-avatar:has(> img)", ".fungible-avatar[data-has-img]"),
+        (".collect-select:has(input:checked)", ".collect-select[data-checked]"),
+        (
+            ".collectable-card:has(.collect-select input:checked)",
+            ".collectable-card[data-selected]",
+        ),
+        (
+            ".collectable-row:has(.collect-select input:checked)",
+            ".collectable-row[data-selected]",
+        ),
+        (".chat-unread-toggle:has(input:checked)", ".chat-unread-toggle[data-checked]"),
+        (
+            ".send-collectable-preview:has(> .collectable-media + .collectable-media)",
+            ".send-collectable-preview[data-multi]",
+        ),
+        (
+            ".wallet-nav-bar[data-permission]:has(.wallet-action-bar--nav[data-cta='primary'])",
+            ".wallet-nav-bar[data-permission][data-cta='primary']",
+        ),
+        (
+            ".wallet-nav-bar[data-permission]:has(.wallet-nav-tab-accept[data-selected]:not(:disabled))",
+            ".wallet-nav-bar[data-permission][data-cta='primary']",
+        ),
+        (
+            ".wallet-nav-bar[data-permission]:has(.wallet-action-bar--nav[data-cta='danger'])",
+            ".wallet-nav-bar[data-permission][data-cta='danger']",
+        ),
+        (
+            ".wallet-nav-bar[data-permission]:has(.wallet-nav-tab-danger[data-selected]:not(:disabled))",
+            ".wallet-nav-bar[data-permission][data-cta='danger']",
+        ),
+        (
+            ".wallet-actions:has(> .btn:nth-child(3))",
+            ".wallet-actions",
+        ),
+        (
+            ".wallet-nav-actions-pill.wallet-hero-metric:has(.fiat-currency-trigger:is(:active, :focus-visible, [aria-expanded='true']))",
+            ".wallet-nav-actions-pill.wallet-hero-metric[data-aeon-state='open']",
+        ),
+        (
+            ".wallet-nav-actions-pill.wallet-hero-identity-chrome:has(.wallet-hero-identity:is(:active, :focus-visible, [aria-expanded='true']))",
+            ".wallet-nav-actions-pill.wallet-hero-identity-chrome[data-aeon-state='open']",
+        ),
+    ];
+    for (from, to) in HAS_REWRITES {
+        if s.contains(from) {
+            s = s.replace(from, to);
+        }
+    }
+    // Strip remaining `.wallet-nav-stage:has(...)` layout guards (stage is always a flex column).
+    while let Some(pos) = s.find(".wallet-nav-stage:has(") {
+        let has_open = pos + ".wallet-nav-stage:has(".len() - 1;
+        let Some((close, _)) = scan_until(s.as_bytes(), has_open + 1, b")") else {
+            break;
+        };
+        s.replace_range((pos + ".wallet-nav-stage".len())..=close, "");
+    }
+    if s.contains(":has(") {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+pub fn rewrite_selector(raw_sel: &str) -> (Cond, String) {
+    let normalized = normalize_selector_ws(raw_sel);
+    let Some(sel_owned) = rewrite_has_clauses(&normalized) else {
+        return (Cond::Never, String::new());
+    };
+    let sel = sel_owned.as_str();
     let Some(after_html) = sel.strip_prefix("html") else {
         return (Cond::Always, sel.to_string());
     };
@@ -456,6 +675,7 @@ mod tests {
         let open = out.matches('{').count();
         let close = out.matches('}').count();
         assert_eq!(open, close);
+        assert!(!out.contains(":has("), "unrewritten :has() selector in SCOPED_SHEETS");
         for line in out.lines() {
             let t = line.trim_start();
             assert!(
@@ -464,5 +684,8 @@ mod tests {
             );
         }
         assert!(out.contains(".hc-root[data-aeon-platform='linux']"));
+        assert!(out.contains(".app-shell[data-aeon-state='ready'] > .stage"));
+        assert!(out.contains(".app-shell:not([data-aeon-state='ready']) > .titlebar"));
+        assert!(out.contains(".wallet-hero[data-menu-open] .wallet-hero-main"));
     }
 }
