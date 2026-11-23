@@ -44,9 +44,9 @@ let cached: { key: string; profile: AccountProfile | null } | null = null
 
 /** The public profile the unlocked account presents; one read per identity change, shared by every row. */
 export function useCurrentAccountProfile(): AccountProfile | null {
-  const generation = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
-  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration)
-  const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
+  const generation = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration, publicIdentitiesGeneration)
+  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration, identityProfilesGeneration)
+  const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration, issuerIdentitiesGeneration)
   const active = getWalletRuntime()?.instance
   if (!active) return null
   const key = `${active.chain}:${active.identityKey}:${active.accountIndex}:${generation}:${profiles}:${packages}`

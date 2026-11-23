@@ -6,16 +6,21 @@
 //! `src/components/DeviceSignInPanel.tsx`, `src/components/PasswordField.tsx`, and
 //! `src/components/auth/AuthEntryTaglines.tsx`.
 
-use crate::icons::{EyeIcon, EyeOffIcon, TickerCoinMark};
+use crate::icons::{EyeIcon, EyeOffIcon, ExpandMoreIcon, TickerCoinMark};
 use crate::machines::{
     AppSessionEvent, AppSessionMachine, AuthFormMode, FiatCode, OnboardStep, RestoreRole,
     ToastNotice, UnlockState,
 };
 use crate::state::{AcceptedCoins, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::BrandLogo;
-use aeon_ui::{button, field};
+use aeon_ui::{button, field, list_row};
 use dioxus::prelude::*;
+use handcash_primitives::brc140::{
+    extract_brc140_shares, share_download_filename, slice_set_label, Brc140IssuedSet,
+    BRC140_DESTINATION_HINTS,
+};
 use handcash_primitives::keys::MnemonicScheme;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 const AUTH_ENTRY_TAGLINES: &[&str] = &[
@@ -158,6 +163,9 @@ pub fn AuthFlow(
     let chain = use_signal(|| "main".to_string());
     let mut pending_onboard = use_signal(|| Option::<PendingOnboard>::None);
     let mut phrase_copied = use_signal(|| false);
+    let mut backup_kind = use_signal(|| "phrase");
+    let mut onboard_shares = use_signal(|| Option::<Brc140IssuedSet>::None);
+    let mut saved_slices = use_signal(BTreeSet::<usize>::new);
     let mut accept_choice = use_signal(|| AcceptedCoins::Bitcoin);
     let mut protect_mode = use_signal(|| {
         if services.os_key_storage_available() {
@@ -176,6 +184,11 @@ pub fn AuthFlow(
             OnboardStep::History => {
                 let p_next = pending.clone();
                 let p_skip = pending.clone();
+                let svc_hist = Arc::clone(&services);
+                let local_snaps = services.list_local_brc39_archive();
+                let has_local_snap = local_snaps.first().cloned();
+                let has_snap = has_local_snap.is_some();
+                let snap_state = if has_snap { "ready" } else { "missing" };
                 return rsx! {
                     section {
                         class: "auth-screen",
@@ -184,24 +197,65 @@ pub fn AuthFlow(
                         div {
                             class: "wallet-setup-config",
                             "data-aeon-scope": "history-recovery",
-                            "data-aeon-state": "missing",
+                            "data-aeon-state": snap_state,
                             h2 { "Restore your history" }
                             p { class: "auth-lede",
                                 "Keys are on this device. Activity, UTXOs, friends, and peer apps live in your encrypted history backup — sealed to this wallet’s key, not your unlock password."
                             }
-                            p { class: "auth-lede", role: "status",
-                                "No history backup on HandCash yet. You can enter with a chain scan only, or check Settings → History later."
+                            if let Some(ref snap_meta) = has_local_snap {
+                                p { class: "auth-lede", role: "status",
+                                    "Found an on-device history snapshot ({snap_meta.bytes / 1024} KB). Restore it now or choose a backup file."
+                                }
+                            } else {
+                                p { class: "auth-lede", role: "status",
+                                    "Choose a .brc39 or .json history backup file if you saved one, or enter with a chain scan and check Settings → History later."
+                                }
                             }
                             div {
                                 class: "auth-actions",
                                 style: "display: flex; gap: 8px; flex-wrap: wrap;",
                                 "data-aeon-part": "history-recovery-actions",
-                                "data-aeon-state": "missing",
+                                "data-aeon-state": snap_state,
                                 button::Root {
                                     variant: button::ButtonVariant::Solid,
                                     class: "btn btn-primary primary",
                                     onclick: move |_| {
+                                        if let Some(ref meta) = has_local_snap {
+                                            if let Ok(msg) = svc_hist.restore_local_brc39_snapshot(&meta.id, None) {
+                                                snapshot.set(svc_hist.read_snapshot());
+                                                toast.set(Some(ToastNotice {
+                                                    title: "History restored".into(),
+                                                    body: Some(msg),
+                                                    tone: "success",
+                                                }));
+                                            }
+                                        } else if let Some(path) = rfd::FileDialog::new()
+                                            .add_filter("HandCash History Backup", &["brc39", "json"])
+                                            .pick_file()
+                                        {
+                                            if let Ok(bytes) = std::fs::read(&path) {
+                                                match svc_hist.restore_brc39_backup_bytes(&bytes, None) {
+                                                    Ok(msg) => {
+                                                        snapshot.set(svc_hist.read_snapshot());
+                                                        toast.set(Some(ToastNotice {
+                                                            title: "History restored".into(),
+                                                            body: Some(msg),
+                                                            tone: "success",
+                                                        }));
+                                                    }
+                                                    Err(e) => {
+                                                        toast.set(Some(ToastNotice {
+                                                            title: "Restore failed".into(),
+                                                            body: Some(e),
+                                                            tone: "error",
+                                                        }));
+                                                        return;
+                                                    }
+                                                }
+                                            }
+                                        }
                                         let mut next = p_next.clone();
+                                        next.balance_sats = snapshot.read().balance.displayed_sats;
                                         next.step = OnboardStep::Protect;
                                         pending_onboard.set(Some(next));
                                     },
@@ -223,17 +277,30 @@ pub fn AuthFlow(
                 };
             }
             OnboardStep::KeysBackup => {
+                let cur_kind = *backup_kind.read();
                 let phrase_text = pending.mnemonic.clone().unwrap_or_default();
                 let words: Vec<String> = phrase_text
                     .split_whitespace()
                     .map(ToString::to_string)
                     .collect();
-                let can_confirm = *phrase_copied.read();
+                let threshold = onboard_shares
+                    .read()
+                    .as_ref()
+                    .map(|s| s.threshold)
+                    .unwrap_or(2);
+                let can_confirm = if cur_kind == "split" {
+                    saved_slices.read().len() >= threshold
+                } else {
+                    *phrase_copied.read()
+                };
                 let svc_confirm = Arc::clone(&services);
                 let svc_defer = Arc::clone(&services);
+                let svc_slices = Arc::clone(&services);
+                let svc_rotate = Arc::clone(&services);
                 let p_confirm = pending.clone();
                 let p_defer = pending.clone();
                 let phrase_for_copy = phrase_text.clone();
+                let share_set_opt = onboard_shares.read().clone();
                 return rsx! {
                     section {
                         class: "auth-screen",
@@ -248,56 +315,111 @@ pub fn AuthFlow(
                                     button {
                                         r#type: "button",
                                         role: "tab",
-                                        aria_selected: "true",
-                                        class: "btn btn-primary keys-backup-tab",
+                                        aria_selected: if cur_kind == "phrase" { "true" } else { "false" },
+                                        class: if cur_kind == "phrase" {
+                                            "btn btn-primary keys-backup-tab"
+                                        } else {
+                                            "btn btn-ghost keys-backup-tab"
+                                        },
+                                        onclick: move |_| {
+                                            backup_kind.set("phrase");
+                                            onboard_shares.set(None);
+                                            saved_slices.set(BTreeSet::new());
+                                        },
                                         "Phrase"
                                     }
                                     button {
                                         r#type: "button",
                                         role: "tab",
-                                        aria_selected: "false",
-                                        class: "btn btn-ghost keys-backup-tab",
-                                        disabled: true,
-                                        title: "Key slice generation runs in Settings → Recovery backup",
+                                        aria_selected: if cur_kind == "split" { "true" } else { "false" },
+                                        class: if cur_kind == "split" {
+                                            "btn btn-primary keys-backup-tab"
+                                        } else {
+                                            "btn btn-ghost keys-backup-tab"
+                                        },
+                                        onclick: move |_| {
+                                            match svc_slices.load_or_issue_brc140_set() {
+                                                Ok(set) => {
+                                                    saved_slices.set(BTreeSet::new());
+                                                    onboard_shares.set(Some(set));
+                                                    backup_kind.set("split");
+                                                }
+                                                Err(e) => toast.set(Some(ToastNotice {
+                                                    title: "Couldn’t prepare slices".into(),
+                                                    body: Some(e),
+                                                    tone: "error",
+                                                })),
+                                            }
+                                        },
                                         "Key slices"
                                     }
                                 }
                             }
                             div { class: "keys-backup-body", "data-aeon-scroll": "hover",
-                                div { class: "split-backup-shares",
-                                    ol {
-                                        class: "recovery-phrase-grid",
-                                        "data-words": "{words.len()}",
-                                        for (i, word) in words.iter().enumerate() {
-                                            li { key: "{i}-{word}",
-                                                span { class: "recovery-phrase-index", "{i + 1}" }
-                                                span { class: "recovery-phrase-word", "{word}" }
+                                if cur_kind == "phrase" {
+                                    div { class: "split-backup-shares",
+                                        ol {
+                                            class: "recovery-phrase-grid",
+                                            "data-words": "{words.len()}",
+                                            for (i, word) in words.iter().enumerate() {
+                                                li { key: "{i}-{word}",
+                                                    span { class: "recovery-phrase-index", "{i + 1}" }
+                                                    span { class: "recovery-phrase-word", "{word}" }
+                                                }
                                             }
+                                        }
+                                    }
+                                } else if let Some(set) = share_set_opt {
+                                    div { class: "split-backup-shares",
+                                        KeySliceList {
+                                            set,
+                                            saved_indices: saved_slices,
+                                            toast,
+                                            on_rotate: move |_| {
+                                                match svc_rotate.rotate_brc140_set() {
+                                                    Ok(next_set) => {
+                                                        saved_slices.set(BTreeSet::new());
+                                                        onboard_shares.set(Some(next_set));
+                                                        toast.set(Some(ToastNotice {
+                                                            title: "New slice set".into(),
+                                                            body: Some("Slices from the previous set will not combine with these.".into()),
+                                                            tone: "success",
+                                                        }));
+                                                    }
+                                                    Err(e) => toast.set(Some(ToastNotice {
+                                                        title: "Rotate failed".into(),
+                                                        body: Some(e),
+                                                        tone: "error",
+                                                    })),
+                                                }
+                                            },
                                         }
                                     }
                                 }
                             }
                             footer { class: "keys-backup-foot",
-                                button::Root {
-                                    variant: button::ButtonVariant::Ghost,
-                                    class: "btn btn-ghost",
-                                    onclick: move |_| {
-                                        let _ = crate::state::copy_to_clipboard(&phrase_for_copy);
-                                        toast.set(Some(ToastNotice {
-                                            title: "Copied".into(),
-                                            body: Some("Phrase copied to clipboard.".into()),
-                                            tone: "success",
-                                        }));
-                                        phrase_copied.set(true);
-                                    },
-                                    button::Label { "Copy phrase" }
+                                if cur_kind == "phrase" {
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost",
+                                        onclick: move |_| {
+                                            let _ = crate::state::copy_to_clipboard(&phrase_for_copy);
+                                            toast.set(Some(ToastNotice {
+                                                title: "Copied".into(),
+                                                body: Some("Phrase copied to clipboard.".into()),
+                                                tone: "success",
+                                            }));
+                                            phrase_copied.set(true);
+                                        },
+                                        button::Label { "Copy phrase" }
+                                    }
                                 }
                                 button::Root {
                                     variant: button::ButtonVariant::Solid,
                                     class: "btn btn-primary",
                                     disabled: !can_confirm,
                                     onclick: move |_| {
-                                        svc_confirm.mark_keys_backup_confirmed("phrase");
+                                        svc_confirm.mark_keys_backup_confirmed(cur_kind);
                                         toast.set(Some(ToastNotice {
                                             title: "Recovery backup saved".into(),
                                             body: None,
@@ -484,10 +606,30 @@ pub fn AuthFlow(
                 let svc_protect = Arc::clone(&services);
                 let p_protect = pending.clone();
                 let options: [(&str, &str, &str, bool); 4] = [
-                    ("none", "None", "Open this wallet on this computer without a prompt.", false),
-                    ("password", "Password", "Unlock with a HandCash password you choose.", false),
-                    ("device", "Touch ID", "Unlock with this device’s fingerprint or lock screen.", true),
-                    ("both", "Password + Touch ID", "Either your password or this device can unlock.", true),
+                    (
+                        "none",
+                        "None",
+                        "Open this wallet on this computer without a prompt.",
+                        false,
+                    ),
+                    (
+                        "password",
+                        "Password",
+                        "Unlock with a HandCash password you choose.",
+                        false,
+                    ),
+                    (
+                        "device",
+                        "Touch ID",
+                        "Unlock with this device’s fingerprint or lock screen.",
+                        true,
+                    ),
+                    (
+                        "both",
+                        "Password + Touch ID",
+                        "Either your password or this device can unlock.",
+                        true,
+                    ),
                 ];
                 return rsx! {
                     section {
@@ -768,13 +910,13 @@ pub fn AuthFlow(
     };
 
     let submitting = *unlock_state.read() == UnlockState::Opening;
-    let submit_label = if submitting { "Working…" } else { primary_label };
+    let submit_label = if submitting {
+        "Working…"
+    } else {
+        primary_label
+    };
     let svc_submit = Arc::clone(&services);
-    let shares_found = shares_input
-        .read()
-        .lines()
-        .filter(|l| l.trim().split('.').count() == 4)
-        .count();
+    let shares_found = extract_brc140_shares(&shares_input.read()).len();
 
     rsx! {
         section {
@@ -905,10 +1047,35 @@ pub fn AuthFlow(
                             }
                         }
                         AuthFormMode::Shares => {
-                            unlock_state.set(UnlockState::Failed);
-                            error_msg.set(Some(
-                                "BRC-140 slice combination is not yet ported in the native build; restore with your recovery phrase or 64-hex emergency root key.".into(),
-                            ));
+                            let h = handle.read().trim().to_string();
+                            let eff_handle = if h.is_empty() { "wallet".to_string() } else { h };
+                            let raw_shares = shares_input.read().clone();
+                            let c = chain.read().clone();
+                            match svc_submit.restore_vault_brc140_shares_onboard(
+                                &eff_handle,
+                                &raw_shares,
+                                &c,
+                            ) {
+                                Ok((sum, wrap_pw)) => {
+                                    shares_input.set(String::new());
+                                    unlock_state.set(UnlockState::Success);
+                                    let snap = svc_submit.read_snapshot();
+                                    let sats = snap.balance.displayed_sats;
+                                    snapshot.set(snap);
+                                    pending_onboard.set(Some(PendingOnboard {
+                                        profile: sum,
+                                        balance_sats: sats,
+                                        wrap_password: wrap_pw,
+                                        mnemonic: None,
+                                        step: OnboardStep::History,
+                                        is_create: false,
+                                    }));
+                                }
+                                Err(err) => {
+                                    unlock_state.set(UnlockState::Failed);
+                                    error_msg.set(Some(err));
+                                }
+                            }
                         }
                     }
                 },
@@ -1149,6 +1316,214 @@ pub fn PasswordField(
                     } else {
                         EyeIcon { size: 18 }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/KeySliceList.tsx`.
+#[component]
+pub fn KeySliceList(
+    set: Brc140IssuedSet,
+    mut saved_indices: Signal<BTreeSet<usize>>,
+    mut toast: Signal<Option<ToastNotice>>,
+    on_rotate: EventHandler<MouseEvent>,
+) -> Element {
+    let mut open_idx = use_signal(|| Some(0usize));
+    let saved_set = saved_indices.read().clone();
+    let saved_count = saved_set.len();
+    let threshold = set.threshold;
+    let total = set.shares.len();
+    let complete = saved_count >= threshold;
+    let pct = ((saved_count.min(threshold) * 100) / threshold.max(1)).min(100);
+    let issued_label = slice_set_label(set.issued_at);
+
+    rsx! {
+        div {
+            class: "key-slice-list",
+            "data-aeon-scope": "key-slice-list",
+            "data-aeon-state": if complete { "complete" } else { "pending" },
+
+            div { class: "key-slice-progress-block", "data-aeon-part": "progress",
+                div { class: "key-slice-progress-meta",
+                    span { class: "key-slice-progress-label",
+                        if complete {
+                            "Ready — {saved_count} of {total} slices confirmed saved"
+                        } else {
+                            "{saved_count} of {threshold} required slices confirmed saved"
+                        }
+                    }
+                    span { class: "key-slice-progress-count mono", "{saved_count}/{threshold}" }
+                }
+                div {
+                    class: "key-slice-progress",
+                    role: "progressbar",
+                    aria_valuenow: "{saved_count.min(threshold)}",
+                    aria_valuemin: "0",
+                    aria_valuemax: "{threshold}",
+                    div { class: "key-slice-progress-track",
+                        div {
+                            class: "key-slice-progress-range",
+                            style: "width: {pct}%;",
+                        }
+                    }
+                }
+                p { class: "settings-row-desc",
+                    "{issued_label} · Integrity "
+                    span { class: "mono", "{set.integrity}" }
+                    " · any {threshold} of {total} from this set restore the wallet"
+                }
+            }
+
+            div { class: "key-slice-accordion",
+                for (index, share) in set.shares.iter().enumerate() {
+                    {
+                        let saved = saved_set.contains(&index);
+                        let is_open = *open_idx.read() == Some(index);
+                        let destination = BRC140_DESTINATION_HINTS
+                            .get(index)
+                            .copied()
+                            .unwrap_or("Separate account or device");
+                        let share_copy = share.clone();
+                        let share_save = share.clone();
+                        let share_email = share.clone();
+                        let integrity_save = set.integrity.clone();
+                        let integrity_email = set.integrity.clone();
+                        let issued_save = issued_label.clone();
+                        let issued_email = issued_label.clone();
+                        rsx! {
+                            div {
+                                key: "{share}",
+                                class: "key-slice-item",
+                                "data-aeon-state": if saved { "saved" } else { "pending" },
+                                button {
+                                    r#type: "button",
+                                    class: "key-slice-trigger",
+                                    aria_expanded: is_open,
+                                    onclick: move |_| {
+                                        let cur = *open_idx.read();
+                                        open_idx.set(if cur == Some(index) { None } else { Some(index) });
+                                    },
+                                    list_row::Root { class: "key-slice-row",
+                                        list_row::Leading { class: "key-slice-leading", "{index + 1}" }
+                                        span { class: "key-slice-row-text",
+                                            list_row::Label { class: "key-slice-label", "Slice {index + 1}" }
+                                            list_row::Description { class: "key-slice-desc", "{destination}" }
+                                        }
+                                        list_row::Trailing { class: "key-slice-trailing",
+                                            span {
+                                                class: "key-slice-status",
+                                                "data-aeon-state": if saved { "saved" } else { "pending" },
+                                                if saved { "Confirmed" } else { "Open" }
+                                            }
+                                            ExpandMoreIcon { size: 16 }
+                                        }
+                                    }
+                                }
+                                if is_open {
+                                    div { class: "key-slice-body",
+                                        code { class: "mono split-backup-share", "{share}" }
+                                        div { class: "actions split-backup-item-actions",
+                                            button::Root {
+                                                variant: button::ButtonVariant::Solid,
+                                                class: "btn btn-primary",
+                                                onclick: move |_| {
+                                                    let subject = format!("HandCash key slice {} of {total}", index + 1);
+                                                    let body = format!(
+                                                        "HandCash key slice {}/{total}\nSuggested place: {destination}\nIntegrity: {integrity_email}\n{issued_email}\n\n{share_email}\n\nOnly slices from the same set combine.",
+                                                        index + 1
+                                                    );
+                                                    let mailto = format!(
+                                                        "mailto:?subject={}&body={}",
+                                                        subject.replace(' ', "%20"),
+                                                        body.replace('\n', "%0A").replace(' ', "%20")
+                                                    );
+                                                    let _ = crate::state::open_external_url(&mailto);
+                                                    toast.set(Some(ToastNotice {
+                                                        title: "Opened email".into(),
+                                                        body: Some(destination.into()),
+                                                        tone: "success",
+                                                    }));
+                                                },
+                                                button::Label { "Share this slice" }
+                                            }
+                                            button::Root {
+                                                variant: button::ButtonVariant::Ghost,
+                                                class: "btn btn-ghost",
+                                                onclick: move |_| {
+                                                    if crate::state::copy_to_clipboard(&share_copy).is_ok() {
+                                                        toast.set(Some(ToastNotice {
+                                                            title: "Copied".into(),
+                                                            body: Some(destination.into()),
+                                                            tone: "success",
+                                                        }));
+                                                    }
+                                                },
+                                                button::Label { "Copy" }
+                                            }
+                                            button::Root {
+                                                variant: button::ButtonVariant::Ghost,
+                                                class: "btn btn-ghost",
+                                                onclick: move |_| {
+                                                    let fname = share_download_filename(index, total, &integrity_save);
+                                                    let content = format!(
+                                                        "# {destination}\n# integrity {integrity_save}\n# {issued_save}\n{share_save}\n"
+                                                    );
+                                                    if let Some(path) = rfd::FileDialog::new()
+                                                        .set_file_name(&fname)
+                                                        .save_file()
+                                                    {
+                                                        if std::fs::write(&path, content).is_ok() {
+                                                            let mut next = saved_indices.read().clone();
+                                                            next.insert(index);
+                                                            saved_indices.set(next);
+                                                            toast.set(Some(ToastNotice {
+                                                                title: format!("Slice {} saved", index + 1),
+                                                                body: Some(path.display().to_string()),
+                                                                tone: "success",
+                                                            }));
+                                                        }
+                                                    }
+                                                },
+                                                button::Label { "Save file" }
+                                            }
+                                        }
+                                        div { class: "actions split-backup-item-actions",
+                                            button::Root {
+                                                variant: button::ButtonVariant::Ghost,
+                                                class: if saved { "btn btn-ghost" } else { "btn btn-primary" },
+                                                disabled: saved,
+                                                onclick: move |_| {
+                                                    let mut next = saved_indices.read().clone();
+                                                    next.insert(index);
+                                                    saved_indices.set(next);
+                                                    toast.set(Some(ToastNotice {
+                                                        title: format!("Slice {} confirmed", index + 1),
+                                                        body: Some("Keep it separate from your other slice.".into()),
+                                                        tone: "success",
+                                                    }));
+                                                },
+                                                button::Label {
+                                                    if saved { "Saved — confirmed" } else { "I saved this slice" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div { class: "actions",
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    title: "Replace this set. Slices from the old set will not combine with the new ones.",
+                    onclick: move |evt| on_rotate.call(evt),
+                    button::Label { "Replace slice set" }
                 }
             }
         }

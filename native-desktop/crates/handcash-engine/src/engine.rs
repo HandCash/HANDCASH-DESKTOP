@@ -338,6 +338,36 @@ impl WalletEngine {
             .map_err(EngineError::Storage)
     }
 
+    /// Lane 1 interactive WAL read: fetch one content-addressed blob (e.g. item art) by SHA-256 hex.
+    pub async fn read_blob(
+        &self,
+        account_id: &str,
+        generation: u64,
+        sha256_hex: String,
+    ) -> Result<Option<Vec<u8>>, EngineError> {
+        let store = self.fenced_store(account_id, generation)?;
+        self.scheduler
+            .run_read(move || store.get_blob(&sha256_hex))
+            .await
+            .map_err(EngineError::InvalidParam)?
+            .map_err(EngineError::Storage)
+    }
+
+    /// Export the account's SQLite WAL store as a canonical BRC-38 JSON document (no null fields).
+    pub async fn export_brc38(
+        &self,
+        account_id: &str,
+        generation: u64,
+    ) -> Result<String, EngineError> {
+        let store = self.fenced_store(account_id, generation)?;
+        let now = now_ms();
+        self.scheduler
+            .run_maintenance_blocking(move || handcash_storage::export_brc38_json(&store, now))
+            .await
+            .map_err(EngineError::InvalidParam)?
+            .map_err(EngineError::Storage)
+    }
+
     /// Non-destructive bootstrap import of a BRC-38 JSON document into SQLite WAL.
     pub async fn import_brc38(
         &self,

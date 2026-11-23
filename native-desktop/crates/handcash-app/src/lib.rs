@@ -6,6 +6,7 @@ pub mod css_scope;
 pub mod health;
 pub mod icons;
 pub mod machines;
+pub mod parity;
 pub mod state;
 pub mod theme;
 pub mod ui;

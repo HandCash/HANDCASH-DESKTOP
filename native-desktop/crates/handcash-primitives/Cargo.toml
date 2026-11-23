@@ -16,7 +16,7 @@ bs58 = { version = "0.5", features = ["check"] }
 hex = "0.4"
 hkdf = "0.12"
 hmac = "0.12"
-k256 = { version = "0.13", features = ["ecdsa", "ecdh", "arithmetic"] }
+k256 = { version = "0.13", features = ["ecdsa", "ecdh", "arithmetic", "expose-field"] }
 rand = "0.8"
 ring = "0.17"
 ripemd = "0.1"

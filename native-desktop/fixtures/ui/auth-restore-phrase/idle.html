@@ -1,0 +1,33 @@
+<section class="auth-screen" data-aeon-scope="auth" data-aeon-state="idle">
+  <div class="auth-copy">
+    <h1 class="auth-title">Restore on this device</h1>
+    <p class="auth-lede">Enter your recovery phrase, 12 or 24 words. Same phrase = same identity on Desktop or Mobile.</p>
+  </div>
+  <form class="auth-form" data-aeon-part="form">
+    <div aria-label="Restore method" class="auth-mode-switch" role="tablist">
+      <button aria-selected="true" class="auth-mode-tab" data-aeon-state="selected" role="tab" type="button">Phrase</button>
+      <button aria-selected="false" class="auth-mode-tab" data-aeon-state="idle" role="tab" type="button">Shares</button>
+      <button aria-selected="false" class="auth-mode-tab" data-aeon-state="idle" role="tab" type="button">Key</button>
+    </div>
+    <div class="field" data-aeon-interaction="pristine" data-aeon-part="root" data-aeon-scope="field" data-aeon-state="idle" data-aeon-submission="idle" data-aeon-validation="valid">
+      <label data-aeon-part="label" for="mnemonic">Recovery phrase</label>
+      <textarea data-aeon-part="textarea" id="mnemonic" placeholder="12 or 24 words separated by spaces" rows="3"/>
+    </div>
+    <div class="field" data-aeon-part="restore-role">
+      <div aria-label="Your other device" class="auth-mode-switch" role="radiogroup">
+        <button aria-checked="true" class="auth-mode-tab" data-aeon-state="selected" role="radio" type="button">Replace old device</button>
+        <button aria-checked="false" class="auth-mode-tab" data-aeon-state="idle" role="radio" type="button">Keep both</button>
+      </div>
+      <p class="field-hint">This device takes over every wallet. Your old device stops spending them when it next connects.</p>
+    </div>
+    <button class="btn btn-primary auth-submit" data-aeon-part="trigger" data-aeon-scope="button" data-aeon-size="md" data-aeon-state="idle" data-aeon-variant="solid" type="submit">
+      <span data-aeon-part="label" data-aeon-scope="button">Restore</span>
+    </button>
+    <p class="auth-alt">
+      <button class="auth-alt-link" type="button">Sign in with email and your device</button>
+      · New here?
+      <button class="auth-alt-link" type="button">Create a wallet</button>
+    </p>
+    <p class="auth-lede auth-restore-note">Next you’ll restore history, then choose how this device unlocks.</p>
+  </form>
+</section>

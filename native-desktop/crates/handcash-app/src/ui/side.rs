@@ -4,7 +4,9 @@
 
 use crate::icons::{BsvLogoMark, CheckIcon, ExpandMoreIcon, TickerCoinMark};
 use crate::machines::{DisplayCurrency, FiatCode, MarketCoin, NavChild, NavSection, ToastNotice};
-use crate::state::{format_bsv, format_fiat_value, FxRates, WalletSnapshot};
+use crate::state::{
+    format_bsv, format_coin_short, format_fiat_value, FxRates, HeldCoins, WalletSnapshot,
+};
 use crate::ui::activity::ActivityFeed;
 use dioxus::prelude::*;
 
@@ -37,16 +39,60 @@ fn coin_about_copy(coin: MarketCoin) -> (&'static str, &'static str) {
     }
 }
 
-fn coin_demo_stats(coin: MarketCoin, range: &str, bsv_usd: f64) -> (f64, &'static str, bool, &'static str) {
+fn coin_demo_stats(
+    coin: MarketCoin,
+    range: &str,
+    bsv_usd: f64,
+) -> (f64, &'static str, bool, &'static str) {
     match (coin, range) {
-        (MarketCoin::Bsv, "7D") => (bsv_usd, "+6.8%", true, "M 0,58 L 40,52 L 80,49 L 120,44 L 160,36 L 200,29 L 240,22 L 280,14"),
-        (MarketCoin::Bsv, "1M") => (bsv_usd, "+14.2%", true, "M 0,62 L 40,56 L 80,51 L 120,46 L 160,39 L 200,31 L 240,20 L 280,12"),
-        (MarketCoin::Bsv, _) => (bsv_usd, "+2.4%", true, "M 0,54 L 35,48 L 70,50 L 105,38 L 140,41 L 175,28 L 210,32 L 245,18 L 280,14"),
-        (MarketCoin::Ltc, _) => (84.50, "+1.8%", true, "M 0,50 L 40,46 L 80,48 L 120,40 L 160,35 L 200,32 L 240,24 L 280,20"),
-        (MarketCoin::Bch, _) => (412.00, "+3.1%", true, "M 0,56 L 40,50 L 80,45 L 120,42 L 160,34 L 200,28 L 240,22 L 280,16"),
-        (MarketCoin::Btc, _) => (89400.00, "+1.2%", true, "M 0,48 L 40,45 L 80,42 L 120,44 L 160,36 L 200,30 L 240,26 L 280,22"),
-        (MarketCoin::Doge, _) => (0.28, "-0.9%", false, "M 0,22 L 40,26 L 80,28 L 120,34 L 160,38 L 200,44 L 240,48 L 280,52"),
-        (MarketCoin::ArcUsd, _) => (1.00, "0.0%", true, "M 0,36 L 40,36 L 80,36 L 120,36 L 160,36 L 200,36 L 240,36 L 280,36"),
+        (MarketCoin::Bsv, "7D") => (
+            bsv_usd,
+            "+6.8%",
+            true,
+            "M 0,58 L 40,52 L 80,49 L 120,44 L 160,36 L 200,29 L 240,22 L 280,14",
+        ),
+        (MarketCoin::Bsv, "1M") => (
+            bsv_usd,
+            "+14.2%",
+            true,
+            "M 0,62 L 40,56 L 80,51 L 120,46 L 160,39 L 200,31 L 240,20 L 280,12",
+        ),
+        (MarketCoin::Bsv, _) => (
+            bsv_usd,
+            "+2.4%",
+            true,
+            "M 0,54 L 35,48 L 70,50 L 105,38 L 140,41 L 175,28 L 210,32 L 245,18 L 280,14",
+        ),
+        (MarketCoin::Ltc, _) => (
+            84.50,
+            "+1.8%",
+            true,
+            "M 0,50 L 40,46 L 80,48 L 120,40 L 160,35 L 200,32 L 240,24 L 280,20",
+        ),
+        (MarketCoin::Bch, _) => (
+            412.00,
+            "+3.1%",
+            true,
+            "M 0,56 L 40,50 L 80,45 L 120,42 L 160,34 L 200,28 L 240,22 L 280,16",
+        ),
+        (MarketCoin::Btc, _) => (
+            89400.00,
+            "+1.2%",
+            true,
+            "M 0,48 L 40,45 L 80,42 L 120,44 L 160,36 L 200,30 L 240,26 L 280,22",
+        ),
+        (MarketCoin::Doge, _) => (
+            0.28,
+            "-0.9%",
+            false,
+            "M 0,22 L 40,26 L 80,28 L 120,34 L 160,38 L 200,44 L 240,48 L 280,52",
+        ),
+        (MarketCoin::ArcUsd, _) => (
+            1.00,
+            "0.0%",
+            true,
+            "M 0,36 L 40,36 L 80,36 L 120,36 L 160,36 L 200,36 L 240,36 L 280,36",
+        ),
     }
 }
 
@@ -70,6 +116,7 @@ pub fn DashboardSideColumn(
             WhatIsBsvPanel {
                 active_coin,
                 bsv_sats: snap.balance.displayed_sats,
+                held: snap.held_coins,
                 fiat_code,
                 fx_rates: fx_rates.clone(),
                 toast,
@@ -97,6 +144,7 @@ pub fn DashboardSideColumn(
 pub fn WhatIsBsvPanel(
     mut active_coin: Signal<MarketCoin>,
     bsv_sats: u64,
+    #[props(default)] held: HeldCoins,
     fiat_code: FiatCode,
     fx_rates: FxRates,
     mut toast: Signal<Option<ToastNotice>>,
@@ -113,8 +161,12 @@ pub fn WhatIsBsvPanel(
     let active_toast = toast.read().clone();
 
     let bsv_usd = fx_rates.rate_for(FiatCode::Usd).unwrap_or(48.20);
-    let (coin_usd, pct_label, is_up, spark_path) = coin_demo_stats(current_coin, cur_range, bsv_usd);
-    let fiat_mult = fx_rates.rate_for(fiat_code).map(|r| r / bsv_usd.max(0.01)).unwrap_or(1.0);
+    let (coin_usd, pct_label, is_up, spark_path) =
+        coin_demo_stats(current_coin, cur_range, bsv_usd);
+    let fiat_mult = fx_rates
+        .rate_for(fiat_code)
+        .map(|r| r / bsv_usd.max(0.01))
+        .unwrap_or(1.0);
     let price_label = if current_coin == MarketCoin::Bsv {
         fx_rates
             .format_price(fiat_code)
@@ -128,7 +180,6 @@ pub fn WhatIsBsvPanel(
     let bsv_fiat_held = fx_rates
         .format_sats(bsv_sats, fiat_code)
         .unwrap_or_else(|| format_fiat_value(0.0, fiat_code));
-    let zero_fiat = format_fiat_value(0.0, fiat_code);
 
     let (about_title, about_body) = coin_about_copy(current_coin);
 
@@ -168,7 +219,12 @@ pub fn WhatIsBsvPanel(
                                 let held_desc = if coin == MarketCoin::Bsv {
                                     format!("{} {} · {}", bsv_amount, coin.code(), bsv_fiat_held)
                                 } else {
-                                    format!("0 {} · {}", coin.code(), zero_fiat)
+                                    // No local price feed for other coins: show the held
+                                    // amount only (TS `heldIn` omits fiat without a price).
+                                    match held.units(coin).filter(|u| *u > 0) {
+                                        Some(u) => format!("{} {}", format_coin_short(u, 8), coin.code()),
+                                        None => coin.code().to_string(),
+                                    }
                                 };
                                 rsx! {
                                     li { key: "{coin.as_str()}",

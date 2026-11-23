@@ -10,6 +10,10 @@ import { PasswordField } from './PasswordField'
 
 type Props = {
   wrapPassword: string
+  initialChoice?: {
+    noneAllowed: boolean
+    defaultMode: DeviceLockMode
+  }
   onDone: (sessionPassword: string | null) => void
 }
 
@@ -47,11 +51,11 @@ const OPTIONS: {
 
 const NO_KEYSTORE = 'Needs a system keyring on this computer, or anyone who can read its files could open this wallet.'
 
-export function OnboardProtectPanel({ wrapPassword, onDone }: Props) {
+export function OnboardProtectPanel({ wrapPassword, initialChoice, onDone }: Props) {
   const [device, setDevice] = useState<DeviceAuthStatus | null>(null)
-  const [noneAllowed, setNoneAllowed] = useState(false)
+  const [noneAllowed, setNoneAllowed] = useState(initialChoice?.noneAllowed ?? false)
   /** Null until the device is known, so no choice shows before its default. */
-  const [mode, setMode] = useState<DeviceLockMode | null>(null)
+  const [mode, setMode] = useState<DeviceLockMode | null>(initialChoice?.defaultMode ?? null)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   /** Synchronous choice/policy failures; the async failure lives in the chart. */

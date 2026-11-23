@@ -8,7 +8,8 @@
 //! - `src/components/BurnAssetPanel.tsx`
 
 use crate::icons::{
-    CheckIcon, CollectablesIcon, CopyIcon, FireIcon, LaunchIcon, ViewGridIcon, ViewListIcon,
+    CheckIcon, CollectablesIcon, CopyIcon, ExpandMoreIcon, FireIcon, LaunchIcon, SendIcon,
+    ViewGridIcon, ViewListIcon,
 };
 use crate::machines::{classify_recipient, CollectionView, NavChild, RecipientKind, ToastNotice};
 use crate::state::{
@@ -16,6 +17,7 @@ use crate::state::{
     WalletSnapshot,
 };
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
+use crate::ui::primitives::MiddleEllipsisName;
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -124,7 +126,259 @@ fn item_group_label(item: &ItemCardRow) -> String {
     "Uncategorized items".into()
 }
 
+/// Collect's select box, 1:1 port of `src/components/SelectionCheckbox.tsx`.
+#[component]
+fn CollectSelect(
+    checked: bool,
+    disabled: bool,
+    label: String,
+    class: &'static str,
+    on_change: EventHandler<bool>,
+) -> Element {
+    rsx! {
+        label {
+            class: "collect-select {class}",
+            title: "{label}",
+            onclick: move |evt| evt.stop_propagation(),
+            input {
+                r#type: "checkbox",
+                checked: checked,
+                disabled: disabled,
+                aria_label: "{label}",
+                onchange: move |evt| on_change.call(evt.checked()),
+            }
+            span { "aria-hidden": "true" }
+        }
+    }
+}
+
+fn set_outpoint_selected(mut selected: Signal<BTreeSet<String>>, outpoint: &str, on: bool) {
+    let mut next = selected.read().clone();
+    if on {
+        next.insert(outpoint.to_string());
+    } else {
+        next.remove(outpoint);
+    }
+    selected.set(next);
+}
+
 /// 1:1 port of `src/components/InventoryPanel.tsx`.
+/// One shelf per issuer key, mirroring the TS `IssuerGroupItem` accordion.
+struct IssuerShelf<'a> {
+    key: String,
+    label: String,
+    items: Vec<&'a ItemCardRow>,
+}
+
+/// Shelves items by `issuer_key`. Items without a key are returned for the "No issuer" section.
+fn group_by_issuer<'a>(items: &[&'a ItemCardRow]) -> (Vec<IssuerShelf<'a>>, Vec<&'a ItemCardRow>) {
+    let mut buckets: BTreeMap<String, Vec<&'a ItemCardRow>> = BTreeMap::new();
+    let mut loose = Vec::new();
+    for item in items {
+        match item
+            .issuer_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|k| !k.is_empty())
+        {
+            Some(key) => buckets.entry(key.to_string()).or_default().push(*item),
+            None => loose.push(*item),
+        }
+    }
+    let shelves = buckets
+        .into_iter()
+        .map(|(key, items)| IssuerShelf {
+            key: format!("issuer:pubkey:{key}"),
+            label: format!("Issuer {}", truncate_mid(&key, 10)),
+            items,
+        })
+        .collect();
+    (shelves, loose)
+}
+
+/// Mirrors `groupQuantityLabel`: "N items" plus "N verified" when BRC-150 proven.
+fn shelf_quantity_label(items: &[&ItemCardRow]) -> String {
+    let verified = items
+        .iter()
+        .filter(|item| authenticity_display(&item.authenticity_status).1 == "brc150")
+        .count();
+    let count = items.len();
+    let noun = if count == 1 { "item" } else { "items" };
+    if verified > 0 {
+        format!("{count} {noun} · {verified} verified")
+    } else {
+        format!("{count} {noun}")
+    }
+}
+
+fn collect_grid_card(
+    item: &ItemCardRow,
+    art_url: Option<String>,
+    is_selected: bool,
+    mut nav_child: Signal<Option<NavChild>>,
+    selected_outpoints: Signal<BTreeSet<String>>,
+) -> Element {
+    let outpoint = item.outpoint.clone();
+    let outpoint_send = item.outpoint.clone();
+    let outpoint_select = item.outpoint.clone();
+    rsx! {
+        li {
+            key: "{item.outpoint}",
+            class: if is_selected {
+                "collection-grid-card collectable-card is-selected"
+            } else {
+                "collection-grid-card collectable-card"
+            },
+            button {
+                r#type: "button",
+                class: "collection-grid-main collectable-main",
+                onclick: move |_| {
+                    nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
+                },
+                div { class: "collectable-media",
+                    if let Some(art_url) = art_url {
+                        img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 36 }
+                        }
+                    }
+                    CollectableVerifyMark {
+                        authenticity_status: item.authenticity_status.clone(),
+                    }
+                }
+                MiddleEllipsisName { class: "collection-grid-name", label: item.name.clone() }
+                span { class: "collection-grid-host", "aria-hidden": "true", "\u{a0}" }
+            }
+            div { class: "collectable-card-actions",
+                button {
+                    r#type: "button",
+                    class: "collectable-send-btn",
+                    title: "Send {item.name}",
+                    aria_label: "Send {item.name}",
+                    onclick: move |_| {
+                        nav_child.set(Some(NavChild::SendCollectable(outpoint_send.clone())));
+                    },
+                    SendIcon { size: 14 }
+                    span { class: "collectable-send-label", "Send" }
+                }
+                CollectSelect {
+                    class: "collect-select--inline",
+                    checked: is_selected,
+                    disabled: false,
+                    label: if is_selected { format!("Deselect {}", item.name) } else { format!("Select {}", item.name) },
+                    on_change: move |on: bool| set_outpoint_selected(selected_outpoints, &outpoint_select, on),
+                }
+            }
+        }
+    }
+}
+
+fn collect_list_row(
+    item: &ItemCardRow,
+    art_url: Option<String>,
+    is_selected: bool,
+    mut nav_child: Signal<Option<NavChild>>,
+    selected_outpoints: Signal<BTreeSet<String>>,
+) -> Element {
+    let outpoint = item.outpoint.clone();
+    let outpoint_send = item.outpoint.clone();
+    let outpoint_select = item.outpoint.clone();
+    rsx! {
+        li {
+            key: "{item.outpoint}",
+            class: if is_selected {
+                "connected-app-row collectable-row is-selected"
+            } else {
+                "connected-app-row collectable-row"
+            },
+            button {
+                r#type: "button",
+                class: "connected-app-main collectable-row-main",
+                onclick: move |_| {
+                    nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
+                },
+                div { class: "collectable-media collectable-media-sm",
+                    if let Some(art_url) = art_url {
+                        img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 22 }
+                        }
+                    }
+                    CollectableVerifyMark {
+                        authenticity_status: item.authenticity_status.clone(),
+                    }
+                }
+                div { class: "connected-app-body",
+                    MiddleEllipsisName { class: "connected-app-name", label: item.name.clone() }
+                    span { class: "connected-app-host", "aria-hidden": "true", "\u{a0}" }
+                }
+            }
+            div { class: "collectable-row-actions",
+                button {
+                    r#type: "button",
+                    class: "collectable-send-btn collectable-send-btn--row",
+                    title: "Send {item.name}",
+                    aria_label: "Send {item.name}",
+                    onclick: move |_| {
+                        nav_child.set(Some(NavChild::SendCollectable(outpoint_send.clone())));
+                    },
+                    SendIcon { size: 14 }
+                }
+                CollectSelect {
+                    class: "collect-select--row",
+                    checked: is_selected,
+                    disabled: false,
+                    label: if is_selected { format!("Deselect {}", item.name) } else { format!("Select {}", item.name) },
+                    on_change: move |on: bool| set_outpoint_selected(selected_outpoints, &outpoint_select, on),
+                }
+            }
+        }
+    }
+}
+
+/// The grid or list of items inside one shelf (or the "No issuer" section).
+fn collect_items_list(
+    items: &[&ItemCardRow],
+    snap: &WalletSnapshot,
+    grid: bool,
+    selected_set: &BTreeSet<String>,
+    nav_child: Signal<Option<NavChild>>,
+    selected_outpoints: Signal<BTreeSet<String>>,
+) -> Element {
+    if grid {
+        rsx! {
+            ul { class: "collection-grid collectables-grid",
+                for item in items.iter().copied() {
+                    { collect_grid_card(
+                        item,
+                        snap.item_art.get(&item.outpoint).cloned(),
+                        selected_set.contains(&item.outpoint),
+                        nav_child,
+                        selected_outpoints,
+                    ) }
+                }
+            }
+        }
+    } else {
+        rsx! {
+            ul { class: "connected-app-list collectables-list",
+                for item in items.iter().copied() {
+                    { collect_list_row(
+                        item,
+                        snap.item_art.get(&item.outpoint).cloned(),
+                        selected_set.contains(&item.outpoint),
+                        nav_child,
+                        selected_outpoints,
+                    ) }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/InventoryPanel.tsx`: issuer shelves, "No issuer" section, group select.
 #[component]
 pub fn InventoryPanel(
     snap: WalletSnapshot,
@@ -133,86 +387,50 @@ pub fn InventoryPanel(
     #[props(default)] selected_outpoints_ext: Option<Signal<BTreeSet<String>>>,
 ) -> Element {
     let mut query = use_signal(String::new);
-    let mut auth_filter = use_signal(ItemAuthFilter::default);
     let local_selected = use_signal(BTreeSet::<String>::new);
     let mut selected_outpoints = selected_outpoints_ext.unwrap_or(local_selected);
+    let mut collapsed = use_signal(BTreeSet::<String>::new);
 
     let q = query.read().trim().to_ascii_lowercase();
     let cur_view = *view.read();
-    let cur_auth = *auth_filter.read();
     let selected_set = selected_outpoints.read().clone();
-
-    let verified_count = snap
-        .items
-        .iter()
-        .filter(|i| authenticity_display(&i.authenticity_status).1 == "brc150")
-        .count();
-    let unverified_count = snap.items.len().saturating_sub(verified_count);
+    let collapsed_set = collapsed.read().clone();
+    let grid = cur_view == CollectionView::Grid;
 
     let filtered: Vec<&ItemCardRow> = snap
         .items
         .iter()
         .filter(|item| {
-            let (_, tone) = authenticity_display(&item.authenticity_status);
-            let auth_ok = match cur_auth {
-                ItemAuthFilter::All => true,
-                ItemAuthFilter::Verified => tone == "brc150",
-                ItemAuthFilter::Unverified => tone != "brc150",
-            };
-            let query_ok = q.is_empty()
+            q.is_empty()
                 || item.name.to_ascii_lowercase().contains(&q)
                 || item.origin_outpoint.to_ascii_lowercase().contains(&q)
-                || item.mime.to_ascii_lowercase().contains(&q);
-            auth_ok && query_ok
+                || item.outpoint.to_ascii_lowercase().contains(&q)
         })
         .collect();
-
-    let mut grouped: BTreeMap<String, Vec<&ItemCardRow>> = BTreeMap::new();
-    for item in &filtered {
-        grouped
-            .entry(item_group_label(item))
-            .or_default()
-            .push(*item);
-    }
+    let (shelves, ungrouped) = group_by_issuer(&filtered);
 
     rsx! {
         div {
             class: "nav-section-body nav-section-with-scroll",
             "data-aeon-scope": "collectables",
-            "data-aeon-state": "list",
+            "data-aeon-state": cur_view.as_str(),
             "data-view": cur_view.as_str(),
 
-            if !snap.items.is_empty() {
-                div { class: "collectables-toolbar",
-                    div { class: "field collectables-search-field",
-                        input {
-                            placeholder: "Filter items by name, origin, or MIME…",
-                            value: "{query}",
-                            oninput: move |e| query.set(e.value()),
+            div { class: "connected-panel-head",
+                h2 { "Collect" }
+                if !snap.items.is_empty() {
+                    div { class: "collectables-toolbar",
+                        div { class: "field collectables-search-field",
+                            input {
+                                id: "collectables-search-input",
+                                r#type: "search",
+                                aria_label: "Search collectables by name, trait or id",
+                                placeholder: "Name, trait or id",
+                                value: "{query}",
+                                oninput: move |e| query.set(e.value()),
+                            }
                         }
-                    }
-                    div { class: "payment-filter-options collectables-filter-pills", role: "group", aria_label: "Authenticity filter",
-                        button {
-                            r#type: "button",
-                            class: if cur_auth == ItemAuthFilter::All { "payment-filter-option is-active" } else { "payment-filter-option" },
-                            aria_pressed: cur_auth == ItemAuthFilter::All,
-                            onclick: move |_| auth_filter.set(ItemAuthFilter::All),
-                            "All ({snap.items.len()})"
-                        }
-                        button {
-                            r#type: "button",
-                            class: if cur_auth == ItemAuthFilter::Verified { "payment-filter-option is-active" } else { "payment-filter-option" },
-                            aria_pressed: cur_auth == ItemAuthFilter::Verified,
-                            onclick: move |_| auth_filter.set(ItemAuthFilter::Verified),
-                            "Verified · BRC-150 ({verified_count})"
-                        }
-                        button {
-                            r#type: "button",
-                            class: if cur_auth == ItemAuthFilter::Unverified { "payment-filter-option is-active" } else { "payment-filter-option" },
-                            aria_pressed: cur_auth == ItemAuthFilter::Unverified,
-                            onclick: move |_| auth_filter.set(ItemAuthFilter::Unverified),
-                            "Unverified ({unverified_count})"
-                        }
+                        CollectionViewToggle { view }
                     }
                 }
             }
@@ -221,229 +439,91 @@ pub fn InventoryPanel(
                 EmptyState {
                     icon: Some(rsx! { CollectablesIcon { size: 28 } }),
                     title: "No collectables here",
-                    body: Some("Items and 1Sat ordinals sent to this wallet show up here with BRC-150 provenance.".into()),
-                }
-            } else if filtered.is_empty() {
-                EmptyState {
-                    icon: Some(rsx! { CollectablesIcon { size: 28 } }),
-                    title: "No matching items",
-                    body: Some("Try clearing your search or switching the authenticity filter.".into()),
-                    action: Some(rsx! {
-                        button::Root {
-                            variant: button::ButtonVariant::Ghost,
-                            class: "btn btn-ghost",
-                            onclick: move |_| {
-                                query.set(String::new());
-                                auth_filter.set(ItemAuthFilter::All);
-                            },
-                            button::Label { "Reset filters" }
-                        }
-                    }),
+                    body: Some("Items and tokens sent to this wallet show up here.".into()),
                 }
             } else {
                 div { class: "nav-section-scroll-body",
-                    section { class: "collect-items-section",
-                        for (group_name, group_items) in grouped.into_iter() {
-                            {
-                                let group_outpoints: Vec<String> = group_items.iter().map(|i| i.outpoint.clone()).collect();
-                                let group_selected_count = group_outpoints.iter().filter(|op| selected_set.contains(*op)).count();
-                                let all_group_selected = !group_outpoints.is_empty() && group_selected_count == group_outpoints.len();
-                                let group_qty_label = if group_items.len() == 1 {
-                                    "1 item".to_string()
-                                } else {
-                                    format!("{} items", group_items.len())
-                                };
-                                let group_meta = if group_selected_count > 0 {
-                                    format!("{group_qty_label} · {group_selected_count} selected")
-                                } else {
-                                    group_qty_label
-                                };
-                                rsx! {
-                                    div { key: "{group_name}", class: "collect-issuer-group",
-                                        header { class: "collect-issuer-head",
-                                            div { class: "collect-issuer-copy",
-                                                strong { class: "collect-issuer-title", "{group_name}" }
-                                                span { class: "collect-issuer-meta", "{group_meta}" }
-                                            }
-                                            button {
-                                                r#type: "button",
-                                                class: "collect-issuer-select-btn",
-                                                onclick: move |_| {
-                                                    let mut next = selected_outpoints.read().clone();
-                                                    if all_group_selected {
-                                                        for op in &group_outpoints {
-                                                            next.remove(op);
+                    if filtered.is_empty() {
+                        div { class: "friends-empty",
+                            strong { "No collectables found" }
+                            span { "Try another name, trait, origin, or id." }
+                        }
+                    } else {
+                        section { class: "collect-items-section", aria_label: "Issuers and items",
+                            for shelf in shelves.iter() {
+                                {
+                                    let open = !collapsed_set.contains(&shelf.key);
+                                    let shelf_selected = shelf
+                                        .items
+                                        .iter()
+                                        .filter(|item| selected_set.contains(&item.outpoint))
+                                        .count();
+                                    let all_selected = shelf_selected == shelf.items.len();
+                                    let shelf_outpoints: Vec<String> =
+                                        shelf.items.iter().map(|item| item.outpoint.clone()).collect();
+                                    let toggle_key = shelf.key.clone();
+                                    let meta = if shelf_selected > 0 {
+                                        format!("{} · {shelf_selected} selected", shelf_quantity_label(&shelf.items))
+                                    } else {
+                                        shelf_quantity_label(&shelf.items)
+                                    };
+                                    rsx! {
+                                        div { class: "collect-collection", key: "{shelf.key}",
+                                            div { class: "collect-collection-head",
+                                                button {
+                                                    r#type: "button",
+                                                    class: "collect-collection-trigger",
+                                                    "aria-expanded": "{open}",
+                                                    onclick: move |_| {
+                                                        let mut next = collapsed.read().clone();
+                                                        if !next.remove(&toggle_key) {
+                                                            next.insert(toggle_key.clone());
                                                         }
-                                                    } else {
-                                                        for op in &group_outpoints {
-                                                            next.insert(op.clone());
+                                                        collapsed.set(next);
+                                                    },
+                                                    span { class: "collect-collection-body",
+                                                        strong { class: "collect-collection-name",
+                                                            span { class: "collect-collection-name-text", "{shelf.label}" }
                                                         }
+                                                        span { class: "collect-collection-meta", "{meta}" }
                                                     }
-                                                    selected_outpoints.set(next);
-                                                },
-                                                if all_group_selected {
-                                                    "Clear"
-                                                } else {
-                                                    "Select all"
-                                                }
-                                            }
-                                        }
-
-                                        if cur_view == CollectionView::Grid {
-                                            ul { class: "collection-grid collectables-grid",
-                                                for item in group_items.iter() {
-                                                    {
-                                                        let outpoint = item.outpoint.clone();
-                                                        let outpoint_toggle = item.outpoint.clone();
-                                                        let is_selected = selected_set.contains(&item.outpoint);
-                                                        let (auth_label, auth_tone) = authenticity_display(&item.authenticity_status);
-                                                        rsx! {
-                                                            li {
-                                                                key: "{item.outpoint}",
-                                                                class: if is_selected {
-                                                                    "collection-grid-card collectable-card is-selected"
-                                                                } else {
-                                                                    "collection-grid-card collectable-card"
-                                                                },
-                                                                "data-selected": if is_selected { Some("") } else { None },
-                                                                div { class: "collectable-card-inner",
-                                                                    button {
-                                                                        r#type: "button",
-                                                                        class: if is_selected {
-                                                                            "collectable-select-box is-selected"
-                                                                        } else {
-                                                                            "collectable-select-box"
-                                                                        },
-                                                                        aria_label: if is_selected { "Deselect item" } else { "Select item" },
-                                                                        aria_pressed: is_selected,
-                                                                        onclick: move |evt| {
-                                                                            evt.stop_propagation();
-                                                                            let mut next = selected_outpoints.read().clone();
-                                                                            if !next.remove(&outpoint_toggle) {
-                                                                                next.insert(outpoint_toggle.clone());
-                                                                            }
-                                                                            selected_outpoints.set(next);
-                                                                        },
-                                                                        if is_selected {
-                                                                            CheckIcon { size: 12 }
-                                                                        }
-                                                                    }
-                                                                    button {
-                                                                        r#type: "button",
-                                                                        class: "collection-grid-main collectable-main",
-                                                                        onclick: move |_| {
-                                                                            nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
-                                                                        },
-                                                                        div { class: "collectable-media",
-                                                                            if let Some(art_url) = snap.item_art.get(&item.outpoint) {
-                                                                                img {
-                                                                                    class: "collectable-img",
-                                                                                    src: "{art_url}",
-                                                                                    alt: "{item.name}",
-                                                                                }
-                                                                            } else {
-                                                                                span { class: "collectable-media-fallback", aria_hidden: true,
-                                                                                    CollectablesIcon { size: 32 }
-                                                                                }
-                                                                            }
-                                                                            CollectableVerifyMark {
-                                                                                authenticity_status: item.authenticity_status.clone(),
-                                                                            }
-                                                                        }
-                                                                        strong { class: "collection-grid-name", "{item.name}" }
-                                                                        span {
-                                                                            class: "collection-grid-host",
-                                                                            "data-tone": "{auth_tone}",
-                                                                            "{auth_label}"
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                    span { class: "collect-collection-indicator", "aria-hidden": "true",
+                                                        ExpandMoreIcon { size: 20 }
                                                     }
                                                 }
-                                            }
-                                        } else {
-                                            ul { class: "connected-app-list collectables-list",
-                                                for item in group_items.iter() {
-                                                    {
-                                                        let outpoint = item.outpoint.clone();
-                                                        let outpoint_toggle = item.outpoint.clone();
-                                                        let is_selected = selected_set.contains(&item.outpoint);
-                                                        let (auth_label, auth_tone) = authenticity_display(&item.authenticity_status);
-                                                        rsx! {
-                                                            li {
-                                                                key: "{item.outpoint}",
-                                                                class: if is_selected {
-                                                                    "connected-app-row collectable-row is-selected"
-                                                                } else {
-                                                                    "connected-app-row collectable-row"
-                                                                },
-                                                                "data-selected": if is_selected { Some("") } else { None },
-                                                                div { class: "collectable-row-inner",
-                                                                    button {
-                                                                        r#type: "button",
-                                                                        class: if is_selected {
-                                                                            "collectable-select-box collectable-select-box--row is-selected"
-                                                                        } else {
-                                                                            "collectable-select-box collectable-select-box--row"
-                                                                        },
-                                                                        aria_label: if is_selected { "Deselect item" } else { "Select item" },
-                                                                        aria_pressed: is_selected,
-                                                                        onclick: move |evt| {
-                                                                            evt.stop_propagation();
-                                                                            let mut next = selected_outpoints.read().clone();
-                                                                            if !next.remove(&outpoint_toggle) {
-                                                                                next.insert(outpoint_toggle.clone());
-                                                                            }
-                                                                            selected_outpoints.set(next);
-                                                                        },
-                                                                        if is_selected {
-                                                                            CheckIcon { size: 12 }
-                                                                        }
-                                                                    }
-                                                                    button {
-                                                                        r#type: "button",
-                                                                        class: "connected-app-main collectable-row-main",
-                                                                        onclick: move |_| {
-                                                                            nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
-                                                                        },
-                                                                        div { class: "collectable-media collectable-media-sm",
-                                                                            if let Some(art_url) = snap.item_art.get(&item.outpoint) {
-                                                                                img {
-                                                                                    class: "collectable-img",
-                                                                                    src: "{art_url}",
-                                                                                    alt: "{item.name}",
-                                                                                }
-                                                                            } else {
-                                                                                span { class: "collectable-media-fallback", aria_hidden: true,
-                                                                                    CollectablesIcon { size: 20 }
-                                                                                }
-                                                                            }
-                                                                            CollectableVerifyMark {
-                                                                                authenticity_status: item.authenticity_status.clone(),
-                                                                            }
-                                                                        }
-                                                                        div { class: "connected-app-body",
-                                                                            strong { class: "connected-app-name", "{item.name}" }
-                                                                            span { class: "connected-app-host mono",
-                                                                                "{truncate_mid(&item.origin_outpoint, 12)} · {item.mime}"
-                                                                            }
-                                                                        }
-                                                                        span {
-                                                                            class: "history-when",
-                                                                            "data-tone": "{auth_tone}",
-                                                                            "{auth_label}"
-                                                                        }
-                                                                    }
-                                                                }
+                                                CollectSelect {
+                                                    class: "collect-select--group",
+                                                    checked: all_selected,
+                                                    disabled: false,
+                                                    label: if all_selected { format!("Deselect {}", shelf.label) } else { format!("Select {}", shelf.label) },
+                                                    on_change: move |on: bool| {
+                                                        let mut next = selected_outpoints.read().clone();
+                                                        for outpoint in &shelf_outpoints {
+                                                            if on {
+                                                                next.insert(outpoint.clone());
+                                                            } else {
+                                                                next.remove(outpoint);
                                                             }
                                                         }
-                                                    }
+                                                        selected_outpoints.set(next);
+                                                    },
+                                                }
+                                            }
+                                            if open {
+                                                div { class: "collect-collection-body-content",
+                                                    {collect_items_list(&shelf.items, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                                                 }
                                             }
                                         }
                                     }
+                                }
+                            }
+                            if !ungrouped.is_empty() {
+                                section { class: "collect-nested-collection",
+                                    if !shelves.is_empty() {
+                                        h3 { class: "collect-section-title", "No issuer" }
+                                    }
+                                    {collect_items_list(&ungrouped, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                                 }
                             }
                         }

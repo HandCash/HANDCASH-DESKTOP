@@ -211,7 +211,7 @@ export function ConnectedAppsPanel({ apps, openTabCount, onShowTabs }: Props) {
     const q = query.trim().toLowerCase()
     return launcherTiles([], filteredApps).filter((t) => t.kind === 'peer' || !q || t.label.toLowerCase().includes(q))
   }, [filteredApps, query])
-  const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout)
+  const compact = useSyncExternalStore(subscribeCompactLayout, isCompactLayout, isCompactLayout)
   const canOpen = canOpenAppAddresses(compact)
   const address = appsSearchAddress(query, canOpen)
 

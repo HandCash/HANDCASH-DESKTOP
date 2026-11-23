@@ -43,10 +43,10 @@ export function currentIssuerTrust(): IssuerTrust {
 
 /** Generation that changes whenever an identity, a stored profile or package, or the verified list does. */
 export function useIssuerIdentitiesGeneration(): string {
-  const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration)
-  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration)
-  const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration)
-  const listed = useSyncExternalStore(subscribeVerifiedIssuers, verifiedIssuersGeneration)
+  const identities = useSyncExternalStore(subscribePublicIdentities, publicIdentitiesGeneration, publicIdentitiesGeneration)
+  const profiles = useSyncExternalStore(subscribeIdentityProfiles, identityProfilesGeneration, identityProfilesGeneration)
+  const packages = useSyncExternalStore(subscribeIssuerIdentities, issuerIdentitiesGeneration, issuerIdentitiesGeneration)
+  const listed = useSyncExternalStore(subscribeVerifiedIssuers, verifiedIssuersGeneration, verifiedIssuersGeneration)
   useEffect(() => {
     ensureVerifiedIssuersFresh()
   }, [])

@@ -3,23 +3,26 @@
 //! `SendPanel`, `ReceivePanel`, `RecentActivity` / `TransactionsPanel`,
 //! `ConnectedAppsPanel`, `InventoryPanel`, `FriendsPanel`, `IdentityPanel`, `SettingsPanel`.
 
-use crate::icons::{
-    ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, DarkModeIcon,
-    DevicesIcon, DownloadIcon, EncryptIcon, ExpandMoreIcon, FileIcon, FingerprintIcon, InfoIcon,
-    LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon, MonitorIcon, PaletteIcon, RefreshIcon,
-    ScanQrIcon, SwapIcon, SystemUpdateIcon, WarningIcon,
-};
 use crate::health::{dependency_health_alert, DependencyHealthSnapshot, HealthAlert};
-use crate::machines::{FiatCode, NavChild, SettingSubpage, ToastNotice};
+use crate::icons::{
+    ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, CopyIcon,
+    DarkModeIcon, DevicesIcon, DownloadIcon, EncryptIcon, ExpandMoreIcon, FileIcon,
+    FingerprintIcon, InfoIcon, LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon, MonitorIcon,
+    PaletteIcon, RefreshIcon, ScanQrIcon, SwapIcon, SystemUpdateIcon, VolumeUpIcon, WarningIcon,
+};
+use crate::machines::{AppSessionMachine, FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
-    copy_to_clipboard, render_qr_svg, truncate_mid, AcceptedCoins, AppServices, LabFeature,
-    RecoverScan, SessionSummary, WalletSnapshot, APP_VERSION,
+    copy_to_clipboard, load_builtin_chart_apps, render_qr_svg, truncate_mid, AcceptedCoins,
+    AppServices, BuiltinChartApp, LabFeature, RecoverScan, SessionSummary, WalletSnapshot,
+    APP_VERSION,
 };
 use crate::theme::AppearancePreference;
-use crate::ui::auth::PasswordField;
+use crate::ui::auth::{KeySliceList, PasswordField};
 use crate::ui::EmptyState;
 use aeon_ui::{button, list_row};
 use dioxus::prelude::*;
+use handcash_primitives::brc140::Brc140IssuedSet;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// 1:1 port of `src/components/ReceivePanel.tsx`.
@@ -358,6 +361,20 @@ pub fn SettingsPanel(
     let app_pref = *appearance.read();
     let mut accepted = use_signal(|| services.load_accepted_coins());
     let accepted_now = *accepted.read();
+    let mut sfx_enabled = use_signal(|| services.sfx_enabled());
+    let sfx_now = *sfx_enabled.read();
+    let mut updater_rev = use_signal(|| 0u64);
+    let _ = *updater_rev.read();
+    let updater_status = services.updater.status();
+    let upd_state = updater_status
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("idle")
+        .to_string();
+    let upd_avail_ver = updater_status
+        .get("availableVersion")
+        .and_then(|v| v.as_str())
+        .map(ToString::to_string);
     let mut open = move |sub: SettingSubpage| nav_child.set(Some(NavChild::Setting(sub)));
     let health = use_dependency_health();
     {
@@ -530,12 +547,84 @@ pub fn SettingsPanel(
                             list_row::Root { "data-aeon-layout": "control",
                                 list_row::Leading {
                                     span { class: "settings-row-icon", "data-tone": "default",
+                                        VolumeUpIcon { size: 20 }
+                                    }
+                                }
+                                list_row::Label { "Sound effects" }
+                                list_row::Description { "Subtle audio feedback for payments and actions." }
+                                list_row::Trailing {
+                                    {
+                                        let svc_sfx = Arc::clone(&services);
+                                        rsx! {
+                                            button {
+                                                r#type: "button",
+                                                role: "switch",
+                                                aria_checked: sfx_now,
+                                                class: "settings-icon-toggle-btn",
+                                                style: "padding: 4px 10px; min-width: 52px;",
+                                                "data-selected": if sfx_now { Some("") } else { None },
+                                                onclick: move |_| {
+                                                    let next = !sfx_now;
+                                                    sfx_enabled.set(next);
+                                                    svc_sfx.set_sfx_enabled(next);
+                                                },
+                                                if sfx_now { "On" } else { "Off" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        li {
+                            list_row::Root { "data-aeon-layout": "control",
+                                list_row::Leading {
+                                    span { class: "settings-row-icon", "data-tone": "default",
                                         InfoIcon { size: 20 }
                                     }
                                 }
                                 list_row::Label { "Version {APP_VERSION}" }
                                 list_row::Description {
-                                    "Pure-Rust SQLite WAL · Engine phase {snap.engine_phase}"
+                                    if let Some(ref ver) = upd_avail_ver {
+                                        "Update v{ver} available ({upd_state})"
+                                    } else if upd_state != "idle" {
+                                        "Updater: {upd_state} · Pure-Rust SQLite WAL"
+                                    } else {
+                                        "Pure-Rust SQLite WAL · Engine phase {snap.engine_phase}"
+                                    }
+                                }
+                                list_row::Trailing {
+                                    {
+                                        let svc_upd = Arc::clone(&services);
+                                        let has_avail = upd_avail_ver.is_some() && upd_state == "available";
+                                        rsx! {
+                                            button::Root {
+                                                variant: button::ButtonVariant::Ghost,
+                                                class: "btn btn-ghost settings-action-btn",
+                                                disabled: upd_state == "checking" || upd_state == "downloading",
+                                                onclick: move |_| {
+                                                    if has_avail {
+                                                        svc_upd.updater.download();
+                                                    } else {
+                                                        svc_upd.updater.check(false);
+                                                    }
+                                                    let next = *updater_rev.read() + 1;
+                                                    updater_rev.set(next);
+                                                },
+                                                button::Label {
+                                                    if has_avail {
+                                                        "Download"
+                                                    } else if upd_state == "checking" {
+                                                        "Checking…"
+                                                    } else if upd_state == "downloading" {
+                                                        "Downloading…"
+                                                    } else {
+                                                        "Check updates"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -788,26 +877,42 @@ fn setting_icon(sub: SettingSubpage) -> Element {
 }
 
 #[component]
-fn SettingsNavRow(
+pub fn SettingsNavRow(
     label: &'static str,
     #[props(into, default)] description: String,
     /// Live status replaces the description (`status || description` in TS).
-    #[props(default)] status: Option<String>,
+    #[props(default)]
+    status: Option<String>,
     #[props(default = "muted")] status_tone: &'static str,
     #[props(default = "default")] tone: &'static str,
     icon: Element,
     onclick: EventHandler<MouseEvent>,
     #[props(default)] trailing_end: Option<Element>,
 ) -> Element {
-    let desc_state = if status.is_some() { status_tone } else { "idle" };
+    let desc_state = if status.is_some() {
+        status_tone
+    } else {
+        "idle"
+    };
     let desc = status.unwrap_or(description);
     rsx! {
         li { class: "settings-nav-item",
-            list_row::Root {
+            button {
+                r#type: "button",
                 class: "settings-nav-row",
+                "data-aeon-scope": "listRow",
+                "data-aeon-part": "root",
                 onclick: move |evt| onclick.call(evt),
-                list_row::Leading {
-                    span { class: "settings-row-icon", "data-tone": "{tone}", {icon} }
+                span {
+                    "aria-hidden": "true",
+                    "data-aeon-scope": "listRow",
+                    "data-aeon-part": "leading",
+                    span {
+                        "aria-hidden": "true",
+                        class: "settings-row-icon",
+                        "data-tone": "{tone}",
+                        {icon}
+                    }
                 }
                 list_row::Label { "{label}" }
                 if !desc.is_empty() {
@@ -823,7 +928,7 @@ fn SettingsNavRow(
 
 /// 1:1 port of `src/components/settings/WalletHealthAlertBadge.tsx`.
 #[component]
-fn WalletHealthAlertBadge(tone: &'static str) -> Element {
+pub fn WalletHealthAlertBadge(tone: &'static str) -> Element {
     rsx! {
         div { class: "settings-icon-toggle wallet-health-trailing", aria_hidden: "true",
             span {
@@ -872,10 +977,15 @@ fn spawn_health_refresh(services: &Arc<AppServices>, mut running: Option<Signal<
 
 /// 1:1 port of `src/components/settings/WalletHealthPanel.tsx`.
 #[component]
-fn WalletHealthPanel() -> Element {
+fn WalletHealthPanel(
+    mut snapshot: Signal<WalletSnapshot>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let snap = use_dependency_health();
     let checking = use_signal(|| false);
+    let mut heal_state = use_signal(|| "idle");
+    let mut heal_summary = use_signal(|| Option::<String>::None);
     {
         let svc = Arc::clone(&services);
         use_hook(move || spawn_health_refresh(&svc, Some(checking)));
@@ -883,6 +993,9 @@ fn WalletHealthPanel() -> Element {
     let is_checking = *checking.read();
     let view = snap.read().clone();
     let svc_btn = Arc::clone(&services);
+    let svc_heal = Arc::clone(&services);
+    let cur_heal_state = *heal_state.read();
+    let cur_heal_msg = heal_summary.read().clone();
 
     rsx! {
         div { class: "nav-section-body settings-nav", "data-aeon-scope": "wallet-health",
@@ -935,22 +1048,58 @@ fn WalletHealthPanel() -> Element {
                             }
                             list_row::Label { "Heal wallet UTXOs" }
                             list_row::Description {
-                                "UTXO heal is not available in the native Rust build yet."
+                                if let Some(ref msg) = cur_heal_msg {
+                                    "{msg}"
+                                } else {
+                                    "Snapshots local UTXOs to the write-once BRC-39 archive and reconciles proofs and 1Sat provenance."
+                                }
                             }
                             list_row::Trailing {
                                 span {
                                     class: "status-pill status-pill-compact",
-                                    "data-tone": "muted",
-                                    "data-aeon-state": "unavailable",
-                                    "—"
+                                    "data-tone": if cur_heal_state == "done" { "ok" } else if cur_heal_state == "error" { "error" } else { "muted" },
+                                    "data-aeon-state": "{cur_heal_state}",
+                                    if cur_heal_state == "done" {
+                                        "OK"
+                                    } else if cur_heal_state == "error" {
+                                        "Failed"
+                                    } else {
+                                        "Ready"
+                                    }
                                 }
                                 button::Root {
                                     variant: button::ButtonVariant::Solid,
                                     class: "btn btn-primary settings-action-btn",
-                                    disabled: true,
+                                    disabled: cur_heal_state == "running",
                                     "data-aeon-part": "heal-action",
-                                    "data-aeon-state": "unavailable",
-                                    button::Label { "Heal" }
+                                    "data-aeon-state": "{cur_heal_state}",
+                                    onclick: move |_| {
+                                        heal_state.set("running");
+                                        match svc_heal.heal_wallet_utxos() {
+                                            Ok(summary) => {
+                                                heal_summary.set(Some(summary.clone()));
+                                                heal_state.set("done");
+                                                snapshot.set(svc_heal.read_snapshot());
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Wallet UTXOs healed".into(),
+                                                    body: Some(summary),
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => {
+                                                heal_summary.set(Some(e.clone()));
+                                                heal_state.set("error");
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Heal failed".into(),
+                                                    body: Some(e),
+                                                    tone: "error",
+                                                }));
+                                            }
+                                        }
+                                    },
+                                    button::Label {
+                                        if cur_heal_state == "running" { "Healing…" } else { "Heal" }
+                                    }
                                 }
                             }
                         }
@@ -985,9 +1134,12 @@ fn WalletBackupPanel(
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let has_phrase = profile.has_mnemonic;
-    let mut kind = use_signal(|| if has_phrase { "phrase" } else { "key" });
+    let mut kind = use_signal(|| "split");
     let mut revealed = use_signal(|| false);
     let mut copied = use_signal(|| false);
+    let mut brc140_set = use_signal(|| Option::<Brc140IssuedSet>::None);
+    let mut brc140_err = use_signal(|| Option::<String>::None);
+    let mut saved_slices = use_signal(BTreeSet::<usize>::new);
 
     let cur_kind = *kind.read();
     let is_revealed = *revealed.read();
@@ -1002,8 +1154,11 @@ fn WalletBackupPanel(
     } else {
         None
     };
+    let svc_reveal = Arc::clone(&services);
     let svc_confirm_phrase = Arc::clone(&services);
     let svc_confirm_key = Arc::clone(&services);
+    let svc_confirm_split = Arc::clone(&services);
+    let svc_rotate_split = Arc::clone(&services);
 
     rsx! {
         div {
@@ -1019,8 +1174,11 @@ fn WalletBackupPanel(
                     role: "tab",
                     aria_selected: if cur_kind == "split" { "true" } else { "false" },
                     class: if cur_kind == "split" { "btn btn-primary" } else { "btn btn-ghost" },
-                    disabled: true,
-                    title: "BRC-140 slice issuance is pending GF(256) splitter port",
+                    onclick: move |_| {
+                        revealed.set(false);
+                        copied.set(false);
+                        kind.set("split");
+                    },
                     "Key slices"
                 }
                 button {
@@ -1067,13 +1225,91 @@ fn WalletBackupPanel(
                             class: "btn btn-primary",
                             onclick: move |_| {
                                 copied.set(false);
+                                if *kind.read() == "split" && brc140_set.read().is_none() {
+                                    match svc_reveal.load_or_issue_brc140_set() {
+                                        Ok(set) => {
+                                            brc140_err.set(None);
+                                            brc140_set.set(Some(set));
+                                        }
+                                        Err(e) => brc140_err.set(Some(e)),
+                                    }
+                                }
                                 revealed.set(true);
                             },
                             button::Label {
-                                if cur_kind == "phrase" { "Show phrase" } else { "Show key" }
+                                if cur_kind == "split" {
+                                    "Show slices"
+                                } else if cur_kind == "phrase" {
+                                    "Show phrase"
+                                } else {
+                                    "Show key"
+                                }
                             }
                         }
                     }
+                }
+            }
+
+            if is_revealed && cur_kind == "split" {
+                if let Some(set) = brc140_set.read().clone() {
+                    {
+                        let threshold = set.threshold;
+                        let saved_count = saved_slices.read().len();
+                        let split_ready = saved_count >= threshold;
+                        rsx! {
+                            KeySliceList {
+                                set,
+                                saved_indices: saved_slices,
+                                toast,
+                                on_rotate: move |_| {
+                                    match svc_rotate_split.rotate_brc140_set() {
+                                        Ok(new_set) => {
+                                            saved_slices.set(BTreeSet::new());
+                                            brc140_set.set(Some(new_set));
+                                            toast.set(Some(ToastNotice {
+                                                title: "New slice set issued".into(),
+                                                body: Some("Previous slices will no longer combine with this set.".into()),
+                                                tone: "info",
+                                            }));
+                                        }
+                                        Err(e) => toast.set(Some(ToastNotice {
+                                            title: "Rotate failed".into(),
+                                            body: Some(e),
+                                            tone: "error",
+                                        })),
+                                    }
+                                },
+                            }
+                            div { class: "actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: !split_ready,
+                                    onclick: move |_| {
+                                        svc_confirm_split.mark_keys_backup_confirmed("split");
+                                        revealed.set(false);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Keys backup saved".into(),
+                                            body: Some("History backup is next if you have not done it yet.".into()),
+                                            tone: "success",
+                                        }));
+                                        nav_child.set(Some(NavChild::Setting(SettingSubpage::HistoryBackup)));
+                                    },
+                                    button::Label { "Done — slices saved" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        revealed.set(false);
+                                    },
+                                    button::Label { "Hide" }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(ref err) = *brc140_err.read() {
+                    p { class: "error", role: "alert", "{err}" }
                 }
             }
 
@@ -1586,13 +1822,14 @@ fn AboutHandCashPanel(mut nav_child: Signal<Option<NavChild>>) -> Element {
     }
 }
 
-/// Settings child panels (Recovery backup, Import BRC-38, Unlock/Password, Wallet health, About).
+/// Settings child panels (Recovery backup, Import BRC-38/BRC-39, Unlock/Password, Wallet health, About, History backup, Wipe wallet, Device handoff, HandCash Recovery, Sign-in email, Chart apps).
 #[component]
 pub fn SettingSubpagePanel(
     subpage: SettingSubpage,
     profile: SessionSummary,
     snap: WalletSnapshot,
     mut snapshot: Signal<WalletSnapshot>,
+    app_machine: Signal<AppSessionMachine>,
     nav_child: Signal<Option<NavChild>>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
@@ -1610,9 +1847,9 @@ pub fn SettingSubpagePanel(
             let svc_import = Arc::clone(&services);
             rsx! {
                 div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 14px;",
-                    h3 { "Import BRC-38 backup" }
+                    h3 { "Import BRC-38 / BRC-39 backup" }
                     p { class: "settings-row-desc",
-                        "Import a BRC-38 JSON backup directly into this account's SQLite WAL store."
+                        "Merge an encrypted .brc39 backup or a BRC-38 JSON backup into this account's SQLite WAL store. Existing outputs and proven items are never removed."
                     }
                     div { class: "actions",
                         button::Root {
@@ -1620,12 +1857,12 @@ pub fn SettingSubpagePanel(
                             class: "btn btn-primary",
                             onclick: move |_| {
                                 if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("BRC-38 JSON", &["json"])
+                                    .add_filter("History Backup (.brc39 / .json)", &["brc39", "json"])
                                     .pick_file()
                                 {
-                                    match std::fs::read_to_string(&path)
+                                    match std::fs::read(&path)
                                         .map_err(|e| e.to_string())
-                                        .and_then(|raw| svc_import.import_brc38_json(raw))
+                                        .and_then(|bytes| svc_import.restore_brc39_backup_bytes(&bytes, None))
                                     {
                                         Ok(msg) => {
                                             snapshot.set(svc_import.read_snapshot());
@@ -1644,7 +1881,7 @@ pub fn SettingSubpagePanel(
                                 }
                             },
                             DownloadIcon { size: 16 }
-                            button::Label { "Choose BRC-38 JSON file" }
+                            button::Label { "Choose backup file (.brc39 / .json)" }
                         }
                     }
                 }
@@ -1653,7 +1890,9 @@ pub fn SettingSubpagePanel(
         SettingSubpage::Unlock => rsx! {
             UnlockSettingsPanel { toast }
         },
-        SettingSubpage::WalletHealth => rsx! { WalletHealthPanel {} },
+        SettingSubpage::WalletHealth => rsx! {
+            WalletHealthPanel { snapshot, toast }
+        },
         SettingSubpage::About => rsx! {
             AboutHandCashPanel { nav_child }
         },
@@ -1809,34 +2048,65 @@ pub fn SettingSubpagePanel(
                 }
             }
         },
-        SettingSubpage::RecoverTx => rsx! { RecoverTxPanel {} },
-        // Not ported yet (Slice 5 remainder): say so plainly rather than fake a control.
-        SettingSubpage::HandCashRecovery
-        | SettingSubpage::HistoryBackup
-        | SettingSubpage::DeviceHandoff
-        | SettingSubpage::SigninEmail
-        | SettingSubpage::WipeWallet
-        | SettingSubpage::ChartApps => rsx! {
-            div { class: "nav-child-panel", "data-aeon-state": "unavailable", style: "display: flex; flex-direction: column; gap: 12px;",
-                h3 { "{subpage.label()}" }
-                p { class: "settings-row-desc",
-                    "This setting is not available in the native Rust build yet. Nothing on this page changes your wallet."
-                }
+        SettingSubpage::RecoverTx => rsx! {
+            RecoverTxPanel { snapshot, toast }
+        },
+        SettingSubpage::HandCashRecovery => rsx! {
+            HandCashRecoveryPanel {
+                profile,
+                nav_child,
+                toast,
             }
+        },
+        SettingSubpage::HistoryBackup => rsx! {
+            HistoryBackupPanel {
+                profile,
+                snapshot,
+                nav_child,
+                toast,
+            }
+        },
+        SettingSubpage::DeviceHandoff => rsx! {
+            DeviceHandoffPanel { nav_child, toast }
+        },
+        SettingSubpage::SigninEmail => rsx! {
+            SigninEmailPanel { toast }
+        },
+        SettingSubpage::WipeWallet => rsx! {
+            WipeWalletPanel {
+                snap,
+                snapshot,
+                app_machine,
+                nav_child,
+                toast,
+            }
+        },
+        SettingSubpage::ChartApps => rsx! {
+            ChartAppsPanel { toast }
         },
     }
 }
 
-/// Recover from a transaction (scan step of `RecoverFromTxPanel.tsx`): lists
-/// the 1-sat outputs of a txid that pay this wallet. Read-only; claiming the
-/// items into the wallet is still done by the TS app, and the page says so.
+/// 1:1 port of `src/components/RecoverFromTxPanel.tsx`: scans a txid for 1-sat outputs
+/// paying this wallet and claims them into the wallet's `1sat` basket + BRC-150 verifier.
 #[component]
-fn RecoverTxPanel() -> Element {
+fn RecoverTxPanel(
+    mut snapshot: Signal<WalletSnapshot>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
     let services = use_context::<Arc<AppServices>>();
+    let svc_scan = Arc::clone(&services);
     let mut txid = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    let mut claiming = use_signal(|| false);
     let mut result = use_signal(|| None::<Result<RecoverScan, String>>);
-    let state = if *busy.read() { "scanning" } else { "idle" };
+    let state = if *claiming.read() {
+        "claiming"
+    } else if *busy.read() {
+        "scanning"
+    } else {
+        "idle"
+    };
     let current = result.read().clone();
     rsx! {
         div {
@@ -1846,7 +2116,7 @@ fn RecoverTxPanel() -> Element {
             style: "display: flex; flex-direction: column; gap: 12px;",
             h3 { "Recover from transaction" }
             p { class: "settings-row-desc",
-                "Paste the sender's transaction id to find the items in it that were sent to this wallet. Scanning only reads the chain; it does not move anything."
+                "Paste the sender's transaction id to find the items in it that were sent to this wallet. Scanning only reads the chain; claiming adds them to your 1Sat items."
             }
             input {
                 class: "mono",
@@ -1861,9 +2131,9 @@ fn RecoverTxPanel() -> Element {
                 button::Root {
                     variant: button::ButtonVariant::Solid,
                     class: "btn btn-primary",
-                    disabled: *busy.read() || txid.read().trim().is_empty(),
+                    disabled: *busy.read() || *claiming.read() || txid.read().trim().is_empty(),
                     onclick: move |_| {
-                        let svc = Arc::clone(&services);
+                        let svc = Arc::clone(&svc_scan);
                         let raw = txid.read().clone();
                         busy.set(true);
                         result.set(None);
@@ -1893,9 +2163,11 @@ fn RecoverTxPanel() -> Element {
                 },
                 Some(Ok(scan)) => {
                     let count = scan.outputs.len();
+                    let scan_txid = scan.txid.clone();
+                    let svc_claim = Arc::clone(&services);
                     rsx! {
                         p { class: "settings-row-desc",
-                            "{count} output(s) in this transaction pay this wallet. Claiming them into your wallet is not available in the native Rust build yet; use Recover from transaction in the HandCash desktop app to claim them."
+                            "{count} output(s) in this transaction pay this wallet."
                         }
                         ul { class: "identity-list",
                             for out in scan.outputs {
@@ -1904,6 +2176,1120 @@ fn RecoverTxPanel() -> Element {
                                         if out.inscribed { "Inscribed output" } else { "1-sat output" }
                                     }
                                     strong { class: "mono", "{truncate_mid(&out.outpoint, 10)}" }
+                                }
+                            }
+                        }
+                        div { class: "actions",
+                            button::Root {
+                                variant: button::ButtonVariant::Solid,
+                                class: "btn btn-primary",
+                                disabled: *claiming.read(),
+                                onclick: move |_| {
+                                    let svc = Arc::clone(&svc_claim);
+                                    let raw_tx = scan_txid.clone();
+                                    claiming.set(true);
+                                    spawn(async move {
+                                        let handle = svc.engine.runtime_handle().clone();
+                                        let svc_bg = Arc::clone(&svc);
+                                        let out = handle
+                                            .spawn(async move { svc_bg.claim_recover_tx(&raw_tx).await })
+                                            .await
+                                            .unwrap_or_else(|e| Err(e.to_string()));
+                                        claiming.set(false);
+                                        match out {
+                                            Ok(msg) => {
+                                                snapshot.set(svc.read_snapshot());
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Recovered".into(),
+                                                    body: Some(msg),
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => toast.set(Some(ToastNotice {
+                                                title: "Claim failed".into(),
+                                                body: Some(e),
+                                                tone: "error",
+                                            })),
+                                        }
+                                    });
+                                },
+                                button::Label {
+                                    if *claiming.read() { "Claiming…" } else { "Claim into wallet" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/HistoryBackupPanel.tsx`.
+#[component]
+fn HistoryBackupPanel(
+    profile: SessionSummary,
+    mut snapshot: Signal<WalletSnapshot>,
+    mut nav_child: Signal<Option<NavChild>>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut prefs = use_signal(|| services.load_history_backup_prefs());
+    let mut url_input = use_signal(|| services.load_history_backup_prefs().base_url);
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+
+    let cur_prefs = prefs.read().clone();
+    let custom_host = cur_prefs.is_custom_host();
+    let confirmed = services.is_history_backup_confirmed();
+    let local_snapshots = services.list_local_brc39_archive();
+    let id_prefix: String = profile.identity_key.chars().take(10).collect();
+    let default_filename = format!("handcash-history-{id_prefix}.brc39");
+
+    let svc_save_url = Arc::clone(&services);
+    let svc_clear_url = Arc::clone(&services);
+    let svc_download = Arc::clone(&services);
+    let svc_import = Arc::clone(&services);
+    let svc_confirm = Arc::clone(&services);
+
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll",
+            "data-aeon-scope": "history-backup",
+            "data-aeon-state": if confirmed { "confirmed" } else { "idle" },
+            p { class: "settings-hint",
+                "History backup saves your payment notes, contacts, and 1Sat item provenance in an encrypted BRC-39 bundle derived from your root key. Refreshing from the chain alone will not restore P2P notes."
+            }
+
+            section { class: "settings-group", "data-aeon-part": "history-actions",
+                h3 { class: "settings-group-title", "Encrypted backup (.brc39)" }
+                div { class: "actions", style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        onclick: move |_| {
+                            match svc_download.create_brc39_backup_bytes() {
+                                Ok(bytes) => {
+                                    if let Some(path) = rfd::FileDialog::new()
+                                        .set_file_name(&default_filename)
+                                        .add_filter("BRC-39 History Backup", &["brc39"])
+                                        .save_file()
+                                    {
+                                        match std::fs::write(&path, &bytes) {
+                                            Ok(()) => {
+                                                svc_download.mark_history_backup_confirmed();
+                                                let next = *rev.read() + 1;
+                                                rev.set(next);
+                                                toast.set(Some(ToastNotice {
+                                                    title: "History backup saved".into(),
+                                                    body: Some(path.display().to_string()),
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => toast.set(Some(ToastNotice {
+                                                title: "Save failed".into(),
+                                                body: Some(e.to_string()),
+                                                tone: "error",
+                                            })),
+                                        }
+                                    } else {
+                                        let next = *rev.read() + 1;
+                                        rev.set(next);
+                                    }
+                                }
+                                Err(e) => toast.set(Some(ToastNotice {
+                                    title: "Export failed".into(),
+                                    body: Some(e),
+                                    tone: "error",
+                                })),
+                            }
+                        },
+                        DownloadIcon { size: 16 }
+                        button::Label { "Download a backup" }
+                    }
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
+                        class: "btn btn-ghost",
+                        onclick: move |_| {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("History Backup (.brc39 / .json)", &["brc39", "json"])
+                                .pick_file()
+                            {
+                                match std::fs::read(&path)
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|bytes| svc_import.restore_brc39_backup_bytes(&bytes, None))
+                                {
+                                    Ok(msg) => {
+                                        snapshot.set(svc_import.read_snapshot());
+                                        let next = *rev.read() + 1;
+                                        rev.set(next);
+                                        toast.set(Some(ToastNotice {
+                                            title: "History merged".into(),
+                                            body: Some(msg),
+                                            tone: "success",
+                                        }));
+                                    }
+                                    Err(e) => toast.set(Some(ToastNotice {
+                                        title: "Restore failed".into(),
+                                        body: Some(e),
+                                        tone: "error",
+                                    })),
+                                }
+                            }
+                        },
+                        button::Label { "Import a backup" }
+                    }
+                    if !confirmed {
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                svc_confirm.mark_history_backup_confirmed();
+                                let next = *rev.read() + 1;
+                                rev.set(next);
+                                toast.set(Some(ToastNotice {
+                                    title: "History backup confirmed".into(),
+                                    body: None,
+                                    tone: "success",
+                                }));
+                                nav_child.set(None);
+                            },
+                            button::Label { "History backup saved" }
+                        }
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "history-host",
+                h3 { class: "settings-group-title", "Custom history host" }
+                p { class: "settings-row-desc",
+                    "Active endpoint: {cur_prefs.effective_base_url()}"
+                }
+                div { style: "display: flex; gap: 8px; margin-top: 8px; align-items: center;",
+                    input {
+                        class: "mono",
+                        style: "flex: 1;",
+                        placeholder: "https://your-brc39-host.example/history",
+                        value: "{url_input}",
+                        oninput: move |e| url_input.set(e.value()),
+                    }
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
+                        class: "btn btn-ghost",
+                        onclick: move |_| {
+                            let mut next_p = prefs.read().clone();
+                            next_p.base_url = url_input.read().trim().to_string();
+                            svc_save_url.save_history_backup_prefs(&next_p);
+                            prefs.set(next_p);
+                            toast.set(Some(ToastNotice {
+                                title: "History host updated".into(),
+                                body: None,
+                                tone: "success",
+                            }));
+                        },
+                        button::Label { "Save URL" }
+                    }
+                    if custom_host {
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                let mut next_p = prefs.read().clone();
+                                next_p.base_url = String::new();
+                                url_input.set(String::new());
+                                svc_clear_url.save_history_backup_prefs(&next_p);
+                                prefs.set(next_p);
+                            },
+                            button::Label { "Use default" }
+                        }
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "local-archive",
+                h3 { class: "settings-group-title", "On-device snapshots ({local_snapshots.len()})" }
+                if local_snapshots.is_empty() {
+                    p { class: "settings-row-desc",
+                        "No on-device snapshots yet. Downloading a backup or healing UTXOs writes a write-once snapshot to your local archive."
+                    }
+                } else {
+                    ul { class: "settings-list",
+                        for snap_entry in local_snapshots.iter() {
+                            {
+                                let sid = snap_entry.id.clone();
+                                let sid_restore = snap_entry.id.clone();
+                                let bytes_len = snap_entry.bytes;
+                                let svc_rest = Arc::clone(&services);
+                                rsx! {
+                                    li { key: "{sid}",
+                                        list_row::Root { "data-aeon-layout": "control",
+                                            list_row::Label { "{sid}" }
+                                            list_row::Description { "{bytes_len} bytes · write-once archive" }
+                                            list_row::Trailing {
+                                                button::Root {
+                                                    variant: button::ButtonVariant::Ghost,
+                                                    class: "btn btn-ghost settings-action-btn",
+                                                    onclick: move |_| {
+                                                        match svc_rest.restore_local_brc39_snapshot(&sid_restore, None) {
+                                                            Ok(msg) => {
+                                                                snapshot.set(svc_rest.read_snapshot());
+                                                                toast.set(Some(ToastNotice {
+                                                                    title: "Snapshot merged".into(),
+                                                                    body: Some(msg),
+                                                                    tone: "success",
+                                                                }));
+                                                            }
+                                                            Err(e) => toast.set(Some(ToastNotice {
+                                                                title: "Restore failed".into(),
+                                                                body: Some(e),
+                                                                tone: "error",
+                                                            })),
+                                                        }
+                                                    },
+                                                    button::Label { "Restore" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsFeatureAbout {
+                tags: &["BRC-39", "BRC-38", "BRC-78"],
+                copy: "History backups are encrypted with a secret derived from your root key and merged without dropping existing UTXOs or proven 1Sat items.",
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/WipeWalletPanel.tsx`.
+#[component]
+fn WipeWalletPanel(
+    snap: WalletSnapshot,
+    mut snapshot: Signal<WalletSnapshot>,
+    mut app_machine: Signal<AppSessionMachine>,
+    mut nav_child: Signal<Option<NavChild>>,
+    toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let _ = toast;
+    let services = use_context::<Arc<AppServices>>();
+    let no_lock = services.is_no_device_lock();
+    let mut gate_verified = use_signal(|| no_lock);
+    let gate_pw = use_signal(String::new);
+    let mut confirm_text = use_signal(String::new);
+    let mut gate_warning = use_signal(|| Option::<String>::None);
+    let mut error_msg = use_signal(|| Option::<String>::None);
+
+    let is_verified = *gate_verified.read();
+    let typed_delete = confirm_text.read().trim() == "DELETE";
+    let svc_verify = Arc::clone(&services);
+    let svc_wipe = Arc::clone(&services);
+    let svc_sync_wipe = Arc::clone(&services);
+    let svc_force_wipe = Arc::clone(&services);
+
+    if !is_verified {
+        return rsx! {
+            div {
+                class: "settings-detail settings-detail-compact settings-scroll",
+                "data-aeon-scope": "wipe-wallet",
+                "data-aeon-state": "password-gate",
+                form {
+                    class: "confirm-password-gate",
+                    onsubmit: move |e| {
+                        e.prevent_default();
+                        error_msg.set(None);
+                        let pw = gate_pw.read().clone();
+                        match svc_verify.verify_password(&pw) {
+                            Ok(()) => {
+                                gate_verified.set(true);
+                                gate_warning.set(svc_verify.check_wipe_history_gate().err());
+                            }
+                            Err(err) => error_msg.set(Some(err)),
+                        }
+                    },
+                    div { class: "confirm-password-copy",
+                        h3 { class: "confirm-password-title", "Confirm password to wipe wallet" }
+                        p { class: "confirm-password-lede",
+                            "Enter your HandCash password before removing this wallet from this device."
+                        }
+                    }
+                    PasswordField {
+                        id: "wipe-wallet-password",
+                        label: "HandCash password",
+                        placeholder: "Your password",
+                        value: gate_pw,
+                    }
+                    if let Some(ref err) = *error_msg.read() {
+                        p { class: "error", role: "alert", "{err}" }
+                    }
+                    div { class: "actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            button_type: "submit",
+                            class: "btn btn-primary",
+                            disabled: gate_pw.read().trim().is_empty(),
+                            button::Label { "Continue" }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    let active_gate_warn = gate_warning
+        .read()
+        .clone()
+        .or_else(|| services.check_wipe_history_gate().err());
+
+    rsx! {
+        div {
+            class: "settings-detail settings-detail-compact settings-scroll",
+            "data-aeon-scope": "wipe-wallet",
+            "data-aeon-state": "confirm",
+            div { class: "confirm-password-copy",
+                h3 { class: "confirm-password-title", "Wipe wallet from this device" }
+                p { class: "confirm-password-lede",
+                    "This removes your vault keys and local SQLite databases from this computer. On-device write-once BRC-39 archive snapshots are preserved. Type DELETE to confirm."
+                }
+            }
+
+            if let Some(ref warn) = active_gate_warn {
+                div {
+                    class: "settings-hint",
+                    role: "alert",
+                    "data-tone": "warn",
+                    p { "{warn}" }
+                }
+            }
+
+            label { class: "field",
+                span { "Type DELETE to confirm" }
+                input {
+                    class: "mono",
+                    placeholder: "DELETE",
+                    value: "{confirm_text}",
+                    oninput: move |e| {
+                        error_msg.set(None);
+                        confirm_text.set(e.value());
+                    },
+                }
+            }
+
+            if let Some(ref err) = *error_msg.read() {
+                p { class: "error", role: "alert", "{err}" }
+            }
+
+            div { class: "actions", style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                if active_gate_warn.is_some() {
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        disabled: !typed_delete,
+                        onclick: move |_| {
+                            error_msg.set(None);
+                            let _ = svc_sync_wipe.create_brc39_backup_bytes();
+                            svc_sync_wipe.mark_history_backup_confirmed();
+                            let pw = gate_pw.read().clone();
+                            let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
+                            match svc_sync_wipe.wipe_all_wallet_data(pw_opt) {
+                                Ok(()) => {
+                                    snapshot.set(svc_sync_wipe.read_snapshot());
+                                    nav_child.set(None);
+                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                }
+                                Err(e) => error_msg.set(Some(e)),
+                            }
+                        },
+                        button::Label { "Snapshot and wipe" }
+                    }
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
+                        class: "btn btn-ghost",
+                        disabled: !typed_delete,
+                        onclick: move |_| {
+                            error_msg.set(None);
+                            let pw = gate_pw.read().clone();
+                            let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
+                            match svc_force_wipe.wipe_all_wallet_data(pw_opt) {
+                                Ok(()) => {
+                                    snapshot.set(svc_force_wipe.read_snapshot());
+                                    nav_child.set(None);
+                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                }
+                                Err(e) => error_msg.set(Some(e)),
+                            }
+                        },
+                        button::Label { "Wipe anyway" }
+                    }
+                } else {
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        disabled: !typed_delete,
+                        onclick: move |_| {
+                            error_msg.set(None);
+                            let pw = gate_pw.read().clone();
+                            let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
+                            match svc_wipe.wipe_all_wallet_data(pw_opt) {
+                                Ok(()) => {
+                                    snapshot.set(svc_wipe.read_snapshot());
+                                    nav_child.set(None);
+                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                }
+                                Err(e) => error_msg.set(Some(e)),
+                            }
+                        },
+                        button::Label { "Wipe wallet" }
+                    }
+                }
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    onclick: move |_| nav_child.set(None),
+                    button::Label { "Cancel" }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/HandCashRecoveryPanel.tsx`.
+#[component]
+fn HandCashRecoveryPanel(
+    profile: SessionSummary,
+    mut nav_child: Signal<Option<NavChild>>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+    let local_label = AppServices::local_device_label();
+    let peers = services.list_peer_devices();
+    let saved_formats = services.saved_backup_formats();
+    let phrase_saved = saved_formats.iter().any(|s| s == "phrase");
+    let split_saved = saved_formats.iter().any(|s| s == "split");
+    let key_saved = saved_formats.iter().any(|s| s == "key");
+
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll",
+            "data-aeon-scope": "handcash-recovery",
+            p { class: "settings-hint",
+                "Keep a second device signed in or save your recovery slices yourself. HandCash never holds your keys."
+            }
+
+            div { class: "actions", style: "margin-bottom: 12px;",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary",
+                    onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::DeviceHandoff))),
+                    DevicesIcon { size: 16 }
+                    button::Label { "Back this up on another device" }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "devices",
+                h3 { class: "settings-group-title", "Signed-in devices" }
+                ul { class: "settings-list",
+                    li {
+                        list_row::Root { "data-aeon-layout": "control",
+                            list_row::Leading {
+                                span { class: "settings-row-icon", "data-tone": "default",
+                                    DevicesIcon { size: 20 }
+                                }
+                            }
+                            list_row::Label { "{local_label}" }
+                            list_row::Description { "This device · Account #{profile.account_index}" }
+                            list_row::Trailing {
+                                span {
+                                    class: "status-pill status-pill-compact",
+                                    "data-tone": "ok",
+                                    "Active"
+                                }
+                            }
+                        }
+                    }
+                    for peer in peers.iter() {
+                        {
+                            let pid = peer.device_id.clone();
+                            let pid_rm = peer.device_id.clone();
+                            let plabel = peer.label.clone();
+                            let pkey = truncate_mid(&peer.identity_key, 8);
+                            let svc_rm = Arc::clone(&services);
+                            rsx! {
+                                li { key: "{pid}",
+                                    list_row::Root { "data-aeon-layout": "control",
+                                        list_row::Leading {
+                                            span { class: "settings-row-icon", "data-tone": "default",
+                                                DevicesIcon { size: 20 }
+                                            }
+                                        }
+                                        list_row::Label { "{plabel}" }
+                                        list_row::Description { "Linked device · {pkey}" }
+                                        list_row::Trailing {
+                                            button::Root {
+                                                variant: button::ButtonVariant::Ghost,
+                                                class: "btn btn-ghost settings-action-btn",
+                                                onclick: move |_| {
+                                                    svc_rm.remove_peer_device(&pid_rm);
+                                                    let next = *rev.read() + 1;
+                                                    rev.set(next);
+                                                    toast.set(Some(ToastNotice {
+                                                        title: "Device removed".into(),
+                                                        body: None,
+                                                        tone: "info",
+                                                    }));
+                                                },
+                                                button::Label { "Remove" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    SettingsNavRow {
+                        label: "Back up a different wallet",
+                        description: "Pair or hand off over local network or QR",
+                        icon: setting_icon(SettingSubpage::DeviceHandoff),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::DeviceHandoff))),
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "self-backup",
+                h3 { class: "settings-group-title", "Save a backup yourself" }
+                ul { class: "settings-list",
+                    if profile.has_mnemonic {
+                        SettingsNavRow {
+                            label: "24-word recovery phrase",
+                            description: if phrase_saved { "Saved" } else { "Not saved" },
+                            icon: setting_icon(SettingSubpage::Backup),
+                            onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::Backup))),
+                        }
+                    }
+                    SettingsNavRow {
+                        label: "3 key slices, any 2 restore it",
+                        description: if split_saved { "Saved" } else { "Not saved" },
+                        icon: setting_icon(SettingSubpage::Backup),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::Backup))),
+                    }
+                    SettingsNavRow {
+                        label: "Emergency key",
+                        description: if key_saved { "Saved" } else { "Not saved" },
+                        icon: setting_icon(SettingSubpage::Backup),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::Backup))),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/DeviceHandoffPanel.tsx`.
+#[component]
+fn DeviceHandoffPanel(
+    mut nav_child: Signal<Option<NavChild>>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut show_qr = use_signal(|| false);
+    let mut paste_code = use_signal(String::new);
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+
+    let pair_json = services.build_local_pair_qr_json();
+    let qr_svg = pair_json.as_ref().map(|j| render_qr_svg(j));
+    let peers = services.list_peer_devices();
+    let svc_link = Arc::clone(&services);
+
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll",
+            "data-aeon-scope": "device-handoff",
+            p { class: "settings-hint",
+                "Pair a second device so each install holds its own account or backs up your wallet over an encrypted BRC-108 / BRC-246 link."
+            }
+
+            section { class: "settings-group", "data-aeon-part": "pair-qr",
+                h3 { class: "settings-group-title", "This device's pairing code" }
+                if !*show_qr.read() {
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        onclick: move |_| show_qr.set(true),
+                        ScanQrIcon { size: 16 }
+                        button::Label { "Show my code" }
+                    }
+                } else if let (Some(ref json_str), Some(ref svg_str)) = (&pair_json, &qr_svg) {
+                    {
+                        let copy_json = json_str.clone();
+                        rsx! {
+                            div { style: "display: flex; flex-direction: column; gap: 10px; align-items: flex-start;",
+                                div {
+                                    class: "qr-frame",
+                                    style: "width: 180px; height: 180px; padding: 10px; background: #fff; border-radius: 12px;",
+                                    dangerous_inner_html: "{svg_str}",
+                                }
+                                div { class: "actions", style: "display: flex; gap: 8px;",
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost",
+                                        onclick: move |_| {
+                                            if copy_to_clipboard(&copy_json).is_ok() {
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Pairing code copied".into(),
+                                                    body: None,
+                                                    tone: "success",
+                                                }));
+                                            }
+                                        },
+                                        CopyIcon { size: 15 }
+                                        button::Label { "Copy code" }
+                                    }
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost",
+                                        onclick: move |_| show_qr.set(false),
+                                        button::Label { "Hide" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "link-peer",
+                h3 { class: "settings-group-title", "Link another device" }
+                div { style: "display: flex; gap: 8px; align-items: center;",
+                    input {
+                        class: "mono",
+                        style: "flex: 1;",
+                        placeholder: "Paste device pairing JSON code",
+                        value: "{paste_code}",
+                        oninput: move |e| paste_code.set(e.value()),
+                    }
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        disabled: paste_code.read().trim().is_empty(),
+                        onclick: move |_| {
+                            let raw = paste_code.read().clone();
+                            match svc_link.link_peer_from_json(&raw) {
+                                Ok(row) => {
+                                    paste_code.set(String::new());
+                                    let next = *rev.read() + 1;
+                                    rev.set(next);
+                                    toast.set(Some(ToastNotice {
+                                        title: "Device linked".into(),
+                                        body: Some(row.label),
+                                        tone: "success",
+                                    }));
+                                }
+                                Err(e) => toast.set(Some(ToastNotice {
+                                    title: "Link failed".into(),
+                                    body: Some(e),
+                                    tone: "error",
+                                })),
+                            }
+                        },
+                        button::Label { "Link device" }
+                    }
+                }
+            }
+
+            if !peers.is_empty() {
+                section { class: "settings-group", "data-aeon-part": "linked-devices",
+                    h3 { class: "settings-group-title", "Linked devices ({peers.len()})" }
+                    ul { class: "settings-list",
+                        for peer in peers.iter() {
+                            {
+                                let pid = peer.device_id.clone();
+                                let pid_rm = peer.device_id.clone();
+                                let plabel = peer.label.clone();
+                                let pkey = truncate_mid(&peer.identity_key, 8);
+                                let svc_rm = Arc::clone(&services);
+                                rsx! {
+                                    li { key: "{pid}",
+                                        list_row::Root { "data-aeon-layout": "control",
+                                            list_row::Label { "{plabel}" }
+                                            list_row::Description { "{pkey}" }
+                                            list_row::Trailing {
+                                                button::Root {
+                                                    variant: button::ButtonVariant::Ghost,
+                                                    class: "btn btn-ghost settings-action-btn",
+                                                    onclick: move |_| {
+                                                        svc_rm.remove_peer_device(&pid_rm);
+                                                        let next = *rev.read() + 1;
+                                                        rev.set(next);
+                                                    },
+                                                    button::Label { "Remove" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            section { class: "settings-group", "data-aeon-part": "related",
+                h3 { class: "settings-group-title", "Related" }
+                ul { class: "settings-list",
+                    SettingsNavRow {
+                        label: "Key slices",
+                        description: "Save 2-of-3 BRC-140 recovery slices",
+                        icon: setting_icon(SettingSubpage::Backup),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::Backup))),
+                    }
+                    SettingsNavRow {
+                        label: "History backup",
+                        description: "Download or restore an encrypted .brc39 bundle",
+                        icon: setting_icon(SettingSubpage::HistoryBackup),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::HistoryBackup))),
+                    }
+                }
+            }
+
+            SettingsFeatureAbout {
+                tags: &["BRC-108", "BRC-246", "BRC-249"],
+                copy: "Devices share a vault by holding separate accounts and exchanging signed release requests directly over the vault link.",
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/SigninEmailPanel.tsx`.
+#[component]
+fn SigninEmailPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut current_email = use_signal(|| services.signin_email());
+    let mut editing = use_signal(|| false);
+    let mut email_input = use_signal(|| services.signin_email().unwrap_or_default());
+
+    let cur = current_email.read().clone();
+    let is_editing = *editing.read() || cur.is_none();
+    let svc_save = Arc::clone(&services);
+    let svc_remove = Arc::clone(&services);
+
+    rsx! {
+        div {
+            class: "settings-detail settings-detail-compact settings-scroll",
+            "data-aeon-scope": "signin-email",
+            div { class: "confirm-password-copy",
+                h3 { class: "confirm-password-title", "Sign-in email" }
+                p { class: "confirm-password-lede",
+                    "Optional email hint used when requesting a sign-in approval from your other devices."
+                }
+            }
+
+            if let Some(ref saved) = cur {
+                if !is_editing {
+                    ul { class: "settings-list",
+                        li {
+                            list_row::Root { "data-aeon-layout": "control",
+                                list_row::Label { "{saved}" }
+                                list_row::Description { "Stored locally on this device" }
+                                list_row::Trailing {
+                                    div { class: "actions",
+                                        button::Root {
+                                            variant: button::ButtonVariant::Ghost,
+                                            class: "btn btn-ghost",
+                                            onclick: move |_| {
+                                                email_input.set(current_email.read().clone().unwrap_or_default());
+                                                editing.set(true);
+                                            },
+                                            button::Label { "Change" }
+                                        }
+                                        button::Root {
+                                            variant: button::ButtonVariant::Ghost,
+                                            class: "btn btn-ghost",
+                                            onclick: move |_| {
+                                                svc_remove.set_signin_email(None);
+                                                current_email.set(None);
+                                                email_input.set(String::new());
+                                                editing.set(false);
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Sign-in email removed".into(),
+                                                    body: None,
+                                                    tone: "info",
+                                                }));
+                                            },
+                                            button::Label { "Remove" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if is_editing {
+                form {
+                    class: "confirm-password-gate",
+                    onsubmit: move |e| {
+                        e.prevent_default();
+                        let val = email_input.read().trim().to_string();
+                        if !val.contains('@') {
+                            toast.set(Some(ToastNotice {
+                                title: "Invalid email".into(),
+                                body: Some("Enter a valid email address.".into()),
+                                tone: "error",
+                            }));
+                            return;
+                        }
+                        svc_save.set_signin_email(Some(&val));
+                        current_email.set(Some(val));
+                        editing.set(false);
+                        toast.set(Some(ToastNotice {
+                            title: "Sign-in email saved".into(),
+                            body: None,
+                            tone: "success",
+                        }));
+                    },
+                    label { class: "field",
+                        span { "Email address" }
+                        input {
+                            r#type: "email",
+                            placeholder: "you@example.com",
+                            value: "{email_input}",
+                            oninput: move |e| email_input.set(e.value()),
+                        }
+                    }
+                    div { class: "actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            button_type: "submit",
+                            class: "btn btn-primary",
+                            disabled: email_input.read().trim().is_empty(),
+                            button::Label { "Save email" }
+                        }
+                        if cur.is_some() {
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| editing.set(false),
+                                button::Label { "Cancel" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/ChartAppsPanel.tsx`, `src/components/AppReview.tsx`, and `src/components/ChartAppView.tsx`.
+#[component]
+fn ChartAppsPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
+    let apps = use_hook(load_builtin_chart_apps);
+    let mut selected_app = use_signal(|| Option::<BuiltinChartApp>::None);
+    let mut active_state = use_signal(String::new);
+    let mut reviewing = use_signal(|| false);
+
+    if let Some(app) = selected_app.read().clone() {
+        if *reviewing.read() {
+            let author_id = app.author_identity_key.clone();
+            let author_name = app.author_name.clone();
+            let verified = app.verified;
+            let effects = app.effects.clone();
+            let initial = app.initial_state.clone();
+            return rsx! {
+                div {
+                    class: "nav-child-panel",
+                    "data-aeon-scope": "chart-app-review",
+                    style: "display: flex; flex-direction: column; gap: 12px;",
+                    h3 { "{app.name}" }
+                    p { class: "settings-row-desc", "{app.summary}" }
+                    ul { class: "identity-list",
+                        li { class: "identity-field",
+                            span { class: "identity-field-label", "App ID" }
+                            strong { class: "mono", "{app.id} (v{app.version})" }
+                        }
+                        li { class: "identity-field",
+                            span { class: "identity-field-label", "Author" }
+                            strong { class: "mono", "{author_name}" }
+                        }
+                        if !author_id.is_empty() {
+                            li { class: "identity-field",
+                                span { class: "identity-field-label", "Signed by" }
+                                strong { class: "mono", "{truncate_mid(&author_id, 12)}" }
+                            }
+                        }
+                        li { class: "identity-field",
+                            span { class: "identity-field-label", "Signature" }
+                            strong { class: "mono", if verified { "Verified (BRC-100)" } else { "Unverified" } }
+                        }
+                    }
+                    if !effects.is_empty() {
+                        div {
+                            h4 { class: "settings-group-title", "Declared wallet effects" }
+                            ul { class: "identity-list",
+                                for (idx, (needs_approval, desc)) in effects.iter().enumerate() {
+                                    li { key: "{idx}", class: "identity-field",
+                                        span { class: "identity-field-label", "{desc}" }
+                                        strong { class: "mono", if *needs_approval { "Requires approval" } else { "Read-only" } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    div { class: "actions", style: "display: flex; gap: 8px;",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                active_state.set(initial.clone());
+                                reviewing.set(false);
+                            },
+                            button::Label { "Open app" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| selected_app.set(None),
+                            button::Label { "Back to apps" }
+                        }
+                    }
+                }
+            };
+        }
+
+        let cur_state = active_state.read().clone();
+        let state_obj = app
+            .raw_json
+            .get("states")
+            .and_then(|s| s.get(&cur_state));
+        let transitions: Vec<(String, String)> = state_obj
+            .and_then(|s| s.get("on"))
+            .and_then(|o| o.as_object())
+            .map(|map| {
+                map.iter()
+                    .filter_map(|(evt, target)| {
+                        let t = target
+                            .as_str()
+                            .or_else(|| target.get("target").and_then(|v| v.as_str()))?;
+                        Some((evt.clone(), t.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        return rsx! {
+            div {
+                class: "nav-child-panel",
+                "data-aeon-scope": "chart-app-view",
+                "data-aeon-state": "{cur_state}",
+                style: "display: flex; flex-direction: column; gap: 14px;",
+                div { style: "display: flex; justify-content: space-between; align-items: center;",
+                    div {
+                        h3 { "{app.name}" }
+                        p { class: "settings-row-desc mono", "State: {cur_state}" }
+                    }
+                    div { class: "actions", style: "display: flex; gap: 6px;",
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| reviewing.set(true),
+                            button::Label { "Review" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| selected_app.set(None),
+                            button::Label { "Close" }
+                        }
+                    }
+                }
+                p { class: "settings-row-desc", "{app.summary}" }
+                if !transitions.is_empty() {
+                    div { class: "actions", style: "display: flex; gap: 8px; flex-wrap: wrap;",
+                        for (evt, target) in transitions {
+                            {
+                                let next_target = target.clone();
+                                let evt_label = evt.clone();
+                                let evt_toast = evt.clone();
+                                rsx! {
+                                    button::Root {
+                                        key: "{evt_label}",
+                                        variant: button::ButtonVariant::Solid,
+                                        class: "btn btn-primary",
+                                        onclick: move |_| {
+                                            active_state.set(next_target.clone());
+                                            toast.set(Some(ToastNotice {
+                                                title: format!("Event: {evt_toast}"),
+                                                body: None,
+                                                tone: "info",
+                                            }));
+                                        },
+                                        button::Label { "{evt_label} → {target}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll",
+            "data-aeon-scope": "chart-apps",
+            p { class: "settings-hint",
+                "Chart apps are pure signed JSON statecharts. Every wallet action they request is declared up front and approved through your BRC-100 wallet."
+            }
+            section { class: "settings-group", "data-aeon-part": "builtin-apps",
+                h3 { class: "settings-group-title", "Verified apps ({apps.len()})" }
+                ul { class: "settings-list",
+                    for app in apps.iter() {
+                        {
+                            let app_open = app.clone();
+                            let app_review = app.clone();
+                            let initial = app.initial_state.clone();
+                            rsx! {
+                                li { key: "{app.id}",
+                                    list_row::Root { "data-aeon-layout": "control",
+                                        list_row::Leading {
+                                            span { class: "settings-row-icon", "data-tone": "default",
+                                                AppsIcon { size: 20 }
+                                            }
+                                        }
+                                        list_row::Label { "{app.name}" }
+                                        list_row::Description { "{app.summary}" }
+                                        list_row::Trailing {
+                                            div { class: "actions", style: "display: flex; gap: 6px;",
+                                                button::Root {
+                                                    variant: button::ButtonVariant::Ghost,
+                                                    class: "btn btn-ghost settings-action-btn",
+                                                    onclick: move |_| {
+                                                        reviewing.set(true);
+                                                        selected_app.set(Some(app_review.clone()));
+                                                    },
+                                                    button::Label { "Review" }
+                                                }
+                                                button::Root {
+                                                    variant: button::ButtonVariant::Solid,
+                                                    class: "btn btn-primary settings-action-btn",
+                                                    onclick: move |_| {
+                                                        active_state.set(initial.clone());
+                                                        reviewing.set(false);
+                                                        selected_app.set(Some(app_open.clone()));
+                                                    },
+                                                    button::Label { "Open" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

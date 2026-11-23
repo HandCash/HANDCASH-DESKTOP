@@ -4,6 +4,7 @@
 //! Backed strictly by audited, permissively licensed Rust crates (`k256`, `bip39`,
 //! `bs58`, `ring`, `ripemd`, `sha2`, `hmac`, `hkdf`, `aes-gcm`, `argon2`, `zeroize`).
 
+pub mod brc140;
 pub mod brc39;
 pub mod delta_seal;
 pub mod encoding;

@@ -263,7 +263,8 @@ function subscribeWhenClock(listener: () => void): () => void {
 
 /** "N minutes ago" for `at`; re-renders its caller only when the text changes. */
 function useWhenLabel(at: number): string {
-  return useSyncExternalStore(subscribeWhenClock, () => formatWhen(at));
+  const getSnapshot = () => formatWhen(at);
+  return useSyncExternalStore(subscribeWhenClock, getSnapshot, getSnapshot);
 }
 
 function WhenLabel({ at }: { at: number }) {

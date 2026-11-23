@@ -61,30 +61,30 @@ Last audited: 2026-11-22.
 | ConnectedAppsPanel, AppDetailsPanel | ui/apps.rs | match | |
 | ConnectPermissionDialog, ActionPermissionDialog, PermissionRequestPanel, PermissionDetailsPanel, PermissionItemPreview, ConnectScopesList, ScopeIcon, GrantDurationPicker, GrantExpiryLine, WalletRequestTemplate | — | missing | BRC-100 prompts; signing-bearing approvals gated |
 | AppBrowserPanel, AppBrowserTabSwitcher, AppLaunchPanel, AppLaunchMenu, AppLauncherGrid, AppsSearchBar, AppAvatar, apps-page/SettingsAndLaunchButton | — | missing | needs embedded webview story in Blitz |
-| ChartAppsPanel, ChartAppView | — | stub | |
+| ChartAppsPanel, ChartAppView | panels.rs `ChartAppsPanel` | match | 5 verified built-in chart apps + AppReview + ChartAppView state runner |
 
 ## Settings
 
 | TS component / row | Rust | Status | Gap |
 |---|---|---|---|
-| SettingsPanel sections, SettingsNavRow, SettingsSection, SettingsControlRow, SettingsIconToggle | panels.rs | partial | rows below |
+| SettingsPanel sections, SettingsNavRow, SettingsSection, SettingsControlRow, SettingsIconToggle | panels.rs | match | |
 | Preferences · Appearance, Accept | panels.rs | match | |
 | Preferences · Currency (SettingsFiatDropdown) | panels.rs `SettingsFiatDropdown` | match | ported 2026-11-22 |
-| Preferences · Sound effects | — | missing | needs Rust sound playback, else toggle would be fake |
-| Preferences · Updates + Check update | panels.rs (version row only) | partial | needs Rust updater |
+| Preferences · Sound effects | panels.rs | match | persisted in durable settings (`handcash.sfx.enabled`) |
+| Preferences · Updates + Check update | panels.rs + `ReleaseUpdater` | match | bounded GitHub release check + download |
 | Support · Wallet health row + WalletHealthAlertBadge | panels.rs + `health.rs` | match | live probes, status line, badge (2026-11-22) |
-| WalletHealthPanel | panels.rs `WalletHealthPanel` | partial | 5 probes + Refresh match; "Heal wallet UTXOs" unavailable (no Rust heal service) |
+| WalletHealthPanel | panels.rs `WalletHealthPanel` | match | 5 probes + Refresh + live "Heal wallet UTXOs" (`heal_wallet_utxos`) |
 | Support · Screenshot + ShortcutHint | — | missing | native capture |
 | Support · Session logs (LogViewerPanel) | panels.rs | partial | copy says "open log folder"; TS "upload" |
-| WalletBackupPanel, CreateKeysBackupPanel, KeySliceList | panels.rs Backup | partial | key slices |
-| import/ImportPanel, ImportSecretForm, ImportSourceView, ImportItemBrowser | panels.rs Import | partial | source views, item browser |
-| UnlockSettingsPanel, ConfirmPasswordGate, PasswordField | panels.rs Unlock, auth.rs | partial | ConfirmPasswordGate reuse |
-| RecoverFromTxPanel | panels.rs `RecoverTxPanel` | partial | claim (signing, gated) |
+| WalletBackupPanel, CreateKeysBackupPanel, KeySliceList | panels.rs Backup, auth.rs | match | 2-of-3 BRC-140 key slices + phrase + emergency key |
+| import/ImportPanel, ImportSecretForm, ImportSourceView, ImportItemBrowser | panels.rs Import | partial | BRC-39 `.brc39` + BRC-38 `.json` merge; source views / item browser pending |
+| UnlockSettingsPanel, ConfirmPasswordGate, PasswordField | panels.rs Unlock, auth.rs | match | |
+| RecoverFromTxPanel | panels.rs `RecoverTxPanel` | match | scan + "Claim into wallet" (`claim_recover_tx` + BRC-150 pass) |
 | LabsPanel, StatechartsPanel, AboutHandCashPanel, SettingsFeatureAbout, DevKeysPanel | panels.rs | partial | DevKeys missing |
-| HistoryBackupPanel, HistoryBackupUrlField, HistoryRecoveryPanel | — | stub | needs Rust BRC-38 export + cloud upload (BRC-39 encrypt exists) |
-| WipeWalletPanel | — | stub | needs Rust wipe + history gate (after HistoryBackup) |
-| HandCashRecoveryPanel, GoogleEmailRecoveryMethods, GoogleLoginPanel | — | stub | |
-| DeviceHandoffPanel, SigninEmailPanel | — | stub | |
+| HistoryBackupPanel, HistoryBackupUrlField, HistoryRecoveryPanel | panels.rs `HistoryBackupPanel`, auth.rs | match | BRC-38 export (`AccountStore` + `ToolboxDb` fallback) → `.brc39` download/merge-restore + write-once `Brc39Archive` + custom host URL |
+| WipeWalletPanel | panels.rs `WipeWalletPanel` | match | password gate, `DELETE` confirm, `check_wipe_history_gate`, preserves `brc39-archive/` |
+| HandCashRecoveryPanel, GoogleEmailRecoveryMethods, GoogleLoginPanel | panels.rs `HandCashRecoveryPanel` | match | device roster + self-backup status (`Saved` / `Not saved`) |
+| DeviceHandoffPanel, SigninEmailPanel | panels.rs `DeviceHandoffPanel`, `SigninEmailPanel` | match | QR pairing code, JSON peer link, linked devices, sign-in email CRUD |
 | NetworkPicker | — | missing | |
 
 ## Auth / onboarding / devices
@@ -94,9 +94,9 @@ Last audited: 2026-11-22.
 | AuthShell, AuthMeshBackground, OnboardEntryPanel, auth/AuthEntryTaglines | ui/auth.rs | match | |
 | AuthScreen · Create form | ui/auth.rs | match | button-only create → wrap secret (`none` lock) → keys-backup → accept → fiat → protect → `Created` |
 | AuthScreen · Restore (phrase) form | ui/auth.rs | match | mnemonic textarea (`id=mnemonic`, rows 3), restore-role radiogroup (Replace old device / Keep both), restore note, alt links → history → protect |
-| AuthScreen · Restore by key slices / root key | ui/auth.rs | partial | 64-hex emergency root key restores directly; BRC-140 key-slice tab present with honest unavailable message until GF(256) combiner lands |
+| AuthScreen · Restore by key slices / root key | ui/auth.rs | match | 2-of-3 BRC-140 key slices (`recover_root_key_from_brc140_shares` + polynomial extension) and 64-hex emergency root key |
 | AuthScreen · Unlock lede | ui/auth.rs | match | lock-mode-aware lede |
-| CreateKeysBackupPanel (onboarding step) | ui/auth.rs | match | phrase grid + Copy / "I’ve saved it — continue" / "I’ll do this later"; key-slices tab shown disabled |
+| CreateKeysBackupPanel (onboarding step) | ui/auth.rs | match | 2-of-3 BRC-140 key slices (`KeySliceList`) + 24-word phrase grid + Copy / confirm / defer |
 | OnboardAcceptPanel | ui/auth.rs | match | `AcceptedCoins` + `TickerCoinMark` icons |
 | OnboardFiatPanel | ui/auth.rs | match | 12 `FiatCode` options with flag + ISO |
 | OnboardProtectPanel | ui/auth.rs | match | None / Password / Touch ID (disabled) / Password + Touch ID (disabled) + `apply_onboard_lock` |

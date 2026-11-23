@@ -98,6 +98,7 @@ import { applyJoinedDeviceLock } from '../wallet/applyOnboardLock'
 
 type Props = {
   mode: 'onboarding' | 'locked'
+  initialMode?: FormMode
   error: string | null
   /** Toolbox has funds but no vault — create is hidden. */
   recoveryOnly?: boolean
@@ -145,6 +146,7 @@ async function readTextFile(file: File): Promise<string> {
 
 export function AuthScreen({
   mode,
+  initialMode,
   error,
   recoveryOnly = false,
   onCreated,
@@ -155,7 +157,7 @@ export function AuthScreen({
   const [snapshot, send, unlockActor] = useMachine(unlockMachine)
   const chain: Chain = 'main'
   const stateAttr = stateToAttr(snapshot.value)
-  const [formMode, setFormMode] = useState<FormMode>(() => initialFormMode({ mode, recoveryOnly }))
+  const [formMode, setFormMode] = useState<FormMode>(() => initialMode ?? initialFormMode({ mode, recoveryOnly }))
   const [mnemonicInput, setMnemonicInput] = useState('')
   const [sharesInput, setSharesInput] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')

@@ -363,7 +363,7 @@ pub fn EmptyState(
             "data-aeon-scope": "empty-state",
             role: "status",
             if let Some(ic) = icon {
-                div { class: "empty-state-icon", {ic} }
+                div { class: "empty-state-icon", "aria-hidden": "true", {ic} }
             }
             h3 { class: "empty-state-title", "{title}" }
             if let Some(b) = body {

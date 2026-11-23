@@ -1,0 +1,39 @@
+<div class="wallet-setup-config" data-aeon-scope="onboard-protect">
+  <h2>Protect this device</h2>
+  <p class="auth-lede">Choose how HandCash unlocks on this computer. You can change this later in Settings.</p>
+  <div aria-label="Device lock" class="wallet-setup-options" role="radiogroup">
+    <label class="wallet-setup-option is-selected">
+      <input checked="" name="onboard-lock" type="radio" value="none"/>
+      <span class="wallet-setup-option-body">
+        <strong>None</strong>
+        <span>Open this wallet on this computer without a prompt.</span>
+      </span>
+    </label>
+    <label class="wallet-setup-option">
+      <input name="onboard-lock" type="radio" value="password"/>
+      <span class="wallet-setup-option-body">
+        <strong>Password</strong>
+        <span>Unlock with a HandCash password you choose.</span>
+      </span>
+    </label>
+    <label class="wallet-setup-option is-disabled">
+      <input disabled="" name="onboard-lock" type="radio" value="device"/>
+      <span class="wallet-setup-option-body">
+        <strong>Touch ID</strong>
+        <span>Touch ID is not available on this device</span>
+      </span>
+    </label>
+    <label class="wallet-setup-option is-disabled">
+      <input disabled="" name="onboard-lock" type="radio" value="both"/>
+      <span class="wallet-setup-option-body">
+        <strong>Password + Touch ID</strong>
+        <span>Touch ID is not available on this device</span>
+      </span>
+    </label>
+  </div>
+  <div class="auth-actions" data-aeon-part="onboard-protect-actions" data-aeon-state="idle">
+    <button class="btn btn-primary auth-submit" data-aeon-part="root" data-aeon-scope="button" data-aeon-size="md" data-aeon-state="idle" data-aeon-variant="solid" type="button">
+      <span data-aeon-part="label" data-aeon-scope="button">Continue</span>
+    </button>
+  </div>
+</div>

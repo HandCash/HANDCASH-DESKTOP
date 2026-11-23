@@ -698,7 +698,10 @@ mod tests {
         let open = out.matches('{').count();
         let close = out.matches('}').count();
         assert_eq!(open, close);
-        assert!(!out.contains(":has("), "unrewritten :has() selector in SCOPED_SHEETS");
+        assert!(
+            !out.contains(":has("),
+            "unrewritten :has() selector in SCOPED_SHEETS"
+        );
         for line in out.lines() {
             let t = line.trim_start();
             assert!(

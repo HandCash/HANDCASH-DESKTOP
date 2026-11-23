@@ -13,8 +13,8 @@ use crate::machines::{
     ToastNotice,
 };
 use crate::state::{
-    copy_to_clipboard, format_bsv, format_fiat_value, AppServices, FxRates, SessionSummary,
-    WalletSnapshot,
+    copy_to_clipboard, format_bsv, format_coin, format_fiat_value, AppServices, FxRates,
+    SessionSummary, WalletSnapshot,
 };
 use crate::theme::AppearancePreference;
 use crate::ui::chrome::{DockSpec, DockTrigger, WalletActionBarFooter, WalletActionBarNav};
@@ -94,13 +94,18 @@ pub fn Dashboard(
                 format!("{} {}", bsv_num, cur_fiat.iso())
             }
         });
+    let held_units = snap.held_coins.units(selected_coin).unwrap_or(0);
     let active_coin_amount = if selected_coin == MarketCoin::Bsv {
         bsv_num.to_string()
     } else {
-        "0".to_string()
+        format_coin(held_units, 8)
     };
+    // There is no local price feed for other coins, so a non-zero holding gets no
+    // fiat figure (TS omits it) rather than a misleading $0.
     let active_fiat_label = if selected_coin == MarketCoin::Bsv {
         bsv_fiat_label.clone()
+    } else if held_units > 0 {
+        "—".to_string()
     } else {
         zero_fiat_label.clone()
     };
@@ -277,6 +282,7 @@ pub fn Dashboard(
                     side::WhatIsBsvPanel {
                         active_coin,
                         bsv_sats: snap.balance.displayed_sats,
+                        held: snap.held_coins,
                         fiat_code: cur_fiat,
                         fx_rates: fx.clone(),
                         toast,
@@ -605,6 +611,7 @@ pub fn Dashboard(
                                                     profile: profile.clone(),
                                                     snap: snap.clone(),
                                                     snapshot,
+                                                    app_machine,
                                                     nav_child,
                                                     toast,
                                                 }

@@ -1,15 +1,21 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
 //! Application services and wallet session state for `handcash-native`.
 
-use crate::machines::{CollectionView, FiatCode};
+use crate::machines::{CollectionView, FiatCode, MarketCoin};
 use crate::theme::{read_resolved_theme, AppearancePreference, ResolvedTheme};
 use base64::Engine as _;
-use handcash_bitcoin::ord::parse_ord_envelope;
-use handcash_bitcoin::signer::{address_to_locking_script, estimate_p2pkh_fee};
 use handcash_bitcoin::beef::Beef;
+use handcash_bitcoin::ord::parse_ord_envelope;
 use handcash_bitcoin::recover::{find_recoverable_outputs, parse_recover_txid, RecoverableOutput};
+use handcash_bitcoin::signer::{address_to_locking_script, estimate_p2pkh_fee};
 use handcash_bitcoin::tx::{Transaction, TxOutput};
 use handcash_engine::WalletEngine;
+use handcash_primitives::brc140::{
+    create_brc140_shares, extend_brc140_shares, recover_root_key_from_brc140_shares,
+    seal_brc140_issued_set, unseal_brc140_issued_set, Brc140IssuedSet, BRC140_DEFAULT_THRESHOLD,
+    BRC140_DEFAULT_TOTAL, BRC140_ISSUED_SET_KEY_PREFIX,
+};
+use handcash_primitives::encoding::{encode_hex, sha256};
 use handcash_primitives::keys::{KeyDeriver, MnemonicScheme};
 use handcash_primitives::vault::{
     change_vault_password, create_new_vault, generate_wrap_secret, restore_vault_from_mnemonic,
@@ -17,10 +23,14 @@ use handcash_primitives::vault::{
     VAULT_STORAGE_KEY,
 };
 use handcash_shell::brc100_server::Brc100Bridge;
+use handcash_shell::brc39_archive::{Brc39Archive, Brc39ArchiveMeta};
 use handcash_shell::durable::DurableStore;
 use handcash_shell::host_log::HostLog;
+use handcash_shell::release_update::ReleaseUpdater;
 use handcash_shell::{omarchy_theme, paths};
-use handcash_storage::{ActivityRow, BalanceBreakdown, ItemCardRow, ToolboxDbManager};
+use handcash_storage::{
+    export_brc38_from_toolbox, ActivityRow, BalanceBreakdown, ItemCardRow, ToolboxDbManager,
+};
 use qrcode::render::svg;
 use qrcode::QrCode;
 use serde_json::Value;
@@ -34,8 +44,14 @@ pub const DEVICE_LOCK_MODE_KEY: &str = "handcash.brc100.deviceLock.mode";
 pub const OPEN_UNLOCK_SECRET_KEY: &str = "handcash.brc100.vault.openSecret.v1";
 /// `storageRegistry.backupConfirmed` / `backupDeferred` / `backupFormatsSaved`.
 pub const BACKUP_CONFIRMED_KEY: &str = "handcash.brc100.backupConfirmed";
+pub const HISTORY_BACKUP_CONFIRMED_KEY: &str = "handcash.brc100.historyBackupConfirmed";
+pub const HISTORY_BACKUP_PREFS_KEY: &str = "handcash.brc100.historyBackup.v1";
 pub const BACKUP_DEFERRED_KEY: &str = "handcash.brc100.backupDeferred";
 pub const BACKUP_FORMATS_SAVED_KEY: &str = "handcash.backup.formatsSaved.v1";
+pub const DEVICE_ID_STORAGE_KEY: &str = "handcash.brc100.deviceId.v1";
+pub const DEVICE_WALLETS_STORAGE_KEY: &str = "handcash.brc100.deviceWallets.v1";
+pub const SIGNIN_EMAIL_STORAGE_KEY: &str = "handcash.brc100.signinEmail.v1";
+pub const SUGGESTED_HISTORY_BACKUP_BASE_URL: &str = "https://cloud.handcash.io";
 pub const APPEARANCE_STORAGE_KEY: &str = "handcash.appearance";
 pub const FIAT_CURRENCY_STORAGE_KEY: &str = "handcash.brc100.fiatCurrency";
 pub const BSV_USD_STORAGE_KEY: &str = "handcash.brc100.bsvUsd";
@@ -322,6 +338,7 @@ pub struct WalletSnapshot {
     pub items: Vec<ItemCardRow>,
     pub items_total: u64,
     pub item_art: HashMap<String, String>,
+    pub held_coins: HeldCoins,
     pub activity: Vec<ActivityRow>,
     pub activity_total: u64,
     pub bridge_online: bool,
@@ -329,6 +346,189 @@ pub struct WalletSnapshot {
     pub bridge_https_url: String,
     pub engine_phase: u64,
     pub engine_generation: u64,
+}
+
+/// Spendable base units (8 decimals) held per non-BSV coin, read from the shared TS
+/// coin-wallet durable records (`handcash.{coin}.v1:wallet:…`). Read-only display.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeldCoins {
+    pub ltc: u64,
+    pub bch: u64,
+    pub btc: u64,
+    pub doge: u64,
+}
+
+impl HeldCoins {
+    /// Units for a non-BSV coin; `None` for BSV and coins without a local wallet.
+    pub fn units(&self, coin: MarketCoin) -> Option<u64> {
+        match coin {
+            MarketCoin::Ltc => Some(self.ltc),
+            MarketCoin::Bch => Some(self.bch),
+            MarketCoin::Btc => Some(self.btc),
+            MarketCoin::Doge => Some(self.doge),
+            MarketCoin::Bsv | MarketCoin::ArcUsd => None,
+        }
+    }
+}
+
+/// Spendable units of a serialized TS `CoinState`, mirroring `coinWallet.ts` `balanceOf`:
+/// skip coins spent by any payment; count `received` coins only when proven, `claim`
+/// coins always, and change coins once their payment is `sent`.
+pub fn coin_spendable_units(raw: &str) -> u64 {
+    let Ok(state) = serde_json::from_str::<Value>(raw) else {
+        return 0;
+    };
+    let payments = state.get("payments").and_then(Value::as_object);
+    let spent: HashSet<&str> = payments
+        .into_iter()
+        .flat_map(|p| p.values())
+        .filter_map(|p| p.get("inputs").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    let Some(coins) = state.get("coins").and_then(Value::as_object) else {
+        return 0;
+    };
+    let mut total: u64 = 0;
+    for (key, coin) in coins {
+        if spent.contains(key.as_str()) {
+            continue;
+        }
+        let ready = match coin.get("source").and_then(Value::as_str) {
+            Some("received") => coin.get("proven").and_then(Value::as_bool) == Some(true),
+            Some("claim") => true,
+            _ => {
+                let txid = key.split(':').next().unwrap_or_default();
+                payments
+                    .and_then(|p| p.get(txid))
+                    .and_then(|p| p.get("status"))
+                    .and_then(Value::as_str)
+                    == Some("sent")
+            }
+        };
+        if !ready {
+            continue;
+        }
+        let units = match coin.get("litoshi") {
+            Some(Value::String(s)) => s.trim().parse::<u64>().unwrap_or(0),
+            Some(v) => v.as_u64().unwrap_or(0),
+            None => 0,
+        };
+        total = total.saturating_add(units);
+    }
+    total
+}
+
+/// Full decimal amount with trailing zeros trimmed (TS `formatCoin`).
+pub fn format_coin(units: u64, decimals: u32) -> String {
+    let scale = 10u64.pow(decimals);
+    let whole = units / scale;
+    let frac = format!("{:0width$}", units % scale, width = decimals as usize);
+    let frac = frac.trim_end_matches('0');
+    if frac.is_empty() {
+        whole.to_string()
+    } else {
+        format!("{whole}.{frac}")
+    }
+}
+
+/// Four significant digits, no grouping, trailing zeros dropped (TS `formatCoinShort`).
+pub fn format_coin_short(units: u64, decimals: u32) -> String {
+    if units == 0 {
+        return "0".to_string();
+    }
+    let value = units as f64 / 10f64.powi(decimals as i32);
+    let magnitude = value.abs().log10().floor() as i32;
+    let places = (3 - magnitude).max(0) as usize;
+    let s = format!("{value:.places$}");
+    if s.contains('.') {
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    } else {
+        s
+    }
+}
+
+/// Normalised key for the shared `handcash.itemArt.v1` cache (TS `originArtKey`):
+/// lowercase, with a trailing `.N` vout separator rewritten to `_N`.
+pub fn origin_art_key(origin: &str) -> String {
+    let o = origin.trim().to_ascii_lowercase();
+    if let Some((txid, vout)) = o.rsplit_once('.') {
+        if !vout.is_empty() && vout.bytes().all(|b| b.is_ascii_digit()) {
+            return format!("{txid}_{vout}");
+        }
+    }
+    o
+}
+
+/// Fill `item_art` (keyed by outpoint) for items missing art from the shared
+/// `handcash.itemArt.v1` cache (`{ originKey: { mime, b64 } }`). Only `image/*` entries.
+pub fn fill_item_art_from_cache(
+    raw: &str,
+    items: &[ItemCardRow],
+    item_art: &mut HashMap<String, String>,
+) {
+    let Ok(cache) = serde_json::from_str::<Value>(raw) else {
+        return;
+    };
+    let Some(cache) = cache.as_object() else {
+        return;
+    };
+    for item in items {
+        if item_art.contains_key(&item.outpoint) {
+            continue;
+        }
+        let hit = [&item.origin_outpoint, &item.outpoint]
+            .into_iter()
+            .filter(|o| !o.trim().is_empty())
+            .find_map(|o| cache.get(&origin_art_key(o)));
+        let Some(entry) = hit else {
+            continue;
+        };
+        let mime = entry
+            .get("mime")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let b64 = entry.get("b64").and_then(Value::as_str).unwrap_or_default();
+        if mime.to_ascii_lowercase().starts_with("image/") && !b64.is_empty() {
+            item_art.insert(item.outpoint.clone(), format!("data:{mime};base64,{b64}"));
+        }
+    }
+}
+
+/// Last resort for items whose bytes never reached this device (legacy-address sweeps):
+/// GorillaPool `/content/{origin}` (TS `contentUrlForOrigin`). Only for image or
+/// unknown mime so a non-image inscription keeps the placeholder tile.
+pub fn fill_item_art_remote(
+    chain: &str,
+    items: &[ItemCardRow],
+    item_art: &mut HashMap<String, String>,
+) {
+    let base = if chain == "main" {
+        "https://ordinals.gorillapool.io"
+    } else {
+        "https://testnet.ordinals.gorillapool.io"
+    };
+    for item in items {
+        if item_art.contains_key(&item.outpoint) {
+            continue;
+        }
+        let mime = item.mime.to_ascii_lowercase();
+        if !(mime.starts_with("image/") || mime.is_empty() || mime == "application/octet-stream") {
+            continue;
+        }
+        let origin = origin_art_key(&item.origin_outpoint);
+        let Some((txid, vout)) = origin.rsplit_once('_') else {
+            continue;
+        };
+        if txid.len() != 64
+            || !txid.bytes().all(|b| b.is_ascii_hexdigit())
+            || vout.is_empty()
+            || !vout.bytes().all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        item_art.insert(item.outpoint.clone(), format!("{base}/content/{origin}"));
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -371,6 +571,8 @@ pub struct AppServices {
     pub engine: Arc<WalletEngine>,
     pub toolbox: ToolboxDbManager,
     pub brc100: Arc<Brc100Bridge>,
+    pub brc39_archive: Brc39Archive,
+    pub updater: Arc<ReleaseUpdater>,
     pub host_log: Arc<HostLog>,
     pub session: Mutex<Option<ActiveSession>>,
     patch_tx: watch::Sender<u64>,
@@ -402,6 +604,16 @@ impl AppServices {
         let engine = WalletEngine::open(&user_data_dir, testnet).map_err(|e| e.to_string())?;
         let toolbox = ToolboxDbManager::new(&user_data_dir);
         let brc100 = Brc100Bridge::new(user_data_dir.clone(), Arc::clone(&host_log));
+        let brc39_archive = Brc39Archive::open(user_data_dir.join("brc39-archive"));
+        let _ = brc39_archive.sweep_temps();
+        let platform = if cfg!(target_os = "windows") {
+            "win32"
+        } else if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        };
+        let updater = ReleaseUpdater::new(Arc::clone(&durable), APP_VERSION, platform);
         let (patch_tx, _) = watch::channel(0u64);
         let (theme_tx, _) = watch::channel(read_resolved_theme());
         let initial_fx = durable
@@ -424,6 +636,8 @@ impl AppServices {
             engine,
             toolbox,
             brc100,
+            brc39_archive,
+            updater,
             host_log,
             session: Mutex::new(None),
             patch_tx,
@@ -454,11 +668,12 @@ impl AppServices {
     }
 
     /// Run upstream probes once (`refreshDependencyHealth`); logs summary + per-probe lines.
-    pub async fn refresh_dependency_health_async(self: Arc<Self>) -> crate::health::DependencyHealthSnapshot {
+    pub async fn refresh_dependency_health_async(
+        self: Arc<Self>,
+    ) -> crate::health::DependencyHealthSnapshot {
         let probes = crate::health::run_probes().await;
         let summary = crate::health::summarize(&probes);
-        self.host_log
-            .append("info", "dependency-health", &summary);
+        self.host_log.append("info", "dependency-health", &summary);
         for p in &probes {
             self.host_log.append(
                 "info",
@@ -1217,7 +1432,8 @@ impl AppServices {
             }
             "password" => {
                 let user_password = user_password.unwrap_or_default();
-                if let Some(err) = handcash_primitives::vault::password_policy_error(user_password) {
+                if let Some(err) = handcash_primitives::vault::password_policy_error(user_password)
+                {
                     return Err(err);
                 }
                 if user_password != wrap_password {
@@ -1624,7 +1840,12 @@ impl AppServices {
         let lock = address_to_locking_script(&summary.address).map_err(|e| e.to_string())?;
         let hydrated = self
             .engine
-            .hydrate_input_txids(&summary.account_id, summary.generation, vec![txid.clone()], true)
+            .hydrate_input_txids(
+                &summary.account_id,
+                summary.generation,
+                vec![txid.clone()],
+                true,
+            )
             .await
             .map_err(|e| e.to_string())?;
         let entry = hydrated
@@ -1767,6 +1988,33 @@ impl AppServices {
                 snap.items = items.items;
                 snap.items_total = items.total;
             }
+            // Item art for the engine-store path: resolve each card's art blob and keep only
+            // bounded `image/*` inscriptions, the same rules as the toolbox path above.
+            let mut item_art = HashMap::new();
+            for item in &snap.items {
+                let Some(ref hash) = item.art_blob_hash else {
+                    continue;
+                };
+                let Ok(Some(script_bytes)) = rt.block_on(self.engine.read_blob(
+                    &summary.account_id,
+                    summary.generation,
+                    hash.clone(),
+                )) else {
+                    continue;
+                };
+                let Some(ord) = parse_ord_envelope(&script_bytes) else {
+                    continue;
+                };
+                let ct = ord.content_type.to_ascii_lowercase();
+                if ct.starts_with("image/") && !ord.body.is_empty() && ord.body.len() <= 262_144 {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&ord.body);
+                    item_art.insert(
+                        item.outpoint.clone(),
+                        format!("data:{};base64,{b64}", ord.content_type),
+                    );
+                }
+            }
+            snap.item_art = item_art;
             if let Ok(activity) = rt.block_on(self.engine.read_activity_page(
                 &summary.account_id,
                 summary.generation,
@@ -1777,6 +2025,30 @@ impl AppServices {
                 snap.activity_total = activity.total;
             }
         }
+
+        // 2b. Fill missing collectable art from the shared TS art cache (keyed by origin).
+        if let Some(raw) = self.durable.get("handcash.itemArt.v1") {
+            fill_item_art_from_cache(&raw, &snap.items, &mut snap.item_art);
+        }
+        fill_item_art_remote(&summary.chain, &snap.items, &mut snap.item_art);
+
+        // 2c. Other-coin balances (read-only) from the shared TS coin-wallet records.
+        let coin_units = |coin: &str| {
+            let key = format!(
+                "handcash.{coin}.v1:wallet:{}:{}:{}",
+                summary.chain, summary.account_index, summary.identity_key
+            );
+            self.durable
+                .get(&key)
+                .map(|raw| coin_spendable_units(&raw))
+                .unwrap_or(0)
+        };
+        snap.held_coins = HeldCoins {
+            ltc: coin_units("ltc"),
+            bch: coin_units("bch"),
+            btc: coin_units("btc"),
+            doge: coin_units("doge"),
+        };
 
         // 3. Upgrade item authenticity strictly from local BRC-150 proven cache.
         self.apply_proven_collectables(&summary.chain, &mut snap.items);
@@ -2058,6 +2330,959 @@ impl AppServices {
         let fee = estimate_p2pkh_fee(1, &[out], 100);
         Ok((satoshis + fee, fee))
     }
+
+    // ── BRC-140 Key Slices & Backup Formats (`src/wallet/brc140Backup.ts`, `brc140IssuedSet.ts`) ──
+
+    pub fn saved_backup_formats(&self) -> HashSet<String> {
+        self.vault_local_key(BACKUP_FORMATS_SAVED_KEY)
+            .and_then(|k| self.durable.get(&k))
+            .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+            .map(|v| v.into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Load the sealed BRC-140 slice set for the unlocked master identity, or issue & seal a fresh 2-of-3 set.
+    pub fn load_or_issue_brc140_set(&self) -> Result<Brc140IssuedSet, String> {
+        let root_key = self
+            .current_root_key_hex()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let sk = handcash_primitives::keys::SecretKeyBytes::from_hex(&root_key)
+            .map_err(|e| e.to_string())?;
+        let identity_key = sk.public_key_hex().map_err(|e| e.to_string())?;
+        let storage_key = format!("{BRC140_ISSUED_SET_KEY_PREFIX}{identity_key}");
+        if let Some(raw) = self.durable.get(&storage_key) {
+            if let Some(existing) = unseal_brc140_issued_set(&root_key, &raw) {
+                return Ok(existing);
+            }
+        }
+        self.rotate_brc140_set()
+    }
+
+    /// Issue and seal a brand-new 2-of-3 BRC-140 slice set for the unlocked master identity.
+    pub fn rotate_brc140_set(&self) -> Result<Brc140IssuedSet, String> {
+        let root_key = self
+            .current_root_key_hex()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let split = create_brc140_shares(&root_key, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL)
+            .map_err(|e| e.to_string())?;
+        let issued = Brc140IssuedSet {
+            threshold: split.threshold,
+            total_shares: split.total_shares,
+            shares: split.shares,
+            integrity: split.integrity,
+            issued_at: now_ms(),
+            origin: "issued".into(),
+        };
+        let (storage_key, sealed_json) =
+            seal_brc140_issued_set(&root_key, &issued).map_err(|e| e.to_string())?;
+        let _ = self.durable.set(&storage_key, &sealed_json, false);
+        Ok(issued)
+    }
+
+    /// Restore a wallet from BRC-140 key slices, extend the used slices back to a 3-slice set on the
+    /// same polynomial, seal the restored set, and mark `"split"` backup confirmed.
+    pub fn restore_vault_brc140_shares_onboard(
+        &self,
+        handle: &str,
+        raw_shares_text: &str,
+        chain: &str,
+    ) -> Result<(SessionSummary, String), String> {
+        let lines: Vec<String> = raw_shares_text
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        let recovered =
+            recover_root_key_from_brc140_shares(&lines).map_err(|e| e.message)?;
+        let (sum, wrap_str) =
+            self.restore_vault_root_key_onboard(handle, &recovered.root_key_hex, chain)?;
+        let _ = self.mark_keys_backup_confirmed("split");
+        if let Ok(extended) = extend_brc140_shares(
+            &recovered.root_key_hex,
+            &recovered.shares_used,
+            BRC140_DEFAULT_TOTAL,
+        ) {
+            let issued = Brc140IssuedSet {
+                threshold: extended.threshold,
+                total_shares: extended.total_shares,
+                shares: extended.shares,
+                integrity: extended.integrity,
+                issued_at: now_ms(),
+                origin: "restored".into(),
+            };
+            if let Ok((storage_key, sealed_json)) =
+                seal_brc140_issued_set(&recovered.root_key_hex, &issued)
+            {
+                let _ = self.durable.set(&storage_key, &sealed_json, false);
+            }
+        }
+        Ok((sum, wrap_str))
+    }
+
+    // ── BRC-38 / BRC-39 History Backup & On-Device Archive (`src/wallet/historyBackup.ts`) ──
+
+    pub fn account_local_key(&self, base: &str) -> Option<String> {
+        let s = self.current_session_summary()?;
+        Some(format!(
+            "{base}:wallet:{}:{}:{}",
+            s.chain, s.account_index, s.identity_key
+        ))
+    }
+
+    pub fn is_history_backup_confirmed(&self) -> bool {
+        if self
+            .vault_local_key(HISTORY_BACKUP_CONFIRMED_KEY)
+            .and_then(|k| self.durable.get(&k))
+            .as_deref()
+            == Some("1")
+        {
+            return true;
+        }
+        if let Some(acc_key) = self.account_local_key(HISTORY_BACKUP_CONFIRMED_KEY) {
+            if self.durable.get(&acc_key).as_deref() == Some("1") {
+                if let Some(vk) = self.vault_local_key(HISTORY_BACKUP_CONFIRMED_KEY) {
+                    let _ = self.durable.set(&vk, "1", false);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn mark_history_backup_confirmed(&self) -> bool {
+        let Some(vk) = self.vault_local_key(HISTORY_BACKUP_CONFIRMED_KEY) else {
+            return false;
+        };
+        self.durable.set(&vk, "1", false)
+    }
+
+    pub fn load_history_backup_prefs(&self) -> HistoryBackupPrefs {
+        let own_raw = self
+            .account_local_key(HISTORY_BACKUP_PREFS_KEY)
+            .and_then(|k| self.durable.get(&k))
+            .or_else(|| self.durable.get(HISTORY_BACKUP_PREFS_KEY));
+        let vault_raw = self
+            .vault_local_key(HISTORY_BACKUP_PREFS_KEY)
+            .and_then(|k| self.durable.get(&k));
+        HistoryBackupPrefs::from_stored(own_raw.as_deref(), vault_raw.as_deref())
+    }
+
+    pub fn save_history_backup_prefs(&self, prefs: &HistoryBackupPrefs) {
+        let json = prefs.to_json_string();
+        if let Some(vk) = self.vault_local_key(HISTORY_BACKUP_PREFS_KEY) {
+            let _ = self.durable.set(&vk, &json, false);
+        }
+        if let Some(ak) = self.account_local_key(HISTORY_BACKUP_PREFS_KEY) {
+            let _ = self.durable.set(&ak, &json, false);
+        } else {
+            let _ = self.durable.set(HISTORY_BACKUP_PREFS_KEY, &json, false);
+        }
+    }
+
+    /// Export live BRC-38 JSON for the active account (prefers `AccountStore`, falls back to `ToolboxDb`
+    /// if the engine store has no outputs yet).
+    pub fn export_live_brc38_json(&self) -> Result<String, String> {
+        let summary = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let rt = self.engine.runtime_handle();
+        let engine_json = rt
+            .block_on(
+                self.engine
+                    .export_brc38(&summary.account_id, summary.generation),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let engine_has_outputs = serde_json::from_str::<Value>(&engine_json)
+            .ok()
+            .and_then(|v| {
+                v.get("tables")
+                    .and_then(|t| t.get("outputs"))
+                    .and_then(Value::as_array)
+                    .map(|a| !a.is_empty())
+            })
+            .unwrap_or(false);
+
+        if !engine_has_outputs {
+            if let Ok(Some(tb)) = self.toolbox.open_if_exists(&summary.toolbox_db_name) {
+                if let Ok(tb_json) = export_brc38_from_toolbox(&tb, now_ms()) {
+                    // Non-destructively mirror into AccountStore as well.
+                    let _ = rt.block_on(self.engine.import_brc38(
+                        &summary.account_id,
+                        summary.generation,
+                        tb_json.clone(),
+                    ));
+                    return Ok(tb_json);
+                }
+            }
+        }
+        Ok(engine_json)
+    }
+
+    /// Create an encrypted `.brc39` backup sealed to `history_crypto_secret(rootKeyHex)` and archive
+    /// a write-once snapshot in `<userData>/brc39-archive/{identityKey}/`.
+    pub fn create_brc39_backup_bytes(&self) -> Result<Vec<u8>, String> {
+        let summary = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let root_key = self
+            .current_root_key_hex()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let secret = history_crypto_secret(&root_key)?;
+        let json = self.export_live_brc38_json()?;
+        let bytes = self
+            .engine
+            .runtime_handle()
+            .block_on(self.engine.encrypt_brc39_async(json, secret))
+            .map_err(|e| e.to_string())?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let _ = self
+            .brc39_archive
+            .write_snapshot(&summary.identity_key, &b64, Some(now_ms() as u64));
+        Ok(bytes)
+    }
+
+    /// Decrypt and merge a `.brc39` (or plain `.json` BRC-38) backup into the active account's SQLite WAL store.
+    /// Merge-only: never drops existing outputs or downgrades proven BRC-150 items.
+    pub fn restore_brc39_backup_bytes(
+        &self,
+        bytes: &[u8],
+        legacy_password: Option<&str>,
+    ) -> Result<String, String> {
+        if bytes.is_empty() {
+            return Err("Backup file is empty.".into());
+        }
+        // Accept raw BRC-38 JSON if the user selected a `.json` file.
+        let trimmed_str = std::str::from_utf8(bytes).ok().map(str::trim);
+        if let Some(s) = trimmed_str.filter(|s| s.starts_with('{')) {
+            return self.import_brc38_json(s.to_string());
+        }
+        if bytes.len() < 64 {
+            return Err("File is too small to be a BRC-39 backup.".into());
+        }
+        let root_key = self
+            .current_root_key_hex()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let secret = history_crypto_secret(&root_key)?;
+        let rt = self.engine.runtime_handle();
+        let decrypted_json = match rt.block_on(
+            self.engine
+                .decrypt_brc39_async(bytes.to_vec(), secret),
+        ) {
+            Ok(j) => j,
+            Err(root_err) => {
+                let Some(pw) = legacy_password.map(str::trim).filter(|s| !s.is_empty()) else {
+                    return Err(root_err.to_string());
+                };
+                rt.block_on(
+                    self.engine
+                        .decrypt_brc39_async(bytes.to_vec(), pw.to_string()),
+                )
+                .map_err(|_| root_err.to_string())?
+            }
+        };
+        self.import_brc38_json(decrypted_json)
+    }
+
+    pub fn list_local_brc39_archive(&self) -> Vec<Brc39ArchiveMeta> {
+        let Some(summary) = self.current_session_summary() else {
+            return Vec::new();
+        };
+        self.brc39_archive.list_identity(&summary.identity_key)
+    }
+
+    pub fn restore_local_brc39_snapshot(
+        &self,
+        snapshot_id: &str,
+        legacy_password: Option<&str>,
+    ) -> Result<String, String> {
+        let summary = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let val = self
+            .brc39_archive
+            .read_snapshot(&summary.identity_key, snapshot_id)?;
+        let b64 = val
+            .get("bytesBase64")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Snapshot payload missing.".to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .map_err(|e| e.to_string())?;
+        self.restore_brc39_backup_bytes(&bytes, legacy_password)
+    }
+
+    // ── Recover From Transaction — Claim / Ingest (`src/wallet/recoverFromTx.ts`) ──
+
+    /// Scan `raw_txid` and ingest its recoverable 1-sat outputs paying this wallet into `AccountStore`,
+    /// then run a BRC-150 pass so proven ordinal lineage upgrades immediately.
+    pub async fn claim_recover_tx(&self, raw_txid: &str) -> Result<String, String> {
+        let scan = self.scan_recover_tx(raw_txid).await?;
+        if scan.outputs.is_empty() {
+            return Err("No 1-sat outputs in this transaction pay this wallet's address.".into());
+        }
+        let summary = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        let hydrated = self
+            .engine
+            .hydrate_input_txids(
+                &summary.account_id,
+                summary.generation,
+                vec![scan.txid.clone()],
+                true,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        let entry = hydrated
+            .found
+            .get(&scan.txid)
+            .ok_or_else(|| "Transaction bytes missing after scan.".to_string())?;
+        let raw_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&entry.bytes_base64)
+            .map_err(|e| e.to_string())?;
+        let tx = if entry.kind == "beef" {
+            Beef::from_bytes(&raw_bytes)
+                .map_err(|e| e.to_string())?
+                .find_tx(&scan.txid)
+                .cloned()
+                .ok_or_else(|| "Transaction missing from its BEEF.".to_string())?
+        } else {
+            Transaction::from_bytes(&raw_bytes).map_err(|e| e.to_string())?
+        };
+
+        let now = now_ms();
+        let mut outs = Vec::with_capacity(scan.outputs.len());
+        for (i, rec_out) in scan.outputs.iter().enumerate() {
+            let tx_out = tx
+                .outputs
+                .get(rec_out.vout as usize)
+                .ok_or_else(|| "Output index out of bounds.".to_string())?;
+            let script_b64 =
+                base64::engine::general_purpose::STANDARD.encode(&tx_out.locking_script);
+            let mut ci = serde_json::Map::new();
+            ci.insert("origin".into(), Value::from(rec_out.outpoint.clone()));
+            if let Some(ord) = parse_ord_envelope(&tx_out.locking_script) {
+                if !ord.content_type.is_empty() {
+                    ci.insert("contentType".into(), Value::from(ord.content_type));
+                }
+                if let Some(name) = ord
+                    .map_fields
+                    .get("name")
+                    .or_else(|| ord.map_fields.get("subTypeData.name"))
+                    .filter(|s| !s.trim().is_empty())
+                {
+                    ci.insert("name".into(), Value::from(name.trim()));
+                }
+            }
+            outs.push(serde_json::json!({
+                "outputId": now + (i as i64) + 1,
+                "transactionId": 1,
+                "txid": scan.txid,
+                "vout": rec_out.vout,
+                "satoshis": tx_out.satoshis,
+                "basketId": 2,
+                "spendable": true,
+                "change": false,
+                "lockingScript": script_b64,
+                "customInstructions": Value::Object(ci).to_string(),
+            }));
+        }
+
+        let mut tx_obj = serde_json::Map::new();
+        tx_obj.insert("transactionId".into(), Value::from(1));
+        tx_obj.insert("txid".into(), Value::from(scan.txid.clone()));
+        tx_obj.insert("status".into(), Value::from("completed"));
+        tx_obj.insert("isOutgoing".into(), Value::from(false));
+        tx_obj.insert("satoshis".into(), Value::from(scan.outputs.len() as i64));
+        tx_obj.insert(
+            "description".into(),
+            Value::from(format!("Recovered {} item(s)", scan.outputs.len())),
+        );
+        tx_obj.insert("created_at".into(), Value::from(now.to_string()));
+        if entry.kind == "beef" {
+            tx_obj.insert("inputBEEF".into(), Value::from(entry.bytes_base64.clone()));
+        } else {
+            tx_obj.insert("rawTx".into(), Value::from(entry.bytes_base64.clone()));
+        }
+
+        let doc = serde_json::json!({
+            "brc": 38,
+            "schema": "brc-38",
+            "tables": {
+                "outputBaskets": [
+                    { "basketId": 1, "name": "default" },
+                    { "basketId": 2, "name": "1sat" }
+                ],
+                "provenTxs": [],
+                "provenTxReqs": [],
+                "transactions": [Value::Object(tx_obj)],
+                "outputs": outs,
+            }
+        });
+        let stats = self
+            .engine
+            .import_brc38(&summary.account_id, summary.generation, doc.to_string())
+            .await
+            .map_err(|e| e.to_string())?;
+        let proven = self
+            .engine
+            .run_brc150_pass(&summary.account_id, summary.generation, 10)
+            .await
+            .unwrap_or(0);
+        Ok(format!(
+            "Claimed {} item output(s) from {} ({} BRC-150 proven).",
+            stats.items.max(scan.outputs.len()),
+            truncate_mid(&scan.txid, 8),
+            proven
+        ))
+    }
+
+    // ── Wallet Health — UTXO Heal (`src/wallet/utxoHeal.ts`) ──
+
+    pub fn heal_wallet_utxos(&self) -> Result<String, String> {
+        let summary = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock the wallet first.".to_string())?;
+        // 1. Ensure any ToolboxDb UTXOs are mirrored into AccountStore.
+        let _ = self.export_live_brc38_json();
+        // 2. Archive a fresh local BRC-39 snapshot before healing.
+        let _ = self.create_brc39_backup_bytes();
+        // 3. Run chain header sync, proof poll, and BRC-150 verification pass.
+        let sync_msg = self.sync_now()?;
+        let snap = self.read_snapshot();
+        self.host_log.append(
+            "info",
+            "utxo-heal",
+            &format!(
+                "healed account #{}: {} spendable UTXOs ({} sats), {} items ({sync_msg})",
+                summary.account_index,
+                snap.balance.spendable_utxo_count,
+                snap.balance.spendable_sats,
+                snap.balance.item_count
+            ),
+        );
+        Ok(format!(
+            "{} spendable UTXO(s) ({} sats) · {} item(s) verified",
+            snap.balance.spendable_utxo_count,
+            snap.balance.spendable_sats,
+            snap.balance.item_count
+        ))
+    }
+
+    // ── Wipe Wallet & History Gate (`src/wallet/wipeWallet.ts`, `wipeHistoryGate.ts`) ──
+
+    /// Check whether local wallet history is safely backed up before wiping.
+    /// Returns `Ok(gate_kind)` when safe to proceed, or `Err(refusal_message)` when blocked.
+    pub fn check_wipe_history_gate(&self) -> Result<&'static str, String> {
+        let snap = self.read_snapshot();
+        let local_empty = snap.balance.spendable_sats == 0
+            && snap.balance.item_count == 0
+            && snap.activity.is_empty();
+        if local_empty {
+            return Ok("nothing-to-lose");
+        }
+        // Check if on-device BRC-39 archive or confirmed history backup exists.
+        if self.is_history_backup_confirmed() || !self.list_local_brc39_archive().is_empty() {
+            return Ok("synced");
+        }
+        // Attempt an automatic on-device BRC-39 archive snapshot right now so no UTXOs are lost.
+        match self.create_brc39_backup_bytes() {
+            Ok(_) => Ok("synced"),
+            Err(e) => Err(format!("History didn’t sync: {e}")),
+        }
+    }
+
+    /// Factory-reset local wallet: verifies unlock factor, locks session & engine, removes
+    /// `engine-accounts/` and `toolbox-sqlite/` (preserving `brc39-archive/`), and wipes durable keys.
+    pub fn wipe_all_wallet_data(&self, password: Option<&str>) -> Result<(), String> {
+        let open_secret = if self.is_no_device_lock() {
+            self.open_unlock_secret()
+        } else {
+            None
+        };
+        if let Some(pw) = password.filter(|s| !s.is_empty()) {
+            if pw.len() < 8 {
+                return Err("Password must be at least 8 characters".into());
+            }
+            self.verify_password(pw)?;
+        } else if let Some(ref open) = open_secret {
+            self.verify_password(open)?;
+        } else {
+            return Err("Confirm your HandCash password before wiping this device.".into());
+        }
+
+        // Write a final on-device BRC-39 archive snapshot best-effort before wiping (archive is never wiped).
+        let _ = self.create_brc39_backup_bytes();
+
+        self.lock();
+        let _ = std::fs::remove_dir_all(self.user_data_dir.join("engine-accounts"));
+        let _ = std::fs::remove_dir_all(self.user_data_dir.join("toolbox-sqlite"));
+        self.durable.wipe_all();
+        self.host_log
+            .append("info", "wipe", "wiped local wallet data (brc39-archive preserved)");
+        Ok(())
+    }
+
+    // ── Multi-Device Roster, Device Backup & Sign-in Email (`deviceWallets.ts`, `deviceSignin`) ──
+
+    pub fn get_or_create_device_id(&self) -> String {
+        if let Some(existing) = self
+            .durable
+            .get(DEVICE_ID_STORAGE_KEY)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
+            return existing;
+        }
+        let id = format!("dev-{:x}", now_ms());
+        let _ = self.durable.set(DEVICE_ID_STORAGE_KEY, &id, false);
+        id
+    }
+
+    pub fn local_device_label() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "This Mac"
+        } else if cfg!(target_os = "windows") {
+            "This Windows PC"
+        } else {
+            "This Linux PC"
+        }
+    }
+
+    pub fn list_peer_devices(&self) -> Vec<DeviceWalletRow> {
+        let Some(raw) = self.durable.get(DEVICE_WALLETS_STORAGE_KEY) else {
+            return Vec::new();
+        };
+        let Ok(list) = serde_json::from_str::<Vec<DeviceWalletRow>>(&raw) else {
+            return Vec::new();
+        };
+        let local_id = self.get_or_create_device_id();
+        list.into_iter()
+            .filter(|d| !d.is_local && d.device_id != local_id)
+            .collect()
+    }
+
+    pub fn build_local_pair_qr_json(&self) -> Option<String> {
+        let sum = self.current_session_summary()?;
+        let device_id = self.get_or_create_device_id();
+        let platform = if cfg!(target_os = "macos") {
+            "darwin"
+        } else if cfg!(target_os = "windows") {
+            "win32"
+        } else {
+            "linux"
+        };
+        let label = match platform {
+            "darwin" => "Mac",
+            "win32" => "Windows PC",
+            _ => "Linux PC",
+        };
+        let bridge = self.brc100.status_snapshot();
+        let peer_base_url = bridge
+            .get("devicePeerLanUrls")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(Value::as_str);
+        Some(
+            serde_json::json!({
+                "v": 3,
+                "identityKey": sum.identity_key,
+                "address": sum.address,
+                "deviceId": device_id,
+                "label": label,
+                "platform": platform,
+                "peerBaseUrl": peer_base_url,
+            })
+            .to_string(),
+        )
+    }
+
+    pub fn link_peer_from_json(&self, raw: &str) -> Result<DeviceWalletRow, String> {
+        let sum = self
+            .current_session_summary()
+            .ok_or_else(|| "Unlock this wallet first.".to_string())?;
+        let v: Value = serde_json::from_str(raw.trim())
+            .map_err(|_| "Pair code must be a HandCash device QR JSON.".to_string())?;
+        let ver = v.get("v").and_then(Value::as_u64).unwrap_or(0);
+        if !matches!(ver, 1..=3) {
+            return Err("Unsupported pair payload version.".into());
+        }
+        let ik = v
+            .get("identityKey")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| s.len() == 66 && (s.starts_with("02") || s.starts_with("03")))
+            .ok_or_else(|| "Pair payload identity key is invalid.".to_string())?
+            .to_string();
+        let device_id = v
+            .get("deviceId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "Pair payload missing deviceId.".to_string())?
+            .to_string();
+        if device_id == self.get_or_create_device_id() {
+            return Err("That is this device.".into());
+        }
+        let label = v
+            .get("label")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Device")
+            .trim_start_matches("This ")
+            .to_string();
+        let platform = v
+            .get("platform")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let address = v
+            .get("address")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let same_identity = ik.eq_ignore_ascii_case(&sum.identity_key);
+        let row = DeviceWalletRow {
+            device_id: device_id.clone(),
+            label,
+            platform,
+            peer_base_url: v
+                .get("peerBaseUrl")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            is_local: false,
+            identity_key: ik,
+            address,
+            last_seen_at: Some(now_ms()),
+            online: false,
+            linked_at: Some(now_ms()),
+            link_mode: if same_identity {
+                "linked".into()
+            } else {
+                "backup-only".into()
+            },
+        };
+        let mut peers = self.list_peer_devices();
+        peers.retain(|p| p.device_id != device_id);
+        peers.push(row.clone());
+        if let Ok(json) = serde_json::to_string(&peers) {
+            let _ = self.durable.set(DEVICE_WALLETS_STORAGE_KEY, &json, false);
+        }
+        Ok(row)
+    }
+
+    pub fn remove_peer_device(&self, device_id: &str) {
+        let mut peers = self.list_peer_devices();
+        peers.retain(|p| p.device_id != device_id);
+        if let Ok(json) = serde_json::to_string(&peers) {
+            let _ = self.durable.set(DEVICE_WALLETS_STORAGE_KEY, &json, false);
+        }
+    }
+
+    pub fn signin_email(&self) -> Option<String> {
+        let key = self
+            .vault_local_key(SIGNIN_EMAIL_STORAGE_KEY)
+            .unwrap_or_else(|| SIGNIN_EMAIL_STORAGE_KEY.to_string());
+        self.durable
+            .get(&key)
+            .or_else(|| self.durable.get(SIGNIN_EMAIL_STORAGE_KEY))
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    pub fn set_signin_email(&self, email: Option<&str>) {
+        let key = self
+            .vault_local_key(SIGNIN_EMAIL_STORAGE_KEY)
+            .unwrap_or_else(|| SIGNIN_EMAIL_STORAGE_KEY.to_string());
+        match email.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(e) => {
+                let _ = self.durable.set(&key, e, false);
+            }
+            None => {
+                self.durable.remove(&key);
+                self.durable.remove(SIGNIN_EMAIL_STORAGE_KEY);
+            }
+        }
+    }
+}
+
+/// 1:1 port of `historyCryptoSecret` in `src/wallet/historyCryptoSecret.ts`.
+pub fn history_crypto_secret(root_key_hex: &str) -> Result<String, String> {
+    let clean = root_key_hex
+        .trim()
+        .strip_prefix("0x")
+        .or_else(|| root_key_hex.trim().strip_prefix("0X"))
+        .unwrap_or(root_key_hex.trim())
+        .to_ascii_lowercase();
+    if clean.len() != 64 || !clean.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Root key must be 64 hex characters".into());
+    }
+    let material = format!("handcash.brc39.v2|{clean}");
+    Ok(encode_hex(&sha256(material.as_bytes())))
+}
+
+/// 1:1 port of `HistoryBackupPrefs` in `src/wallet/historyBackupPrefs.ts`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryBackupPrefs {
+    pub base_url: String,
+    pub last_uploaded_at: Option<i64>,
+    pub last_error: Option<String>,
+    pub high_water_spendable_sats: Option<u64>,
+    pub high_water_action_count: Option<u64>,
+}
+
+impl HistoryBackupPrefs {
+    pub fn from_stored(own_raw: Option<&str>, vault_raw: Option<&str>) -> Self {
+        let own = own_raw.and_then(|r| serde_json::from_str::<Value>(r).ok());
+        let vault = vault_raw.and_then(|r| serde_json::from_str::<Value>(r).ok());
+        let extract_url = |v: Option<&Value>| -> Option<String> {
+            let v = v?;
+            v.get("baseUrl")
+                .or_else(|| v.get("customBaseUrl"))
+                .and_then(Value::as_str)
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+        };
+        let base_url = extract_url(vault.as_ref())
+            .or_else(|| extract_url(own.as_ref()))
+            .unwrap_or_default();
+        let Some(parsed) = own.or(vault) else {
+            return Self {
+                base_url,
+                ..Default::default()
+            };
+        };
+        Self {
+            base_url,
+            last_uploaded_at: parsed.get("lastUploadedAt").and_then(Value::as_i64),
+            last_error: parsed
+                .get("lastError")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            high_water_spendable_sats: parsed
+                .get("highWaterSpendableSats")
+                .and_then(Value::as_u64),
+            high_water_action_count: parsed
+                .get("highWaterActionCount")
+                .and_then(Value::as_u64),
+        }
+    }
+
+    pub fn effective_base_url(&self) -> &str {
+        let trimmed = self.base_url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            SUGGESTED_HISTORY_BACKUP_BASE_URL
+        } else {
+            trimmed
+        }
+    }
+
+    pub fn is_custom_host(&self) -> bool {
+        let trimmed = self.base_url.trim().trim_end_matches('/');
+        !trimmed.is_empty() && trimmed != SUGGESTED_HISTORY_BACKUP_BASE_URL
+    }
+
+    pub fn to_json_string(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".into())
+    }
+}
+
+pub const MIN_REMOTE_BYTES_TO_PROTECT: u64 = 256;
+pub const SPENDABLE_COMPARE_MARGIN_SATS: u64 = 2_000;
+
+/// 1:1 port of `decideHistoryPush` in `src/wallet/historyEmptyGuard.ts`.
+#[allow(clippy::too_many_arguments)]
+pub fn decide_history_push(
+    remote_exists: bool,
+    remote_bytes: Option<u64>,
+    local_looks_empty: bool,
+    local_spendable_sats: u64,
+    local_action_count: u64,
+    remote_spendable_sats: Option<u64>,
+    remote_action_count: Option<u64>,
+    high_water_spendable_sats: Option<u64>,
+    high_water_action_count: Option<u64>,
+    force: bool,
+) -> Result<(), String> {
+    if force {
+        return Ok(());
+    }
+    let remote_protected =
+        remote_exists && remote_bytes.map(|b| b >= MIN_REMOTE_BYTES_TO_PROTECT).unwrap_or(true);
+    if local_looks_empty && remote_protected {
+        return Err("refuse empty localState overwrite of remote BRC-39".into());
+    }
+    if remote_protected && (remote_spendable_sats.is_none() || remote_action_count.is_none()) {
+        return Err(
+            "refuse overwrite of remote BRC-39 with incomplete richness metadata".into(),
+        );
+    }
+    let check_against = |base_sats: Option<u64>,
+                         base_actions: Option<u64>,
+                         label: &str|
+     -> Result<(), String> {
+        let Some(rich) = base_sats else {
+            return Ok(());
+        };
+        if local_spendable_sats.saturating_add(SPENDABLE_COMPARE_MARGIN_SATS) >= rich {
+            return Ok(());
+        }
+        if let Some(prior_act) = base_actions {
+            if local_action_count > prior_act {
+                return Ok(());
+            }
+        }
+        let act_str = base_actions
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "?".into());
+        Err(format!(
+            "refuse thin local overwrite of {label} (local {local_spendable_sats} sats / {local_action_count} actions vs {rich} sats / {act_str} actions)"
+        ))
+    };
+    check_against(remote_spendable_sats, remote_action_count, "richer remote BRC-39")?;
+    check_against(
+        high_water_spendable_sats,
+        high_water_action_count,
+        "spendable high-water",
+    )?;
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceWalletRow {
+    pub device_id: String,
+    pub label: String,
+    pub platform: String,
+    pub peer_base_url: Option<String>,
+    pub is_local: bool,
+    pub identity_key: String,
+    pub address: Option<String>,
+    pub last_seen_at: Option<i64>,
+    pub online: bool,
+    pub linked_at: Option<i64>,
+    pub link_mode: String,
+}
+
+// ── Built-in Signed Chart Apps (`src/apps/builtin/*`) ──
+
+const CHART_HASHES_JSON: &str = include_str!("../../../../src/apps/builtin/hashes.json");
+const CHART_PAYMENT_REQUEST_JSON: &str =
+    include_str!("../../../../src/apps/builtin/payment-request.json");
+const CHART_TIP_JAR_JSON: &str = include_str!("../../../../src/apps/builtin/tip-jar.json");
+const CHART_SPLIT_BILL_JSON: &str = include_str!("../../../../src/apps/builtin/split-bill.json");
+const CHART_SEND_ITEM_JSON: &str = include_str!("../../../../src/apps/builtin/send-item.json");
+const CHART_MESSAGE_BOX_JSON: &str = include_str!("../../../../src/apps/builtin/message-box.json");
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuiltinChartApp {
+    pub id: String,
+    pub name: String,
+    pub summary: String,
+    pub version: String,
+    pub author_name: String,
+    pub author_identity_key: String,
+    pub initial_state: String,
+    pub verified: bool,
+    pub effects: Vec<(bool, String)>,
+    pub raw_json: Value,
+}
+
+fn describe_chart_effect(effect: &Value) -> (bool, String) {
+    let kind = effect.get("kind").and_then(Value::as_str).unwrap_or("action");
+    match kind {
+        "requestPayment" => (true, "Send a Bitcoin SV payment request to a friend".into()),
+        "sendPayment" => (true, "Send Bitcoin SV after you approve the amount".into()),
+        "sendItem" => (true, "Transfer a 1Sat item you choose after approval".into()),
+        "readBox" | "listMessages" => (false, "Read messages from your message box".into()),
+        "sendMessage" => (true, "Send a signed message to a friend".into()),
+        other => (true, format!("Run wallet effect '{other}'")),
+    }
+}
+
+pub fn load_builtin_chart_apps() -> Vec<BuiltinChartApp> {
+    let hashes: HashMap<String, String> =
+        serde_json::from_str(CHART_HASHES_JSON).unwrap_or_default();
+    let raw_list = [
+        CHART_PAYMENT_REQUEST_JSON,
+        CHART_TIP_JAR_JSON,
+        CHART_SPLIT_BILL_JSON,
+        CHART_SEND_ITEM_JSON,
+        CHART_MESSAGE_BOX_JSON,
+    ];
+    let mut apps = Vec::with_capacity(raw_list.len());
+    for raw_str in raw_list {
+        let Ok(val) = serde_json::from_str::<Value>(raw_str) else {
+            continue;
+        };
+        let id = val
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("app")
+            .to_string();
+        let name = val
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(&id)
+            .to_string();
+        let summary = val
+            .get("summary")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let version = val
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or("1.0.0")
+            .to_string();
+        let author = val.get("author");
+        let author_name = author
+            .and_then(|a| a.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("HandCash")
+            .to_string();
+        let author_identity_key = author
+            .and_then(|a| a.get("identityKey"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let initial_state = val
+            .get("initial")
+            .and_then(Value::as_str)
+            .unwrap_or("compose")
+            .to_string();
+        let has_sig = val
+            .get("signature")
+            .and_then(Value::as_str)
+            .map(|s| s.len() >= 120)
+            .unwrap_or(false);
+        let verified = has_sig && hashes.contains_key(&id);
+        let mut effects = Vec::new();
+        if let Some(eff_obj) = val.get("effects").and_then(Value::as_object) {
+            for eff in eff_obj.values() {
+                let line = describe_chart_effect(eff);
+                if !effects.contains(&line) {
+                    effects.push(line);
+                }
+            }
+        }
+        apps.push(BuiltinChartApp {
+            id,
+            name,
+            summary,
+            version,
+            author_name,
+            author_identity_key,
+            initial_state,
+            verified,
+            effects,
+            raw_json: val,
+        });
+    }
+    apps
 }
 
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
@@ -2126,5 +3351,193 @@ pub fn tx_explorer_url(txid: &str, chain: &str) -> String {
         format!("https://test.whatsonchain.com/tx/{txid}")
     } else {
         format!("https://whatsonchain.com/tx/{txid}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(outpoint: &str, origin: &str) -> ItemCardRow {
+        ItemCardRow {
+            outpoint: outpoint.to_string(),
+            origin_outpoint: origin.to_string(),
+            basket: "1sat".to_string(),
+            authenticity_status: "unknown".to_string(),
+            authenticity_reason: None,
+            verified_at_ms: None,
+            issuer_key: None,
+            name: "x".to_string(),
+            mime: "image/png".to_string(),
+            art_blob_hash: None,
+            sort_key: 0,
+        }
+    }
+
+    #[test]
+    fn coin_balance_mirrors_ts_balance_of() {
+        let raw = r#"{
+            "coins": {
+                "aa:0": {"litoshi": "299439", "source": "received", "proven": true},
+                "bb:1": {"litoshi": "557538", "source": "received", "phase": {"kind": "unchecked"}},
+                "cc:0": {"litoshi": "100", "source": "claim"},
+                "dd:1": {"litoshi": "40", "source": "change"},
+                "ee:1": {"litoshi": "7", "source": "change"},
+                "ff:0": {"litoshi": "1000", "source": "received", "proven": true}
+            },
+            "payments": {
+                "dd": {"status": "sent", "inputs": ["ff:0"]},
+                "ee": {"status": "signed", "inputs": []}
+            },
+            "migrated": true
+        }"#;
+        assert_eq!(coin_spendable_units(raw), 299_439 + 100 + 40);
+        assert_eq!(coin_spendable_units("not json"), 0);
+        assert_eq!(coin_spendable_units(r#"{"coins":{},"payments":{}}"#), 0);
+    }
+
+    #[test]
+    fn coin_formatting_matches_ts() {
+        assert_eq!(format_coin(2_226_675, 8), "0.02226675");
+        assert_eq!(format_coin(100_000_000, 8), "1");
+        assert_eq!(format_coin(150_000_000, 8), "1.5");
+        assert_eq!(format_coin(0, 8), "0");
+        assert_eq!(format_coin_short(2_226_675, 8), "0.02227");
+        assert_eq!(format_coin_short(860_706, 8), "0.008607");
+        assert_eq!(format_coin_short(150_000_000, 8), "1.5");
+        assert_eq!(format_coin_short(123_456_000_000, 8), "1235");
+        assert_eq!(format_coin_short(0, 8), "0");
+    }
+
+    #[test]
+    fn item_art_cache_fills_by_origin() {
+        assert_eq!(origin_art_key(" ABC.0 "), "abc_0");
+        assert_eq!(origin_art_key("abc_1"), "abc_1");
+        let raw = r#"{"abc_0":{"mime":"image/png","b64":"QUJD","at":1},
+                      "def_2":{"mime":"text/plain","b64":"QUJD","at":1}}"#;
+        let items = vec![
+            item("out.1", "ABC.0"),
+            item("def.2", "def_2"),
+            item("have.0", "abc_0"),
+        ];
+        let mut art = HashMap::new();
+        art.insert("have.0".to_string(), "data:keep".to_string());
+        fill_item_art_from_cache(raw, &items, &mut art);
+        assert_eq!(
+            art.get("out.1").map(String::as_str),
+            Some("data:image/png;base64,QUJD")
+        );
+        assert!(!art.contains_key("def.2"));
+        assert_eq!(art.get("have.0").map(String::as_str), Some("data:keep"));
+    }
+
+    #[test]
+    fn remote_art_is_last_resort_for_image_origins() {
+        let txid = "AB".repeat(32);
+        let mut text = item("t.0", &format!("{txid}.1"));
+        text.mime = "text/plain".to_string();
+        let items = vec![
+            item("o.0", &format!("{txid}.0")),
+            text,
+            item("bad.0", "nope"),
+            item("have.0", &format!("{txid}.2")),
+        ];
+        let mut art = HashMap::new();
+        art.insert("have.0".to_string(), "data:keep".to_string());
+        fill_item_art_remote("main", &items, &mut art);
+        assert_eq!(
+            art.get("o.0").map(String::as_str),
+            Some(
+                format!(
+                    "https://ordinals.gorillapool.io/content/{}_0",
+                    txid.to_lowercase()
+                )
+                .as_str()
+            )
+        );
+        assert!(!art.contains_key("t.0"));
+        assert!(!art.contains_key("bad.0"));
+        assert_eq!(art.get("have.0").map(String::as_str), Some("data:keep"));
+    }
+
+    #[test]
+    fn history_crypto_secret_matches_ts_sha256_vector() {
+        let key = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20";
+        let secret = history_crypto_secret(key).unwrap();
+        assert_eq!(secret.len(), 64);
+        assert_eq!(
+            secret,
+            history_crypto_secret(&format!("0x{}", key.to_uppercase())).unwrap()
+        );
+        assert!(history_crypto_secret("not-a-key").is_err());
+    }
+
+    #[test]
+    fn decide_history_push_enforces_empty_and_thin_overwrite_guards() {
+        // Empty local over non-empty remote is refused unless forced
+        assert!(decide_history_push(
+            true,
+            Some(1024),
+            true,
+            0,
+            0,
+            Some(50_000),
+            Some(5),
+            None,
+            None,
+            false
+        )
+        .is_err());
+        assert!(decide_history_push(
+            true,
+            Some(1024),
+            true,
+            0,
+            0,
+            Some(50_000),
+            Some(5),
+            None,
+            None,
+            true
+        )
+        .is_ok());
+
+        // Thinner local balance without a higher action count is refused
+        assert!(decide_history_push(
+            true,
+            Some(1024),
+            false,
+            10_000,
+            5,
+            Some(50_000),
+            Some(5),
+            None,
+            None,
+            false
+        )
+        .is_err());
+
+        // Thinner local balance WITH a higher action count (coins spent down) is allowed
+        assert!(decide_history_push(
+            true,
+            Some(1024),
+            false,
+            10_000,
+            6,
+            Some(50_000),
+            Some(5),
+            None,
+            None,
+            false
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn builtin_chart_apps_load_and_verify_all_five() {
+        let apps = load_builtin_chart_apps();
+        assert_eq!(apps.len(), 5);
+        assert!(apps.iter().all(|a| a.verified));
+        assert_eq!(apps[0].id, "payment-request");
     }
 }

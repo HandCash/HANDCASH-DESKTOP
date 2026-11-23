@@ -99,7 +99,11 @@ pub fn dependency_health_alert(snap: &DependencyHealthSnapshot) -> HealthAlert {
     if snap.probes.iter().any(|p| p.status == ProbeStatus::Down) {
         return HealthAlert::Error;
     }
-    if snap.probes.iter().any(|p| p.status == ProbeStatus::Degraded) {
+    if snap
+        .probes
+        .iter()
+        .any(|p| p.status == ProbeStatus::Degraded)
+    {
         return HealthAlert::Warn;
     }
     HealthAlert::Ok
@@ -118,7 +122,10 @@ pub fn status_from_http(code: u16, timed_out: bool) -> ProbeStatus {
 }
 
 pub fn summarize(probes: &[DependencyProbe]) -> String {
-    let down: Vec<_> = probes.iter().filter(|p| p.status == ProbeStatus::Down).collect();
+    let down: Vec<_> = probes
+        .iter()
+        .filter(|p| p.status == ProbeStatus::Down)
+        .collect();
     let degraded: Vec<_> = probes
         .iter()
         .filter(|p| p.status == ProbeStatus::Degraded)
@@ -147,7 +154,12 @@ struct HttpOutcome {
     body: Option<String>,
 }
 
-async fn probe_url(client: &reqwest::Client, url: &str, head: bool, read_body: bool) -> HttpOutcome {
+async fn probe_url(
+    client: &reqwest::Client,
+    url: &str,
+    head: bool,
+    read_body: bool,
+) -> HttpOutcome {
     let started = Instant::now();
     let req = if head {
         client.head(url)
@@ -157,7 +169,11 @@ async fn probe_url(client: &reqwest::Client, url: &str, head: bool, read_body: b
     match tokio::time::timeout(PROBE_TIMEOUT, async {
         let resp = req.send().await?;
         let code = resp.status().as_u16();
-        let body = if read_body { resp.text().await.ok() } else { None };
+        let body = if read_body {
+            resp.text().await.ok()
+        } else {
+            None
+        };
         Ok::<_, reqwest::Error>((code, body))
     })
     .await
@@ -218,10 +234,22 @@ async fn probe_json(
 }
 
 /// HandCash Chain health: body must be `{ ok: true }`.
-pub fn handcash_chain_probe_from(code: u16, timed_out: bool, latency_ms: u64, body: Option<&str>) -> (ProbeStatus, String) {
+pub fn handcash_chain_probe_from(
+    code: u16,
+    timed_out: bool,
+    latency_ms: u64,
+    body: Option<&str>,
+) -> (ProbeStatus, String) {
     if code == 0 {
         let status = status_from_http(0, timed_out);
-        return (status, if timed_out { "Timeout".into() } else { "Down".into() });
+        return (
+            status,
+            if timed_out {
+                "Timeout".into()
+            } else {
+                "Down".into()
+            },
+        );
     }
     let mut status = status_from_http(code, false);
     let mut detail = if status == ProbeStatus::Ok {
@@ -263,7 +291,13 @@ async fn probe_handcash_chain(client: &reqwest::Client) -> DependencyProbe {
 }
 
 async fn probe_gorillapool(client: &reqwest::Client) -> DependencyProbe {
-    let out = probe_url(client, "https://ordinals.gorillapool.io/favicon.ico", true, false).await;
+    let out = probe_url(
+        client,
+        "https://ordinals.gorillapool.io/favicon.ico",
+        true,
+        false,
+    )
+    .await;
     let status = status_from_http(out.code, out.timed_out);
     let detail = if status == ProbeStatus::Ok {
         format!("{}ms", out.latency_ms)
@@ -295,7 +329,12 @@ pub async fn run_probes() -> Vec<DependencyProbe> {
             "https://arcade-v2-us-1.bsvblockchain.tech/chaintracks/v2/height"
         ),
         probe_handcash_chain(&client),
-        probe_json(&client, "bitails", "Bitails", "https://api.bitails.io/block/latest"),
+        probe_json(
+            &client,
+            "bitails",
+            "Bitails",
+            "https://api.bitails.io/block/latest"
+        ),
         probe_json(
             &client,
             "bananablocks",
@@ -335,30 +374,72 @@ mod tests {
 
     #[test]
     fn summary_and_alert_match_ts() {
-        assert_eq!(dependency_health_alert(&DependencyHealthSnapshot::default()), HealthAlert::Unknown);
+        assert_eq!(
+            dependency_health_alert(&DependencyHealthSnapshot::default()),
+            HealthAlert::Unknown
+        );
         let ok = vec![probe("A", ProbeStatus::Ok), probe("B", ProbeStatus::Ok)];
         assert_eq!(summarize(&ok), "All OK");
-        let one_slow = vec![probe("A", ProbeStatus::Degraded), probe("B", ProbeStatus::Ok)];
+        let one_slow = vec![
+            probe("A", ProbeStatus::Degraded),
+            probe("B", ProbeStatus::Ok),
+        ];
         assert_eq!(summarize(&one_slow), "A slow");
-        let two_slow = vec![probe("A", ProbeStatus::Degraded), probe("B", ProbeStatus::Degraded)];
+        let two_slow = vec![
+            probe("A", ProbeStatus::Degraded),
+            probe("B", ProbeStatus::Degraded),
+        ];
         assert_eq!(summarize(&two_slow), "2 slow");
-        let mixed = vec![probe("A", ProbeStatus::Degraded), probe("B", ProbeStatus::Down)];
+        let mixed = vec![
+            probe("A", ProbeStatus::Degraded),
+            probe("B", ProbeStatus::Down),
+        ];
         assert_eq!(summarize(&mixed), "B down");
-        let snap = DependencyHealthSnapshot { at: 1, probes: mixed, summary: String::new() };
+        let snap = DependencyHealthSnapshot {
+            at: 1,
+            probes: mixed,
+            summary: String::new(),
+        };
         assert_eq!(dependency_health_alert(&snap), HealthAlert::Error);
-        let snap = DependencyHealthSnapshot { at: 1, probes: one_slow, summary: String::new() };
+        let snap = DependencyHealthSnapshot {
+            at: 1,
+            probes: one_slow,
+            summary: String::new(),
+        };
         assert_eq!(dependency_health_alert(&snap), HealthAlert::Warn);
-        let snap = DependencyHealthSnapshot { at: 1, probes: ok, summary: String::new() };
+        let snap = DependencyHealthSnapshot {
+            at: 1,
+            probes: ok,
+            summary: String::new(),
+        };
         assert_eq!(dependency_health_alert(&snap), HealthAlert::Ok);
     }
 
     #[test]
     fn handcash_chain_body_rules() {
-        assert_eq!(handcash_chain_probe_from(200, false, 12, Some(r#"{"ok":true}"#)), (ProbeStatus::Ok, "12ms".into()));
-        assert_eq!(handcash_chain_probe_from(200, false, 12, Some(r#"{"ok":false}"#)), (ProbeStatus::Degraded, "Unhealthy".into()));
-        assert_eq!(handcash_chain_probe_from(200, false, 12, Some("nope")), (ProbeStatus::Degraded, "Unreadable".into()));
-        assert_eq!(handcash_chain_probe_from(500, false, 12, None), (ProbeStatus::Down, "HTTP 500".into()));
-        assert_eq!(handcash_chain_probe_from(0, true, 5000, None), (ProbeStatus::Down, "Timeout".into()));
-        assert_eq!(handcash_chain_probe_from(0, false, 3, None), (ProbeStatus::Down, "Down".into()));
+        assert_eq!(
+            handcash_chain_probe_from(200, false, 12, Some(r#"{"ok":true}"#)),
+            (ProbeStatus::Ok, "12ms".into())
+        );
+        assert_eq!(
+            handcash_chain_probe_from(200, false, 12, Some(r#"{"ok":false}"#)),
+            (ProbeStatus::Degraded, "Unhealthy".into())
+        );
+        assert_eq!(
+            handcash_chain_probe_from(200, false, 12, Some("nope")),
+            (ProbeStatus::Degraded, "Unreadable".into())
+        );
+        assert_eq!(
+            handcash_chain_probe_from(500, false, 12, None),
+            (ProbeStatus::Down, "HTTP 500".into())
+        );
+        assert_eq!(
+            handcash_chain_probe_from(0, true, 5000, None),
+            (ProbeStatus::Down, "Timeout".into())
+        );
+        assert_eq!(
+            handcash_chain_probe_from(0, false, 3, None),
+            (ProbeStatus::Down, "Down".into())
+        );
     }
 }

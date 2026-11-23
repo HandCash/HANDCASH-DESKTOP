@@ -1,0 +1,56 @@
+<div class="wallet-setup-config" data-aeon-scope="onboard-accept" data-aeon-state="bitcoin">
+  <h2>What do you want to accept?</h2>
+  <p class="auth-lede">Just Bitcoin SV is the default. You can change this later in Settings.</p>
+  <div aria-label="Accept" class="wallet-setup-options onboard-accept-options" role="radiogroup">
+    <label class="wallet-setup-option onboard-accept-option is-selected">
+      <input checked="" name="onboard-accept" type="radio" value="bitcoin"/>
+      <span aria-hidden="true" class="onboard-accept-icons">
+        <span class="onboard-accept-icon" data-coin="bsv">
+          <span class="deferred-image" data-aeon-state="loading">
+            <span aria-hidden="true" class="skeleton"/>
+            <img alt="" hidden=""/>
+          </span>
+        </span>
+      </span>
+      <span class="wallet-setup-option-body">
+        <strong>Just Bitcoin SV</strong>
+        <span>Bitcoin SV and its tokens. Other coins and tokens backed by them are hidden, not removed.</span>
+      </span>
+    </label>
+    <label class="wallet-setup-option onboard-accept-option">
+      <input name="onboard-accept" type="radio" value="all"/>
+      <span aria-hidden="true" class="onboard-accept-icons">
+        <span class="onboard-accept-icon" data-coin="bsv">
+          <span class="deferred-image" data-aeon-state="loading">
+            <span aria-hidden="true" class="skeleton"/>
+            <img alt="" hidden=""/>
+          </span>
+        </span>
+        <span class="onboard-accept-icon" data-coin="ltc">
+          <svg aria-hidden="true" data-chain-mark="ltc"/>
+        </span>
+        <span class="onboard-accept-icon" data-coin="bch">
+          <svg aria-hidden="true" data-chain-mark="bch"/>
+        </span>
+        <span class="onboard-accept-icon" data-coin="btc">
+          <svg aria-hidden="true" data-chain-mark="btc"/>
+        </span>
+        <span class="onboard-accept-icon" data-coin="doge">
+          <svg aria-hidden="true" data-chain-mark="doge"/>
+        </span>
+        <span class="onboard-accept-icon" data-coin="arc-usd">
+          <svg aria-hidden="true" data-chain-mark="arc-usd"/>
+        </span>
+      </span>
+      <span class="wallet-setup-option-body">
+        <strong>Bitcoin SV and crypto</strong>
+        <span>Bitcoin SV and its tokens, plus LTC, BCH, BTC, DOGE, USDC on Arc, and tokens backed by them.</span>
+      </span>
+    </label>
+  </div>
+  <div class="auth-actions" data-aeon-part="onboard-accept-actions">
+    <button class="btn btn-primary auth-submit" data-aeon-part="root" data-aeon-scope="button" data-aeon-size="md" data-aeon-state="idle" data-aeon-variant="solid" type="button">
+      <span data-aeon-part="label" data-aeon-scope="button">Continue</span>
+    </button>
+  </div>
+</div>

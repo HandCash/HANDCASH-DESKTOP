@@ -678,6 +678,12 @@ html, body {{
   margin-left: auto;
   overflow: visible;
 }}
+.bsv-logo {{
+  display: block;
+  border-radius: 8px;
+  object-fit: cover;
+  user-select: none;
+}}
 .fiat-currency-menu,
 .ticker-coin-selector {{
   position: relative;
@@ -1046,9 +1052,19 @@ html, body {{
   aspect-ratio: 1 / 1;
   min-height: 92px;
   border-radius: 8px;
-  background: var(--hc-field);
   color: var(--hc-muted);
   overflow: hidden;
+}}
+.collectable-media-fallback {{
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: rgba(127, 127, 127, 0.14);
+  border: 1px solid var(--hc-border);
+  box-sizing: border-box;
+  color: var(--hc-muted);
 }}
 .collectable-img {{
   width: 100%;
@@ -1070,6 +1086,232 @@ html, body {{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}}
+.collectables-grid {{
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  justify-content: start;
+  gap: 8px;
+}}
+.collectables-grid > .collectable-card {{
+  position: relative;
+  min-width: 0;
+}}
+.collectables-grid .collectable-card .collection-grid-main {{
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  gap: 4px;
+  padding: 6px 6px 8px;
+  text-align: center;
+}}
+.collectables-grid .collectable-card .collectable-media {{
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+}}
+.collectables-grid .collectable-card .collection-grid-name {{
+  font-size: 11px;
+}}
+.collectables-grid .collectable-card .collect-select {{
+  position: relative;
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  flex: 0 0 auto;
+  cursor: pointer;
+  z-index: 2;
+}}
+.collect-select input {{
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}}
+.collect-select > span {{
+  display: grid;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 65%, transparent);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-surface);
+  transition: 120ms ease;
+}}
+.collect-select input:checked + span {{
+  border-color: var(--hc-accent);
+  background: var(--hc-accent);
+}}
+.collect-select input:checked + span::after {{
+  content: '✓';
+  color: hsl(var(--background));
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+}}
+.collect-select input:focus-visible + span {{
+  outline: 2px solid color-mix(in srgb, var(--hc-accent) 50%, transparent);
+  outline-offset: 2px;
+}}
+.collect-select input:disabled + span {{
+  opacity: 0.4;
+  cursor: not-allowed;
+}}
+.collect-select--group {{
+  margin-right: 6px;
+}}
+.collect-select--row {{
+  margin: 0;
+}}
+.collectable-row-actions {{
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}}
+.collect-nested-collection:first-child .collect-section-title {{
+  margin-top: 4px;
+}}
+.collect-section-title {{
+  margin: 0.75rem 0 0.4rem;
+  padding: 0 4px;
+  font-size: var(--hc-text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}}
+.collect-items-section {{
+  display: grid;
+  gap: 8px;
+}}
+.collect-collection {{
+  border: var(--hc-border-w) solid var(--hc-border);
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface-2, var(--hc-surface));
+  overflow: hidden;
+}}
+.collect-collection[data-selected] {{
+  border-color: color-mix(in srgb, var(--hc-accent) 65%, var(--hc-border));
+}}
+.collect-collection-head {{
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}}
+.collect-collection-trigger {{
+  display: grid;
+  width: 100%;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}}
+.collect-collection-trigger:hover {{
+  background: var(--hc-surface-hover, rgb(255 255 255 / 4%));
+}}
+.collect-collection-body {{
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}}
+.collect-collection-name,
+.collect-collection-meta {{
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.collect-collection-name {{
+  font-size: var(--hc-text-md);
+}}
+.collect-collection-name-text {{
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}}
+.collect-collection-meta {{
+  color: var(--hc-muted);
+  font-size: var(--hc-text-xs);
+}}
+.collect-collection-indicator {{
+  display: grid;
+  place-items: center;
+  color: var(--hc-muted);
+  transition: transform 120ms ease;
+}}
+.collect-collection-trigger[aria-expanded='true'] .collect-collection-indicator {{
+  transform: rotate(180deg);
+}}
+.collect-collection-body-content {{
+  padding: 0 10px 10px;
+}}
+.collection-grid-host {{
+  display: none;
+}}
+.collectables-grid .collectable-card-actions {{
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0;
+  pointer-events: none;
+}}
+.collectables-grid .collectable-card-actions > * {{
+  pointer-events: auto;
+}}
+.collectables-grid .collectable-card-actions .collectable-send-btn {{
+  order: 2;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--hc-text);
+  cursor: pointer;
+}}
+.collectables-grid .collectable-card-actions .collectable-send-btn:disabled {{
+  opacity: 0.5;
+  cursor: default;
+}}
+.collectables-grid .collectable-send-label {{
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}}
+.collectables-grid .collectable-card-actions .collect-select {{
+  width: 26px;
+  height: 26px;
+}}
+@media (hover: hover) and (pointer: fine) {{
+  .collectables-grid .collectable-card-actions > * {{
+    opacity: 0;
+  }}
+  .collectables-grid .collectable-card:hover .collectable-card-actions > *,
+  .collectables-grid .collectable-card:focus-within .collectable-card-actions > *,
+  .collectables-grid .collectable-card-actions .collect-select:has(input:checked),
+  .collectables-grid .collectable-card-actions .collectable-send-btn:disabled {{
+    opacity: 1;
+  }}
 }}
 .collection-grid-host {{
   color: var(--hc-muted);
@@ -1149,7 +1391,9 @@ mod tests {
     fn shell_and_titlebar_carry_brand_gradients() {
         let css = build_theme_override_css(&ResolvedTheme::dark_handcash());
         assert!(css.contains("> .titlebar.aeon-titlebar {\n  background-color: var(--hc-bg);\n  background-image: none;"));
-        assert!(css.contains(".app-shell[data-aeon-scope=\"app\"] > .stage {\n  background-color: var(--hc-bg);"));
+        assert!(css.contains(
+            ".app-shell[data-aeon-scope=\"app\"] > .stage {\n  background-color: var(--hc-bg);"
+        ));
         assert_eq!(hex_to_rgb_channels("#0a3d22"), "10, 61, 34");
         assert_eq!(hex_to_rgb_channels("oops"), "87, 255, 151");
     }

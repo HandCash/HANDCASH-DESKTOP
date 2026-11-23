@@ -22,7 +22,7 @@ export function usePeerIdentity(
   identityKey: string | null | undefined,
   askFrom?: Pick<Friend, 'identityKey' | 'messagebox'> | null,
 ): PeerIdentityView | null {
-  const cards = useSyncExternalStore(subscribeIdentityCards, identityCardsGeneration)
+  const cards = useSyncExternalStore(subscribeIdentityCards, identityCardsGeneration, identityCardsGeneration)
   const identities = useIssuerIdentitiesGeneration()
   const view = useMemo((): PeerIdentityView | null => {
     const card = peerIdentityFor(chain, identityKey)
