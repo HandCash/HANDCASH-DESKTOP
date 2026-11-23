@@ -23,9 +23,10 @@ use crate::theme::{AEON_ELECTRON_CSS, HANDCASH_CSS, LAYOUT_COMPACT_CSS};
 
 /// Class carried by the app root div that stands in for `<html>`.
 pub const ROOT_CLASS: &str = "hc-root";
-/// `layoutViewport.ts` `measureCompact`: taller than wide, or width <= 900px.
-pub const COMPACT_MEDIA: &str = "(max-width: 900px), (orientation: portrait)";
-pub const WIDE_MEDIA: &str = "(min-width: 901px) and (orientation: landscape)";
+/// Width-based compact/wide split so tiled desktop windows (where height > width)
+/// stay in desktop mode and only narrow/mobile viewports enter compact mode.
+pub const COMPACT_MEDIA: &str = "(max-width: 820px)";
+pub const WIDE_MEDIA: &str = "(min-width: 821px)";
 
 /// `data-aeon-platform` value the TS shell puts on `<html>` (`src/main.tsx`).
 pub const PLATFORM: &str = if cfg!(target_os = "windows") {

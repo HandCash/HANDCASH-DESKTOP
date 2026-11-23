@@ -1346,6 +1346,35 @@ impl AppServices {
             .and_then(|g| g.as_ref().and_then(|s| s.vault.mnemonic.clone()))
     }
 
+    pub fn current_root_key_hex(&self) -> Option<String> {
+        self.session
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.vault.master.key_hex().to_string()))
+    }
+
+    pub fn verify_password(&self, password: &str) -> Result<(), String> {
+        let record = self
+            .load_vault_record()
+            .ok_or_else(|| "No wallet vault found.".to_string())?;
+        unlock_vault_with_password(&record, password)
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
+    pub fn set_password_from_open(&self, new_password: &str) -> Result<(), String> {
+        if let Some(err) = handcash_primitives::vault::password_policy_error(new_password) {
+            return Err(err);
+        }
+        let open_secret = self
+            .open_unlock_secret()
+            .ok_or_else(|| "No open device secret found.".to_string())?;
+        self.change_password(&open_secret, new_password)?;
+        self.clear_open_unlock_secret();
+        self.set_device_lock_mode("password");
+        Ok(())
+    }
+
     fn resolve_active_subaccount(&self, record: &VaultRecord) -> (u32, String) {
         let key = format!("{VAULT_ACCOUNTS_PREFIX}{}", record.identity_key);
         let Some(raw) = self.durable.get(&key) else {

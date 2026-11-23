@@ -413,10 +413,14 @@ pub enum NavChild {
     Receive,
     Swap,
     Scan,
+    TickerCoins,
+    FiatCurrency,
     PaymentDetails(String),
     CollectableDetails(String),
     SendCollectable(String),
+    SendCollectables(Vec<String>),
     BurnAsset(String),
+    BurnCollectables(Vec<String>),
     AddFriend,
     FriendDetails(String),
     AppDetails(String),
@@ -430,14 +434,131 @@ impl NavChild {
             Self::Receive => "Receive",
             Self::Swap => "Swap",
             Self::Scan => "Scan",
-            Self::PaymentDetails(_) => "Details",
+            Self::TickerCoins => "Coins",
+            Self::FiatCurrency => "Currency",
+            Self::PaymentDetails(_) => "Transaction",
             Self::CollectableDetails(_) => "Item",
-            Self::SendCollectable(_) => "Send item",
-            Self::BurnAsset(_) => "Burn",
+            Self::SendCollectable(_) | Self::SendCollectables(_) => "Send",
+            Self::BurnAsset(_) | Self::BurnCollectables(_) => "Burn",
             Self::AddFriend => "Add friend",
             Self::FriendDetails(_) => "Friend",
             Self::AppDetails(_) => "App",
             Self::Setting(sub) => sub.label(),
+        }
+    }
+
+    pub fn state_type(&self) -> &'static str {
+        match self {
+            Self::Send(_) => "send",
+            Self::Receive => "receive",
+            Self::Swap => "swap",
+            Self::Scan => "scan",
+            Self::TickerCoins => "ticker-coins",
+            Self::FiatCurrency => "fiat-currency",
+            Self::PaymentDetails(_) => "payment",
+            Self::CollectableDetails(_) => "collectable",
+            Self::SendCollectable(_) => "send-collectable",
+            Self::SendCollectables(_) => "send-collectables",
+            Self::BurnAsset(_) => "burn-collectable",
+            Self::BurnCollectables(_) => "burn-collectables",
+            Self::AddFriend => "add-friend",
+            Self::FriendDetails(_) => "friend",
+            Self::AppDetails(_) => "app",
+            Self::Setting(_) => "setting",
+        }
+    }
+}
+
+/// Mirrors `MarketCoin` in `src/wallet/tickerCoin.ts` (`bsv | ltc | bch | btc | doge | arc-usd`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MarketCoin {
+    #[default]
+    Bsv,
+    Ltc,
+    Bch,
+    Btc,
+    Doge,
+    ArcUsd,
+}
+
+impl MarketCoin {
+    pub const ALL: [Self; 6] = [
+        Self::Bsv,
+        Self::Ltc,
+        Self::Bch,
+        Self::Btc,
+        Self::Doge,
+        Self::ArcUsd,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bsv => "bsv",
+            Self::Ltc => "ltc",
+            Self::Bch => "bch",
+            Self::Btc => "btc",
+            Self::Doge => "doge",
+            Self::ArcUsd => "arc-usd",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "bsv" => Some(Self::Bsv),
+            "ltc" => Some(Self::Ltc),
+            "bch" => Some(Self::Bch),
+            "btc" => Some(Self::Btc),
+            "doge" => Some(Self::Doge),
+            "arc-usd" | "usdc" => Some(Self::ArcUsd),
+            _ => None,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Bsv => "Bitcoin SV",
+            Self::Ltc => "Litecoin",
+            Self::Bch => "Bitcoin Cash",
+            Self::Btc => "Bitcoin",
+            Self::Doge => "Dogecoin",
+            Self::ArcUsd => "USDC (Arc)",
+        }
+    }
+
+    pub const fn sym(self) -> &'static str {
+        match self {
+            Self::Bsv => "BSV",
+            Self::Ltc => "LTC",
+            Self::Bch => "BCH",
+            Self::Btc => "BTC",
+            Self::Doge => "DOGE",
+            Self::ArcUsd => "USDC",
+        }
+    }
+
+    pub const fn code(self) -> &'static str {
+        self.sym()
+    }
+
+    pub const fn about_title(self) -> &'static str {
+        match self {
+            Self::Bsv => "What is BSV?",
+            Self::Ltc => "What is Litecoin?",
+            Self::Bch => "What is Bitcoin Cash?",
+            Self::Btc => "What is Bitcoin?",
+            Self::Doge => "What is Dogecoin?",
+            Self::ArcUsd => "What is USDC (Arc)?",
+        }
+    }
+
+    pub const fn about_lede(self) -> &'static str {
+        match self {
+            Self::Bsv => "Bitcoin SV restores the original Bitcoin protocol for instant peer-to-peer electronic cash and on-chain data at scale.",
+            Self::Ltc => "Litecoin is a peer-to-peer cryptocurrency created in 2011 with fast 2.5-minute blocks and low transaction fees.",
+            Self::Bch => "Bitcoin Cash is a peer-to-peer electronic cash fork focused on fast payments and larger blocks.",
+            Self::Btc => "Bitcoin is the original decentralized digital currency secured by proof-of-work.",
+            Self::Doge => "Dogecoin is an open-source peer-to-peer digital currency favored for fast, low-fee everyday transfers.",
+            Self::ArcUsd => "USDC on Arc is a dollar-pegged stablecoin available for experimental wrapping and holding in HandCash.",
         }
     }
 }

@@ -183,14 +183,18 @@ pub fn ActivityFeed(
     embedded: bool,
     show_view_all: bool,
     #[props(default = false)] show_filters: bool,
+    #[props(default)] filters_open_ext: Option<Signal<bool>>,
+    #[props(default)] filters_ext: Option<Signal<PaymentFilters>>,
     currency: DisplayCurrency,
     fiat_code: FiatCode,
     fx_rates: FxRates,
     mut nav_section: Signal<NavSection>,
     mut nav_child: Signal<Option<NavChild>>,
 ) -> Element {
-    let mut filters_open = use_signal(|| false);
-    let mut filters = use_signal(PaymentFilters::default);
+    let local_filters_open = use_signal(|| false);
+    let local_filters = use_signal(PaymentFilters::default);
+    let mut filters_open = filters_open_ext.unwrap_or(local_filters_open);
+    let mut filters = filters_ext.unwrap_or(local_filters);
 
     let now = now_ms();
     let cur_filters = filters.read().clone();
@@ -378,7 +382,6 @@ pub fn ActivityFeed(
             div {
                 class: "history-embedded history-with-filters",
                 "data-aeon-scope": "activity-feed",
-                {head}
                 {body}
             }
         }

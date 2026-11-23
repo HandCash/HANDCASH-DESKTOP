@@ -4,9 +4,10 @@
 //! `ConnectedAppsPanel`, `InventoryPanel`, `FriendsPanel`, `IdentityPanel`, `SettingsPanel`.
 
 use crate::icons::{
-    ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, ExpandMoreIcon, DarkModeIcon, DevicesIcon, DownloadIcon,
-    EncryptIcon, FileIcon, InfoIcon, LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon,
-    MonitorIcon, PaletteIcon, RefreshIcon, ScanQrIcon, SwapIcon, SystemUpdateIcon, WarningIcon,
+    ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, DarkModeIcon,
+    DevicesIcon, DownloadIcon, EncryptIcon, ExpandMoreIcon, FileIcon, FingerprintIcon, InfoIcon,
+    LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon, MonitorIcon, PaletteIcon, RefreshIcon,
+    ScanQrIcon, SwapIcon, SystemUpdateIcon, WarningIcon,
 };
 use crate::health::{dependency_health_alert, DependencyHealthSnapshot, HealthAlert};
 use crate::machines::{FiatCode, NavChild, SettingSubpage, ToastNotice};
@@ -960,6 +961,631 @@ fn WalletHealthPanel() -> Element {
     }
 }
 
+/// 1:1 port of `src/components/SettingsFeatureAbout.tsx`.
+#[component]
+pub fn SettingsFeatureAbout(tags: &'static [&'static str], copy: &'static str) -> Element {
+    rsx! {
+        footer { class: "settings-feature-about", "data-aeon-scope": "feature-about",
+            div { class: "settings-feature-about-tags",
+                for tag in tags.iter().copied() {
+                    span { key: "{tag}", class: "spec-tag", "{tag}" }
+                }
+            }
+            p { class: "settings-feature-about-copy", "{copy}" }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/WalletBackupPanel.tsx`.
+#[component]
+fn WalletBackupPanel(
+    profile: SessionSummary,
+    mut nav_child: Signal<Option<NavChild>>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let has_phrase = profile.has_mnemonic;
+    let mut kind = use_signal(|| if has_phrase { "phrase" } else { "key" });
+    let mut revealed = use_signal(|| false);
+    let mut copied = use_signal(|| false);
+
+    let cur_kind = *kind.read();
+    let is_revealed = *revealed.read();
+    let can_confirm = *copied.read();
+    let phrase_val = if is_revealed && cur_kind == "phrase" {
+        services.current_mnemonic()
+    } else {
+        None
+    };
+    let key_val = if is_revealed && cur_kind == "key" {
+        services.current_root_key_hex()
+    } else {
+        None
+    };
+    let svc_confirm_phrase = Arc::clone(&services);
+    let svc_confirm_key = Arc::clone(&services);
+
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll",
+            "data-aeon-scope": "wallet-backup",
+            "data-aeon-state": if is_revealed { "revealed" } else { "idle" },
+            p { class: "settings-hint",
+                "Save two of three slices in separate accounts or apps you control; HandCash receives none."
+            }
+            div { class: "backup-format-tabs", role: "tablist", aria_label: "Recovery formats",
+                button {
+                    r#type: "button",
+                    role: "tab",
+                    aria_selected: if cur_kind == "split" { "true" } else { "false" },
+                    class: if cur_kind == "split" { "btn btn-primary" } else { "btn btn-ghost" },
+                    disabled: true,
+                    title: "BRC-140 slice issuance is pending GF(256) splitter port",
+                    "Key slices"
+                }
+                button {
+                    r#type: "button",
+                    role: "tab",
+                    aria_selected: if cur_kind == "phrase" { "true" } else { "false" },
+                    class: if cur_kind == "phrase" { "btn btn-primary" } else { "btn btn-ghost" },
+                    disabled: !has_phrase,
+                    onclick: move |_| {
+                        revealed.set(false);
+                        copied.set(false);
+                        kind.set("phrase");
+                    },
+                    "Recovery phrase"
+                }
+                button {
+                    r#type: "button",
+                    role: "tab",
+                    aria_selected: if cur_kind == "key" { "true" } else { "false" },
+                    class: if cur_kind == "key" { "btn btn-primary" } else { "btn btn-ghost" },
+                    onclick: move |_| {
+                        revealed.set(false);
+                        copied.set(false);
+                        kind.set("key");
+                    },
+                    "Emergency key"
+                }
+            }
+
+            if !is_revealed {
+                div { class: "confirm-password-gate", "data-aeon-scope": "reveal-recovery",
+                    div { class: "confirm-password-copy",
+                        h3 { class: "confirm-password-title", "Show recovery material" }
+                        p { class: "confirm-password-lede",
+                            "The wallet is unlocked; no password is needed to show backups."
+                        }
+                    }
+                    div {
+                        class: "actions",
+                        "data-aeon-part": "reveal-actions",
+                        "data-aeon-state": "idle",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            class: "btn btn-primary",
+                            onclick: move |_| {
+                                copied.set(false);
+                                revealed.set(true);
+                            },
+                            button::Label {
+                                if cur_kind == "phrase" { "Show phrase" } else { "Show key" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(ref phrase) = phrase_val {
+                {
+                    let words: Vec<String> = phrase
+                        .split_whitespace()
+                        .map(ToString::to_string)
+                        .collect();
+                    let p_copy = phrase.clone();
+                    rsx! {
+                        div { class: "split-backup-shares",
+                            p { class: "settings-hint", "Keep these words private." }
+                            ol { class: "recovery-phrase-grid",
+                                for (i, word) in words.iter().enumerate() {
+                                    li { key: "{i}-{word}",
+                                        span { class: "recovery-phrase-index", "{i + 1}." }
+                                        " {word}"
+                                    }
+                                }
+                            }
+                            div { class: "actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        if copy_to_clipboard(&p_copy).is_ok() {
+                                            copied.set(true);
+                                            toast.set(Some(ToastNotice {
+                                                title: "Copied".into(),
+                                                body: Some("Recovery phrase copied.".into()),
+                                                tone: "success",
+                                            }));
+                                        }
+                                    },
+                                    button::Label { "Copy" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: !can_confirm,
+                                    onclick: move |_| {
+                                        svc_confirm_phrase.mark_keys_backup_confirmed("phrase");
+                                        revealed.set(false);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Keys backup saved".into(),
+                                            body: Some("History backup is next if you have not done it yet.".into()),
+                                            tone: "success",
+                                        }));
+                                        nav_child.set(Some(NavChild::Setting(SettingSubpage::HistoryBackup)));
+                                    },
+                                    button::Label { "I’ve saved my phrase" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        revealed.set(false);
+                                        copied.set(false);
+                                    },
+                                    button::Label { "Hide" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(ref rk) = key_val {
+                {
+                    let rk_copy = rk.clone();
+                    rsx! {
+                        div { class: "split-backup-shares",
+                            p { class: "settings-hint", "Keep this key private." }
+                            p { class: "mono backup-root-key", "{rk}" }
+                            div { class: "actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        if copy_to_clipboard(&rk_copy).is_ok() {
+                                            copied.set(true);
+                                            toast.set(Some(ToastNotice {
+                                                title: "Copied".into(),
+                                                body: Some("Emergency key copied.".into()),
+                                                tone: "success",
+                                            }));
+                                        }
+                                    },
+                                    button::Label { "Copy" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: !can_confirm,
+                                    onclick: move |_| {
+                                        svc_confirm_key.mark_keys_backup_confirmed("key");
+                                        revealed.set(false);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Keys backup saved".into(),
+                                            body: Some("History backup is next if you have not done it yet.".into()),
+                                            tone: "success",
+                                        }));
+                                        nav_child.set(Some(NavChild::Setting(SettingSubpage::HistoryBackup)));
+                                    },
+                                    button::Label { "I’ve saved my key" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        revealed.set(false);
+                                        copied.set(false);
+                                    },
+                                    button::Label { "Hide" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsFeatureAbout {
+                tags: &["BRC-140", "BRC-157", "BRC-75"],
+                copy: "Any two slices from one set restore the wallet. Only Replace slice set creates a new set.",
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/UnlockSettingsPanel.tsx` + `src/components/ConfirmPasswordGate.tsx`.
+#[component]
+fn UnlockSettingsPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut mode = use_signal(|| "overview");
+    let mut gate_input = use_signal(String::new);
+    let mut gate_verified_pw = use_signal(|| Option::<String>::None);
+    let mut new_pw = use_signal(String::new);
+    let mut confirm_pw = use_signal(String::new);
+    let mut error_msg = use_signal(|| Option::<String>::None);
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+
+    let cur_mode = *mode.read();
+    let no_lock = services.is_no_device_lock();
+    let has_mem_pw = services.has_memorable_password();
+
+    if cur_mode == "change-password" && gate_verified_pw.read().is_none() {
+        let svc_gate = Arc::clone(&services);
+        let pw_len = gate_input.read().len();
+        return rsx! {
+            div {
+                class: "settings-detail settings-detail-compact settings-scroll",
+                "data-aeon-scope": "settings-unlock",
+                div {
+                    class: "confirm-password-gate",
+                    "data-aeon-scope": "confirm-password",
+                    "data-aeon-state": "idle",
+                    "data-factor": "password",
+                    div { class: "confirm-password-copy",
+                        h3 { class: "confirm-password-title", "Change password" }
+                        p { class: "confirm-password-lede", "Confirm your current password to change it." }
+                    }
+                    form {
+                        class: "settings-form settings-form-compact",
+                        onsubmit: move |e| {
+                            e.prevent_default();
+                            error_msg.set(None);
+                            let entered = gate_input.read().clone();
+                            match svc_gate.verify_password(&entered) {
+                                Ok(()) => {
+                                    gate_input.set(String::new());
+                                    gate_verified_pw.set(Some(entered));
+                                }
+                                Err(err) => error_msg.set(Some(err)),
+                            }
+                        },
+                        PasswordField {
+                            id: "unlock-change-password",
+                            label: "HandCash password",
+                            placeholder: "Your unlock password",
+                            value: gate_input,
+                        }
+                        if let Some(ref err) = *error_msg.read() {
+                            p { class: "error", role: "alert", "{err}" }
+                        }
+                        div { class: "actions",
+                            button::Root {
+                                variant: button::ButtonVariant::Solid,
+                                button_type: "submit",
+                                class: "btn btn-primary",
+                                disabled: pw_len < 8,
+                                button::Label { "Continue" }
+                            }
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| {
+                                    gate_input.set(String::new());
+                                    error_msg.set(None);
+                                    mode.set("overview");
+                                },
+                                button::Label { "Cancel" }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    if cur_mode == "change-password" {
+        let svc_change = Arc::clone(&services);
+        let new_empty = new_pw.read().is_empty();
+        return rsx! {
+            div {
+                class: "settings-detail settings-detail-compact settings-scroll",
+                "data-aeon-scope": "settings-unlock",
+                "data-aeon-state": "change-password",
+                div { class: "confirm-password-copy",
+                    h3 { class: "confirm-password-title", "Choose a new password" }
+                    p { class: "confirm-password-lede",
+                        "This HandCash password is separate from your phone or computer unlock."
+                    }
+                }
+                form {
+                    class: "settings-form settings-form-compact",
+                    "data-aeon-part": "factor-form",
+                    "data-aeon-state": "idle",
+                    onsubmit: move |e| {
+                        e.prevent_default();
+                        error_msg.set(None);
+                        let np = new_pw.read().clone();
+                        let cp = confirm_pw.read().clone();
+                        if np != cp {
+                            error_msg.set(Some("Passwords do not match".into()));
+                            return;
+                        }
+                        if let Some(err) = handcash_primitives::vault::password_policy_error(&np) {
+                            error_msg.set(Some(err));
+                            return;
+                        }
+                        let cur = gate_verified_pw.read().clone().unwrap_or_default();
+                        match svc_change.change_password(&cur, &np) {
+                            Ok(()) => {
+                                new_pw.set(String::new());
+                                confirm_pw.set(String::new());
+                                gate_verified_pw.set(None);
+                                mode.set("overview");
+                                let next = *rev.read() + 1;
+                                rev.set(next);
+                                toast.set(Some(ToastNotice {
+                                    title: "Password updated".into(),
+                                    body: None,
+                                    tone: "success",
+                                }));
+                            }
+                            Err(err) => error_msg.set(Some(err)),
+                        }
+                    },
+                    PasswordField {
+                        id: "settings-new-password",
+                        label: "New password",
+                        placeholder: "10+ chars, letter and number",
+                        value: new_pw,
+                    }
+                    PasswordField {
+                        id: "settings-confirm-password",
+                        label: "Confirm password",
+                        placeholder: "Type it again",
+                        value: confirm_pw,
+                    }
+                    if let Some(ref err) = *error_msg.read() {
+                        p { class: "error", role: "alert", "{err}" }
+                    }
+                    div { class: "actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            button_type: "submit",
+                            class: "btn btn-primary",
+                            disabled: new_empty,
+                            button::Label { "Update password" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                new_pw.set(String::new());
+                                confirm_pw.set(String::new());
+                                gate_verified_pw.set(None);
+                                error_msg.set(None);
+                                mode.set("overview");
+                            },
+                            button::Label { "Back" }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    if cur_mode == "set-password" {
+        let svc_set = Arc::clone(&services);
+        let new_empty = new_pw.read().is_empty();
+        return rsx! {
+            div {
+                class: "settings-detail settings-detail-compact settings-scroll",
+                "data-aeon-scope": "settings-unlock",
+                "data-aeon-state": "set-password",
+                div { class: "confirm-password-copy",
+                    h3 { class: "confirm-password-title", "Add a HandCash password" }
+                    p { class: "confirm-password-lede",
+                        "Backup unlock without biometrics; confirm with this device first."
+                    }
+                }
+                form {
+                    class: "settings-form settings-form-compact",
+                    "data-aeon-part": "factor-form",
+                    "data-aeon-state": "idle",
+                    onsubmit: move |e| {
+                        e.prevent_default();
+                        error_msg.set(None);
+                        let np = new_pw.read().clone();
+                        let cp = confirm_pw.read().clone();
+                        if np != cp {
+                            error_msg.set(Some("Passwords do not match".into()));
+                            return;
+                        }
+                        match svc_set.set_password_from_open(&np) {
+                            Ok(()) => {
+                                new_pw.set(String::new());
+                                confirm_pw.set(String::new());
+                                mode.set("overview");
+                                let next = *rev.read() + 1;
+                                rev.set(next);
+                                toast.set(Some(ToastNotice {
+                                    title: "HandCash password added".into(),
+                                    body: None,
+                                    tone: "success",
+                                }));
+                            }
+                            Err(err) => error_msg.set(Some(err)),
+                        }
+                    },
+                    PasswordField {
+                        id: "settings-set-password",
+                        label: "HandCash password",
+                        placeholder: "10+ chars, letter and number",
+                        value: new_pw,
+                    }
+                    PasswordField {
+                        id: "settings-set-password-confirm",
+                        label: "Confirm password",
+                        placeholder: "Type it again",
+                        value: confirm_pw,
+                    }
+                    if let Some(ref err) = *error_msg.read() {
+                        p { class: "error", role: "alert", "{err}" }
+                    }
+                    div { class: "actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            button_type: "submit",
+                            class: "btn btn-primary",
+                            disabled: new_empty,
+                            button::Label { "Save password" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                new_pw.set(String::new());
+                                confirm_pw.set(String::new());
+                                error_msg.set(None);
+                                mode.set("overview");
+                            },
+                            button::Label { "Back" }
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    rsx! {
+        div {
+            class: "settings-detail settings-detail-compact settings-scroll",
+            "data-aeon-scope": "settings-unlock",
+            "data-aeon-state": "overview",
+            div { class: "confirm-password-copy",
+                h3 { class: "confirm-password-title", "Unlock" }
+                p { class: "confirm-password-lede",
+                    if no_lock {
+                        "This device opens the wallet without a prompt. Add a password any time."
+                    } else {
+                        "Use device unlock, a HandCash password, or both. Keep at least one."
+                    }
+                }
+            }
+            ul { class: "settings-list",
+                li {
+                    list_row::Root { "data-aeon-layout": "control",
+                        list_row::Leading {
+                            span { class: "settings-row-icon", "data-tone": "default",
+                                FingerprintIcon { size: 20 }
+                            }
+                        }
+                        list_row::Label { "Device unlock" }
+                        list_row::Description { "Not available on this device" }
+                    }
+                }
+                li {
+                    list_row::Root { "data-aeon-layout": "control",
+                        list_row::Leading {
+                            span { class: "settings-row-icon", "data-tone": "default",
+                                LockIcon { size: 20 }
+                            }
+                        }
+                        list_row::Label { "HandCash password" }
+                        list_row::Description {
+                            if no_lock {
+                                "Off · no prompt on this device"
+                            } else if has_mem_pw {
+                                "On · separate from device lock"
+                            } else {
+                                "Off"
+                            }
+                        }
+                        list_row::Trailing {
+                            if has_mem_pw {
+                                div { class: "actions",
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost",
+                                        onclick: move |_| {
+                                            error_msg.set(None);
+                                            gate_input.set(String::new());
+                                            gate_verified_pw.set(None);
+                                            mode.set("change-password");
+                                        },
+                                        button::Label { "Change" }
+                                    }
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost",
+                                        disabled: true,
+                                        button::Label { "Remove" }
+                                    }
+                                }
+                            } else {
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: !no_lock,
+                                    onclick: move |_| {
+                                        error_msg.set(None);
+                                        new_pw.set(String::new());
+                                        confirm_pw.set(String::new());
+                                        mode.set("set-password");
+                                    },
+                                    button::Label { "Add" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/AboutHandCashPanel.tsx`.
+#[component]
+fn AboutHandCashPanel(mut nav_child: Signal<Option<NavChild>>) -> Element {
+    rsx! {
+        div {
+            class: "nav-section-body settings-scroll about-handcash",
+            "data-aeon-scope": "about-handcash",
+            p { class: "settings-hint about-handcash-lead",
+                "Your Bitcoin SV keys stay here; you approve app access through the local bridge."
+            }
+            div { class: "about-handcash-body",
+                p { "HandCash cannot recover your funds if you lose this device without a backup." }
+            }
+            section { class: "settings-group", "data-aeon-part": "app",
+                h3 { class: "settings-group-title", "This app" }
+                ul { class: "settings-list",
+                    li {
+                        list_row::Root { "data-aeon-layout": "control",
+                            list_row::Leading {
+                                span { class: "settings-row-icon", "data-tone": "default",
+                                    InfoIcon { size: 20 }
+                                }
+                            }
+                            list_row::Label { "Version" }
+                            list_row::Trailing {
+                                span { class: "settings-row-desc mono", "{APP_VERSION}" }
+                            }
+                        }
+                    }
+                    SettingsNavRow {
+                        label: "Statecharts",
+                        description: "The state machines behind each flow",
+                        icon: setting_icon(SettingSubpage::Statecharts),
+                        onclick: move |_| nav_child.set(Some(NavChild::Setting(SettingSubpage::Statecharts))),
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Settings child panels (Recovery backup, Import BRC-38, Unlock/Password, Wallet health, About).
 #[component]
 pub fn SettingSubpagePanel(
@@ -967,73 +1593,19 @@ pub fn SettingSubpagePanel(
     profile: SessionSummary,
     snap: WalletSnapshot,
     mut snapshot: Signal<WalletSnapshot>,
+    nav_child: Signal<Option<NavChild>>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut show_phrase = use_signal(|| false);
-    let mut cur_pw = use_signal(String::new);
-    let mut next_pw = use_signal(String::new);
 
     match subpage {
-        SettingSubpage::Backup => {
-            let phrase_opt = if *show_phrase.read() {
-                services.current_mnemonic()
-            } else {
-                None
-            };
-            rsx! {
-                div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 14px;",
-                    h3 { "Recovery backup" }
-                    p { class: "settings-row-desc",
-                        "Your 24-word recovery phrase restores this wallet on any Desktop or Mobile device."
-                    }
-                    if profile.has_mnemonic {
-                        div { class: "actions",
-                            button::Root {
-                                variant: button::ButtonVariant::Solid,
-                                class: "btn btn-primary",
-                                onclick: move |_| {
-                                    let next = !*show_phrase.read();
-                                    show_phrase.set(next);
-                                },
-                                button::Label {
-                                    if *show_phrase.read() { "Hide recovery phrase" } else { "Show recovery phrase" }
-                                }
-                            }
-                        }
-                        if let Some(ref phrase) = phrase_opt {
-                            div {
-                                class: "mono",
-                                style: "padding: 14px; border-radius: 10px; border: 1px solid var(--hc-border); background: var(--hc-field); line-height: 1.6;",
-                                "{phrase}"
-                            }
-                            button::Root {
-                                variant: button::ButtonVariant::Ghost,
-                                class: "btn btn-ghost",
-                                onclick: {
-                                    let p = phrase.clone();
-                                    move |_| match copy_to_clipboard(&p) {
-                                        Ok(()) => toast.set(Some(ToastNotice {
-                                            title: "Copied".into(),
-                                            body: Some("Recovery phrase copied.".into()),
-                                            tone: "success",
-                                        })),
-                                        Err(e) => toast.set(Some(ToastNotice {
-                                            title: "Copy failed".into(),
-                                            body: Some(e),
-                                            tone: "error",
-                                        })),
-                                    }
-                                },
-                                button::Label { "Copy phrase" }
-                            }
-                        }
-                    } else {
-                        p { class: "settings-row-desc", "No mnemonic stored for this vault." }
-                    }
-                }
+        SettingSubpage::Backup => rsx! {
+            WalletBackupPanel {
+                profile,
+                nav_child,
+                toast,
             }
-        }
+        },
         SettingSubpage::Import => {
             let svc_import = Arc::clone(&services);
             rsx! {
@@ -1078,61 +1650,12 @@ pub fn SettingSubpagePanel(
                 }
             }
         }
-        SettingSubpage::Unlock => {
-            let svc_pw = Arc::clone(&services);
-            rsx! {
-                div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 14px; max-width: 420px;",
-                    h3 { "Change vault password" }
-                    PasswordField {
-                        id: "cur-pw",
-                        label: "Current password",
-                        placeholder: "Your current password",
-                        value: cur_pw,
-                    }
-                    PasswordField {
-                        id: "next-pw",
-                        label: "New password",
-                        placeholder: "8+ characters",
-                        value: next_pw,
-                    }
-                    div { class: "actions",
-                        button::Root {
-                            variant: button::ButtonVariant::Solid,
-                            class: "btn btn-primary",
-                            onclick: move |_| {
-                                let c = cur_pw.read().clone();
-                                let n = next_pw.read().clone();
-                                match svc_pw.change_password(&c, &n) {
-                                    Ok(()) => {
-                                        cur_pw.set(String::new());
-                                        next_pw.set(String::new());
-                                        toast.set(Some(ToastNotice {
-                                            title: "Password updated".into(),
-                                            body: Some("Your vault password has been changed.".into()),
-                                            tone: "success",
-                                        }));
-                                    }
-                                    Err(e) => toast.set(Some(ToastNotice {
-                                        title: "Update failed".into(),
-                                        body: Some(e),
-                                        tone: "error",
-                                    })),
-                                }
-                            },
-                            button::Label { "Update password" }
-                        }
-                    }
-                }
-            }
-        }
+        SettingSubpage::Unlock => rsx! {
+            UnlockSettingsPanel { toast }
+        },
         SettingSubpage::WalletHealth => rsx! { WalletHealthPanel {} },
         SettingSubpage::About => rsx! {
-            div { class: "nav-child-panel", style: "display: flex; flex-direction: column; gap: 12px;",
-                h3 { "HandCash Desktop v{APP_VERSION}" }
-                p { class: "settings-row-desc",
-                    "Self-custodial BRC-100 Bitcoin SV wallet built natively in Rust with Aeon UI, Dioxus Native (Blitz/Stylo/Vello), and per-account SQLite WAL storage."
-                }
-            }
+            AboutHandCashPanel { nav_child }
         },
         SettingSubpage::Labs => {
             let mut rev = use_signal(|| 0u64);

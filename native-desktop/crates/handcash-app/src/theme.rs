@@ -105,72 +105,15 @@ impl ResolvedTheme {
 
 pub fn read_resolved_theme() -> ResolvedTheme {
     let snap = omarchy_theme::read_omarchy_theme();
-    if snap.get("detected").and_then(|v| v.as_bool()) != Some(true) {
-        return ResolvedTheme::default();
-    }
-    let Some(c) = snap.get("colors") else {
-        return ResolvedTheme::default();
-    };
-    let get = |k: &str, fallback: &str| -> String {
-        c.get(k)
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    let mode_str = get("mode", "dark");
-    let mode = if mode_str == "light" {
-        AeonMode::Light
+    let is_light = snap
+        .get("colors")
+        .and_then(|c| c.get("mode"))
+        .and_then(|v| v.as_str())
+        == Some("light");
+    if is_light {
+        ResolvedTheme::light_handcash()
     } else {
-        AeonMode::Dark
-    };
-    let name = get("name", "Omarchy");
-    let accent = get(
-        "accent",
-        if mode == AeonMode::Light {
-            "#0a3d22"
-        } else {
-            "#57ff97"
-        },
-    );
-    let green = get("green", &accent);
-    let danger = get("red", "#f87171");
-    let selection = get("selection", "#292e42");
-    if mode == AeonMode::Light {
-        let bg = get("background", "#fafbfa");
-        let dark_bg = get("darkBackground", "#f3f5f3");
-        ResolvedTheme {
-            mode,
-            omarchy_name: Some(name),
-            bg,
-            surface: "#ffffff".into(),
-            surface_raised: dark_bg,
-            border: selection.clone(),
-            text: get("brightForeground", "#141814"),
-            muted: get("lightForeground", "#4a524c"),
-            accent_dim: format!("{accent}24"),
-            accent,
-            danger,
-            green,
-            selection,
-        }
-    } else {
-        let bg = get("darkerBackground", "#000000");
-        ResolvedTheme {
-            mode,
-            omarchy_name: Some(name),
-            bg,
-            surface: get("background", "#000000"),
-            surface_raised: get("lighterBackground", "#0c0c0c"),
-            border: selection.clone(),
-            text: get("brightForeground", "#f4f4f5"),
-            muted: get("lightForeground", "#a1a1aa"),
-            accent_dim: format!("{accent}2e"),
-            accent,
-            danger,
-            green,
-            selection,
-        }
+        ResolvedTheme::dark_handcash()
     }
 }
 
@@ -216,31 +159,49 @@ fn hex_to_rgb_channels(hex: &str) -> String {
     }
 }
 
-/// Brand glow for the app shell background and embossed sheen for the top bar,
-/// matching `src/styles/handcash.css` (`body` `--hc-glow` and `.titlebar.aeon-titlebar`).
+/// Embossed outer shell, stage, and titlebar sheen matching `src/styles/handcash.css`
+/// (`.app-shell[data-aeon-scope='app']`, `.app-shell > .stage`, `.app-shell > .titlebar.aeon-titlebar`).
+/// Uses opaque gray-to-black stops (`#1b1b1d 0% -> #050505 45% -> #000000 100%`) so Vello/Blitz
+/// always renders the vertical gray-to-black gradient behind all containers and on the top bar.
 fn shell_gradient_css(t: &ResolvedTheme) -> String {
-    let brand = hex_to_rgb_channels(&t.green);
-    let (top, corner) = if t.mode == AeonMode::Light {
-        (0.08, 0.04)
-    } else {
-        (0.11, 0.06)
-    };
-    format!(
+    let _ = hex_to_rgb_channels;
+    if t.mode == AeonMode::Light {
         r#"
-.app-shell[data-aeon-scope="app"] {{
+.app-shell[data-aeon-scope="app"],
+.app-shell[data-aeon-scope="app"] > .stage {
   background-color: var(--hc-bg);
-  background-image: radial-gradient(ellipse 72% 48% at 50% -18%, rgba({brand}, {top}), transparent 58%), radial-gradient(ellipse 46% 34% at 92% 104%, rgba({brand}, {corner}), transparent 52%);
-}}
-.app-shell[data-aeon-scope="app"] > .stage {{
-  background-color: transparent;
-  background-image: none;
-}}
-.app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {{
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7), 0 1px 2px 0 rgba(0, 0, 0, 0.08);
+}
+.app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
   background-color: var(--hc-bg);
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 45%, rgba(0, 0, 0, 0.12));
-}}
+  background: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
+  background-image: linear-gradient(180deg, #ffffff 0%, #f6f8f6 45%, #eaeeeb 100%) !important;
+  border-bottom-color: hsl(var(--border));
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7), 0 1px 2px 0 rgba(0, 0, 0, 0.08);
+}
 "#
-    )
+        .to_string()
+    } else {
+        r#"
+.app-shell[data-aeon-scope="app"],
+.app-shell[data-aeon-scope="app"] > .stage {
+  background-color: var(--hc-bg);
+  background-image: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  background: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
+}
+.app-shell[data-aeon-scope="app"] > .titlebar.aeon-titlebar {
+  background-color: var(--hc-bg);
+  background-image: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  background: linear-gradient(180deg, #1b1b1d 0%, #050505 45%, #000000 100%) !important;
+  border-bottom-color: hsl(var(--border));
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.26), 0 1px 2px 0 rgba(0, 0, 0, 0.28);
+}
+"#
+        .to_string()
+    }
 }
 
 /// Generates `:root` + `[data-aeon-theme]` token overrides matching `applyBrandPalette`
@@ -260,21 +221,26 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
     let dark_extra = format!(
         r#"
   color-scheme: dark;
-  --hc-field: color-mix(in srgb, {surface} 82%, #000000);
+  --hc-field: #080808;
   --hc-deep: {bg};
-  --hc-glow: radial-gradient(ellipse 72% 48% at 50% -18%, rgba(87, 255, 151, 0.11), transparent 58%), radial-gradient(ellipse 46% 34% at 92% 104%, rgba(56, 203, 123, 0.06), transparent 52%), {bg};
-  --hc-nav-select: color-mix(in srgb, var(--hc-text, #f4f4f5) 14%, #000000);
-  --hc-nav-unselected: color-mix(in srgb, var(--hc-bg, #000000) 88%, var(--hc-text, #f4f4f5));
-  --hc-nav-chrome: var(--hc-nav-select);
-  --wallet-nav-select: var(--hc-nav-select);
-  --wallet-nav-unselected: var(--hc-nav-unselected);
+  --hc-glow: {bg};
+  --hc-nav-select: #222224;
+  --hc-nav-unselected: #1c1c1e;
+  --hc-nav-chrome: #222224;
+  --wallet-nav-select: #222224;
+  --wallet-nav-unselected: #000000;
   --wallet-nav-pill-radius: 999px;
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
   --hc-sunken: rgba(0, 0, 0, 0.28);
   --hc-sunken-strong: rgba(0, 0, 0, 0.38);
   --hc-hover: rgba(255, 255, 255, 0.045);
+  --coin-bsv: #eab300;
+  --coin-ltc: #3660a3;
+  --coin-bch: #0ac18e;
+  --coin-btc: #f7931a;
+  --coin-doge: #c2a633;
+  --coin-arc-usd: #2775ca;
 "#,
-        surface = t.surface,
         bg = t.bg,
     );
 
@@ -287,11 +253,11 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   color-scheme: light;
   --hc-brand: 148 72% 14%;
   --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, rgba(10, 61, 34, 0.08), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 100%, rgba(10, 61, 34, 0.04), transparent 50%), #fafbfa;
-  --hc-nav-select: color-mix(in srgb, var(--hc-text, #141814) 7%, #eef1ef);
+  --hc-nav-select: #eaedea;
   --hc-nav-unselected: #ffffff;
-  --hc-nav-chrome: var(--hc-nav-select);
-  --wallet-nav-select: var(--hc-nav-select);
-  --wallet-nav-unselected: var(--hc-nav-unselected);
+  --hc-nav-chrome: #eaedea;
+  --wallet-nav-select: #eaedea;
+  --wallet-nav-unselected: #ffffff;
   --wallet-nav-pill-radius: 999px;
   --hc-cta: #38cb7b;
   --hc-cta-ink: #0a120e;
@@ -304,13 +270,19 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-accent-deep: #0a3d22;
   --hc-accent: var(--hc-accent-deep);
   --hc-accent-2: var(--hc-accent-deep);
-  --hc-accent-dim: color-mix(in srgb, var(--hc-accent-deep) 14%, transparent);
+  --hc-accent-dim: rgba(10, 61, 34, 0.14);
   --hc-success: var(--hc-accent-deep);
   --hc-warn: #9a6700;
   --hc-error: #b91c1c;
   --hc-down: #dc2626;
   --hc-fail: #dc2626;
   --hc-shadow: 0 16px 36px -14px rgba(20, 24, 20, 0.1);
+  --coin-bsv: #af8600;
+  --coin-ltc: #345d9d;
+  --coin-bch: #089f75;
+  --coin-btc: #cf7507;
+  --coin-doge: #a28a2b;
+  --coin-arc-usd: #2775ca;
 "#
             .to_string(),
         )
@@ -400,42 +372,103 @@ html, body {{
   color: var(--hc-text);
   overflow: hidden;
 }}
-/* Authentic pill sheen, bevel & inverted selector track effects matching TS handcash.css */
-.wallet-nav-titlebar-pill,
-.wallet-nav-actions-pill,
-.status-pill {{
-  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.09), transparent 48%, rgba(0, 0, 0, 0.14));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+.hc-root[data-hc] {{
+  width: 100%;
+  height: 100%;
+  max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }}
-.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected],
-.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"] {{
-  background: transparent;
-  color: var(--hc-text);
+/* True panel surfaces matching TS handcash.css (solid surface card + 2px border, no fake tint gradients) */
+.panel {{
+  background-color: var(--hc-surface);
+  background-image: none;
+  border: var(--hc-border-w, 2px) solid var(--hc-border);
+  border-radius: var(--hc-radius);
 }}
 .panel.wallet-hero {{
-  background-image: radial-gradient(ellipse 80% 70% at 25% 0%, rgba(87, 255, 151, 0.06), transparent 62%), linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 42%);
+  background-color: var(--hc-bg);
+  background-image: none;
 }}
-.panel.what-is-bsv {{
-  background-image: radial-gradient(ellipse 90% 60% at 80% 0%, rgba(234, 179, 0, 0.06), transparent 58%), linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 45%);
+/* Per-chain balance tint matching TS handcash.css */
+.balance-primary[data-chain="bsv"] {{ --coin-color: var(--hc-accent-deep); }}
+.balance-primary[data-chain="btc"] {{ --coin-color: var(--coin-btc); }}
+.balance-primary[data-chain="bch"] {{ --coin-color: var(--coin-bch); }}
+.balance-primary[data-chain="ltc"] {{ --coin-color: var(--coin-ltc); }}
+.balance-primary[data-chain="doge"] {{ --coin-color: var(--coin-doge); }}
+.balance-primary[data-chain="arc_usd"],
+.balance-primary[data-chain="arc-usd"] {{ --coin-color: var(--coin-arc-usd); }}
+.brand-wordmark-svg {{
+  display: block;
+  color: var(--hc-text);
 }}
-/* Keep compact/narrow windows clean: stack main above side and hide duplicate side activity. */
-@media (max-width: 860px) {{
-  .dashboard {{
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }}
-  .dashboard-main {{
-    flex: 1 1 0;
-    min-height: 0;
-  }}
-  .dashboard-side {{
-    flex: 0 0 auto;
-    height: auto;
-  }}
-  .dashboard-side > .history-panel {{
-    display: none;
-  }}
+/* Unified navigation pill & action bar (`src/styles/handcash.css` + unified-navigation-pill insight) */
+.wallet-nav-titlebar-pill,
+.wallet-nav-bar-track {{
+  background-color: var(--hc-nav-select);
+  background-image: none;
+}}
+.wallet-nav-actions-pill {{
+  background-color: var(--hc-nav-chrome);
+  background-image: none;
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]),
+.wallet-nav-bar-track .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]) {{
+  background-color: var(--hc-nav-unselected);
+  color: var(--hc-muted);
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected],
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"],
+.wallet-nav-bar-track .wallet-nav-tab[data-selected],
+.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] {{
+  background-color: transparent;
+  color: var(--hc-text);
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] > svg,
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"] > svg,
+.wallet-nav-bar-track .wallet-nav-tab[data-selected] > svg,
+.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] > svg {{
+  color: var(--hc-accent);
+}}
+/* Docked WalletActionBar slots inside the unified pill */
+.wallet-action-bar.wallet-action-bar--nav {{
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+}}
+.wallet-action-slot {{
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}}
+.wallet-action-slot--neutral > .wallet-nav-tab {{
+  background-color: var(--hc-nav-unselected);
+  color: var(--hc-muted);
+}}
+.wallet-action-slot--primary[data-highlighted] > .wallet-nav-tab {{
+  background-color: var(--hc-cta, var(--hc-accent));
+  color: var(--hc-cta-ink, #060a08);
+}}
+.wallet-action-slot--danger[data-highlighted] > .wallet-nav-tab {{
+  background-color: var(--hc-danger);
+  color: #ffffff;
+}}
+.wallet-nav-action-badge {{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: var(--hc-accent);
+  color: #060a08;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }}
 .app-shell {{
   width: 100%;
@@ -465,12 +498,176 @@ html, body {{
   display: flex;
   flex-direction: column;
 }}
+/* Base default: desktop mode (top action bar active; bottom mobile action bar & mobile ticker strip hidden) */
+.wallet-nav-bar {{
+  display: none;
+}}
+.compact-only-ticker {{
+  display: none;
+}}
 .dashboard-side {{
   min-height: 0;
   height: 100%;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}}
+/* Compact/Mobile responsive layout (`<= 820px`, matching `css_scope.rs` COMPACT_MEDIA) */
+@media (min-width: 821px) {{
+  .wallet-nav-bar {{
+    display: none !important;
+  }}
+  .compact-only-ticker {{
+    display: none !important;
+  }}
+}}
+@media (max-width: 820px) {{
+  .stage {{
+    padding: 8px 10px 10px !important;
+  }}
+  .dashboard {{
+    display: flex !important;
+    flex-direction: column !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px !important;
+  }}
+  .dashboard-main {{
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+  }}
+  .dashboard-side {{
+    display: none !important;
+  }}
+  .compact-only-ticker {{
+    display: block !important;
+    flex: 0 0 auto;
+    width: 100%;
+  }}
+  .wallet-hero-main {{
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }}
+  .wallet-actions {{
+    width: 100% !important;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 8px !important;
+  }}
+  .wallet-actions .btn {{
+    flex: 35 1 0 !important;
+    min-height: 40px !important;
+    padding: 8px 10px !important;
+  }}
+  .wallet-actions .btn.wallet-action--swap {{
+    flex-grow: 30 !important;
+  }}
+  .wallet-nav-titlebar-tabs {{
+    display: none !important;
+  }}
+  .wallet-nav-bar {{
+    display: flex !important;
+    flex: 0 0 auto;
+    width: auto;
+    margin: 0 8px 8px;
+  }}
+  .wallet-nav-bar-track {{
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    width: 100%;
+    min-height: 40px;
+    border-radius: 12px;
+    overflow: hidden;
+  }}
+  .wallet-nav-bar-track .wallet-nav-tab {{
+    flex: 1 1 0;
+    min-width: 0;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px 2px;
+    border: 0;
+    font-size: 11px;
+    font-weight: 600;
+  }}
+  .wallet-nav-bar-track .wallet-nav-tab-label,
+  .wallet-nav-bar-track .wallet-nav-tab-label-short {{
+    display: none;
+  }}
+  .wallet-nav-bar-track[data-permission] .wallet-nav-tab-label-short {{
+    display: block;
+    font-size: 9px;
+    line-height: 1.1;
+  }}
+}}
+/* Mobile compact ticker strip & attached coin selector inside `WhatIsBsvPanel` */
+.what-is-bsv--compact {{
+  padding: 10px 14px 8px !important;
+  min-height: 0 !important;
+  height: auto !important;
+}}
+.bsv-slide--compact {{
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  width: 100%;
+  cursor: pointer;
+}}
+.bsv-slide--compact > .bsv-asset-row {{
+  flex: 0 0 auto;
+}}
+.bsv-spark--compact {{
+  flex: 1 1 0;
+  max-width: 168px;
+  height: 24px !important;
+  margin: 0 auto !important;
+}}
+.bsv-compact-quote {{
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}}
+.bsv-compact-quote > .bsv-price {{
+  font-size: var(--hc-text-lg);
+  line-height: 1.15;
+}}
+.bsv-compact-quote > .bsv-change {{
+  font-size: var(--hc-text-2xs);
+  line-height: 1.15;
+}}
+.bsv-carousel-dots {{
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 6px;
+}}
+.bsv-carousel-dots > button {{
+  appearance: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  border: 0;
+  padding: 0;
+  background: var(--hc-border);
+  cursor: pointer;
+  transition: width 140ms ease, background-color 140ms ease;
+}}
+.bsv-carousel-dots > button[aria-current="true"] {{
+  width: 14px;
+  background: var(--hc-accent);
 }}
 .wallet-hero {{
   position: relative;
@@ -485,7 +682,8 @@ html, body {{
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 8px;
   width: 100%;
   overflow: visible;
 }}
@@ -500,8 +698,51 @@ html, body {{
   margin-left: auto;
   overflow: visible;
 }}
-.fiat-currency-menu {{
+.fiat-currency-menu,
+.ticker-coin-selector {{
+  position: relative;
   overflow: visible;
+}}
+.ticker-coin-trigger {{
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hc-text);
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}}
+.ticker-coin-trigger-mark,
+.ticker-coin-option-mark {{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}}
+.ticker-coin-option-balance {{
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  font-family: var(--hc-mono);
+  font-size: 11px;
+}}
+.ticker-coin-option-balance strong {{
+  color: var(--hc-text);
+  font-weight: 600;
+}}
+.ticker-coin-option-balance span {{
+  color: var(--hc-muted);
+  font-size: 10px;
 }}
 .wallet-account-dropdown {{
   position: absolute;
@@ -512,7 +753,8 @@ html, body {{
   max-height: 360px;
   overflow-y: auto;
 }}
-.wallet-account-dropdown.fiat-currency-menu-dropdown {{
+.wallet-account-dropdown.fiat-currency-menu-dropdown,
+.wallet-account-dropdown.ticker-coin-dropdown {{
   left: 0;
   right: auto;
   width: 260px;
@@ -566,9 +808,19 @@ html, body {{
   border-color: transparent;
 }}
 [data-aeon-scope="button"][data-aeon-part="root"].btn.btn-ghost {{
-  background-color: transparent;
+  background-color: var(--hc-surface-2);
   color: var(--hc-text);
   border: 1px solid var(--hc-border);
+}}
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn {{
+  background-color: var(--wallet-nav-unselected);
+  color: var(--hc-text);
+  border: 1px solid var(--hc-border);
+}}
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn:hover:not([data-disabled]),
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn[aria-pressed="true"] {{
+  background-color: var(--wallet-nav-select);
+  border-color: var(--hc-accent);
 }}
 [data-aeon-scope="button"][data-aeon-part="root"].btn.btn-ghost:hover:not([data-disabled]) {{
   background-color: var(--hc-hover);
@@ -576,7 +828,7 @@ html, body {{
 }}
 [data-aeon-scope="listRow"][data-aeon-part="root"].activity-row {{
   border: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--hc-border) 55%, transparent);
+  border-bottom: 1px solid var(--hc-border);
   border-radius: 0;
   background-color: transparent;
   padding: 10px 12px;
@@ -634,6 +886,148 @@ html, body {{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}}
+/* Collectables / Items page toolbar, issuer groups, selection boxes & details showcase */
+.collectables-toolbar {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}}
+.collectables-search-field {{
+  margin-bottom: 0;
+}}
+.collectables-filter-pills {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}}
+.collect-items-section {{
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}}
+.collect-issuer-group {{
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}}
+.collect-issuer-head {{
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+}}
+.collect-issuer-copy {{
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}}
+.collect-issuer-title {{
+  color: var(--hc-text);
+  font-size: var(--hc-text-sm);
+  font-weight: 650;
+}}
+.collect-issuer-meta {{
+  color: var(--hc-muted);
+  font-size: 11px;
+}}
+.collect-issuer-select-btn {{
+  appearance: none;
+  border: 1px solid var(--hc-border);
+  border-radius: 999px;
+  background: var(--hc-surface-2);
+  color: var(--hc-muted);
+  padding: 2px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}}
+.collect-issuer-select-btn:hover {{
+  color: var(--hc-text);
+  border-color: var(--hc-accent);
+}}
+.collectable-card-inner {{
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}}
+.collectable-row-inner {{
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  width: 100%;
+  padding-left: 10px;
+}}
+.collectable-select-box {{
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1.5px solid var(--hc-border);
+  background: rgba(0, 0, 0, 0.65);
+  color: #060a08;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}}
+.collectable-select-box--row {{
+  position: static;
+  flex-shrink: 0;
+}}
+.collectable-select-box.is-selected {{
+  background: var(--hc-accent);
+  border-color: var(--hc-accent);
+  color: #060a08;
+}}
+.collectable-card.is-selected,
+.collectable-row.is-selected {{
+  border-color: var(--hc-accent);
+}}
+.collectable-details-showcase {{
+  display: flex;
+  justify-content: center;
+  margin-bottom: 12px;
+}}
+.collectable-details-media {{
+  width: min(240px, 100%);
+  max-height: 240px;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--hc-border);
+  border-radius: var(--hc-radius);
+}}
+.collectable-details-subrow {{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}}
+.collectable-auth-pill {{
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  border: 1px solid var(--hc-border);
+  background: var(--hc-surface-2);
+  color: var(--hc-muted);
+}}
+.collectable-auth-pill[data-tone="brc150"] {{
+  border-color: var(--hc-accent);
+  color: var(--hc-accent);
+  background: var(--hc-accent-dim);
 }}
 .collection-grid {{
   list-style: none;
@@ -775,7 +1169,7 @@ mod tests {
     fn shell_and_titlebar_carry_brand_gradients() {
         let css = build_theme_override_css(&ResolvedTheme::dark_handcash());
         assert!(css.contains("> .titlebar.aeon-titlebar {\n  background-color: var(--hc-bg);\n  background-image: linear-gradient("));
-        assert!(css.contains("rgba(87, 255, 151, 0.11)"));
+        assert!(css.contains(".app-shell[data-aeon-scope=\"app\"] > .stage {\n  background-color: var(--hc-bg);"));
         assert_eq!(hex_to_rgb_channels("#0a3d22"), "10, 61, 34");
         assert_eq!(hex_to_rgb_channels("oops"), "87, 255, 151");
     }

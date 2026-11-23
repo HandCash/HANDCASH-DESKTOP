@@ -6,13 +6,13 @@
 //! - `src/components/AppToastHost.tsx`
 
 use crate::icons::{
-    AddIcon, BackIcon, CheckIcon, CloseIcon, CopyIcon, EditIcon, ExpandMoreIcon, FireIcon,
-    PersonAddIcon, SendIcon,
+    AddIcon, BackIcon, CheckIcon, CloseIcon, CopyIcon, DownloadIcon, EditIcon, ExpandMoreIcon,
+    FireIcon, PersonAddIcon, SendIcon, TickerCoinMark,
 };
 use crate::machines::{
-    AppSessionEvent, AppSessionMachine, FiatCode, NavChild, NavSection, ToastNotice,
+    AppSessionEvent, AppSessionMachine, FiatCode, MarketCoin, NavChild, NavSection, ToastNotice,
 };
-use crate::state::{copy_to_clipboard, AppServices, SessionSummary, WalletSnapshot};
+use crate::state::{copy_to_clipboard, format_bsv, AppServices, SessionSummary, WalletSnapshot};
 use dioxus::prelude::*;
 use std::sync::Arc;
 
@@ -32,6 +32,8 @@ pub enum ActionIcon {
     Send,
     Fire,
     PersonAdd,
+    Download,
+    Copy,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +44,7 @@ pub struct DockActionSpec {
     pub tone: ActionTone,
     pub icon: ActionIcon,
     pub disabled: bool,
+    pub tertiary_before: Option<Box<DockActionSpec>>,
 }
 
 impl DockActionSpec {
@@ -58,21 +61,67 @@ impl DockActionSpec {
             tone,
             icon,
             disabled: false,
+            tertiary_before: None,
         }
+    }
+
+    pub const fn short_label(mut self, short_label: &'static str) -> Self {
+        self.short_label = short_label;
+        self
     }
 
     pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
+
+    pub fn with_tertiary(mut self, tertiary: DockActionSpec) -> Self {
+        self.tertiary_before = Some(Box::new(tertiary));
+        self
+    }
 }
 
-/// Declarative CTA specification docked directly into `.wallet-nav-titlebar-tabs[data-permission=""]`.
+/// Declarative CTA specification docked directly into `.wallet-nav-titlebar-tabs[data-permission=""]`
+/// and `.wallet-nav-bar-track`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockSpec {
     pub aria_label: &'static str,
     pub secondary: Option<DockActionSpec>,
     pub primary: DockActionSpec,
+}
+
+impl DockSpec {
+    pub fn three(
+        aria_label: &'static str,
+        tertiary: DockActionSpec,
+        secondary: DockActionSpec,
+        primary: DockActionSpec,
+    ) -> Self {
+        Self {
+            aria_label,
+            secondary: Some(secondary.with_tertiary(tertiary)),
+            primary,
+        }
+    }
+
+    pub fn actions(&self) -> Vec<DockActionSpec> {
+        let mut actions = Vec::with_capacity(3);
+        if let Some(ref sec) = self.secondary {
+            if let Some(ref tert) = sec.tertiary_before {
+                actions.push((**tert).clone());
+            }
+            let mut clean_sec = sec.clone();
+            clean_sec.tertiary_before = None;
+            actions.push(clean_sec);
+        }
+        if let Some(ref tert) = self.primary.tertiary_before {
+            actions.push((**tert).clone());
+        }
+        let mut clean_prim = self.primary.clone();
+        clean_prim.tertiary_before = None;
+        actions.push(clean_prim);
+        actions
+    }
 }
 
 /// Monotonic CTA dispatch event (`(sequence, action_id)`).
@@ -90,27 +139,32 @@ fn render_action_icon(icon: ActionIcon) -> Element {
         ActionIcon::Send => rsx! { SendIcon { size: 17 } },
         ActionIcon::Fire => rsx! { FireIcon { size: 17 } },
         ActionIcon::PersonAdd => rsx! { PersonAddIcon { size: 17 } },
+        ActionIcon::Download => rsx! { DownloadIcon { size: 17 } },
+        ActionIcon::Copy => rsx! { CopyIcon { size: 16 } },
     }
 }
 
-/// 1:1 port of `src/components/WalletActionBar.tsx` (`placement="nav"`),
-/// rendered directly inside `.wallet-nav-titlebar-tabs[data-permission=""]`.
+/// 1:1 port of `src/components/WalletActionBar.tsx` (`<footer class="wallet-action-bar wallet-action-bar--nav">`).
 #[component]
-pub fn WalletActionBarNav(spec: DockSpec, mut trigger: Signal<DockTrigger>) -> Element {
-    let mut actions: Vec<DockActionSpec> = Vec::with_capacity(2);
-    if let Some(sec) = spec.secondary.clone() {
-        actions.push(sec);
-    }
-    actions.push(spec.primary.clone());
+pub fn WalletActionBarFooter(spec: DockSpec, mut trigger: Signal<DockTrigger>) -> Element {
+    let mut hovered_idx = use_signal(|| Option::<usize>::None);
+    let actions = spec.actions();
 
-    // Prefer the primary CTA when enabled; danger secondaries never rest highlighted.
-    let highlighted_idx: Option<usize> = if !spec.primary.disabled {
+    // Prefer the primary CTA when enabled; danger secondaries/tertiaries never rest highlighted.
+    let fallback_idx: Option<usize> = if !spec.primary.disabled {
         Some(actions.len() - 1)
-    } else if actions.len() > 1 && !actions[0].disabled && actions[0].tone != ActionTone::Danger {
-        Some(0)
     } else {
-        None
+        actions
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1)
+            .find(|(_, a)| !a.disabled && a.tone != ActionTone::Danger)
+            .map(|(i, _)| i)
     };
+
+    let cur_hover = (*hovered_idx.read()).filter(|&i| actions.get(i).is_some_and(|a| !a.disabled));
+    let highlighted_idx = cur_hover.or(fallback_idx);
 
     let data_cta = highlighted_idx.map(|i| {
         if actions[i].tone == ActionTone::Danger {
@@ -121,63 +175,75 @@ pub fn WalletActionBarNav(spec: DockSpec, mut trigger: Signal<DockTrigger>) -> E
     });
 
     rsx! {
-        div {
-            class: "wallet-nav-titlebar-tabs",
+        footer {
+            class: "wallet-action-bar wallet-action-bar--nav",
             role: "group",
             aria_label: "{spec.aria_label}",
-            "data-permission": "",
-            footer {
-                class: "wallet-action-bar wallet-action-bar--nav",
-                role: "group",
-                aria_label: "{spec.aria_label}",
-                "data-cta": data_cta,
-                for (idx, action) in actions.into_iter().enumerate() {
-                    {
-                        let is_highlighted = highlighted_idx == Some(idx) && !action.disabled;
-                        let slot_tone = if !is_highlighted {
-                            "neutral"
-                        } else if action.tone == ActionTone::Danger {
-                            "danger"
-                        } else {
-                            "primary"
-                        };
-                        let slot_class = format!("wallet-action-slot wallet-action-slot--{slot_tone}");
-                        let btn_class = match action.tone {
-                            ActionTone::Primary => "wallet-nav-tab wallet-nav-tab-accept",
-                            ActionTone::Danger => "wallet-nav-tab wallet-nav-tab-danger",
-                            ActionTone::Secondary => "wallet-nav-tab wallet-nav-tab-deny",
-                        };
-                        let aid = action.id;
-                        rsx! {
-                            span {
-                                key: "{action.id}-{idx}",
-                                class: "{slot_class}",
-                                "data-highlighted": if is_highlighted { Some("") } else { None },
-                                button {
-                                    r#type: "button",
-                                    class: "{btn_class}",
-                                    "data-selected": if is_highlighted { Some("") } else { None },
-                                    disabled: action.disabled,
-                                    title: "{action.label}",
-                                    aria_label: "{action.label}",
-                                    onclick: move |_| {
-                                        let next_seq = trigger.read().seq.wrapping_add(1);
-                                        trigger.set(DockTrigger {
-                                            seq: next_seq,
-                                            action_id: aid,
-                                        });
-                                    },
-                                    span { class: "wallet-nav-tab-icon",
-                                        {render_action_icon(action.icon)}
-                                    }
-                                    span { class: "wallet-nav-tab-label", "{action.label}" }
-                                    span { class: "wallet-nav-tab-label-short", "{action.short_label}" }
+            "data-cta": data_cta,
+            onmouseleave: move |_| hovered_idx.set(None),
+            for (idx, action) in actions.into_iter().enumerate() {
+                {
+                    let is_highlighted = highlighted_idx == Some(idx) && !action.disabled;
+                    let slot_tone = if !is_highlighted {
+                        "neutral"
+                    } else if action.tone == ActionTone::Danger {
+                        "danger"
+                    } else {
+                        "primary"
+                    };
+                    let slot_class = format!("wallet-action-slot wallet-action-slot--{slot_tone}");
+                    let btn_class = match action.tone {
+                        ActionTone::Primary => "wallet-nav-tab wallet-nav-tab-accept",
+                        ActionTone::Danger => "wallet-nav-tab wallet-nav-tab-danger",
+                        ActionTone::Secondary => "wallet-nav-tab wallet-nav-tab-deny",
+                    };
+                    let aid = action.id;
+                    rsx! {
+                        span {
+                            key: "{action.id}-{idx}",
+                            class: "{slot_class}",
+                            "data-highlighted": if is_highlighted { Some("") } else { None },
+                            button {
+                                r#type: "button",
+                                class: "{btn_class}",
+                                "data-selected": if is_highlighted { Some("") } else { None },
+                                disabled: action.disabled,
+                                title: "{action.label}",
+                                aria_label: "{action.label}",
+                                onmouseenter: move |_| hovered_idx.set(Some(idx)),
+                                onclick: move |_| {
+                                    let next_seq = trigger.read().seq.wrapping_add(1);
+                                    trigger.set(DockTrigger {
+                                        seq: next_seq,
+                                        action_id: aid,
+                                    });
+                                },
+                                span { class: "wallet-nav-tab-icon",
+                                    {render_action_icon(action.icon)}
                                 }
+                                span { class: "wallet-nav-tab-label", "{action.label}" }
+                                span { class: "wallet-nav-tab-label-short", "{action.short_label}" }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/WalletActionBar.tsx` (`placement="nav"`),
+/// rendered directly inside `.wallet-nav-titlebar-tabs[data-permission=""]`.
+#[component]
+pub fn WalletActionBarNav(spec: DockSpec, trigger: Signal<DockTrigger>) -> Element {
+    let aria = spec.aria_label;
+    rsx! {
+        div {
+            class: "wallet-nav-titlebar-tabs",
+            role: "group",
+            aria_label: "{aria}",
+            "data-permission": "",
+            WalletActionBarFooter { spec, trigger }
         }
     }
 }
@@ -519,6 +585,117 @@ pub fn WalletAccountMenu(
 
                         if let Some(ref err) = *menu_error.read() {
                             p { class: "wallet-account-error", role: "alert", "{err}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/TickerCoinSelector.tsx` (multi-currency coin selector dropdown in `.wallet-hero-head`).
+#[component]
+pub fn TickerCoinSelector(
+    mut active_coin: Signal<MarketCoin>,
+    bsv_sats: u64,
+    bsv_fiat_label: String,
+    zero_fiat_label: String,
+    mut open_menu: Signal<Option<&'static str>>,
+) -> Element {
+    let open = *open_menu.read() == Some("coin");
+    let current = *active_coin.read();
+    let bsv_text = format_bsv(bsv_sats);
+    let bsv_amount = bsv_text.trim_end_matches(" BSV").to_string();
+    let trigger_aria = format!("Choose coin ({})", current.code());
+
+    rsx! {
+        div {
+            class: "wallet-nav-actions-pill wallet-hero-metric ticker-coin-selector",
+            "data-aeon-scope": "ticker-coin",
+            "data-aeon-state": if open { "open" } else { "closed" },
+            button {
+                r#type: "button",
+                class: "ticker-coin-trigger",
+                "data-aeon-part": "trigger",
+                aria_haspopup: "dialog",
+                aria_expanded: open,
+                aria_label: "{trigger_aria}",
+                title: "Choose coin",
+                onclick: move |_| {
+                    let next = if *open_menu.read() == Some("coin") { None } else { Some("coin") };
+                    open_menu.set(next);
+                },
+                span { class: "ticker-coin-trigger-mark", aria_hidden: true,
+                    TickerCoinMark { coin: current.as_str(), size: 18 }
+                }
+                span { class: "ticker-coin-trigger-code", "{current.code()}" }
+                ExpandMoreIcon {
+                    size: 16,
+                    class: if open { "wallet-account-caret is-open" } else { "wallet-account-caret" },
+                }
+            }
+
+            if open {
+                section {
+                    id: "ticker-coin-dropdown",
+                    class: "wallet-account-dropdown ticker-coin-dropdown",
+                    "data-aeon-part": "content",
+                    aria_label: "Choose coin",
+                    header { class: "wallet-account-heading",
+                        div { strong { "Choose coin" } }
+                        span { class: "wallet-account-count", "{MarketCoin::ALL.len()}" }
+                    }
+                    ul { class: "wallet-account-list", role: "listbox", aria_label: "Coins",
+                        for coin in MarketCoin::ALL {
+                            {
+                                let selected = coin == current;
+                                let amt_str = if coin == MarketCoin::Bsv {
+                                    bsv_amount.clone()
+                                } else {
+                                    "0".to_string()
+                                };
+                                let fiat_str = if coin == MarketCoin::Bsv {
+                                    bsv_fiat_label.clone()
+                                } else {
+                                    zero_fiat_label.clone()
+                                };
+                                rsx! {
+                                    li { key: "{coin.as_str()}",
+                                        div { class: "wallet-account-row",
+                                            button {
+                                                r#type: "button",
+                                                role: "option",
+                                                aria_selected: selected,
+                                                class: if selected {
+                                                    "wallet-account-option ticker-coin-row is-selected"
+                                                } else {
+                                                    "wallet-account-option ticker-coin-row"
+                                                },
+                                                onclick: move |_| {
+                                                    active_coin.set(coin);
+                                                    open_menu.set(None);
+                                                },
+                                                span { class: "wallet-account-option-lead",
+                                                    span { class: "ticker-coin-option-mark", aria_hidden: true,
+                                                        TickerCoinMark { coin: coin.as_str(), size: 22 }
+                                                    }
+                                                    span { class: "wallet-account-option-copy",
+                                                        strong { "{coin.code()}" }
+                                                        span { "{coin.name()}" }
+                                                    }
+                                                }
+                                                span { class: "ticker-coin-option-balance",
+                                                    strong { "{amt_str}" }
+                                                    span { "{fiat_str}" }
+                                                }
+                                                if selected {
+                                                    CheckIcon { size: 17, class: "wallet-account-option-check" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

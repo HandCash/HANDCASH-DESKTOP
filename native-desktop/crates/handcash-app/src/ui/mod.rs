@@ -14,7 +14,7 @@ pub mod send;
 pub mod side;
 
 use crate::css_scope::{PLATFORM, ROOT_CLASSES, SCOPED_SHEETS};
-use crate::icons::{HandCashBrandMark, LockIcon, ScanQrIcon};
+use crate::icons::{HandCashBrandMark, HandCashWordmarkSvg, LockIcon, ScanQrIcon};
 use crate::machines::{
     resolve_wallet_status, AppSessionEvent, AppSessionMachine, AppSessionState, AuthFormMode,
     DisplayCurrency, NavChild, NavSection, ToastNotice,
@@ -341,7 +341,10 @@ pub fn BrandLogo(
             }
             if show_wordmark {
                 div { class: "brand-wordmark",
-                    div { class: "brand-name", "HandCash" }
+                    div { class: "brand-name",
+                        HandCashWordmarkSvg {}
+                        span { class: "sr-only", "HandCash" }
+                    }
                 }
             }
         }
