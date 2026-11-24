@@ -342,6 +342,13 @@ pub struct ItemDisplayMeta {
     pub collection_id: Option<String>,
     pub signer: Option<String>,
     pub media_origin: Option<String>,
+    pub issuer_attested: bool,
+    pub bap_id: Option<String>,
+    pub content: Option<String>,
+    pub item_type: Option<String>,
+    pub sub_type: Option<String>,
+    pub traits: Vec<(String, String)>,
+    pub extras: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -588,6 +595,63 @@ pub fn apply_inscription_resolutions(
                 .filter(|s| !s.is_empty())
                 .map(origin_art_key)
                 .filter(|k| is_valid_origin_key(k));
+        }
+        if entry.content.is_none() {
+            entry.content = rec
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.item_type.is_none() {
+            entry.item_type = rec
+                .get("type")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.sub_type.is_none() {
+            entry.sub_type = rec
+                .get("subType")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.bap_id.is_none() {
+            entry.bap_id = rec
+                .get("bapId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if rec.get("issuerAttested").and_then(Value::as_bool) == Some(true) {
+            entry.issuer_attested = true;
+        }
+        if entry.traits.is_empty() {
+            if let Some(arr) = rec.get("traits").and_then(Value::as_array) {
+                for t in arr {
+                    let name = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                    let val = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                    if !name.is_empty() && !val.is_empty() {
+                        entry.traits.push((name.to_string(), val.to_string()));
+                    }
+                }
+            }
+        }
+        if entry.extras.is_empty() {
+            if let Some(arr) = rec.get("extras").and_then(Value::as_array) {
+                for t in arr {
+                    let name = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                    let val = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                    if !name.is_empty() && !val.is_empty() {
+                        entry.extras.push((name.to_string(), val.to_string()));
+                    }
+                }
+            }
         }
     }
 }

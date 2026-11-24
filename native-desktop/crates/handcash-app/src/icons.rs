@@ -425,6 +425,15 @@ pub fn EditIcon(#[props(default = 16)] size: u32) -> Element {
 }
 
 #[component]
+pub fn SearchIcon(#[props(default = 16)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" }
+        }
+    }
+}
+
+#[component]
 pub fn CloseIcon(#[props(default = 18)] size: u32) -> Element {
     rsx! {
         svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
@@ -555,6 +564,15 @@ pub fn ScreenshotIcon(#[props(default = 20)] size: u32) -> Element {
     rsx! {
         svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
             path { d: "M20 3H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h4v2h8v-2h4c1.1 0 1.99-.9 1.99-2L22 5c0-1.1-.9-2-2-2zm0 14H4V5h16v12z" }
+        }
+    }
+}
+
+#[component]
+pub fn VerifiedIcon(#[props(default = 15)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "m23 12-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.96 8.6 1.5 6.71 4.69 3.1 5.5l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82L8.6 22.5l3.4-1.47 3.4 1.46 1.89-3.19 3.61-.82-.34-3.69L23 12zm-12.91 4.72-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48-7.33 7.35z" }
         }
     }
 }

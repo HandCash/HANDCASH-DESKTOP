@@ -7,6 +7,33 @@ Styling is shared: the Rust app includes `src/styles/handcash.css` + `layout-com
 
 Last audited: 2026-11-22.
 
+## Re-audit 2026-11-24 (overrides the statuses below where they conflict)
+
+Method: every non-test `.tsx` under `src/components` (152 files) was checked for its name anywhere in `native-desktop/crates/handcash-app/src`, and the `.tsx` line count was compared with the Rust function that claims to port it. Line count is only a rough guide, but a 5× gap shows the port left things out.
+
+Result: **76 of 152 components are not referenced anywhere in Rust**, and several rows marked `match` above are much smaller than their TS source. In practice the true count is under 20 `match` rows, not 36.
+
+Rows marked `match` above that are really `partial`:
+
+| Row | TS lines | Rust lines | What is missing |
+|---|---|---|---|
+| RecentActivity + PaymentDetailsPanel | 1613 + 1231 | `ActivityFeed` 195 + `PaymentDetailsPanel` 237 | most of the feed (job rows, sign-in approvals, swap rows, pairing code entry, grouping), most of the details panel |
+| MessagesPanel + messages/* | 814 | `MessagesPanel` 223 | ChatThread, MessageBubble, ChatSidebar, ChatComposer are not ported as components |
+| HandCashRecoveryPanel + GoogleLoginPanel + GoogleEmailRecoveryMethods | 156 + 303 + 229 | 133 | Google sign-in and email recovery methods are absent |
+| ChartAppsPanel + ChartAppView | 151 + 374 | 234 | ChartAppView not referenced |
+| DevKeysPanel | 670 | 211 | most of the panel |
+| SettingsSection / SettingsControlRow / SettingsIconToggle / LabsPanel / ShortcutHint / HistoryBackupUrlField | 23–138 each | not referenced | inlined or dropped; unverified |
+
+Stubs and placeholders: `SwapPanel` (13 lines, EmptyState) vs 570 + 361 + 174 + 63 TS lines; `ScanPanel` (22 lines, links to Send) vs 252 + QrScanner 305; ARC send, 1Sat transfer and burn all end in a "wiring is next" toast (`send.rs:228`, `collectables.rs:1416`, `collectables.rs:1661`).
+
+Whole features with no Rust surface: Import browser (`import/*`, ~1750 lines), BRC-100 permission dialogs (10 components, ~1340 lines), App browser/launcher (~710 lines), PairDevicePanel + AnimatedQr + QrScanner (~1300 lines), Swaps/coins (Swap*, CoinDeposit*, NetworkPicker, AutoPayControls, AmountPad, FiatCurrencyPanel), BntShelf / FungibleTokenFace / DeferredImage / DeferredModelViewer / AssetHistoryList / CollectableSendingMark, UpdatePrompt, LogViewerPanel, CallDock, shared prompts (CommandConfirmPrompt, AsyncActionPrompt, CopyableError, PanelFilter, SearchField, NavBreadcrumb, TopBarPopover, WalletNavChrome).
+
+Probably not needed in Rust (web-only plumbing): ModalPortal, KeepAliveSlot, RenderProbe, FitSlot; MermaidDiagram/StatechartsPanel are dev-only.
+
+The plan to close these gaps is `docs/rust-ui-parity-plan.md`; it replaces "Order of work" below.
+
+Rule going forward: a row may be marked `match` only when a TS DOM fixture replays against the dioxus-ssr output (`parity.rs`), or when every sub-component in the row is referenced in Rust and its behaviour is listed in the Gap column.
+
 ## Chrome / nav / dashboard
 
 | TS component | Rust | Status | Gap |

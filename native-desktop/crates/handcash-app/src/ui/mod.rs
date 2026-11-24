@@ -197,7 +197,10 @@ pub fn HandCashApp() -> Element {
                                     syncing.set(false);
                                 },
                                 span { class: "status-dot", "data-tone": status_view.tone.as_str() }
-                                span { class: "status-pill-label", "{status_view.label}" }
+                                primitives::TextOverflowCarousel {
+                                    label: status_view.label.to_string(),
+                                    class: "status-pill-label".to_string(),
+                                }
                             }
                         } else {
                             div {
@@ -207,7 +210,10 @@ pub fn HandCashApp() -> Element {
                                 "data-tone": status_view.tone.as_str(),
                                 title: "{status_view.detail}",
                                 span { class: "status-dot", "data-tone": status_view.tone.as_str() }
-                                span { class: "status-pill-label", "{status_view.label}" }
+                                primitives::TextOverflowCarousel {
+                                    label: status_view.label.to_string(),
+                                    class: "status-pill-label".to_string(),
+                                }
                             }
                         }
 

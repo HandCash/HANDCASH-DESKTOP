@@ -3,23 +3,24 @@
 //! - `src/components/InventoryPanel.tsx`
 //! - `src/components/CollectionViewToggle.tsx`
 //! - `src/components/CollectableVerifyMark.tsx`
+//! - `src/components/IssuerIdentityMark.tsx` (+ `AssetIssuers.tsx`)
+//! - `src/components/CollectFacepile.tsx`
 //! - `src/components/CollectableDetailsPanel.tsx`
 //! - `src/components/SendCollectablePanel.tsx`
 //! - `src/components/BurnAssetPanel.tsx`
 
 use crate::icons::{
-    CheckIcon, CollectablesIcon, CopyIcon, ExpandMoreIcon, FireIcon, LaunchIcon, SendIcon,
-    ViewGridIcon, ViewListIcon,
+    CheckIcon, CollectablesIcon, ExpandMoreIcon, FireIcon, SendIcon, VerifiedIcon, ViewGridIcon,
+    ViewListIcon, WarningIcon,
 };
 use crate::machines::{classify_recipient, CollectionView, NavChild, RecipientKind, ToastNotice};
-use crate::state::{
-    copy_to_clipboard, open_external_url, truncate_mid, tx_explorer_url, AppServices,
-    WalletSnapshot,
-};
+use crate::state::{copy_to_clipboard, truncate_mid, AppServices, WalletSnapshot};
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
-use crate::ui::primitives::{MiddleEllipsisName, ProfileAvatar, ProfileFingerprint};
+use crate::ui::primitives::{
+    profile_fingerprint, MiddleEllipsisName, ProfileAvatar, ProfileFingerprint, ProfileIdenticon,
+};
 use crate::ui::EmptyState;
-use aeon_ui::button;
+use base64::Engine as _;
 use dioxus::prelude::*;
 use handcash_storage::ItemCardRow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,12 +37,35 @@ pub fn authenticity_display(status: &str) -> (&'static str, &'static str) {
     }
 }
 
-fn txid_from_outpoint(outpoint: &str) -> Option<&str> {
-    let txid = outpoint.split(['_', '.', ':']).next()?;
-    if txid.len() == 64 && txid.bytes().all(|b| b.is_ascii_hexdigit()) {
-        Some(txid)
-    } else {
-        None
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|v| !v.is_empty())
+}
+
+/// `toLocaleString()` for sat counts.
+fn group_thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn toast_copy(mut toast: Signal<Option<ToastNotice>>, title: &str, value: &str) {
+    match copy_to_clipboard(value) {
+        Ok(()) => toast.set(Some(ToastNotice {
+            title: title.to_string(),
+            body: Some(truncate_mid(value, 12)),
+            tone: "success",
+        })),
+        Err(e) => toast.set(Some(ToastNotice {
+            title: "Copy failed".into(),
+            body: Some(e),
+            tone: "error",
+        })),
     }
 }
 
@@ -102,35 +126,203 @@ pub fn CollectableVerifyMark(authenticity_status: String) -> Element {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ItemAuthFilter {
-    #[default]
-    All,
-    Verified,
-    Unverified,
+// ---------------------------------------------------------------------------
+// Issuer identity (IssuerIdentityMark.tsx / AssetIssuers.tsx)
+// ---------------------------------------------------------------------------
+
+/// TS `IssuerView`: who issued an asset — BAP profile, signing key, or unsigned claim.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IssuerView {
+    pub identity_key: String,
+    pub label: String,
+    /// TS `issuerViewState`: listed | imitation | shared-name | verified | unconfirmed | key | claim.
+    pub state: &'static str,
+    pub profile_id: Option<String>,
+    pub image_url: Option<String>,
+    pub issuer_attested: bool,
 }
 
-fn item_group_label(item: &ItemCardRow) -> String {
-    if let Some(ref iss) = item.issuer_key {
-        let t = iss.trim();
-        if !t.is_empty() {
-            return format!("Issuer {}", truncate_mid(t, 10));
+impl IssuerView {
+    /// TS `issuerTrustNote` + `issuerViewTitle`.
+    fn title(&self) -> String {
+        match self.profile_id {
+            Some(ref id) => {
+                let head = if self.state == "unconfirmed" {
+                    format!("Profile ID {id}")
+                } else {
+                    format!("{} · Profile ID {id}", self.label)
+                };
+                let note = match self.state {
+                    "unconfirmed" => "No identity package on this device proves this signer speaks for the profile ID, so its name and image stay hidden.",
+                    "listed" => "Verified by HandCash.",
+                    _ => "Its identity package proves the signer. Not on HandCash’s verified list; compare the profile ID.",
+                };
+                format!("{head} · {note}")
+            }
+            None if self.issuer_attested => format!("Signed by {}", self.identity_key),
+            None => format!("Unsigned issuer claim {}", self.identity_key),
         }
     }
-    if let Some((prefix, _)) = item.name.split_once('#') {
-        let clean = prefix.trim();
-        if clean.len() >= 3 {
-            return clean.to_string();
-        }
-    }
-    "Uncategorized items".into()
 }
+
+/// TS `useIssuerView` for one asset: issuer key (or Sigma signer) resolved against known profiles.
+fn issuer_view_for(
+    item: &ItemCardRow,
+    snap: &WalletSnapshot,
+    services: &AppServices,
+    chain: &str,
+) -> Option<IssuerView> {
+    let meta = snap.item_meta.get(&item.outpoint);
+    let key = non_empty(item.issuer_key.as_deref())
+        .or_else(|| non_empty(meta.and_then(|m| m.signer.as_deref())))?;
+    let attested = meta.is_some_and(|m| m.issuer_attested);
+    let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref())).map(ToString::to_string);
+    match services.peer_identity_for(chain, key) {
+        Some(profile) => Some(IssuerView {
+            identity_key: key.to_string(),
+            label: profile.name,
+            state: "verified",
+            profile_id: Some(bap_id.unwrap_or_else(|| key.to_string())),
+            image_url: profile.image_data_url,
+            issuer_attested: attested,
+        }),
+        None => Some(IssuerView {
+            identity_key: key.to_string(),
+            label: truncate_mid(key, 10),
+            state: if attested { "key" } else { "claim" },
+            profile_id: None,
+            image_url: None,
+            issuer_attested: attested,
+        }),
+    }
+}
+
+/// 1:1 port of `IssuerTrustBadge`: the checkmark or caution after an issuer name.
+#[component]
+pub fn IssuerTrustBadge(state: &'static str) -> Element {
+    match state {
+        "listed" => rsx! {
+            span {
+                class: "issuer-trust-badge",
+                "data-aeon-part": "issuer-trust",
+                "data-aeon-state": state,
+                role: "img",
+                aria_label: "Verified by HandCash",
+                VerifiedIcon { size: 15 }
+            }
+        },
+        "imitation" | "shared-name" => rsx! {
+            span {
+                class: "issuer-trust-badge",
+                "data-aeon-part": "issuer-trust",
+                "data-aeon-state": state,
+                role: "img",
+                aria_label: if state == "imitation" { "Looks like a verified issuer" } else { "Name shared with another identity" },
+                WarningIcon { size: 15 }
+            }
+        },
+        _ => rsx! {},
+    }
+}
+
+/// 1:1 port of `src/components/IssuerIdentityMark.tsx`.
+#[component]
+pub fn IssuerIdentityMark(view: IssuerView, #[props(default)] class: Option<String>) -> Element {
+    let class = match class {
+        Some(c) => format!("identity-pill {c}"),
+        None => "identity-pill".to_string(),
+    };
+    let title = view.title();
+    let short = view
+        .profile_id
+        .as_deref()
+        .filter(|_| view.state == "verified")
+        .map(|id| profile_fingerprint(id).short);
+    rsx! {
+        span {
+            class: "{class}",
+            "data-aeon-part": "issuer",
+            "data-aeon-state": view.state,
+            title: "{title}",
+            if let Some(ref src) = view.image_url {
+                span { class: "identity-pill-lead",
+                    img { class: "identity-pill-image", src: "{src}", alt: "", width: 16, height: 16 }
+                }
+            } else if let Some(ref id) = view.profile_id {
+                span { class: "identity-pill-lead",
+                    ProfileIdenticon { id: id.clone(), size: 10 }
+                }
+            }
+            span { class: "identity-pill-label", "{view.label}" }
+            IssuerTrustBadge { state: view.state }
+            if let Some(short) = short {
+                span { class: "identity-pill-id mono", "{short}" }
+            }
+        }
+    }
+}
+
+const ISSUERS_SHOWN: usize = 3;
+
+/// 1:1 port of `src/components/AssetIssuers.tsx`.
+#[component]
+fn AssetIssuers(views: Vec<IssuerView>) -> Element {
+    let mut seen = BTreeSet::new();
+    let views: Vec<IssuerView> = views
+        .into_iter()
+        .filter(|v| seen.insert(v.identity_key.to_ascii_lowercase()))
+        .collect();
+    if views.is_empty() {
+        return rsx! {};
+    }
+    let hidden = views.len().saturating_sub(ISSUERS_SHOWN);
+    rsx! {
+        span {
+            class: "asset-issuers",
+            "data-aeon-part": "asset-issuers",
+            "data-aeon-state": if hidden > 0 { "overflow" } else { "all" },
+            for view in views.into_iter().take(ISSUERS_SHOWN) {
+                IssuerIdentityMark { key: "{view.identity_key}", view }
+            }
+            if hidden > 0 {
+                span { class: "asset-issuers-more", "+{hidden} more" }
+            }
+        }
+    }
+}
+
+const FACE_LIMIT: usize = 4;
+
+/// 1:1 port of `src/components/CollectFacepile.tsx`.
+#[component]
+fn CollectFacepile(faces: Vec<(String, Option<String>)>) -> Element {
+    rsx! {
+        span { class: "collect-facepile", "aria-hidden": "true",
+            for (outpoint, image) in faces.into_iter().take(FACE_LIMIT) {
+                span { key: "{outpoint}", class: "collect-facepile-face",
+                    if let Some(src) = image {
+                        img { src: "{src}", alt: "", width: 36, height: 36, decoding: "async" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 16 }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InventoryPanel.tsx
+// ---------------------------------------------------------------------------
 
 /// Collect's select box, 1:1 port of `src/components/SelectionCheckbox.tsx`.
 #[component]
 fn CollectSelect(
     checked: bool,
     disabled: bool,
+    #[props(default)] mixed: bool,
     label: String,
     class: &'static str,
     on_change: EventHandler<bool>,
@@ -139,12 +331,14 @@ fn CollectSelect(
         label {
             class: "collect-select {class}",
             title: "{label}",
+            "data-state": if mixed { "indeterminate" } else if checked { "checked" } else { "unchecked" },
             onclick: move |evt| evt.stop_propagation(),
             input {
                 r#type: "checkbox",
                 checked: checked,
                 disabled: disabled,
                 aria_label: "{label}",
+                aria_checked: if mixed { "mixed" } else if checked { "true" } else { "false" },
                 onchange: move |evt| on_change.call(evt.checked()),
             }
             span { "aria-hidden": "true" }
@@ -162,26 +356,6 @@ fn set_outpoint_selected(mut selected: Signal<BTreeSet<String>>, outpoint: &str,
     selected.set(next);
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum CollectSortMode {
-    #[default]
-    Identity,
-    Name,
-    Recent,
-}
-
-impl CollectSortMode {
-    pub const ALL: [Self; 3] = [Self::Identity, Self::Name, Self::Recent];
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Identity => "By identity",
-            Self::Name => "Name",
-            Self::Recent => "Recent",
-        }
-    }
-}
-
-/// 1:1 port of `src/components/InventoryPanel.tsx`.
 /// One shelf per issuer identity (verified issuer profile -> signer -> app -> collection -> unverified key).
 struct IdentityShelf<'a> {
     key: String,
@@ -190,6 +364,10 @@ struct IdentityShelf<'a> {
     avatar_url: Option<String>,
     avatar_key: Option<String>,
     label: String,
+    /// TS `issuerViewState` for the trust badge.
+    trust_state: &'static str,
+    /// Hover title on the shelf name.
+    title: String,
     items: Vec<&'a ItemCardRow>,
 }
 
@@ -219,90 +397,86 @@ fn group_by_identity<'a>(
     let mut loose = Vec::new();
     for &item in items {
         let meta = snap.item_meta.get(&item.outpoint);
-        let issuer_key = item
-            .issuer_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|k| !k.is_empty());
-        let signer = meta
-            .and_then(|m| m.signer.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
-        let app = meta
-            .and_then(|m| m.app.as_deref())
-            .map(str::trim)
-            .filter(|a| !a.is_empty());
-        let collection_id = meta
-            .and_then(|m| m.collection_id.as_deref())
-            .map(str::trim)
-            .filter(|c| !c.is_empty());
+        let issuer_key = non_empty(item.issuer_key.as_deref());
+        let signer = non_empty(meta.and_then(|m| m.signer.as_deref()));
+        let app = non_empty(meta.and_then(|m| m.app.as_deref()));
+        let collection_id = non_empty(meta.and_then(|m| m.collection_id.as_deref()));
+        let attested = meta.is_some_and(|m| m.issuer_attested);
 
-        let shelf_spec = if let Some(key) = issuer_key {
+        let shelf = if let Some(key) = issuer_key {
             let prof = services.peer_identity_for(chain, key);
-            let (rank, label, avatar_url) = match prof {
-                Some(p) => (0u8, p.name, p.image_data_url),
-                None => (3u8, format!("Issuer {}", truncate_mid(key, 10)), None),
+            let (rank, label, avatar_url, trust_state) = match prof {
+                Some(p) => (0u8, p.name, p.image_data_url, "verified"),
+                None => (
+                    3u8,
+                    format!("Issuer {}", truncate_mid(key, 10)),
+                    None,
+                    if attested { "key" } else { "claim" },
+                ),
             };
-            Some((
-                format!("issuer:pubkey:{}", key.to_ascii_lowercase()),
+            Some(IdentityShelf {
+                key: format!("issuer:pubkey:{}", key.to_ascii_lowercase()),
                 rank,
-                Some(key.to_string()),
+                fingerprint_id: Some(key.to_string()),
                 avatar_url,
-                Some(key.to_string()),
+                avatar_key: Some(key.to_string()),
+                title: format!("{label} · issuer attribution: {key}"),
                 label,
-            ))
+                trust_state,
+                items: Vec::new(),
+            })
         } else if let Some(sig) = signer {
             let label = app
                 .map(ToString::to_string)
                 .unwrap_or_else(|| format!("Signed · {}", truncate_mid(sig, 10)));
-            Some((
-                format!("issuer:signer:{sig}"),
-                2u8,
-                Some(sig.to_string()),
-                None,
-                Some(sig.to_string()),
+            Some(IdentityShelf {
+                key: format!("issuer:signer:{sig}"),
+                rank: 2,
+                fingerprint_id: Some(sig.to_string()),
+                avatar_url: None,
+                avatar_key: Some(sig.to_string()),
+                title: format!("{label} · signed by {sig}, as the index reports it"),
                 label,
-            ))
+                trust_state: if attested { "key" } else { "claim" },
+                items: Vec::new(),
+            })
         } else if let Some(a) = app {
-            Some((
-                format!("issuer:app:{}", a.to_ascii_lowercase()),
-                2u8,
-                None,
-                None,
-                None,
-                a.to_string(),
-            ))
+            Some(IdentityShelf {
+                key: format!("issuer:app:{}", a.to_ascii_lowercase()),
+                rank: 2,
+                fingerprint_id: None,
+                avatar_url: None,
+                avatar_key: None,
+                title: a.to_string(),
+                label: a.to_string(),
+                trust_state: "claim",
+                items: Vec::new(),
+            })
         } else if let Some(cid) = collection_id {
             let label = collection_series_stem(&item.name)
                 .unwrap_or_else(|| format!("Collection {}", truncate_mid(cid, 10)));
-            Some((
-                format!("issuer:collection:{}", cid.to_ascii_lowercase()),
-                2u8,
-                None,
-                None,
-                None,
+            Some(IdentityShelf {
+                key: format!("issuer:collection:{}", cid.to_ascii_lowercase()),
+                rank: 2,
+                fingerprint_id: None,
+                avatar_url: None,
+                avatar_key: None,
+                title: label.clone(),
                 label,
-            ))
+                trust_state: "claim",
+                items: Vec::new(),
+            })
         } else {
             None
         };
 
-        if let Some((key, rank, fingerprint_id, avatar_url, avatar_key, label)) = shelf_spec {
-            buckets
-                .entry(key.clone())
-                .or_insert_with(|| IdentityShelf {
-                    key,
-                    rank,
-                    fingerprint_id,
-                    avatar_url,
-                    avatar_key,
-                    label,
-                    items: Vec::new(),
-                })
+        match shelf {
+            Some(shelf) => buckets
+                .entry(shelf.key.clone())
+                .or_insert(shelf)
                 .items
-                .push(item);
-        } else {
-            loose.push(item);
+                .push(item),
+            None => loose.push(item),
         }
     }
     let mut shelves: Vec<IdentityShelf<'a>> = buckets.into_values().collect();
@@ -312,6 +486,41 @@ fn group_by_identity<'a>(
             .then_with(|| a.label.to_ascii_lowercase().cmp(&b.label.to_ascii_lowercase()))
     });
     (shelves, loose)
+}
+
+/// A nested collection: id, display name, and its items.
+type NestedCollection<'a> = (String, String, Vec<&'a ItemCardRow>);
+
+/// Splits a shelf into its nested collections (by `collection_id`) and the uncollected rest.
+fn nested_collections<'a>(
+    items: &[&'a ItemCardRow],
+    snap: &WalletSnapshot,
+) -> (Vec<NestedCollection<'a>>, Vec<&'a ItemCardRow>) {
+    let mut by_id: BTreeMap<String, Vec<&'a ItemCardRow>> = BTreeMap::new();
+    let mut loose = Vec::new();
+    for &item in items {
+        let cid = non_empty(
+            snap.item_meta
+                .get(&item.outpoint)
+                .and_then(|m| m.collection_id.as_deref()),
+        );
+        match cid {
+            Some(cid) => by_id.entry(cid.to_string()).or_default().push(item),
+            None => loose.push(item),
+        }
+    }
+    let mut collections: Vec<(String, String, Vec<&'a ItemCardRow>)> = by_id
+        .into_iter()
+        .map(|(cid, members)| {
+            let label = members
+                .first()
+                .and_then(|first| collection_series_stem(&first.name))
+                .unwrap_or_else(|| format!("Collection {}", truncate_mid(&cid, 10)));
+            (cid, label, members)
+        })
+        .collect();
+    collections.sort_by_key(|(_, label, _)| label.to_ascii_lowercase());
+    (collections, loose)
 }
 
 /// Mirrors `groupQuantityLabel`: "N items" plus "N verified" when BRC-150 proven.
@@ -454,7 +663,7 @@ fn collect_list_row(
     }
 }
 
-/// The grid or list of items inside one shelf (or the "No issuer" section).
+/// The grid or list of items inside one shelf section (or the "No issuer" section).
 fn collect_items_list(
     items: &[&ItemCardRow],
     snap: &WalletSnapshot,
@@ -494,7 +703,27 @@ fn collect_items_list(
     }
 }
 
-/// 1:1 port of `src/components/InventoryPanel.tsx`: issuer shelves, "No issuer" section, group select.
+fn item_matches(item: &ItemCardRow, snap: &WalletSnapshot, q: &str) -> bool {
+    if q.is_empty() {
+        return true;
+    }
+    let has = |s: &str| s.to_ascii_lowercase().contains(q);
+    let meta = snap.item_meta.get(&item.outpoint);
+    has(&item.name)
+        || has(&item.origin_outpoint)
+        || has(&item.outpoint)
+        || item.issuer_key.as_deref().is_some_and(has)
+        || meta.is_some_and(|m| {
+            m.app.as_deref().is_some_and(has)
+                || m.collection_id.as_deref().is_some_and(has)
+                || m.signer.as_deref().is_some_and(has)
+                || m.bap_id.as_deref().is_some_and(has)
+                || m.traits.iter().any(|(k, v)| has(k) || has(v))
+        })
+}
+
+/// 1:1 port of `src/components/InventoryPanel.tsx`: issuer shelves (accordion, one open),
+/// nested collections, "No issuer" section, group select and the selection dock.
 #[component]
 pub fn InventoryPanel(
     #[props(default = "main".to_string())] chain: String,
@@ -502,72 +731,112 @@ pub fn InventoryPanel(
     view: Signal<CollectionView>,
     mut nav_child: Signal<Option<NavChild>>,
     #[props(default)] selected_outpoints_ext: Option<Signal<BTreeSet<String>>>,
+    #[props(default)] dock_spec: Option<Signal<Option<DockSpec>>>,
+    #[props(default)] dock_trigger: Option<Signal<DockTrigger>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut query = use_signal(String::new);
-    let mut sort_mode = use_signal(|| CollectSortMode::Identity);
     let local_selected = use_signal(BTreeSet::<String>::new);
     let mut selected_outpoints = selected_outpoints_ext.unwrap_or(local_selected);
-    let mut collapsed = use_signal(BTreeSet::<String>::new);
+    let mut open_shelf = use_signal(|| Option::<String>::None);
+    let mut last_seq = use_signal(|| dock_trigger.map(|t| t.read().seq).unwrap_or_default());
 
     // Trigger bounded background prefetch for any items missing cached local data: art.
     if !snap.items.is_empty() {
         services.prefetch_missing_item_art(&chain, &snap);
     }
 
+    // Drop selections whose items left the wallet.
+    {
+        let held: BTreeSet<&str> = snap.items.iter().map(|i| i.outpoint.as_str()).collect();
+        let stale = selected_outpoints
+            .peek()
+            .iter()
+            .any(|op| !held.contains(op.as_str()));
+        if stale {
+            let kept = selected_outpoints
+                .peek()
+                .iter()
+                .filter(|op| held.contains(op.as_str()))
+                .cloned()
+                .collect();
+            selected_outpoints.set(kept);
+        }
+    }
+
+    let selected_set = selected_outpoints.read().clone();
+
+    // Selection dock: Cancel · Burn (N) · Send (N).
+    if let Some(mut dock) = dock_spec {
+        let desired = if selected_set.is_empty() {
+            None
+        } else {
+            let n = selected_set.len();
+            Some(DockSpec::three(
+                "Selected collectables",
+                DockActionSpec::new(
+                    "cancel-selection",
+                    "Cancel",
+                    ActionTone::Secondary,
+                    ActionIcon::Close,
+                ),
+                DockActionSpec::new_owned(
+                    "burn-selected",
+                    format!("Burn ({n})"),
+                    ActionTone::Danger,
+                    ActionIcon::Fire,
+                ),
+                DockActionSpec::new_owned(
+                    "send-selected",
+                    format!("Send ({n})"),
+                    ActionTone::Primary,
+                    ActionIcon::Send,
+                ),
+            ))
+        };
+        if *dock.peek() != desired {
+            dock.set(desired);
+        }
+    }
+    use_effect(move || {
+        let Some(trigger) = dock_trigger else {
+            return;
+        };
+        let trig = *trigger.read();
+        if trig.seq == *last_seq.peek() {
+            return;
+        }
+        last_seq.set(trig.seq);
+        let all: Vec<String> = selected_outpoints.peek().iter().cloned().collect();
+        match trig.action_id {
+            "cancel-selection" => selected_outpoints.set(BTreeSet::new()),
+            "burn-selected" if !all.is_empty() => {
+                nav_child.set(Some(NavChild::BurnCollectables(all)))
+            }
+            "send-selected" if !all.is_empty() => {
+                nav_child.set(Some(NavChild::SendCollectables(all)))
+            }
+            _ => {}
+        }
+    });
+
     let q = query.read().trim().to_ascii_lowercase();
     let cur_view = *view.read();
-    let cur_sort = *sort_mode.read();
-    let selected_set = selected_outpoints.read().clone();
-    let collapsed_set = collapsed.read().clone();
     let grid = cur_view == CollectionView::Grid;
+    let open_key = open_shelf.read().clone();
 
-    let mut filtered: Vec<&ItemCardRow> = snap
+    let filtered: Vec<&ItemCardRow> = snap
         .items
         .iter()
-        .filter(|item| {
-            if q.is_empty() {
-                return true;
-            }
-            let meta = snap.item_meta.get(&item.outpoint);
-            item.name.to_ascii_lowercase().contains(&q)
-                || item.origin_outpoint.to_ascii_lowercase().contains(&q)
-                || item.outpoint.to_ascii_lowercase().contains(&q)
-                || item
-                    .issuer_key
-                    .as_deref()
-                    .is_some_and(|k| k.to_ascii_lowercase().contains(&q))
-                || meta
-                    .and_then(|m| m.app.as_deref())
-                    .is_some_and(|a| a.to_ascii_lowercase().contains(&q))
-                || meta
-                    .and_then(|m| m.collection_id.as_deref())
-                    .is_some_and(|c| c.to_ascii_lowercase().contains(&q))
-                || meta
-                    .and_then(|m| m.signer.as_deref())
-                    .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
-        })
+        .filter(|item| item_matches(item, &snap, &q))
         .collect();
-    match cur_sort {
-        CollectSortMode::Name => {
-            filtered.sort_by_key(|a| a.name.to_ascii_lowercase());
-        }
-        CollectSortMode::Recent => {
-            filtered.sort_by_key(|a| std::cmp::Reverse(a.sort_key));
-        }
-        CollectSortMode::Identity => {}
-    }
-    let (shelves, ungrouped) = if cur_sort == CollectSortMode::Identity {
-        group_by_identity(&filtered, &snap, &services, &chain)
-    } else {
-        (Vec::new(), filtered.clone())
-    };
+    let (shelves, ungrouped) = group_by_identity(&filtered, &snap, &services, &chain);
 
     rsx! {
         div {
             class: "nav-section-body nav-section-with-scroll",
             "data-aeon-scope": "collectables",
-            "data-aeon-state": cur_view.as_str(),
+            "data-aeon-state": "view",
             "data-view": cur_view.as_str(),
 
             div { class: "connected-panel-head",
@@ -582,21 +851,6 @@ pub fn InventoryPanel(
                                 placeholder: "Name, trait or id",
                                 value: "{query}",
                                 oninput: move |e| query.set(e.value()),
-                            }
-                        }
-                        div {
-                            class: "collectables-sort-group",
-                            role: "group",
-                            aria_label: "Sort collectables",
-                            for mode in CollectSortMode::ALL {
-                                button {
-                                    key: "{mode.label()}",
-                                    r#type: "button",
-                                    class: "collectables-sort-btn",
-                                    aria_pressed: cur_sort == mode,
-                                    onclick: move |_| sort_mode.set(mode),
-                                    "{mode.label()}"
-                                }
                             }
                         }
                         CollectionViewToggle { view }
@@ -619,78 +873,114 @@ pub fn InventoryPanel(
                         }
                     } else {
                         section { class: "collect-items-section", aria_label: "Issuers and items",
-                            for shelf in shelves.iter() {
-                                {
-                                    let open = !collapsed_set.contains(&shelf.key);
-                                    let shelf_selected = shelf
-                                        .items
-                                        .iter()
-                                        .filter(|item| selected_set.contains(&item.outpoint))
-                                        .count();
-                                    let all_selected = shelf_selected == shelf.items.len();
-                                    let shelf_outpoints: Vec<String> =
-                                        shelf.items.iter().map(|item| item.outpoint.clone()).collect();
-                                    let toggle_key = shelf.key.clone();
-                                    let meta = if shelf_selected > 0 {
-                                        format!("{} · {shelf_selected} selected", shelf_quantity_label(&shelf.items))
-                                    } else {
-                                        shelf_quantity_label(&shelf.items)
-                                    };
-                                    rsx! {
-                                        div { class: "collect-collection", key: "{shelf.key}",
-                                            div { class: "collect-collection-head",
-                                                button {
-                                                    r#type: "button",
-                                                    class: "collect-collection-trigger",
-                                                    "aria-expanded": "{open}",
-                                                    onclick: move |_| {
-                                                        let mut next = collapsed.read().clone();
-                                                        if !next.remove(&toggle_key) {
-                                                            next.insert(toggle_key.clone());
+                            div { class: "collect-collections",
+                                for shelf in shelves.iter() {
+                                    {
+                                        let open = open_key.as_deref() == Some(shelf.key.as_str());
+                                        let shelf_selected = shelf
+                                            .items
+                                            .iter()
+                                            .filter(|item| selected_set.contains(&item.outpoint))
+                                            .count();
+                                        let all_selected = shelf_selected == shelf.items.len();
+                                        let some_selected = shelf_selected > 0 && !all_selected;
+                                        let shelf_outpoints: Vec<String> =
+                                            shelf.items.iter().map(|item| item.outpoint.clone()).collect();
+                                        let toggle_key = shelf.key.clone();
+                                        let faces: Vec<(String, Option<String>)> = shelf
+                                            .items
+                                            .iter()
+                                            .take(FACE_LIMIT)
+                                            .map(|item| (item.outpoint.clone(), snap.item_art.get(&item.outpoint).cloned()))
+                                            .collect();
+                                        let (collections, uncollected) = nested_collections(&shelf.items, &snap);
+                                        rsx! {
+                                            div {
+                                                class: "collect-collection",
+                                                key: "{shelf.key}",
+                                                "data-state": if open { "open" } else { "closed" },
+                                                "data-selected": if all_selected { Some("all") } else if some_selected { Some("some") } else { None },
+                                                div { class: "collect-collection-head",
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "collect-collection-trigger",
+                                                        "aria-expanded": "{open}",
+                                                        onclick: move |_| {
+                                                            let next = if open_shelf.peek().as_deref() == Some(toggle_key.as_str()) {
+                                                                None
+                                                            } else {
+                                                                Some(toggle_key.clone())
+                                                            };
+                                                            open_shelf.set(next);
+                                                        },
+                                                        if shelf.avatar_url.is_some() {
+                                                            ProfileAvatar {
+                                                                label: shelf.label.clone(),
+                                                                image_url: shelf.avatar_url.clone(),
+                                                                identity_key: shelf.avatar_key.clone(),
+                                                            }
+                                                        } else {
+                                                            CollectFacepile { faces }
                                                         }
-                                                        collapsed.set(next);
-                                                    },
-                                                    span { class: "collect-collection-body",
-                                                        strong { class: "collect-collection-name", style: "display: inline-flex; align-items: center; gap: 6px;",
-                                                            if shelf.avatar_url.is_some() || shelf.avatar_key.is_some() {
-                                                                ProfileAvatar {
-                                                                    label: shelf.label.clone(),
-                                                                    image_url: shelf.avatar_url.clone(),
-                                                                    identity_key: shelf.avatar_key.clone(),
+                                                        span { class: "collect-collection-body",
+                                                            strong {
+                                                                class: "collect-collection-name",
+                                                                "data-aeon-state": shelf.trust_state,
+                                                                title: "{shelf.title}",
+                                                                span { class: "collect-collection-name-text", "{shelf.label}" }
+                                                                IssuerTrustBadge { state: shelf.trust_state }
+                                                            }
+                                                            span { class: "collect-collection-meta",
+                                                                if let Some(ref fp_id) = shelf.fingerprint_id {
+                                                                    ProfileFingerprint { id: fp_id.clone(), class: Some("collect-issuer-fingerprint".to_string()) }
+                                                                }
+                                                                "{shelf_quantity_label(&shelf.items)}"
+                                                                if shelf_selected > 0 {
+                                                                    " · {shelf_selected} selected"
                                                                 }
                                                             }
-                                                            span { class: "collect-collection-name-text", "{shelf.label}" }
-                                                            if let Some(ref fp_id) = shelf.fingerprint_id {
-                                                                ProfileFingerprint { id: fp_id.clone() }
-                                                            }
                                                         }
-                                                        span { class: "collect-collection-meta", "{meta}" }
+                                                        span { class: "collect-collection-indicator", "aria-hidden": "true",
+                                                            ExpandMoreIcon { size: 20 }
+                                                        }
                                                     }
-                                                    span { class: "collect-collection-indicator", "aria-hidden": "true",
-                                                        ExpandMoreIcon { size: 20 }
+                                                    CollectSelect {
+                                                        class: "collect-select--group",
+                                                        checked: all_selected,
+                                                        mixed: some_selected,
+                                                        disabled: shelf.items.is_empty(),
+                                                        label: if all_selected { format!("Deselect {}", shelf.label) } else { format!("Select {}", shelf.label) },
+                                                        on_change: move |_on: bool| {
+                                                            let mut next = selected_outpoints.peek().clone();
+                                                            let select = !shelf_outpoints.iter().all(|op| next.contains(op));
+                                                            for outpoint in &shelf_outpoints {
+                                                                if select {
+                                                                    next.insert(outpoint.clone());
+                                                                } else {
+                                                                    next.remove(outpoint);
+                                                                }
+                                                            }
+                                                            selected_outpoints.set(next);
+                                                        },
                                                     }
                                                 }
-                                                CollectSelect {
-                                                    class: "collect-select--group",
-                                                    checked: all_selected,
-                                                    disabled: false,
-                                                    label: if all_selected { format!("Deselect {}", shelf.label) } else { format!("Select {}", shelf.label) },
-                                                    on_change: move |on: bool| {
-                                                        let mut next = selected_outpoints.read().clone();
-                                                        for outpoint in &shelf_outpoints {
-                                                            if on {
-                                                                next.insert(outpoint.clone());
-                                                            } else {
-                                                                next.remove(outpoint);
+                                                if open {
+                                                    div { class: "collect-collection-body-content",
+                                                        for (cid, label, members) in collections.iter() {
+                                                            section { class: "collect-nested-collection", key: "{cid}",
+                                                                h4 { class: "collect-section-title collect-nested-title", "{label}" }
+                                                                {collect_items_list(members, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                                                             }
                                                         }
-                                                        selected_outpoints.set(next);
-                                                    },
-                                                }
-                                            }
-                                            if open {
-                                                div { class: "collect-collection-body-content",
-                                                    {collect_items_list(&shelf.items, &snap, grid, &selected_set, nav_child, selected_outpoints)}
+                                                        if !uncollected.is_empty() {
+                                                            section { class: "collect-nested-collection",
+                                                                if !collections.is_empty() {
+                                                                    h4 { class: "collect-section-title collect-nested-title", "Uncollected" }
+                                                                }
+                                                                {collect_items_list(&uncollected, &snap, grid, &selected_set, nav_child, selected_outpoints)}
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -698,12 +988,10 @@ pub fn InventoryPanel(
                                 }
                             }
                             if !ungrouped.is_empty() {
-                                section { class: "collect-nested-collection",
-                                    if !shelves.is_empty() {
-                                        h3 { class: "collect-section-title", "No identity" }
-                                    }
-                                    {collect_items_list(&ungrouped, &snap, grid, &selected_set, nav_child, selected_outpoints)}
+                                if !shelves.is_empty() {
+                                    h3 { class: "collect-section-title", "No issuer" }
                                 }
+                                {collect_items_list(&ungrouped, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                             }
                         }
                     }
@@ -711,6 +999,122 @@ pub fn InventoryPanel(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// CollectableDetailsPanel.tsx
+// ---------------------------------------------------------------------------
+
+/// Plain-markup port of the Aeon `MetricStrip` used for Traits / Details.
+#[component]
+fn TraitStrip(title: &'static str, rows: Vec<(String, String)>) -> Element {
+    if rows.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "collectable-traits",
+            span { class: "field-static-label", "{title}" }
+            div { class: "collectable-trait-strip", "data-aeon-part": "root",
+                for (i, (label, value)) in rows.into_iter().enumerate() {
+                    div { key: "{i}", "data-aeon-part": "chip",
+                        span { "data-aeon-part": "value", title: "{value}", "{value}" }
+                        span { "data-aeon-part": "label", "{label}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// TS `MetaRow`: label + click-to-copy mono value.
+#[component]
+fn MetaRow(label: &'static str, value: String, toast: Signal<Option<ToastNotice>>) -> Element {
+    let title = format!("Click to copy {}\n{value}", label.to_ascii_lowercase());
+    let shown = truncate_mid(&value, 14);
+    rsx! {
+        dt { "{label}" }
+        dd {
+            button {
+                r#type: "button",
+                class: "mono collectable-meta-copy",
+                title: "{title}",
+                onclick: move |_| toast_copy(toast, &format!("{label} copied"), &value),
+                "{shown}"
+            }
+        }
+    }
+}
+
+fn data_url_bytes(url: &str) -> Option<(String, Vec<u8>)> {
+    let rest = url.strip_prefix("data:")?;
+    let (head, body) = rest.split_once(',')?;
+    let mime = head.split(';').next().unwrap_or("").to_string();
+    if !head.ends_with(";base64") {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(body).ok()?;
+    Some((mime, bytes))
+}
+
+fn image_extension(mime: &str) -> &'static str {
+    match mime {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/svg+xml" => "svg",
+        "image/avif" => "avif",
+        _ => "bin",
+    }
+}
+
+fn safe_file_stem(name: &str) -> String {
+    let stem: String = name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let stem = stem.trim_matches('-');
+    if stem.is_empty() {
+        "collectable".to_string()
+    } else {
+        stem.to_string()
+    }
+}
+
+/// Saves a data-URL image through the native save dialog.
+fn save_image(art_url: String, name: String, mut toast: Signal<Option<ToastNotice>>) {
+    let Some((mime, bytes)) = data_url_bytes(&art_url) else {
+        toast.set(Some(ToastNotice {
+            title: "Save failed".into(),
+            body: Some("This image is not stored locally yet.".into()),
+            tone: "error",
+        }));
+        return;
+    };
+    let ext = image_extension(&mime);
+    let file_name = format!("{}.{ext}", safe_file_stem(&name));
+    spawn(async move {
+        let Some(handle) = rfd::AsyncFileDialog::new()
+            .add_filter("Image", &[ext])
+            .set_file_name(&file_name)
+            .save_file()
+            .await
+        else {
+            return;
+        };
+        match std::fs::write(handle.path(), &bytes) {
+            Ok(()) => toast.set(Some(ToastNotice {
+                title: "Image saved".into(),
+                body: Some(file_name),
+                tone: "success",
+            })),
+            Err(e) => toast.set(Some(ToastNotice {
+                title: "Save failed".into(),
+                body: Some(e.to_string()),
+                tone: "error",
+            })),
+        }
+    });
 }
 
 /// 1:1 port of `src/components/CollectableDetailsPanel.tsx` with CTAs baked into the WalletNav action bar.
@@ -719,262 +1123,207 @@ pub fn CollectableDetailsPanel(
     outpoint: String,
     chain: String,
     snap: WalletSnapshot,
-    mut snapshot: Signal<WalletSnapshot>,
     mut nav_child: Signal<Option<NavChild>>,
     mut dock_spec: Signal<Option<DockSpec>>,
     dock_trigger: Signal<DockTrigger>,
-    mut toast: Signal<Option<ToastNotice>>,
+    toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
-    let Some(item) = snap.items.iter().find(|i| i.outpoint == outpoint).cloned() else {
-        if dock_spec.read().is_some() {
-            dock_spec.set(None);
-        }
-        return rsx! {
-            div { class: "nav-child-panel collectable-details", "data-aeon-scope": "collectable-details",
-                EmptyState {
-                    icon: Some(rsx! { CollectablesIcon { size: 28 } }),
-                    title: "Item not found",
-                    body: Some("This collectable is no longer in your local inventory.".into()),
-                }
-            }
-        };
-    };
+    let item = snap.items.iter().find(|i| i.outpoint == outpoint).cloned();
+    let art_url = item
+        .as_ref()
+        .and_then(|i| snap.item_art.get(&i.outpoint).cloned());
 
-    let desired_dock = DockSpec {
-        aria_label: "Collectable actions",
-        secondary: Some(DockActionSpec::new(
-            "burn",
-            "Burn",
-            ActionTone::Danger,
-            ActionIcon::Fire,
-        )),
-        primary: DockActionSpec::new("send", "Send", ActionTone::Primary, ActionIcon::Send),
-    };
-    if *dock_spec.read() != Some(desired_dock.clone()) {
-        dock_spec.set(Some(desired_dock));
+    let desired_dock = item.as_ref().map(|_| {
+        let burn = DockActionSpec::new("burn", "Burn item", ActionTone::Danger, ActionIcon::Fire)
+            .short_label("Burn");
+        let send = DockActionSpec::new("send", "Send item", ActionTone::Primary, ActionIcon::Send)
+            .short_label("Send");
+        if art_url.is_some() {
+            DockSpec::three(
+                "Collectable actions",
+                burn,
+                DockActionSpec::new(
+                    "save-image",
+                    "Save image",
+                    ActionTone::Secondary,
+                    ActionIcon::Download,
+                )
+                .short_label("Save"),
+                send,
+            )
+        } else {
+            DockSpec {
+                aria_label: "Collectable actions",
+                secondary: Some(burn),
+                primary: send,
+            }
+        }
+    });
+    if *dock_spec.peek() != desired_dock {
+        dock_spec.set(desired_dock);
     }
 
     {
-        let out_send = item.outpoint.clone();
-        let out_burn = item.outpoint.clone();
+        let out = outpoint.clone();
+        let art = art_url.clone();
+        let name = item.as_ref().map(|i| i.name.clone()).unwrap_or_default();
         use_effect(move || {
             let trig = *dock_trigger.read();
-            if trig.seq == *last_seq.read() {
+            if trig.seq == *last_seq.peek() {
                 return;
             }
             last_seq.set(trig.seq);
             match trig.action_id {
-                "burn" => nav_child.set(Some(NavChild::BurnAsset(out_burn.clone()))),
-                "send" => nav_child.set(Some(NavChild::SendCollectable(out_send.clone()))),
+                "burn" => nav_child.set(Some(NavChild::BurnAsset(out.clone()))),
+                "send" => nav_child.set(Some(NavChild::SendCollectable(out.clone()))),
+                "save-image" => {
+                    if let Some(ref a) = art {
+                        save_image(a.clone(), name.clone(), toast);
+                    }
+                }
                 _ => {}
             }
         });
     }
 
+    let Some(item) = item else {
+        return rsx! {
+            div {
+                class: "nav-child-panel collectable-details",
+                "data-aeon-scope": "collectable-details",
+                "data-aeon-state": "missing",
+                EmptyState {
+                    icon: Some(rsx! { CollectablesIcon { size: 28 } }),
+                    title: "Item unavailable",
+                    body: Some("This collectable is no longer in the wallet or could not be loaded.".into()),
+                }
+            }
+        };
+    };
+
+    let meta = snap.item_meta.get(&item.outpoint).cloned().unwrap_or_default();
+    let issuer = issuer_view_for(&item, &snap, &services, &chain);
     let (auth_label, auth_tone) = authenticity_display(&item.authenticity_status);
-    let explorer_url =
-        txid_from_outpoint(&item.origin_outpoint).map(|tx| tx_explorer_url(tx, &chain));
-    let current_explorer_url =
-        txid_from_outpoint(&item.outpoint).map(|tx| tx_explorer_url(tx, &chain));
-    let svc_verify = Arc::clone(&services);
-    let origin_copy = item.origin_outpoint.clone();
-    let outpoint_copy = item.outpoint.clone();
-    let group_label = item_group_label(&item);
+    let reason = non_empty(item.authenticity_reason.as_deref()).map(ToString::to_string);
+    let auth_title = match (auth_tone, item.authenticity_status.trim()) {
+        ("brc150", _) => "BRC-150 tip-to-origin lineage verified".to_string(),
+        (_, "invalid") => format!(
+            "BRC-150 lineage {}",
+            reason.clone().unwrap_or_else(|| "could not be verified".into())
+        ),
+        _ => match reason {
+            Some(ref r) => format!("Not proven yet — {r}"),
+            None => {
+                "Identity is a chain/indexer claim and has not been cryptographically proven"
+                    .to_string()
+            }
+        },
+    };
+
+    let mut details: Vec<(String, String)> = Vec::new();
+    if let Some(app) = non_empty(meta.app.as_deref()) {
+        details.push(("App".into(), app.to_string()));
+    }
+    if let Some(t) = non_empty(meta.item_type.as_deref()) {
+        details.push(("Type".into(), t.to_string()));
+    }
+    if let Some(t) = non_empty(meta.sub_type.as_deref()) {
+        details.push(("Subtype".into(), t.to_string()));
+    }
+    if !item.mime.trim().is_empty() {
+        details.push(("MIME".into(), item.mime.clone()));
+    }
+    details.extend(meta.extras.iter().cloned());
+
+    let issuer_key = non_empty(item.issuer_key.as_deref())
+        .or_else(|| non_empty(meta.signer.as_deref()))
+        .map(ToString::to_string);
+    let issuer_label: &'static str = if meta.issuer_attested {
+        "Issuer"
+    } else {
+        "Issuer claim"
+    };
+    let bap_id = non_empty(meta.bap_id.as_deref()).map(ToString::to_string);
+    let collection_id = non_empty(meta.collection_id.as_deref()).map(ToString::to_string);
+    let app_line = non_empty(meta.app.as_deref()).map(ToString::to_string);
 
     rsx! {
         div {
             class: "nav-child-panel collectable-details",
             "data-aeon-scope": "collectable-details",
-            "data-aeon-state": "{auth_tone}",
+            "data-aeon-state": "ready",
 
-            div { class: "collectable-details-showcase",
-                div { class: "collectable-media collectable-details-media",
-                    span { class: "collectable-media-fallback", aria_hidden: true,
-                        CollectablesIcon { size: 56 }
-                    }
-                    if let Some(art_url) = snap.item_art.get(&item.outpoint) {
-                        img {
-                            class: "collectable-img",
-                            src: "{art_url}",
-                            alt: "{item.name}",
+            div { class: "collectable-details-hero",
+                div { class: "collectable-media collectable-media-md",
+                    if let Some(ref art) = art_url {
+                        img { class: "collectable-img", src: "{art}", alt: "{item.name}" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 40 }
                         }
                     }
-                    CollectableVerifyMark {
-                        authenticity_status: item.authenticity_status.clone(),
+                }
+                div { class: "collectable-details-copy",
+                    h3 { class: "collectable-details-name", "{item.name}" }
+                    if let Some(view) = issuer {
+                        IssuerIdentityMark { view, class: Some("detail-issuer-mark".to_string()) }
+                    }
+                    if let Some(ref app) = app_line {
+                        p { class: "collectable-details-app", "{app}" }
+                    }
+                    p {
+                        class: "collectable-authenticity collectable-authenticity-{auth_tone}",
+                        title: "{auth_title}",
+                        "{auth_label}"
                     }
                 }
             }
 
-            div { class: "payment-details-hero",
-                div { class: "payment-details-copy",
-                    div { class: "payment-details-title-row",
-                        strong { class: "collectable-details-name payment-details-title", "{item.name}" }
-                        if let Some(ref url) = explorer_url {
-                            {
-                                let u = url.clone();
-                                rsx! {
-                                    button {
-                                        r#type: "button",
-                                        class: "payment-details-woc",
-                                        onclick: move |_| {
-                                            if let Err(e) = open_external_url(&u) {
-                                                toast.set(Some(ToastNotice {
-                                                    title: "Open explorer".into(),
-                                                    body: Some(e),
-                                                    tone: "error",
-                                                }));
-                                            }
-                                        },
-                                        LaunchIcon { size: 14 }
-                                        span { "Open in WhatsOnChain" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "collectable-details-subrow",
-                        span { class: "collectable-auth-pill", "data-tone": "{auth_tone}", "{auth_label}" }
-                        span { class: "history-when", "· {group_label}" }
-                    }
+            TraitStrip { title: "Traits", rows: meta.traits.clone() }
+            TraitStrip { title: "Details", rows: details }
+
+            dl { class: "collectable-details-meta",
+                if let Some(key) = issuer_key {
+                    MetaRow { label: issuer_label, value: key, toast }
                 }
+                if let Some(id) = bap_id {
+                    MetaRow { label: "Profile ID", value: id, toast }
+                }
+                if let Some(cid) = collection_id {
+                    MetaRow { label: "Collection", value: cid, toast }
+                }
+                MetaRow { label: "Origin", value: item.origin_outpoint.clone(), toast }
+                MetaRow { label: "Outpoint", value: item.outpoint.clone(), toast }
             }
+        }
+    }
+}
 
-            if let Some(ref reason) = item.authenticity_reason {
-                p { class: "settings-row-desc", "{reason}" }
-            } else if auth_tone == "brc150" {
-                p { class: "settings-row-desc",
-                    "Verified local BRC-150 v2 ancestry: exact parent spend, 1-sat continuity, AtomicBEEF subject, and origin ord envelope."
-                }
-            } else {
-                p { class: "settings-row-desc",
-                    "Indexer or marker-only identity stays unverified until a complete BRC-150 ancestry proof is verified locally."
-                }
-            }
+// ---------------------------------------------------------------------------
+// SendCollectablePanel.tsx
+// ---------------------------------------------------------------------------
 
-            dl { class: "payment-details-meta",
-                dt { "Collection" }
-                dd { "{group_label}" }
+fn pick_items(snap: &WalletSnapshot, outpoints: &[String]) -> Vec<ItemCardRow> {
+    let mut seen = BTreeSet::new();
+    outpoints
+        .iter()
+        .filter(|op| seen.insert(op.as_str()))
+        .filter_map(|op| snap.items.iter().find(|i| &i.outpoint == op).cloned())
+        .collect()
+}
 
-                dt { "Basket" }
-                dd { class: "mono", "{item.basket}" }
-
-                dt { "Media type" }
-                dd { class: "mono", "{item.mime}" }
-
-                dt { "Origin" }
-                dd {
-                    button {
-                        r#type: "button",
-                        class: "mono collectable-meta-copy",
-                        title: "Copy origin",
-                        onclick: move |_| match copy_to_clipboard(&origin_copy) {
-                            Ok(()) => toast.set(Some(ToastNotice {
-                                title: "Origin copied".into(),
-                                body: Some(truncate_mid(&origin_copy, 12)),
-                                tone: "success",
-                            })),
-                            Err(e) => toast.set(Some(ToastNotice {
-                                title: "Copy failed".into(),
-                                body: Some(e),
-                                tone: "error",
-                            })),
-                        },
-                        "{truncate_mid(&item.origin_outpoint, 14)}"
-                    }
-                }
-
-                dt { "Outpoint" }
-                dd {
-                    div { style: "display: flex; align-items: center; gap: 8px; flex-wrap: wrap;",
-                        button {
-                            r#type: "button",
-                            class: "mono collectable-meta-copy",
-                            title: "Copy outpoint",
-                            onclick: move |_| match copy_to_clipboard(&outpoint_copy) {
-                                Ok(()) => toast.set(Some(ToastNotice {
-                                    title: "Outpoint copied".into(),
-                                    body: Some(truncate_mid(&outpoint_copy, 12)),
-                                    tone: "success",
-                                })),
-                                Err(e) => toast.set(Some(ToastNotice {
-                                    title: "Copy failed".into(),
-                                    body: Some(e),
-                                    tone: "error",
-                                })),
-                            },
-                            "{truncate_mid(&item.outpoint, 14)}"
-                        }
-                        if let Some(ref cur_url) = current_explorer_url {
-                            {
-                                let u = cur_url.clone();
-                                rsx! {
-                                    button {
-                                        r#type: "button",
-                                        class: "payment-details-woc",
-                                        onclick: move |_| {
-                                            let _ = open_external_url(&u);
-                                        },
-                                        LaunchIcon { size: 12 }
-                                        span { "Tx" }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if let Some(ref issuer) = item.issuer_key {
-                    {
-                        let iss_copy = issuer.clone();
-                        rsx! {
-                            dt { "Issuer key" }
-                            dd {
-                                button {
-                                    r#type: "button",
-                                    class: "mono collectable-meta-copy",
-                                    title: "Copy issuer key",
-                                    onclick: move |_| {
-                                        if copy_to_clipboard(&iss_copy).is_ok() {
-                                            toast.set(Some(ToastNotice {
-                                                title: "Issuer key copied".into(),
-                                                body: Some(truncate_mid(&iss_copy, 12)),
-                                                tone: "success",
-                                            }));
-                                        }
-                                    },
-                                    "{truncate_mid(issuer, 14)}"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if auth_tone != "brc150" {
-                div { class: "actions",
-                    button::Root {
-                        variant: button::ButtonVariant::Ghost,
-                        class: "btn btn-ghost",
-                        onclick: move |_| match svc_verify.verify_brc150_batch() {
-                            Ok(n) => {
-                                snapshot.set(svc_verify.read_snapshot());
-                                toast.set(Some(ToastNotice {
-                                    title: "BRC-150 check finished".into(),
-                                    body: Some(format!("Verified {n} item(s).")),
-                                    tone: "success",
-                                }));
-                            }
-                            Err(e) => toast.set(Some(ToastNotice {
-                                title: "Verification failed".into(),
-                                body: Some(e),
-                                tone: "error",
-                            })),
-                        },
-                        CopyIcon { size: 14 }
-                        button::Label { "Verify BRC-150 proof" }
+fn preview_media(items: &[ItemCardRow], snap: &WalletSnapshot) -> Element {
+    rsx! {
+        for item in items.iter().take(3) {
+            div { class: "collectable-media collectable-media-sm", key: "{item.outpoint}",
+                if let Some(art) = snap.item_art.get(&item.outpoint) {
+                    img { class: "collectable-img", src: "{art}", alt: "{item.name}", width: 48, height: 48 }
+                } else {
+                    span { class: "collectable-media-fallback", "aria-hidden": "true",
+                        CollectablesIcon { size: 22 }
                     }
                 }
             }
@@ -982,91 +1331,92 @@ pub fn CollectableDetailsPanel(
     }
 }
 
-/// 1:1 port of `src/components/SendCollectablePanel.tsx` with CTAs baked into the WalletNav action bar.
+/// 1:1 port of `src/components/SendCollectablePanel.tsx` (single or batch) with CTAs in the dock.
 #[component]
 pub fn SendCollectablePanel(
-    outpoint: String,
+    outpoints: Vec<String>,
+    #[props(default = "main".to_string())] chain: String,
     snap: WalletSnapshot,
     mut nav_child: Signal<Option<NavChild>>,
     mut dock_spec: Signal<Option<DockSpec>>,
     dock_trigger: Signal<DockTrigger>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
+    let services = use_context::<Arc<AppServices>>();
     let mut confirming = use_signal(|| false);
     let mut recipient_input = use_signal(String::new);
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
-    let Some(item) = snap.items.iter().find(|i| i.outpoint == outpoint).cloned() else {
-        if dock_spec.read().is_some() {
-            dock_spec.set(None);
-        }
-        return rsx! {
-            div { class: "nav-child-panel",
-                p { class: "connected-empty-line", "Collectable not found." }
-            }
-        };
-    };
-
+    let items = pick_items(&snap, &outpoints);
+    let batch = items.len() > 1;
     let raw_to = recipient_input.read().clone();
     let parsed = classify_recipient(&raw_to);
     let is_confirming = *confirming.read();
 
-    let desired_dock = if !is_confirming {
-        DockSpec {
-            aria_label: "Send collectable actions",
-            secondary: Some(DockActionSpec::new(
-                "back",
-                "Back",
-                ActionTone::Secondary,
-                ActionIcon::Back,
-            )),
-            primary: DockActionSpec::new(
-                "review",
-                "Review",
-                ActionTone::Primary,
-                ActionIcon::Check,
-            )
-            .disabled(parsed.is_none()),
+    let desired_dock = (!items.is_empty()).then(|| {
+        if is_confirming {
+            DockSpec {
+                aria_label: "Confirm collectable transfer",
+                secondary: Some(DockActionSpec::new(
+                    "cancel",
+                    "Cancel",
+                    ActionTone::Danger,
+                    ActionIcon::Close,
+                )),
+                primary: DockActionSpec::new(
+                    "confirm",
+                    "Confirm",
+                    ActionTone::Primary,
+                    ActionIcon::Check,
+                ),
+            }
+        } else {
+            DockSpec {
+                aria_label: "Collectable send actions",
+                secondary: Some(DockActionSpec::new(
+                    "cancel",
+                    "Cancel",
+                    ActionTone::Danger,
+                    ActionIcon::Close,
+                )),
+                primary: DockActionSpec::new(
+                    "review",
+                    "Review",
+                    ActionTone::Primary,
+                    ActionIcon::Check,
+                )
+                .disabled(parsed.is_none()),
+            }
         }
-    } else {
-        DockSpec {
-            aria_label: "Confirm collectable transfer",
-            secondary: Some(DockActionSpec::new(
-                "cancel-confirm",
-                "Cancel",
-                ActionTone::Danger,
-                ActionIcon::Close,
-            )),
-            primary: DockActionSpec::new(
-                "confirm",
-                "Confirm",
-                ActionTone::Primary,
-                ActionIcon::Check,
-            ),
-        }
-    };
-    if *dock_spec.read() != Some(desired_dock.clone()) {
-        dock_spec.set(Some(desired_dock));
+    });
+    if *dock_spec.peek() != desired_dock {
+        dock_spec.set(desired_dock);
     }
 
     {
-        let out_back = item.outpoint.clone();
-        let item_name = item.name.clone();
+        let first = items.first().map(|i| i.outpoint.clone());
+        let summary = if batch {
+            format!("{} collectables", items.len())
+        } else {
+            items.first().map(|i| i.name.clone()).unwrap_or_default()
+        };
         use_effect(move || {
             let trig = *dock_trigger.read();
-            if trig.seq == *last_seq.read() {
+            if trig.seq == *last_seq.peek() {
                 return;
             }
             last_seq.set(trig.seq);
             match trig.action_id {
-                "back" => nav_child.set(Some(NavChild::CollectableDetails(out_back.clone()))),
+                "cancel" => match (batch, first.clone()) {
+                    (false, Some(op)) => nav_child.set(Some(NavChild::CollectableDetails(op))),
+                    _ => nav_child.set(None),
+                },
                 "review" => confirming.set(true),
-                "cancel-confirm" => confirming.set(false),
                 "confirm" => {
                     toast.set(Some(ToastNotice {
                         title: "Item transfer prepared".into(),
                         body: Some(format!(
-                            "{item_name} validated for transfer. Native 1Sat broadcast wiring is next."
+                            "{summary} validated for transfer. Native 1Sat broadcast wiring is next."
                         )),
                         tone: "success",
                     }));
@@ -1078,61 +1428,115 @@ pub fn SendCollectablePanel(
         });
     }
 
+    if items.is_empty() {
+        return rsx! {
+            div {
+                class: "nav-child-panel send-panel send-collectable-panel",
+                "data-aeon-scope": "send-collectable",
+                "data-aeon-state": "missing",
+                EmptyState {
+                    icon: Some(rsx! { CollectablesIcon { size: 22 } }),
+                    title: "Item unavailable",
+                    body: Some("This collectable is no longer in the wallet or could not be loaded.".into()),
+                }
+            }
+        };
+    }
+
+    let issuers: Vec<IssuerView> = items
+        .iter()
+        .filter_map(|i| issuer_view_for(i, &snap, &services, &chain))
+        .collect();
+    let first = &items[0];
+    let first_app = non_empty(
+        snap.item_meta
+            .get(&first.outpoint)
+            .and_then(|m| m.app.as_deref()),
+    )
+    .map(ToString::to_string);
+    let recipient_label = parsed
+        .as_ref()
+        .map(RecipientKind::display_label)
+        .unwrap_or_else(|| raw_to.clone());
+
     rsx! {
         div {
-            class: "nav-child-panel send-panel",
+            class: "nav-child-panel send-panel send-collectable-panel",
             "data-aeon-scope": "send-collectable",
             "data-aeon-state": if is_confirming { "confirming" } else { "editing" },
 
-            div { class: "send-stage",
-                div { class: "send-layout",
-                    div { class: "send-amount-hero send-collectable-hero",
-                        div { class: "send-collectable-preview",
-                            CollectablesIcon { size: 28 }
-                            div {
-                                p { class: "send-eyebrow",
-                                    if is_confirming { "You're sending" } else { "1Sat Collectable" }
+            if !is_confirming {
+                div { class: "send-stage send-stage-edit",
+                    div { class: "send-layout",
+                        div { class: "send-amount-hero send-collectable-hero",
+                            div { class: "send-collectable-preview",
+                                {preview_media(&items, &snap)}
+                                div {
+                                    p { class: "send-eyebrow",
+                                        if batch { "Send {items.len()} collectables" } else { "Send collectable" }
+                                    }
+                                    strong { class: "collectable-details-name",
+                                        if batch { "{items.len()} selected" } else { "{first.name}" }
+                                    }
+                                    AssetIssuers { views: issuers.clone() }
+                                    if !batch {
+                                        if let Some(ref app) = first_app {
+                                            p { class: "collectable-details-app", "{app}" }
+                                        }
+                                    }
                                 }
-                                strong { class: "collectable-details-name", "{item.name}" }
-                                p { class: "history-when mono", "{truncate_mid(&item.origin_outpoint, 12)}" }
                             }
                         }
-                    }
 
-                    div { class: "send-side",
-                        if !is_confirming {
+                        div { class: "send-side",
                             div { class: "field friend-recipient-field send-to-field",
-                                label { r#for: "send-item-to", "To" }
+                                label { r#for: "collectable-to", "To" }
                                 div { class: "send-to-input",
                                     input {
-                                        id: "send-item-to",
-                                        placeholder: "BSV address (1…), peerpay:, $handle, or wallet key",
+                                        id: "collectable-to",
+                                        placeholder: "Friend, $handle, address, or wallet key",
+                                        autocomplete: "off",
+                                        spellcheck: false,
                                         value: "{raw_to}",
                                         oninput: move |e| recipient_input.set(e.value()),
                                     }
                                 }
-                                if !raw_to.trim().is_empty() && parsed.is_none() {
-                                    p { class: "wallet-sync-note is-error", role: "alert",
-                                        "Enter a valid BSV address, peerpay: URI, $handle, or wallet key."
-                                    }
-                                }
                                 if let Some(ref kind) = parsed {
-                                    p { class: "send-resolved",
+                                    p { class: "send-resolved", aria_live: "polite",
                                         "Sending to "
                                         strong { "{kind.display_label()}" }
                                     }
+                                } else if !raw_to.trim().is_empty() {
+                                    p { class: "error", role: "status",
+                                        "Enter a valid BSV address, $handle, or wallet key."
+                                    }
                                 }
                             }
-                        } else {
+                        }
+                    }
+                }
+            } else {
+                div { class: "send-stage send-stage-confirm",
+                    div { class: "send-layout send-layout-confirm",
+                        div { class: "send-amount-hero send-collectable-hero",
+                            div { class: "send-collectable-preview",
+                                {preview_media(&items, &snap)}
+                                div {
+                                    p { class: "send-eyebrow", "You’re sending" }
+                                    strong { class: "collectable-details-name",
+                                        if batch { "{items.len()} collectables" } else { "{first.name}" }
+                                    }
+                                    AssetIssuers { views: issuers }
+                                }
+                            }
+                        }
+                        div { class: "send-side",
                             p { class: "send-confirm-to",
                                 "to "
-                                strong {
-                                    "{parsed.as_ref().map(RecipientKind::display_label).unwrap_or_else(|| raw_to.clone())}"
-                                }
+                                strong { "{recipient_label}" }
                             }
-                            p { class: "mono send-confirm-address", "{raw_to}" }
-                            p { class: "send-confirm-note",
-                                "Includes BRC-150 provenance remittance when verified. Cannot be undone once broadcast."
+                            if recipient_label != raw_to {
+                                p { class: "mono send-confirm-address", "{raw_to}" }
                             }
                         }
                     }
@@ -1142,86 +1546,122 @@ pub fn SendCollectablePanel(
     }
 }
 
-/// 1:1 port of `src/components/BurnAssetPanel.tsx` with CTAs baked into the WalletNav action bar.
+// ---------------------------------------------------------------------------
+// BurnAssetPanel.tsx
+// ---------------------------------------------------------------------------
+
+/// TS `estimateBurnEconomics` (`src/wallet/burnEconomics.ts`) at the default 100 sat/kB.
+struct BurnEconomics {
+    gross_asset_sats: u64,
+    protocol_output_sats: u64,
+    recoverable_sats: u64,
+    estimated_fee_sats: u64,
+}
+
+fn estimate_burn_economics(
+    input_count: u64,
+    protocol_output_count: u64,
+    recovery_output: bool,
+    gross_asset_sats: Option<u64>,
+) -> BurnEconomics {
+    let gross = gross_asset_sats.unwrap_or(input_count);
+    let protocol = protocol_output_count;
+    let outputs = protocol_output_count + u64::from(recovery_output);
+    let bytes = 10 + input_count * 148 + outputs * 180;
+    BurnEconomics {
+        gross_asset_sats: gross,
+        protocol_output_sats: protocol,
+        recoverable_sats: gross.saturating_sub(protocol),
+        estimated_fee_sats: (bytes * 100).div_ceil(1000),
+    }
+}
+
+/// 1:1 port of `src/components/BurnAssetPanel.tsx` (`BurnCollectablePanel` /
+/// `BurnCollectablesPanel` inside `BurnShell`) with CTAs in the dock.
 #[component]
 pub fn BurnAssetPanel(
-    outpoint: String,
+    outpoints: Vec<String>,
+    #[props(default = "main".to_string())] chain: String,
     snap: WalletSnapshot,
     mut nav_child: Signal<Option<NavChild>>,
     mut dock_spec: Signal<Option<DockSpec>>,
     dock_trigger: Signal<DockTrigger>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
+    let services = use_context::<Arc<AppServices>>();
     let mut confirming = use_signal(|| false);
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
-    let Some(item) = snap.items.iter().find(|i| i.outpoint == outpoint).cloned() else {
-        if dock_spec.read().is_some() {
-            dock_spec.set(None);
-        }
-        return rsx! {
-            div { class: "nav-child-panel",
-                p { class: "connected-empty-line", "Collectable not found." }
-            }
-        };
-    };
-
+    let wanted: BTreeSet<&str> = outpoints.iter().map(String::as_str).collect();
+    let items = pick_items(&snap, &outpoints);
+    let batch = wanted.len() > 1;
+    let complete = !items.is_empty() && items.len() == wanted.len();
     let is_confirming = *confirming.read();
-    let desired_dock = if !is_confirming {
-        DockSpec {
-            aria_label: "Burn review actions",
-            secondary: Some(DockActionSpec::new(
-                "back",
-                "Back",
-                ActionTone::Secondary,
-                ActionIcon::Back,
-            )),
-            primary: DockActionSpec::new(
-                "review-burn",
-                "Review burn",
-                ActionTone::Danger,
-                ActionIcon::Fire,
-            ),
+
+    let desired_dock = complete.then(|| {
+        if is_confirming {
+            DockSpec {
+                aria_label: "Confirm permanent burn",
+                secondary: Some(DockActionSpec::new(
+                    "back",
+                    "Back",
+                    ActionTone::Danger,
+                    ActionIcon::Close,
+                )),
+                primary: DockActionSpec::new(
+                    "confirm-burn",
+                    "Confirm burn",
+                    ActionTone::Danger,
+                    ActionIcon::Fire,
+                ),
+            }
+        } else {
+            DockSpec {
+                aria_label: "Review burn",
+                secondary: Some(DockActionSpec::new(
+                    "cancel",
+                    "Cancel",
+                    ActionTone::Danger,
+                    ActionIcon::Close,
+                )),
+                primary: DockActionSpec::new(
+                    "review",
+                    "Review",
+                    ActionTone::Danger,
+                    ActionIcon::Check,
+                ),
+            }
         }
-    } else {
-        DockSpec {
-            aria_label: "Confirm burn",
-            secondary: Some(DockActionSpec::new(
-                "cancel-burn",
-                "Cancel",
-                ActionTone::Secondary,
-                ActionIcon::Close,
-            )),
-            primary: DockActionSpec::new(
-                "confirm-burn",
-                "Burn permanently",
-                ActionTone::Danger,
-                ActionIcon::Fire,
-            ),
-        }
-    };
-    if *dock_spec.read() != Some(desired_dock.clone()) {
-        dock_spec.set(Some(desired_dock));
+    });
+    if *dock_spec.peek() != desired_dock {
+        dock_spec.set(desired_dock);
     }
 
     {
-        let out_back = item.outpoint.clone();
-        let item_name = item.name.clone();
+        let first = items.first().map(|i| i.outpoint.clone());
+        let summary = if batch {
+            format!("{} collectables", items.len())
+        } else {
+            items.first().map(|i| i.name.clone()).unwrap_or_default()
+        };
         use_effect(move || {
             let trig = *dock_trigger.read();
-            if trig.seq == *last_seq.read() {
+            if trig.seq == *last_seq.peek() {
                 return;
             }
             last_seq.set(trig.seq);
             match trig.action_id {
-                "back" => nav_child.set(Some(NavChild::CollectableDetails(out_back.clone()))),
-                "review-burn" => confirming.set(true),
-                "cancel-burn" => confirming.set(false),
+                "cancel" => match (batch, first.clone()) {
+                    (false, Some(op)) => nav_child.set(Some(NavChild::CollectableDetails(op))),
+                    _ => nav_child.set(None),
+                },
+                "review" => confirming.set(true),
+                "back" => confirming.set(false),
                 "confirm-burn" => {
                     toast.set(Some(ToastNotice {
                         title: "Burn prepared".into(),
                         body: Some(format!(
-                            "Burn intent for {item_name} validated. Native burn broadcast wiring is next."
+                            "Burn intent for {summary} validated. Native burn broadcast wiring is next."
                         )),
                         tone: "error",
                     }));
@@ -1233,43 +1673,154 @@ pub fn BurnAssetPanel(
         });
     }
 
+    if !complete {
+        let (title, body) = if batch {
+            (
+                "Some items are no longer available",
+                "Return to Collect and choose items still held by this wallet.",
+            )
+        } else {
+            (
+                "Item not on this device",
+                "This collectable is no longer held by this wallet.",
+            )
+        };
+        return rsx! {
+            div {
+                class: "nav-child-panel send-panel burn-panel",
+                "data-aeon-scope": "asset-burn",
+                "data-aeon-state": "missing",
+                EmptyState {
+                    icon: Some(rsx! { CollectablesIcon { size: 28 } }),
+                    title: title,
+                    body: Some(body.to_string()),
+                }
+            }
+        };
+    }
+
+    let issuers: Vec<IssuerView> = items
+        .iter()
+        .filter_map(|i| issuer_view_for(i, &snap, &services, &chain))
+        .collect();
+    let first = &items[0];
+    let n = items.len();
+    let economics = if batch {
+        estimate_burn_economics(n as u64, 0, true, Some(n as u64))
+    } else {
+        estimate_burn_economics(1, 0, true, None)
+    };
+    let (eyebrow, title, subtitle, amount_label, confirm_subtitle) = if batch {
+        (
+            "Burn collectables".to_string(),
+            format!("{n} selected items"),
+            "One permanent on-chain action".to_string(),
+            format!("{n} collectables"),
+            "Every selected item and its BRC-150 lineage",
+        )
+    } else {
+        let app = non_empty(
+            snap.item_meta
+                .get(&first.outpoint)
+                .and_then(|m| m.app.as_deref()),
+        );
+        (
+            "Burn collectable".to_string(),
+            first.name.clone(),
+            match app {
+                Some(app) => format!("{app} · one of a kind"),
+                None => "One of a kind".to_string(),
+            },
+            first.name.clone(),
+            "This item, and its BRC-150 lineage with it",
+        )
+    };
+    let recovered = economics.recoverable_sats;
+    let fee = economics.estimated_fee_sats;
+    let net_sign = if recovered >= fee { "+" } else { "−" };
+    let net_abs = recovered.abs_diff(fee);
+    let first_art = snap.item_art.get(&first.outpoint).cloned();
+
     rsx! {
         div {
-            class: "nav-child-panel send-panel",
-            "data-aeon-scope": "burn-asset",
+            class: "nav-child-panel send-panel burn-panel",
+            "data-aeon-scope": "asset-burn",
             "data-aeon-state": if is_confirming { "confirming" } else { "editing" },
 
-            div { class: "send-stage",
-                div { class: "send-layout",
+            div { class: if is_confirming { "send-stage send-stage-confirm" } else { "send-stage send-stage-edit" },
+                div { class: if is_confirming { "send-layout send-layout-confirm" } else { "send-layout" },
                     div { class: "send-amount-hero send-collectable-hero",
                         div { class: "send-collectable-preview",
-                            span { class: "burn-hero-media", aria_hidden: true,
-                                FireIcon { size: 24 }
+                            span { class: "burn-hero-media", "aria-hidden": "true",
+                                if batch {
+                                    span { class: "burn-batch-preview", "aria-hidden": "true",
+                                        for item in items.iter().take(3) {
+                                            if let Some(art) = snap.item_art.get(&item.outpoint) {
+                                                img { key: "{item.outpoint}", src: "{art}", alt: "", width: 40, height: 40 }
+                                            } else {
+                                                CollectablesIcon { key: "{item.outpoint}", size: 20 }
+                                            }
+                                        }
+                                    }
+                                } else if let Some(ref art) = first_art {
+                                    img { class: "burn-hero-image", src: "{art}", alt: "{first.name}", width: 48, height: 48 }
+                                } else {
+                                    span { class: "burn-hero-model", "aria-hidden": "true",
+                                        CollectablesIcon { size: 26 }
+                                    }
+                                }
                             }
                             div {
                                 p { class: "send-eyebrow burn-eyebrow",
-                                    if is_confirming { "You're burning" } else { "Destroy collectable" }
+                                    FireIcon { size: 12 }
+                                    if is_confirming { "You’re burning" } else { "{eyebrow}" }
                                 }
-                                strong { class: "collectable-details-name", "{item.name}" }
-                                p { class: "collectable-details-app mono", "{truncate_mid(&item.origin_outpoint, 12)}" }
+                                strong { class: "collectable-details-name",
+                                    if is_confirming { "{amount_label}" } else { "{title}" }
+                                }
+                                AssetIssuers { views: issuers }
+                                if !is_confirming {
+                                    p { class: "collectable-details-app", "{subtitle}" }
+                                }
                             }
                         }
                     }
 
                     div { class: "send-side",
+                        if is_confirming {
+                            p { class: "send-confirm-to", "{confirm_subtitle}" }
+                        }
                         dl { class: "burn-breakdown",
-                            div {
-                                dt { "Asset satoshi" }
-                                dd { "1 sat" }
+                            if !is_confirming {
+                                div {
+                                    dt { "Asset sats selected" }
+                                    dd { "{group_thousands(economics.gross_asset_sats)} sats" }
+                                }
+                                div {
+                                    dt { "Protocol outputs" }
+                                    dd { "{group_thousands(economics.protocol_output_sats)} sats" }
+                                }
                             }
                             div {
-                                dt { "Effect" }
-                                dd { "Permanently destroys this 1Sat inscription on chain" }
+                                dt { "Recovered to Pay" }
+                                dd { "{group_thousands(recovered)} sats" }
+                            }
+                            div {
+                                dt { "Network fee" }
+                                dd { "about {group_thousands(fee)} sats" }
+                            }
+                            div { class: "burn-breakdown-net",
+                                dt { "Effect on Pay" }
+                                dd { "{net_sign}{group_thousands(net_abs)} sats" }
                             }
                         }
                         if is_confirming {
-                            p { class: "error",
-                                "This cannot be undone. Confirm only if you intend to permanently burn this item."
+                            p { class: "burn-note",
+                                "Destroyed on chain for good — no undo, and History backup cannot bring it back."
+                            }
+                        } else {
+                            p { class: "burn-note",
+                                "Only eligible physical sats come back as wallet change. The asset itself ends here."
                             }
                         }
                     }

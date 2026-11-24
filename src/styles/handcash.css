@@ -1547,7 +1547,6 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
   color: #fafafa;
 }
 
@@ -2669,7 +2668,6 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
   color: #fafafa;
 }
 
@@ -4713,7 +4711,6 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
   color: #fafafa;
 }
 
@@ -5100,7 +5097,6 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wa
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
   color: #fafafa;
 }
 
@@ -5293,12 +5289,8 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wa
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
   color: #fafafa;
-  background-color: var(--hc-select-3d-bg);
-  background-image: var(--hc-select-3d);
-  border-top: 1px solid var(--hc-select-3d-top);
-  border-bottom: 1px solid var(--hc-select-3d-bottom);
-  box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .wallet-nav-tab.is-active svg,
@@ -5573,9 +5565,11 @@ html:not(.platform-mobile):not(.layout-compact)
   min-height: 34px;
   padding: 2px;
   border: var(--hc-border-w) solid hsl(var(--border));
+  border-top-color: var(--hc-select-3d-top);
   border-radius: var(--wallet-nav-pill-radius);
-  background: var(--wallet-nav-select);
-  box-shadow: none;
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  box-shadow: var(--hc-select-3d-shadow);
   overflow: visible;
 }
 
@@ -5663,12 +5657,8 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected]:hover,
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected='true']:hover {
   color: #fafafa;
-  background-color: var(--hc-select-3d-bg);
-  background-image: var(--hc-select-3d);
-  border-top: 1px solid var(--hc-select-3d-top);
-  border-bottom: 1px solid var(--hc-select-3d-bottom);
-  box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] svg,

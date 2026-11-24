@@ -256,17 +256,56 @@ pub fn ProfileIdenticon(id: String, #[props(default = 16)] size: u32) -> Element
     }
 }
 
-/// TS `ProfileFingerprint` / `SignerFingerprint` (`claim: true`).
+/// TS `ProfileFingerprint` (`src/components/ProfileIdenticon.tsx`).
 #[component]
-pub fn ProfileFingerprint(id: String, #[props(default = false)] claim: bool) -> Element {
+pub fn ProfileFingerprint(
+    id: String,
+    #[props(default = false)] claim: bool,
+    #[props(default)] class: Option<String>,
+    #[props(default = true)] show_id: bool,
+    #[props(default)] state: Option<String>,
+) -> Element {
     let fp = profile_fingerprint(&id);
+    let cls = match class {
+        Some(c) if !c.is_empty() => format!("identity-pill {c}"),
+        _ => "identity-pill".to_string(),
+    };
+    let state_attr = state.or_else(|| if claim { Some("claim".to_string()) } else { None });
     rsx! {
         span {
-            class: "identity-pill",
+            class: "{cls}",
             "data-aeon-part": "profile-fingerprint",
-            "data-aeon-state": if claim { Some("claim") } else { None },
-            title: "{id}",
+            "data-aeon-state": state_attr,
+            "data-has-lead": "",
+            "data-only-child": if !show_id { Some("") } else { None },
+            title: "Profile ID {id}",
             span { class: "identity-pill-lead", ProfileIdenticon { id: id.clone(), size: 10 } }
+            if show_id {
+                span { class: "identity-pill-id mono", "{fp.short}" }
+            }
+        }
+    }
+}
+
+/// TS `SignerFingerprint` (`src/components/ProfileIdenticon.tsx`).
+#[component]
+pub fn SignerFingerprint(
+    address: String,
+    #[props(default)] class: Option<String>,
+) -> Element {
+    let fp = profile_fingerprint(&address);
+    let cls = match class {
+        Some(c) if !c.is_empty() => format!("identity-pill {c}"),
+        _ => "identity-pill".to_string(),
+    };
+    rsx! {
+        span {
+            class: "{cls}",
+            "data-aeon-part": "signer-fingerprint",
+            "data-aeon-state": "claim",
+            "data-has-lead": "",
+            title: "Signed by {address} · as the index reports it, not checked here",
+            span { class: "identity-pill-lead", ProfileIdenticon { id: address.clone(), size: 10 } }
             span { class: "identity-pill-id mono", "{fp.short}" }
         }
     }
@@ -332,6 +371,83 @@ pub fn PeerAvatar(
                 img { class: "peer-avatar-image", src: "{src}", alt: "", draggable: "false" }
             } else {
                 "{initial}"
+            }
+        }
+    }
+}
+
+/// 1:1 port of Aeon `TextOverflow` (`mode="carousel"`) used by `WalletStatusPill`.
+/// Static (`data-aeon-state="fit"`, 0Hz) when `label` fits within `max_fit_chars` (6 = "Synced");
+/// smoothly loops horizontally when longer (e.g. "Bridge off", "Syncing", "Catching up").
+#[component]
+pub fn TextOverflowCarousel(
+    label: String,
+    #[props(default = "status-pill-label".to_string())] class: String,
+    #[props(default = 6)] max_fit_chars: usize,
+) -> Element {
+    let overflows = label.chars().count() > max_fit_chars;
+    let mut paused = use_signal(|| false);
+    let mut offset_px = use_signal(|| 0.0_f64);
+    let mut active_label = use_signal(|| label.clone());
+    if *active_label.read() != label {
+        active_label.set(label.clone());
+        offset_px.set(0.0);
+    }
+
+    // Estimate one track cycle in pixels (uppercase ~8.5px/char + 24px gap) and tick at 20fps
+    // only while overflowing; drops to 0Hz when the label fits (e.g. "Synced").
+    use_future(move || async move {
+        loop {
+            let cur = active_label.read().clone();
+            let len = cur.chars().count();
+            if len <= max_fit_chars {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            if *paused.read() {
+                continue;
+            }
+            let cycle_px = (len as f64) * 9.5 + 24.0;
+            let next = *offset_px.read() + 1.1;
+            if next >= cycle_px {
+                offset_px.set(0.0);
+            } else {
+                offset_px.set(next);
+            }
+        }
+    });
+
+    let state_attr = if !overflows {
+        "fit"
+    } else if *paused.read() {
+        "paused"
+    } else {
+        "carousel"
+    };
+    let track_style = if overflows {
+        format!("transform: translateX(-{:.1}px);", *offset_px.read())
+    } else {
+        String::new()
+    };
+
+    rsx! {
+        span {
+            class: "{class}",
+            "data-aeon-scope": "text-overflow",
+            "data-aeon-mode": "carousel",
+            "data-aeon-state": "{state_attr}",
+            onmouseenter: move |_| paused.set(true),
+            onmouseleave: move |_| paused.set(false),
+            span { "data-aeon-part": "viewport",
+                span {
+                    "data-aeon-part": "track",
+                    style: "{track_style}",
+                    span { "data-aeon-part": "item", "{label}" }
+                    if overflows {
+                        span { "data-aeon-part": "item", aria_hidden: true, "{label}" }
+                    }
+                }
             }
         }
     }

@@ -218,10 +218,10 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-select-3d-shadow: 0 1px 2px rgba(0, 0, 0, 0.78);
   --hc-select-3d-top: #3f3f46;
   --hc-select-3d-bottom: #000000;
-  --hc-unselected-plate: #16161b;
-  --hc-unselected-plate-hover: #202027;
+  --hc-unselected-plate: #000000;
+  --hc-unselected-plate-hover: #141418;
   --hc-unselected-ink: #8c8c96;
-  --wallet-nav-pill-radius: 999px;
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
   --hc-sunken: rgba(0, 0, 0, 0.28);
   --hc-sunken-strong: rgba(0, 0, 0, 0.38);
@@ -255,10 +255,10 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-select-3d-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
   --hc-select-3d-top: #3f3f46;
   --hc-select-3d-bottom: #000000;
-  --hc-unselected-plate: #eef1ef;
-  --hc-unselected-plate-hover: #e1e6e2;
+  --hc-unselected-plate: #ffffff;
+  --hc-unselected-plate-hover: #eef1ef;
   --hc-unselected-ink: #4a524c;
-  --wallet-nav-pill-radius: 999px;
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   --hc-cta: #38cb7b;
   --hc-cta-ink: #0a120e;
   --hc-sunken-soft: rgba(20, 24, 20, 0.025);
@@ -403,15 +403,18 @@ html, body {{
   display: block;
   color: var(--hc-text);
 }}
-/* Unified action bar object: selected tab + label share the glossy black 3D theme;
-   unselected tabs hold a distinct flat theme. Square corners on selected; full-cell hitboxes. */
+/* Inverted navigation pill & action bar: the outer pill carries the continuous sleek obsidian 3D
+   bevel so the section label/crumbs and selected tab are incorporated into one surface; unselected
+   tabs sit on top as flat black plates with rounded end-caps (`calc(var(--wallet-nav-pill-radius) - 2px)`). */
 .wallet-nav-titlebar-pill,
 .wallet-nav-bar-track {{
-  padding: 0;
-  border: 1.5px solid #32323b;
-  background-color: var(--hc-unselected-plate);
-  background-image: none;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  padding: 2px;
+  border: var(--hc-border-w, 2px) solid var(--hc-border);
+  border-top-color: var(--hc-select-3d-top);
+  border-radius: var(--wallet-nav-pill-radius);
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  box-shadow: var(--hc-select-3d-shadow);
   overflow: hidden;
 }}
 .wallet-nav-titlebar-label,
@@ -421,16 +424,11 @@ html, body {{
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  background-color: var(--hc-select-3d-bg);
-  background-image: var(--hc-select-3d);
-  border-top: 1px solid var(--hc-select-3d-top);
-  border-bottom: 1px solid var(--hc-select-3d-bottom);
-  border-right: 1px solid #2a2a30;
-  border-radius: 0;
+  background: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
   color: #fafafa;
-}}
-.wallet-nav-titlebar-pill[data-has-crumbs] .wallet-nav-titlebar-label {{
-  border-right: 0;
 }}
 .wallet-nav-titlebar-tabs {{
   display: inline-flex;
@@ -445,14 +443,12 @@ html, body {{
   justify-content: center;
   align-self: stretch;
   height: 100%;
-  min-width: 42px;
-  padding: 0 11px;
+  min-width: 39px;
+  padding: 0 10px;
   margin: 0;
   box-sizing: border-box;
   border: 0;
-  border-top: 1px solid transparent;
-  border-bottom: 1px solid transparent;
-  border-radius: 0 !important;
+  border-radius: 0;
   cursor: pointer;
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab > svg,
@@ -474,6 +470,23 @@ html, body {{
   background-image: none;
   color: var(--hc-text);
 }}
+/* Preserve the original inverted-pill cap radii on unselected runs (selected stays flush/transparent). */
+.wallet-nav-titlebar-tabs .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]):first-child,
+.wallet-nav-titlebar-tabs .wallet-nav-tab[data-selected] + .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]),
+.wallet-nav-titlebar-tabs .wallet-nav-tab[aria-selected="true"] + .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]),
+.wallet-nav-bar-track .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]):first-child,
+.wallet-nav-bar-track .wallet-nav-tab[data-selected] + .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]),
+.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] + .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]) {{
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}}
+.wallet-nav-titlebar-tabs .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]):last-child,
+.wallet-nav-titlebar-tabs .wallet-nav-tab[data-before-selected]:not([aria-selected="true"]):not([data-selected]),
+.wallet-nav-bar-track .wallet-nav-tab:not([aria-selected="true"]):not([data-selected]):last-child,
+.wallet-nav-bar-track .wallet-nav-tab[data-before-selected]:not([aria-selected="true"]):not([data-selected]) {{
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}}
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected],
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"],
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected]:hover,
@@ -482,14 +495,11 @@ html, body {{
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"],
 .wallet-nav-bar-track .wallet-nav-tab[data-selected]:hover,
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"]:hover {{
-  background-color: var(--hc-select-3d-bg);
-  background-image: var(--hc-select-3d);
-  border-top: 1px solid var(--hc-select-3d-top);
-  border-bottom: 1px solid var(--hc-select-3d-bottom);
-  border-left: 1px solid #2a2a30;
-  border-right: 1px solid #2a2a30;
-  box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0 !important;
+  background-color: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
   color: #fafafa;
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] > svg,
@@ -497,6 +507,38 @@ html, body {{
 .wallet-nav-bar-track .wallet-nav-tab[data-selected] > svg,
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] > svg {{
   color: inherit;
+}}
+/* Status pill carousel (TS TextOverflow mode="carousel") */
+.status-pill [data-aeon-scope="text-overflow"] {{
+  display: inline-flex;
+  align-items: center;
+  grid-column: 2;
+  grid-row: 1;
+  width: 0;
+  min-width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}}
+.status-pill [data-aeon-scope="text-overflow"] > [data-aeon-part="viewport"] {{
+  display: block;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+}}
+.status-pill [data-aeon-scope="text-overflow"] [data-aeon-part="track"] {{
+  display: inline-flex;
+  align-items: center;
+  gap: 24px;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  animation: none;
+}}
+.status-pill [data-aeon-scope="text-overflow"] [data-aeon-part="item"] {{
+  display: inline-block;
+  flex-shrink: 0;
+  white-space: nowrap;
 }}
 /* Docked WalletActionBar slots inside the unified pill */
 .wallet-action-bar.wallet-action-bar--nav {{
@@ -655,7 +697,7 @@ html, body {{
     align-items: stretch;
     width: 100%;
     min-height: 40px;
-    border-radius: 12px;
+    border-radius: var(--wallet-nav-pill-radius);
     overflow: hidden;
   }}
   .wallet-nav-bar-track .wallet-nav-tab {{
@@ -782,22 +824,28 @@ html, body {{
   object-fit: contain;
   user-select: none;
 }}
+[data-aeon-scope="what-is-bsv"] button.bsv-asset-trigger[data-aeon-part="coin-trigger"],
 .bsv-asset-trigger {{
   appearance: none;
   position: relative;
+  inset: auto;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  margin: -4px -8px;
-  padding: 4px 8px;
+  width: auto;
+  height: auto;
+  margin: 0 -8px;
+  padding: 2px 8px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--hc-ticker-select-radius, 10px);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }}
+[data-aeon-scope="what-is-bsv"] button.bsv-asset-trigger[data-aeon-part="coin-trigger"]:hover,
 .bsv-asset-trigger:hover {{
   background: var(--hc-hover);
 }}
@@ -894,7 +942,7 @@ html, body {{
   padding: 8px 12px;
   box-sizing: border-box;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--hc-radius);
   background-color: transparent;
   background-image: none;
 }}
@@ -916,7 +964,6 @@ html, body {{
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0 !important;
   color: #fafafa;
 }}
 [data-aeon-scope="ticker-coins"] {{
@@ -931,7 +978,7 @@ html, body {{
   padding: 8px 12px;
   box-sizing: border-box;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--hc-ticker-select-radius, 10px);
 }}
 .wallet-nav-shell,
 .wallet-nav,
@@ -1015,7 +1062,7 @@ html, body {{
   border-top-color: var(--hc-select-3d-top);
   border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
-  border-radius: 0 !important;
+  border-radius: var(--hc-radius);
   color: #fafafa;
 }}
 [data-aeon-scope="button"][data-aeon-part="root"].btn.btn-ghost:hover:not([data-disabled]) {{
@@ -1347,7 +1394,6 @@ html, body {{
   background-image: var(--hc-select-3d);
   border-top: 1px solid var(--hc-select-3d-top);
   border-bottom: 1px solid var(--hc-select-3d-bottom);
-  border-radius: 0;
   color: #fafafa;
 }}
 .collectables-toolbar {{
@@ -1688,15 +1734,22 @@ mod tests {
         // Opaque obsidian 3D gradient (no translucent white stops or white inset box-shadow that Blitz paints gray)
         assert!(css.contains("--hc-select-3d: linear-gradient(180deg, #27272b"));
         assert!(!css.contains("inset 0 1px 0 rgb(255 255 255"));
-        // Action bar is a distinct bordered object with unified label+selected vs flat unselected
+        // Inverted action bar pill: outer pill carries 3D track, label+selected transparent, unselected caps rounded
+        assert!(css.contains("--wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);"));
+        assert!(css.contains("border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);"));
+        assert!(css.contains("border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);"));
         assert!(css.contains(".wallet-nav-titlebar-label,\n.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs"));
-        assert!(css.contains("background-color: var(--hc-unselected-plate);"));
-        // Dropdowns are pure black with square selected 3D rows
+        // Dropdowns are pure black and preserve existing option border-radius (no border-radius: 0 !important)
         assert!(css.contains("background-color: #000000;"));
-        assert!(css.contains("border-radius: 0 !important;"));
+        assert!(!css.contains("border-radius: 0 !important;"));
+        // Ticker coin-trigger stays in normal flow (overrides handcash.css position:absolute)
+        assert!(css.contains("[data-aeon-scope=\"what-is-bsv\"] button.bsv-asset-trigger[data-aeon-part=\"coin-trigger\"]"));
+        assert!(css.contains("position: relative;\n  inset: auto;"));
+        // Status pill carousel keeps grid-cell width (0/100%) and disables CSS keyframes collision
+        assert!(css.contains(".status-pill [data-aeon-scope=\"text-overflow\"] {\n  display: inline-flex;\n  align-items: center;\n  grid-column: 2;\n  grid-row: 1;\n  width: 0;\n  min-width: 100%;"));
+        assert!(css.contains("animation: none;"));
         // BSV logo uses object-fit: contain (not cover)
         assert!(css.contains(".bsv-logo {\n  display: block;\n  border-radius: 0;\n  object-fit: contain;"));
-        assert!(!css.contains(".bsv-logo {\n  display: block;\n  border-radius: 8px;\n  object-fit: cover;"));
         // Collectables tiles always have a visible surface and disable container-type in Blitz
         assert!(css.contains("container-type: normal;"));
         assert!(css.contains(".collectable-media-fallback {\n  position: absolute;"));

@@ -40,8 +40,8 @@ pub enum ActionIcon {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DockActionSpec {
     pub id: &'static str,
-    pub label: &'static str,
-    pub short_label: &'static str,
+    pub label: std::borrow::Cow<'static, str>,
+    pub short_label: std::borrow::Cow<'static, str>,
     pub tone: ActionTone,
     pub icon: ActionIcon,
     pub disabled: bool,
@@ -57,8 +57,8 @@ impl DockActionSpec {
     ) -> Self {
         Self {
             id,
-            label,
-            short_label: label,
+            label: std::borrow::Cow::Borrowed(label),
+            short_label: std::borrow::Cow::Borrowed(label),
             tone,
             icon,
             disabled: false,
@@ -66,12 +66,30 @@ impl DockActionSpec {
         }
     }
 
-    pub const fn short_label(mut self, short_label: &'static str) -> Self {
-        self.short_label = short_label;
+    pub fn new_owned(
+        id: &'static str,
+        label: impl Into<String>,
+        tone: ActionTone,
+        icon: ActionIcon,
+    ) -> Self {
+        let owned = label.into();
+        Self {
+            id,
+            label: std::borrow::Cow::Owned(owned.clone()),
+            short_label: std::borrow::Cow::Owned(owned),
+            tone,
+            icon,
+            disabled: false,
+            tertiary_before: None,
+        }
+    }
+
+    pub fn short_label(mut self, short_label: &'static str) -> Self {
+        self.short_label = std::borrow::Cow::Borrowed(short_label);
         self
     }
 
-    pub const fn disabled(mut self, disabled: bool) -> Self {
+    pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }

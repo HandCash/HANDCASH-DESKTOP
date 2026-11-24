@@ -71,10 +71,15 @@ pub fn Dashboard(
                 | NavChild::AppDetails(_)
         )
     );
-    if !child_supports_dock && dock_spec.read().is_some() {
+    // Collect's root selection dock (Cancel · Burn · Send) while items are selected.
+    let collect_selection_dock = active_child.is_none()
+        && active_section == NavSection::Collectables
+        && !selected_collectables.read().is_empty();
+    let dock_allowed = child_supports_dock || collect_selection_dock;
+    if !dock_allowed && dock_spec.read().is_some() {
         dock_spec.set(None);
     }
-    let active_dock = if child_supports_dock {
+    let active_dock = if dock_allowed {
         dock_spec.read().clone()
     } else {
         None
@@ -418,7 +423,8 @@ pub fn Dashboard(
                                         if selected_item_count > 0 {
                                             if let Some(ref first_op) = first_selected_item {
                                                 {
-                                                    let op_send = first_op.clone();
+                                                    let _ = first_op;
+                                                    let send_all: Vec<String> = selected_collectables.read().iter().cloned().collect();
                                                     let send_title = format!("Send selected ({selected_item_count})");
                                                     rsx! {
                                                         button {
@@ -427,7 +433,7 @@ pub fn Dashboard(
                                                             aria_label: "{send_title}",
                                                             title: "{send_title}",
                                                             onclick: move |_| {
-                                                                nav_child.set(Some(NavChild::SendCollectable(op_send.clone())));
+                                                                nav_child.set(Some(NavChild::SendCollectables(send_all.clone())));
                                                             },
                                                             SendIcon { size: 16 }
                                                             span { class: "wallet-nav-action-badge", "{selected_item_count}" }
@@ -536,7 +542,6 @@ pub fn Dashboard(
                                                     outpoint,
                                                     chain: profile.chain.clone(),
                                                     snap: snap.clone(),
-                                                    snapshot,
                                                     nav_child,
                                                     dock_spec,
                                                     dock_trigger,
@@ -545,7 +550,9 @@ pub fn Dashboard(
                                             },
                                             NavChild::SendCollectable(outpoint) => rsx! {
                                                 collectables::SendCollectablePanel {
-                                                    outpoint,
+                                                    key: "{outpoint}",
+                                                    outpoints: vec![outpoint],
+                                                    chain: profile.chain.clone(),
                                                     snap: snap.clone(),
                                                     nav_child,
                                                     dock_spec,
@@ -554,10 +561,12 @@ pub fn Dashboard(
                                                 }
                                             },
                                             NavChild::SendCollectables(outpoints) => {
-                                                let outpoint = outpoints.into_iter().next().unwrap_or_default();
+                                                let panel_key = outpoints.join(",");
                                                 rsx! {
                                                     collectables::SendCollectablePanel {
-                                                        outpoint,
+                                                        key: "{panel_key}",
+                                                        outpoints,
+                                                        chain: profile.chain.clone(),
                                                         snap: snap.clone(),
                                                         nav_child,
                                                         dock_spec,
@@ -568,7 +577,9 @@ pub fn Dashboard(
                                             },
                                             NavChild::BurnAsset(outpoint) => rsx! {
                                                 collectables::BurnAssetPanel {
-                                                    outpoint,
+                                                    key: "{outpoint}",
+                                                    outpoints: vec![outpoint],
+                                                    chain: profile.chain.clone(),
                                                     snap: snap.clone(),
                                                     nav_child,
                                                     dock_spec,
@@ -577,10 +588,12 @@ pub fn Dashboard(
                                                 }
                                             },
                                             NavChild::BurnCollectables(outpoints) => {
-                                                let outpoint = outpoints.into_iter().next().unwrap_or_default();
+                                                let panel_key = outpoints.join(",");
                                                 rsx! {
                                                     collectables::BurnAssetPanel {
-                                                        outpoint,
+                                                        key: "{panel_key}",
+                                                        outpoints,
+                                                        chain: profile.chain.clone(),
                                                         snap: snap.clone(),
                                                         nav_child,
                                                         dock_spec,
@@ -687,6 +700,8 @@ pub fn Dashboard(
                                                     view: collection_view,
                                                     nav_child,
                                                     selected_outpoints_ext: Some(selected_collectables),
+                                                    dock_spec: Some(dock_spec),
+                                                    dock_trigger: Some(dock_trigger),
                                                 }
                                             },
                                             NavSection::Friends => rsx! {
