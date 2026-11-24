@@ -142,6 +142,7 @@ describe('coins sent to an identity (BRC-213 §7)', () => {
     await fundedAlice(100_000n)
     const paid = await as(alice, () => btcWallet.send({ identityKey: identityOf(bob), litoshi: '40000' }, { toLabel: '$bob' }))
     expect(paid.status).toBe('sent')
+    expect(paid.rawTx).toBe(broadcasts[0])
     await btcWallet.refresh()
 
     expect(notices).toHaveLength(1)
@@ -204,6 +205,28 @@ describe('coins sent to an identity (BRC-213 §7)', () => {
     }
     expect(broadcasts).toHaveLength(0)
     expect(notices).toHaveLength(0)
+  })
+
+  it('carries the app\'s order reference to the recipient, who lists it with the coin', async () => {
+    await fundedAlice(100_000n)
+    const paid = await as(alice, () => btcWallet.send({ identityKey: identityOf(bob), litoshi: '40000', reference: 'order-7' }))
+    await btcWallet.refresh()
+    const notice = JSON.parse(notices[0]!.plaintext) as CoinPaymentNotice
+    expect(notice.reference).toBe('order-7')
+    expect((await btcWallet.refresh()).payments[0]).toMatchObject({ ltcTxid: paid.ltcTxid, reference: 'order-7' })
+
+    expect(await as(bob, () => btcWallet.ingestPaymentNotice(identityOf(alice), notice))).toBe('recorded')
+    expect((await btcWallet.refresh()).coins.find((c) => c.txid === paid.ltcTxid)).toMatchObject({ reference: 'order-7' })
+  })
+
+  it('refuses a malformed reference before signing', async () => {
+    await fundedAlice(100_000n)
+    for (const reference of ['', 'a\u0007b', 'x'.repeat(129), 7]) {
+      expect(() => btcWallet.preflightSend({ identityKey: identityOf(bob), litoshi: '40000', reference })).toThrow(
+        expect.objectContaining({ reason: 'bad-args' }),
+      )
+    }
+    expect(broadcasts).toHaveLength(0)
   })
 
   it('refuses its own identity, a malformed key, and naming both an address and an identity', async () => {

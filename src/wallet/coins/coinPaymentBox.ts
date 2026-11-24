@@ -2,7 +2,7 @@ import { errorText } from '../errorText'
 import { coinWalletOf } from '../coinMethods'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { getWalletRuntime } from '../walletRuntime'
-import { isCoinChain } from './coinChains'
+import { coinReferenceOf, isCoinChain } from './coinChains'
 import { COIN_PAYMENT_BOX, type CoinPaymentNotice } from './coinWallet'
 
 /**
@@ -31,7 +31,8 @@ export function parseCoinPaymentNotice(plaintext: string | null): CoinPaymentNot
   const n = raw as Partial<CoinPaymentNotice>
   if (n.v !== 1 || n.t !== 'coin-payment' || !isCoinChain(n.chain)) return null
   if (typeof n.txid !== 'string' || typeof n.keyId !== 'string' || typeof n.vout !== 'number') return null
-  return { v: 1, t: 'coin-payment', chain: n.chain, txid: n.txid, vout: n.vout, keyId: n.keyId }
+  const reference = coinReferenceOf(n.reference)
+  return { v: 1, t: 'coin-payment', chain: n.chain, txid: n.txid, vout: n.vout, keyId: n.keyId, ...(reference ? { reference } : {}) }
 }
 
 /** One pass over the box, at most every {@link POLL_MS} unless forced. An account held on another device never reads or acknowledges it. */

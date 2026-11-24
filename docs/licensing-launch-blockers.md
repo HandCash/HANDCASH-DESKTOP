@@ -1,6 +1,8 @@
 # Licensing launch blockers — 6 November 2026
 
 Status: OPEN. Technical evidence and release checklist, not legal clearance.
+
+**Update 12 November 2026 (L1):** BSVA relicensed current TS Stack first-party code to Apache-2.0 with a patent non-assert ([ts-stack 4760b26d](https://github.com/bsv-blockchain/ts-stack/commit/4760b26d), [5226d0c7](https://github.com/bsv-blockchain/ts-stack/commit/5226d0c7)); see `docs/bsva-apache-relicense.md`. L1 narrows to (a) installed packages still published under Open BSV v6 until we move to their first Apache release, and (b) pre-2026 Wallet Toolbox v4 code in `packages/wallet-engine`, which upstream keeps under its BSV-only grant. L2–L5 and T1 are unchanged.
 No license choice, exception, dependency removal, publishing or relicensing is authorized by this report.
 
 ## Candidate and coordination

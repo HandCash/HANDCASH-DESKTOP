@@ -51,3 +51,15 @@ export function formatCoin(chain: CoinChain, units: bigint): string {
   const frac = (units % scale).toString().padStart(COIN_INFO[chain].decimals, '0').replace(/0+$/, '')
   return frac ? `${whole}.${frac}` : whole.toString()
 }
+
+/** Longest order reference a coin payment carries (BRC-213 §7, §9), in characters. */
+export const MAX_COIN_REFERENCE = 128
+
+/** A valid order reference: 1 to {@link MAX_COIN_REFERENCE} characters, no control characters. Null when absent or invalid. */
+export function coinReferenceOf(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const reference = raw.trim()
+  // eslint-disable-next-line no-control-regex
+  if (!reference || reference.length > MAX_COIN_REFERENCE || /[\u0000-\u001f\u007f]/.test(reference)) return null
+  return reference
+}

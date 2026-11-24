@@ -9,7 +9,7 @@
  * response is reshaped.
  */
 import type { CoinWallet, CoinWalletReport, SendCoinArgs, SendCoinResult } from './coins/coinWallet'
-import { COIN_CHAINS, isCoinChain, type CoinChain } from './coins/coinChains'
+import { COIN_CHAINS, coinReferenceOf, isCoinChain, type CoinChain } from './coins/coinChains'
 
 export { COIN_CHAINS, type CoinChain }
 
@@ -52,7 +52,12 @@ export async function coinWalletOf(chain: CoinChain): Promise<CoinWallet> {
 /** The payment a `sendCoins` call asks for, in the engine's terms. */
 export function coinPaymentArgs(args: unknown): SendCoinArgs {
   const body = record(args)
-  return { address: body.address, litoshi: body.amount, ...(body.identityKey !== undefined ? { identityKey: body.identityKey } : {}) }
+  return {
+    address: body.address,
+    litoshi: body.amount,
+    ...(body.identityKey !== undefined ? { identityKey: body.identityKey } : {}),
+    ...(body.reference !== undefined ? { reference: body.reference } : {}),
+  }
 }
 
 /** A `sendCoins` call's chain, or the 400 to answer with. */
@@ -94,9 +99,10 @@ export function sendCoinsResponseAsWithdrawLtc(response: { status: number; body:
   return response
 }
 
-/** BRC-213 §9 `sendCoins` result. */
-export function sendCoinsResult(chain: CoinChain, sent: SendCoinResult) {
-  return { chain, txid: sent.ltcTxid, amount: sent.litoshi, fee: sent.fee, status: sent.status }
+/** BRC-213 §9 `sendCoins` result. `rawTx` lets the payee check the payment on its own chain; `reference` echoes the app's. */
+export function sendCoinsResult(chain: CoinChain, sent: SendCoinResult, args?: unknown) {
+  const reference = coinReferenceOf(record(args).reference)
+  return { chain, txid: sent.ltcTxid, amount: sent.litoshi, fee: sent.fee, status: sent.status, rawTx: sent.rawTx, ...(reference ? { reference } : {}) }
 }
 
 export type CoinState = 'unconfirmed' | 'confirming' | 'spendable' | 'unchecked' | 'missing' | 'abandoned'
@@ -115,6 +121,8 @@ export type ListCoinsResult = {
     confirmations?: number
     needed: number
     spent: boolean
+    /** The payer's order reference, from its notice; theirs to set. */
+    reference?: string
   }>
   payments: Array<{
     txid: string
@@ -126,6 +134,7 @@ export type ListCoinsResult = {
     lastError?: string
     /** Paid to an identity (BRC-213 §7); `notified` once the recipient's box took the notice. */
     to?: { identityKey: string; notified: boolean }
+    reference?: string
   }>
 }
 
@@ -153,6 +162,7 @@ export function listCoinsFromReport(
         ...(state !== 'spendable' && c.source === 'received' ? { confirmations: counted } : {}),
         needed,
         spent: c.spent,
+        ...(c.reference ? { reference: c.reference } : {}),
       }
     }),
     payments: report.payments.map((p) => ({
@@ -164,6 +174,7 @@ export function listCoinsFromReport(
       confirmed: p.confirmed,
       ...(p.lastError ? { lastError: p.lastError } : {}),
       ...(p.to ? { to: p.to } : {}),
+      ...(p.reference ? { reference: p.reference } : {}),
     })),
   }
 }

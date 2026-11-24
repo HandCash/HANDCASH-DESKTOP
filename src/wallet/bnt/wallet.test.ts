@@ -575,7 +575,7 @@ describe('open BNT wallet', () => {
     expect(await balanceOf(frank, token.assetId)).toBe('1500')
   })
 
-  it('never lets a backed token leave its issuer: anyone else would hold a claim only the issuer can pay', async () => {
+  it('moves a proven backed token to anyone, who redeems it by sending it back to its issuer, never by burning', async () => {
     const reserve = toHex(parseLtcTx(fromHex(ltcDeposit.hex)).outputs[ltcDeposit.vout]!.script)
     const deposit = { txid: ltcDeposit.txid, vout: ltcDeposit.vout }
     const proof = { tx: ltcDeposit.hex, path: ltcDeposit.proof.merkle, pos: ltcDeposit.proof.pos, height: ltcDeposit.height, header: ltcDeposit.headers[0]! }
@@ -586,9 +586,16 @@ describe('open BNT wallet', () => {
     )
     setLtcAnchorForTest({ check: async () => ({ kind: 'buried' }) })
     await as(frank, () => proveBntBacking(token.assetId, token.txid, proof))
-    await expect(as(frank, () => preflightBntTransfer({ assetId: token.assetId, recipient: gina.identityKey, amount: '1' }))).rejects.toMatchObject({ reason: 'custodial' })
-    await expect(as(frank, () => transferBntAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '1' }))).rejects.toMatchObject({ reason: 'custodial' })
+    await as(frank, () => preflightBntTransfer({ assetId: token.assetId, recipient: gina.identityKey, amount: '40' }))
+    const sent = await as(frank, () => transferBntAsset({ assetId: token.assetId, recipient: gina.identityKey, amount: '40' }))
+    expect(sent.delivered).toBe(true)
+    await as(gina, () => serveBntBox({ force: true }))
+    expect(await balanceOf(frank, token.assetId)).toBe('960')
+    expect(await balanceOf(gina, token.assetId)).toBe('40')
+
+    await expect(as(gina, () => preflightBntBurn({ assetId: token.assetId, amount: '1' }))).rejects.toMatchObject({ reason: 'custodial' })
+    await as(gina, () => transferBntAsset({ assetId: token.assetId, recipient: frank.identityKey, amount: '40' }))
+    await as(frank, () => serveBntBox({ force: true }))
     expect(await balanceOf(frank, token.assetId)).toBe('1000')
-    expect(await balanceOf(gina, token.assetId)).toBeUndefined()
   })
 })

@@ -6,7 +6,7 @@
 import {
   appendCustody,
   custodyEntries,
-  custodyJournalRoot,
+  custodyJournalRootAsync,
   onCustodyJournalGrew,
 } from './custodyJournal'
 import {
@@ -27,7 +27,7 @@ const replica = journalReplica({
   info: HKDF_INFO,
   tag: 'custody-journal',
   debounceMs: 15_000,
-  root: custodyJournalRoot,
+  root: custodyJournalRootAsync,
   entries: custodyEntries,
   append: appendCustody,
 })

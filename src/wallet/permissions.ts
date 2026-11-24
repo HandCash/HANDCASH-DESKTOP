@@ -48,8 +48,8 @@ import { marketListingPreviewFromArgs } from './marketListing'
 import type { IssuanceAttestation } from './identityIssuance'
 import { formatUsd } from './fx'
 import { coinBudgetSats, coinUsdValue, usdcBudgetSats } from './coins/budget'
-import { coinApprovalTitle, COIN_INFO, formatCoin, isCoinChain } from './coins/coinChains'
-import { bntAmountLabel } from './bnt/assetLabel'
+import { coinApprovalTitle, COIN_INFO, coinReferenceOf, formatCoin, isCoinChain } from './coins/coinChains'
+import { bntAmountLabel, bntBackingOf } from './bnt/assetLabel'
 
 const STORAGE_KEY_BASE = storageRegistry.connectedApps.key
 
@@ -1355,6 +1355,8 @@ export function summarizeAction(method: string, args: unknown): {
 
   if (method === 'transferBntAsset') {
     const recipient = typeof body.recipient === 'string' ? body.recipient : ''
+    const backing = bntBackingOf(body.assetId)
+    const redeemers = backing?.issuers.map((k) => `${k.slice(0, 16)}…`).join(', ')
     return {
       title: `Send ${bntAmountLabel(body.assetId, body.amount ?? '1')}`,
       summary: 'You sign the transfer; the recipient gets its proof in their inbox and checks it themselves.',
@@ -1362,6 +1364,10 @@ export function summarizeAction(method: string, args: unknown): {
       details: [
         typeof body.assetId === 'string' ? `Asset: ${body.assetId}` : 'Unknown asset',
         recipient ? `To: ${recipient.slice(0, 16)}…` : 'Unknown recipient',
+        // BRC-212 §10: the basis and the reserve holder, wherever the token appears.
+        ...(backing
+          ? [`Backed by ${isCoinChain(backing.chain) ? COIN_INFO[backing.chain].label : backing.chain === 'arc' ? 'USDC on Arc' : backing.chain}; only its issuer (${redeemers}) redeems it, from a reserve the issuer keeps`]
+          : []),
       ],
     }
   }
@@ -1385,6 +1391,7 @@ export function summarizeAction(method: string, args: unknown): {
       budgetSats: units ? coinBudgetSats(chain, units) ?? undefined : undefined,
       details: [
         identityKey ? `To identity: ${identityKey.slice(0, 16)}…` : address ? `To: ${address}` : 'Unknown address',
+        ...(coinReferenceOf(body.reference) ? [`Reference: ${coinReferenceOf(body.reference)}`] : []),
         ...(identityKey ? [`Their wallet receives ${label} at its identity; it is told which key the coins are locked to`] : []),
         `Paid on ${label} from this wallet; the ${label} network fee is added on top`,
         'Counts toward this app\'s Auto-pay limit at its dollar value',

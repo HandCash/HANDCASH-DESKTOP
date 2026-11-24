@@ -1,5 +1,7 @@
 # Meridian Wallet Engine — working architecture
 
+**12 November 2026:** BSVA's Apache-2.0 relicense (`docs/bsva-apache-relicense.md`) removes the licence reason to replace the SDK and other current TS Stack code. The licence-driven scope narrows to pre-2026 Wallet Toolbox v4 code in `packages/wallet-engine`; rebasing onto post-relicense Toolbox code is the cheaper first option. The architecture below stays valid as design, not as a licence requirement.
+
 Working name only; trademark/name availability is not cleared. Target: a genuinely independently authored replacement for all BSVA implementation code and other BSV-restricted components, not a renamed Toolbox fork. BRC-100 remains the external compatibility boundary. No blanket originality, clean-room, legal-clearance or unrestricted-distribution claim is made. The contributor has examined legacy implementations.
 
 ## Architecture

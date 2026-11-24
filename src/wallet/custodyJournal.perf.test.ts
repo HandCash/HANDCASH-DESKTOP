@@ -86,6 +86,27 @@ describe('custody journal load cost', () => {
     console.info(`[custody-journal perf] root after one append ${againMs.toFixed(0)}ms`)
   }, 60_000)
 
+  it('yields during the first backup root and includes an append during a yield', async () => {
+    const j = await load()
+    j.appendCustody(alice, journalEntries())
+    let ticks = 0
+    const timer = setInterval(() => { ticks += 1 }, 0)
+    const started = performance.now()
+    try {
+      const pending = j.custodyJournalRootAsync(alice)
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      j.appendCustody(alice, [{ k: 'spent', op: `${txid(1)}.1` }])
+      const root = await pending
+      const elapsedMs = performance.now() - started
+      expect(ticks).toBeGreaterThan(10)
+      expect(root).toBe(legacyIdsAndRoot(j.custodyEntries(alice)))
+      expect(await j.custodyJournalRootAsync(alice)).toBe(root)
+      console.info(`[custody-journal perf] yielding root ${elapsedMs.toFixed(0)}ms, event loop serviced ${ticks} times`)
+    } finally {
+      clearInterval(timer)
+    }
+  }, 60_000)
+
   it('gives each entry the same id as the pure-JS hash, including non-ASCII text', async () => {
     const j = await load()
     const entry = { k: 'out', op: `${txid(7)}.0`, sats: 5, r: { p: 'basket insertion', basket: 'café ✓', ci: '{"n":"𝔁"}' } } as const

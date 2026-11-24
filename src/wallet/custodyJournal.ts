@@ -29,6 +29,7 @@ import { bytesToHex } from '@noble/hashes/utils.js'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { sleep } from './timing'
 
 export type SpendRecipe =
   /** BRC-29 derivation; `sender` omitted means this wallet's own identity. */
@@ -408,6 +409,33 @@ export function custodyJournalRoot(owner: BoundAccountKeyScope): string {
     state.ids.push(custodyEntryId(state.entries[i]))
   }
   state.root = sha256Hex([...state.ids].sort().join(''))
+  return state.root
+}
+
+/**
+ * Backup-only root: yield between bounded batches rather than hashing the
+ * whole journal in one renderer task. Appends during a yield invalidate the
+ * snapshot; retry before publishing a cached root.
+ */
+export async function custodyJournalRootAsync(owner: BoundAccountKeyScope): Promise<string> {
+  const state = load(owner)
+  while (!state.root) {
+    while (state.ids.length < state.entries.length) {
+      const end = Math.min(state.ids.length + 128, state.entries.length)
+      while (state.ids.length < end) {
+        state.ids.push(custodyEntryId(state.entries[state.ids.length]))
+      }
+      await sleep(0)
+    }
+    const count = state.entries.length
+    const ids = [...state.ids].sort()
+    const hash = sha256.create()
+    for (let i = 0; i < ids.length; i += 128) {
+      hash.update(utf8.encode(ids.slice(i, i + 128).join('')))
+      await sleep(0)
+    }
+    if (state.entries.length === count) state.root = bytesToHex(hash.digest())
+  }
   return state.root
 }
 

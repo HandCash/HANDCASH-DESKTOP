@@ -659,7 +659,7 @@ export async function dispatchWalletMethod(
       return (await import('./assetProfiles')).listAssetProfiles()
     case 'sendCoins': {
       const chain = coinChainOf(args)
-      return sendCoinsResult(chain, await (await coinWalletOf(chain)).send(coinPaymentArgs(args), { origin: originator }))
+      return sendCoinsResult(chain, await (await coinWalletOf(chain)).send(coinPaymentArgs(args), { origin: originator }), args)
     }
     case 'getArcUsdAddress': {
       const { arcUsdWallet } = await import('./arcUsdc')

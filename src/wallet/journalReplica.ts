@@ -36,7 +36,7 @@ export type GrowOnlyJournal = {
   /** Log tag, e.g. `custody-journal`. */
   tag: string
   debounceMs: number
-  root: (owner: BoundAccountKeyScope) => string
+  root: (owner: BoundAccountKeyScope) => string | Promise<string>
   entries: (owner: BoundAccountKeyScope) => readonly unknown[]
   /** Union `incoming` into the local set; never throws on a foreign entry. */
   append: (owner: BoundAccountKeyScope, incoming: readonly unknown[]) => { added: number }
@@ -150,7 +150,7 @@ export function journalReplica(journal: GrowOnlyJournal): JournalReplica {
     const etag = ifMatchEtag(got.headers.get('ETag'))
     const sealed = (await got.json().catch(() => null)) as SealedJournal | null
     const root = typeof sealed?.root === 'string' ? sealed.root : null
-    if (root && root === journal.root(owner)) return { remote: { etag, root }, pulled: 0 }
+    if (root && root === await journal.root(owner)) return { remote: { etag, root }, pulled: 0 }
     try {
       const incoming = await openJournal(journal.info, rootKeyHex, owner.identityKey, sealed)
       return { remote: { etag, root }, pulled: journal.append(owner, incoming).added }
@@ -183,7 +183,7 @@ export function journalReplica(journal: GrowOnlyJournal): JournalReplica {
           pulled += got.pulled
           lastRemote.set(url, remote)
         }
-        const root = journal.root(owner)
+        const root = await journal.root(owner)
         if (root === remote.root || !stillCurrent()) break
         const body = JSON.stringify(
           await sealJournal(journal.info, rootKeyHex, owner.identityKey, root, journal.entries(owner)),
@@ -215,7 +215,7 @@ export function journalReplica(journal: GrowOnlyJournal): JournalReplica {
         lastRemote.delete(url)
         throw new Error(`push ${put.status}`)
       }
-      const root = journal.root(owner)
+      const root = await journal.root(owner)
       if (pulled > 0 || pushed || Date.now() - t0 > 250) {
         console.info(
           `[${journal.tag}] backup ${reason} pulled=${pulled} pushed=${pushed} entries=${journal.entries(owner).length} ` +

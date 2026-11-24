@@ -20306,8 +20306,62 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill .status-
 [data-aeon-scope='call-dock'] [data-aeon-part='problem'] { color: var(--hc-danger); }
 [data-aeon-scope='call-dock'] [data-aeon-part='actions'] { display: flex; flex-wrap: wrap; gap: 8px; }
 
-[data-aeon-scope='grant-duration'] { display: grid; gap: 6px; margin: 4px 0; }
-[data-aeon-scope='grant-duration'] .grant-duration-label { font-size: var(--hc-text-xs); color: var(--hc-muted); }
+[data-aeon-scope='grant-duration'] {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 4px 0;
+}
+
+[data-aeon-scope='grant-duration'] .grant-duration-label {
+  font-size: var(--hc-text-xs);
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='grant-duration'] [role='radiogroup'] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: var(--hc-border-w) solid var(--hc-border);
+  border-radius: var(--hc-radius-sm);
+  background: var(--hc-bg);
+}
+
+[data-aeon-scope='grant-duration'] [data-aeon-part='item'] {
+  flex: 1 1 auto;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: var(--hc-border-w) solid transparent;
+  border-radius: var(--hc-radius-sm);
+  background: transparent;
+  color: var(--hc-muted);
+  font: inherit;
+  font-size: var(--hc-text-xs);
+  line-height: 1.3;
+  cursor: pointer;
+}
+
+[data-aeon-scope='grant-duration'] [data-aeon-part='item']:hover:not(:disabled) {
+  background: var(--hc-hover);
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='grant-duration'] [data-aeon-part='item'][data-aeon-state='selected'] {
+  border-color: var(--hc-accent);
+  background: var(--hc-surface);
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='grant-duration'] [data-aeon-part='item']:focus-visible {
+  outline: 2px solid var(--hc-accent);
+  outline-offset: 2px;
+}
+
+[data-aeon-scope='grant-duration'] [data-aeon-part='item']:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 [data-aeon-scope='grant-expiry'] { margin: 2px 0 0; font-size: var(--hc-text-xs); color: var(--hc-muted); }
 [data-aeon-scope='grant-expiry'][data-aeon-state='expiring'],
 [data-aeon-scope='grant-expiry'][data-aeon-state='expired'] { color: var(--hc-danger); }

@@ -11,7 +11,7 @@ import { depositCount, type CoinDepositPhase, type CoinDepositView } from './dep
 import { fromHex, ltcTxid, sameBytes, toHex, type LtcTx } from '../ltc/litecoin'
 import { checkLtcBurial, locateLtcDeposit, readLtcDeposit, type CoinProofRules, type LtcBurialProof } from '../ltc/verify'
 import { assertOnlineForPayment } from '../paymentPolicy'
-import type { CoinChain } from './coinChains'
+import { coinReferenceOf, MAX_COIN_REFERENCE, type CoinChain } from './coinChains'
 import type { ActiveWallet } from '../session'
 import { activeAccountSpendRefusal } from '../vaultAccountHolding'
 import { moveIfHeldElsewhere, spendNeedsMove } from '../spendAutoMove'
@@ -112,6 +112,8 @@ export type Coin = {
   goneAt?: number
   /** Paid to this wallet's identity: locked to the key derived for `sender` under `keyId` (BRC-213 §7). Absent: the wallet's own key. */
   paidBy?: CoinSender
+  /** The payer's order reference, from its notice (BRC-213 §7). Theirs to set; never checked against the chain. */
+  reference?: string
 }
 
 export type CoinSender = { sender: string; keyId: string }
@@ -136,6 +138,8 @@ export type Payment = {
   to?: { identityKey: string; keyId: string; vout: number; notice: CoinNotice }
   /** Locks a swap's hash-locked outputs (outputs `0..n-1`); `address` is the first lock's. */
   lock?: { swapId: string }
+  /** The app's order reference; told to an identity recipient in its notice. */
+  reference?: string
   status: 'signed' | 'sent'
   /** In a block; until then a sent payment is re-broadcast whenever the network has lost it. */
   confirmed?: true
@@ -172,7 +176,7 @@ export type CoinPaymentPlan = {
   change?: { vout: number; litoshi: bigint }
 }
 
-export type CoinStatus = { txid: string; vout: number; litoshi: string; source: Coin['source']; phase: CoinDepositPhase; spent: boolean }
+export type CoinStatus = { txid: string; vout: number; litoshi: string; source: Coin['source']; phase: CoinDepositPhase; spent: boolean; reference?: string }
 export type CoinPaymentStatus = {
   ltcTxid: string
   address: string
@@ -183,10 +187,11 @@ export type CoinPaymentStatus = {
   lastError?: string
   /** Paid to an identity; `notified` once its notice reached the recipient's box. */
   to?: { identityKey: string; notified: boolean }
+  reference?: string
 }
 export type CoinWalletReport = { address: string; balance: CoinBalance; coins: CoinStatus[]; payments: CoinPaymentStatus[] }
 /** A payment names an address on the chain, or an identity (BRC-213 §7). */
-export type SendCoinArgs = { address?: unknown; identityKey?: unknown; litoshi?: unknown }
+export type SendCoinArgs = { address?: unknown; identityKey?: unknown; litoshi?: unknown; reference?: unknown }
 type Destination = { address: string; script: Uint8Array; to?: { identityKey: string; keyId: string } }
 /** Where a swap lock stands on this wallet's own chain. `unchecked`: could not be read now; try again. */
 export type LockSighting =
@@ -198,7 +203,8 @@ export type LockSighting =
   | { kind: 'unchecked'; detail: string }
   | { kind: 'refused'; reason: string; detail: string }
 
-export type SendCoinResult = { ltcTxid: string; litoshi: string; fee: string; status: 'sent' | 'queued' }
+/** `rawTx`: the signed transaction as broadcast, in hex, so a merchant checks the payment on its own chain. */
+export type SendCoinResult = { ltcTxid: string; litoshi: string; fee: string; status: 'sent' | 'queued'; rawTx: string }
 
 export type CoinAppCoin = {
   txid: string
@@ -225,7 +231,7 @@ const MAX_INPUTS = 50
 const outputBytes = (script: Uint8Array) => 9 + script.length
 /** The box a payment to an identity is announced in (BRC-213 §7). */
 export const COIN_PAYMENT_BOX = 'coin-payment'
-export type CoinPaymentNotice = { v: 1; t: 'coin-payment'; chain: CoinChainId; txid: string; vout: number; keyId: string }
+export type CoinPaymentNotice = { v: 1; t: 'coin-payment'; chain: CoinChainId; txid: string; vout: number; keyId: string; reference?: string }
 const NOTICE_RETRY_MS = [30_000, 2 * 60_000, 10 * 60_000, 60 * 60_000]
 const KEY_ID = /^[0-9a-f]{32}$/
 const IDENTITY_KEY = /^0[23][0-9a-f]{64}$/
@@ -646,6 +652,12 @@ export function createCoinWallet(binding: CoinBinding) {
     return { address, script }
   }
 
+  /** The app's order reference, when given; refused rather than dropped when malformed. */
+  function referenceArg(args: SendCoinArgs): string | null {
+    if (args.reference === undefined) return null
+    return coinReferenceOf(args.reference) ?? refuse('bad-args', `reference is 1 to ${MAX_COIN_REFERENCE} characters, no control characters.`)
+  }
+
   /** The recipient a payment names: an address on this chain, or an identity (BRC-213 §7). Never both. */
   function recipientOf(active: ActiveWallet, args: SendCoinArgs): { kind: 'address'; address: unknown } | { kind: 'identity'; identityKey: string } {
     if (args.identityKey === undefined) return { kind: 'address', address: args.address }
@@ -702,6 +714,7 @@ export function createCoinWallet(binding: CoinBinding) {
     if (!spendNeedsMove(activeAccountSpendRefusal(active))) refuseHeldElsewhere(active)
     migrate()
     const units = unitsOf(args.litoshi)
+    referenceArg(args)
     const recipient = recipientOf(active, args)
     if (recipient.kind === 'address') addressDestination(active, recipient.address)
     const { spendable: ready } = balanceOf(readState())
@@ -772,6 +785,7 @@ export function createCoinWallet(binding: CoinBinding) {
       chart.send({ type: 'SEND' })
       try {
         const units = unitsOf(args.litoshi)
+        const reference = referenceArg(args)
         const recipient = recipientOf(active, args)
         if (recipient.kind === 'identity') await requireRecipientSupport(recipient.identityKey)
         const destination = recipient.kind === 'identity' ? identityDestination(active, recipient.identityKey) : addressDestination(active, recipient.address)
@@ -785,6 +799,7 @@ export function createCoinWallet(binding: CoinBinding) {
           inputs: plan.inputs,
           ...(plan.change ? { change: { vout: plan.change.vout, litoshi: plan.change.litoshi.toString() } } : {}),
           ...(destination.to ? { to: { ...destination.to, vout: 0, notice: { attempts: 0 } } } : {}),
+          ...(reference ? { reference } : {}),
           status: 'signed',
           at: Date.now(),
           attempts: 0,
@@ -809,7 +824,7 @@ export function createCoinWallet(binding: CoinBinding) {
         if (sent && destination.to) void serial(() => deliverNotices(active))
         const ms = Date.now() - startedAt
         if (ms > 250) console.info(`[${tag}] send done ${ms}ms`)
-        return { ltcTxid: txid, litoshi: units.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued' }
+        return { ltcTxid: txid, litoshi: units.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued', rawTx: payment.hex }
       } catch (err) {
         chart.send({ type: 'FAIL', error: errorText(err) })
         throw err
@@ -882,7 +897,7 @@ export function createCoinWallet(binding: CoinBinding) {
         chart.send(sent ? { type: 'BROADCASTED' } : { type: 'BROADCAST_QUEUED', error: readState().payments[txid]?.lastError ?? 'broadcast failed' })
         const ms = Date.now() - startedAt
         if (ms > 250) console.info(`[${tag}] lock done ${ms}ms`)
-        return { ltcTxid: txid, litoshi: total.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued' }
+        return { ltcTxid: txid, litoshi: total.toString(), fee: plan.fee.toString(), status: sent ? 'sent' : 'queued', rawTx: payment.hex }
       } catch (err) {
         chart.send({ type: 'FAIL', error: errorText(err) })
         throw err
@@ -1004,7 +1019,7 @@ export function createCoinWallet(binding: CoinBinding) {
     const now = Date.now()
     for (const [txid, p] of Object.entries(readState().payments)) {
       if (!p.to || !owesNotice(p) || (p.to.notice.nextAt ?? 0) > now) continue
-      const notice: CoinPaymentNotice = { v: 1, t: 'coin-payment', chain, txid, vout: p.to.vout, keyId: p.to.keyId }
+      const notice: CoinPaymentNotice = { v: 1, t: 'coin-payment', chain, txid, vout: p.to.vout, keyId: p.to.keyId, ...(p.reference ? { reference: p.reference } : {}) }
       let error: string | null = null
       try {
         const { sendSealedToPeerBox } = await import('../messageTransport')
@@ -1063,7 +1078,8 @@ export function createCoinWallet(binding: CoinBinding) {
         journalPaidCoin(active, key, sighting.litoshi, paidBy)
         const next = readState()
         if (!next.coins[key]) {
-          next.coins[key] = { litoshi: sighting.litoshi.toString(), at: Date.now(), source: 'received', paidBy }
+          const reference = coinReferenceOf(notice.reference)
+          next.coins[key] = { litoshi: sighting.litoshi.toString(), at: Date.now(), source: 'received', paidBy, ...(reference ? { reference } : {}) }
           writeState(next)
           recordAppActivity({
             origin: WALLET_ACTIVITY_ORIGIN,
@@ -1142,7 +1158,7 @@ export function createCoinWallet(binding: CoinBinding) {
         .sort(([, a], [, z]) => z.at - a.at)
         .map(([key, coin]) => {
           const [txid, vout] = key.split(':') as [string, string]
-          return { txid, vout: Number(vout), litoshi: coin.litoshi, source: coin.source, phase: phaseOf(coin), spent: spent.has(key) }
+          return { txid, vout: Number(vout), litoshi: coin.litoshi, source: coin.source, phase: phaseOf(coin), spent: spent.has(key), ...(coin.reference ? { reference: coin.reference } : {}) }
         }),
       payments: Object.entries(state.payments)
         .sort(([, a], [, z]) => z.at - a.at)
@@ -1155,6 +1171,7 @@ export function createCoinWallet(binding: CoinBinding) {
           confirmed: p.confirmed === true,
           ...(p.lastError ? { lastError: p.lastError } : {}),
           ...(p.to ? { to: { identityKey: p.to.identityKey, notified: p.to.notice.delivered === true } } : {}),
+          ...(p.reference ? { reference: p.reference } : {}),
         })),
     }
   }

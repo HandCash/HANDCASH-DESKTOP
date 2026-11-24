@@ -1363,11 +1363,6 @@ async function transferChecks(active: ActiveWallet, args: TransferArgs) {
   const deploy = await deployOf(active, assetId)
   if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
   if (deploy.fields.mode !== 'open' && deploy.fields.mode !== 'countersign') refuse('unsupported-mode', 'This wallet transfers open or countersigned BNT assets only.')
-  // Anyone but the issuer holding a backed token would hold a claim only the
-  // issuer's reserve key can pay: custody. It only ever returns to its issuer.
-  if (deploy.fields.bk && !deploy.fields.iss.some((k) => k.toLowerCase() === recipient)) {
-    refuse('custodial', 'A backed token only goes back to its issuer: anyone else would depend on the issuer to redeem it.')
-  }
   const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
   if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > BNT_MAX_AMOUNT) {
     refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')
@@ -1498,7 +1493,7 @@ async function burnChecks(active: ActiveWallet, args: { assetId?: unknown; amoun
   if (!isBntAssetId(assetId)) refuse('bad-asset-args', 'assetId is a 40-hex BNT asset id.')
   const deploy = await deployOf(active, assetId)
   if (!deploy) refuse('not-held', 'This wallet does not know that asset.')
-  if (deploy.fields.bk) refuse('custodial', 'A backed token only goes back to its issuer, which redeems it.')
+  if (deploy.fields.bk) refuse('custodial', 'A backed token is redeemed by sending it back to its issuer; burning it would destroy the claim.')
   const amountRaw = deploy.fields.kind === 'item' ? String(args.amount ?? '1') : String(args.amount ?? '').trim()
   if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= 0n || BigInt(amountRaw) > BNT_MAX_AMOUNT) {
     refuse('bad-asset-args', 'amount is a whole number of units, at least 1.')

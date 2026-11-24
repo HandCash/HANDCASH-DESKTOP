@@ -20,6 +20,11 @@ describe('BRC-213 coin methods', () => {
     expect(!refused.ok && JSON.parse(refused.body).code).toBe('COIN_UNSUPPORTED_CHAIN')
     expect(sendCoinsChain({ chain: 'bch' })).toEqual({ ok: true, chain: 'bch' })
     expect(coinPaymentArgs({ chain: 'bch', address: 'bitcoincash:q', amount: '546' })).toEqual({ address: 'bitcoincash:q', litoshi: '546' })
+    expect(coinPaymentArgs({ chain: 'bch', address: 'bitcoincash:q', amount: '546', reference: 'order-7' })).toEqual({
+      address: 'bitcoincash:q',
+      litoshi: '546',
+      reference: 'order-7',
+    })
   })
 
   it('runs withdrawLtc as sendCoins on Litecoin and answers it in its own shape', () => {
@@ -31,7 +36,7 @@ describe('BRC-213 coin methods', () => {
     })
     const sent = sendCoinsResponseAsWithdrawLtc({
       status: 200,
-      body: JSON.stringify(sendCoinsResult('ltc', { ltcTxid: 'ab'.repeat(32), litoshi: '300000', fee: '282', status: 'queued' })),
+      body: JSON.stringify(sendCoinsResult('ltc', { ltcTxid: 'ab'.repeat(32), litoshi: '300000', fee: '282', status: 'queued', rawTx: '0200' })),
     })
     expect(JSON.parse(sent.body)).toEqual({ ltcTxid: 'ab'.repeat(32), litoshi: '300000', fee: '282', status: 'queued' })
     const refused = sendCoinsResponseAsWithdrawLtc({
@@ -43,14 +48,18 @@ describe('BRC-213 coin methods', () => {
     expect(sendCoinsResponseAsWithdrawLtc(denied)).toBe(denied)
   })
 
-  it('answers sendCoins with generic fields', () => {
-    expect(sendCoinsResult('bch', { ltcTxid: 'cd'.repeat(32), litoshi: '1000', fee: '226', status: 'sent' })).toEqual({
+  it('answers sendCoins with generic fields, the signed transaction and the app\'s reference', () => {
+    expect(sendCoinsResult('bch', { ltcTxid: 'cd'.repeat(32), litoshi: '1000', fee: '226', status: 'sent', rawTx: '0200' })).toEqual({
       chain: 'bch',
       txid: 'cd'.repeat(32),
       amount: '1000',
       fee: '226',
       status: 'sent',
+      rawTx: '0200',
     })
+    const sent = { ltcTxid: 'cd'.repeat(32), litoshi: '1000', fee: '226', status: 'sent' as const, rawTx: '0200' }
+    expect(sendCoinsResult('bch', sent, { reference: ' order-7 ' })).toMatchObject({ reference: 'order-7' })
+    expect(sendCoinsResult('bch', sent, { reference: 'a\nb' })).not.toHaveProperty('reference')
   })
 
   it('lists coins in BRC-213 states: spendable once buried, confirming with its count, change once sent', () => {
