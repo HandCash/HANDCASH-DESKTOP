@@ -1520,26 +1520,35 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   opacity: 1;
 }
 
-/* Same plates as the action bar: black idle, gray when selected / pressed. */
+/* Same plates as the action bar: flat unselected, sleek black 3D mask when selected (square corners). */
 .wallet-actions .btn,
 .wallet-actions .btn-ghost,
 .wallet-actions .btn-primary,
 html[data-aeon-mode='light'] .wallet-actions .btn,
 html[data-aeon-mode='light'] .wallet-actions .btn-ghost,
 html[data-aeon-mode='light'] .wallet-actions .btn-primary {
-  background: var(--wallet-nav-unselected, #000);
+  background-color: var(--hc-unselected-plate, #16161b);
+  background-image: none;
 }
 
 .wallet-actions .btn:hover,
 .wallet-actions .btn-ghost:hover,
-.wallet-actions .btn-primary:hover,
+.wallet-actions .btn-primary:hover {
+  background-color: var(--hc-unselected-plate-hover, #202027);
+  background-image: none;
+}
+
 .wallet-actions .btn:active,
-.wallet-actions .btn:focus-visible,
 .wallet-actions .btn[aria-pressed='true'],
 .wallet-actions .btn[data-aeon-state='selected'] {
-  background: var(--hc-select-3d);
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-color: #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
   border-radius: 0;
+  color: #fafafa;
 }
 
 .btn-danger {
@@ -2485,14 +2494,14 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   display: block;
   width: 32px;
   height: 32px;
-  border-radius: var(--hc-radius);
-  overflow: hidden;
+  border-radius: 0;
+  overflow: visible;
 }
 
 .bsv-logo {
   width: 32px;
   height: 32px;
-  border-radius: var(--hc-radius);
+  border-radius: 0;
   display: block;
   object-fit: contain;
   user-select: none;
@@ -2652,10 +2661,16 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
   background: var(--hc-hover);
 }
 
-[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'][data-aeon-state='selected'] {
-  background: var(--hc-select-3d);
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'][data-aeon-state='selected'],
+[data-aeon-scope='ticker-coins'] [data-aeon-part='coin'][aria-selected='true'] {
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border: 1px solid #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
   border-radius: 0;
+  color: #fafafa;
 }
 
 html:not([data-aeon-mode='light']) [data-aeon-scope='ticker-coins'] {
@@ -2663,7 +2678,8 @@ html:not([data-aeon-mode='light']) [data-aeon-scope='ticker-coins'] {
 }
 
 [data-aeon-scope='ticker-coins'] [data-aeon-part='coin'] img {
-  border-radius: var(--hc-radius);
+  border-radius: 0;
+  object-fit: contain;
 }
 
 [data-aeon-scope='ticker-coins'] [data-aeon-part='copy'] {
@@ -4688,13 +4704,22 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero .wallet-nav-actions
   border-radius: var(--hc-radius);
 }
 
-.fiat-currency-panel .fiat-currency-option[data-aeon-state='selected'] {
-  background: var(--hc-select-3d);
+.fiat-currency-panel .fiat-currency-option[data-aeon-state='selected'],
+.fiat-currency-dropdown .fiat-currency-option[data-aeon-state='selected'],
+.fiat-currency-option[aria-selected='true'] {
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border: 1px solid #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
   border-radius: 0;
+  color: #fafafa;
 }
 
-html:not([data-aeon-mode='light']) .fiat-currency-panel {
+html:not([data-aeon-mode='light']) .fiat-currency-panel,
+html:not([data-aeon-mode='light']) .fiat-currency-dropdown,
+html:not([data-aeon-mode='light']) .wallet-account-dropdown {
   background: #000;
 }
 
@@ -5062,13 +5087,21 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wa
   cursor: pointer;
 }
 
-.wallet-account-option:hover,
-.wallet-account-option.is-selected {
-  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+.wallet-account-option:hover {
+  background: #141418;
 }
 
-.wallet-account-option.is-selected {
-  box-shadow: inset 2px 0 var(--hc-accent);
+.wallet-account-option.is-selected,
+.wallet-account-option[aria-selected='true'],
+.wallet-account-option[data-aeon-state='selected'] {
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border: 1px solid #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
+  box-shadow: var(--hc-select-3d-shadow);
+  border-radius: 0;
+  color: #fafafa;
 }
 
 .wallet-account-option-copy {
@@ -5244,17 +5277,26 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-hero-identity-chrome .wa
   background: var(--hc-hover);
 }
 
-/* Shared selection plate: black, glossy top light, raised 3D edge, square corners. */
+/* Shared selection plate: sleek opaque obsidian 3D glass (Blitz-safe — no translucent white wash or inset gray fill), square corners. */
 :root {
-  --hc-select-3d: linear-gradient(180deg, rgb(255 255 255 / 0.2) 0%, rgb(255 255 255 / 0.03) 46%, rgb(0 0 0 / 0.18) 54%, rgb(0 0 0 / 0.05) 100%), #0c0c0c;
-  --hc-select-3d-shadow: inset 0 1px 0 rgb(255 255 255 / 0.28), inset 0 -1px 0 rgb(0 0 0 / 0.9), 0 1px 2px rgb(0 0 0 / 0.7);
+  --hc-select-3d-bg: #0b0b0d;
+  --hc-select-3d: linear-gradient(180deg, #27272b 0%, #151518 47%, #060607 53%, #0e0e11 100%);
+  --hc-select-3d-shadow: 0 1px 2px rgba(0, 0, 0, 0.78);
+  --hc-select-3d-top: #3f3f46;
+  --hc-select-3d-bottom: #000000;
+  --hc-unselected-plate: #16161b;
+  --hc-unselected-plate-hover: #202027;
+  --hc-unselected-ink: #8c8c96;
 }
 
 .wallet-nav-tab.is-active,
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
   color: #fafafa;
-  background: var(--hc-select-3d);
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-top: 1px solid var(--hc-select-3d-top);
+  border-bottom: 1px solid var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
   border-radius: 0;
 }
@@ -5621,7 +5663,10 @@ html:not(.platform-mobile):not(.layout-compact) .wallet-nav-titlebar .wallet-nav
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected]:hover,
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected='true']:hover {
   color: #fafafa;
-  background: var(--hc-select-3d);
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-top: 1px solid var(--hc-select-3d-top);
+  border-bottom: 1px solid var(--hc-select-3d-bottom);
   box-shadow: var(--hc-select-3d-shadow);
   border-radius: 0;
 }

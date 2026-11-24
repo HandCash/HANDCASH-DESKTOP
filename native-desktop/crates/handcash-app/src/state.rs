@@ -58,6 +58,8 @@ pub const BSV_USD_STORAGE_KEY: &str = "handcash.brc100.bsvUsd";
 pub const APP_ACTIVITY_STORAGE_KEY: &str = "handcash.brc100.appActivity";
 pub const COLLECTABLE_PROVEN_V2_KEY: &str = "handcash.collectables.proven.v2";
 pub const COLLECTABLE_PROVEN_V1_KEY: &str = "handcash.collectables.proven.v1";
+pub const INSCRIPTION_RESOLUTION_KEY: &str = "handcash.inscriptionResolution.v1";
+pub const ITEM_ART_CACHE_KEY: &str = "handcash.itemArt.v1";
 pub const COLLECTABLES_VIEW_KEY: &str = "handcash.collectables.view";
 pub const FRIENDS_STORAGE_KEY: &str = "handcash.brc100.friends";
 pub const CONNECTED_APPS_STORAGE_KEY: &str = "handcash.brc100.connectedApps";
@@ -332,12 +334,23 @@ pub struct SessionSummary {
     pub derivation: String,
 }
 
+/// Display/grouping metadata for a collectable card enriched from `ord` MAP fields,
+/// `handcash.inscriptionResolution.v1`, and `handcash.collectables.proven.v2`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ItemDisplayMeta {
+    pub app: Option<String>,
+    pub collection_id: Option<String>,
+    pub signer: Option<String>,
+    pub media_origin: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WalletSnapshot {
     pub balance: BalanceSummary,
     pub items: Vec<ItemCardRow>,
     pub items_total: u64,
     pub item_art: HashMap<String, String>,
+    pub item_meta: HashMap<String, ItemDisplayMeta>,
     pub held_coins: HeldCoins,
     pub activity: Vec<ActivityRow>,
     pub activity_total: u64,
@@ -460,11 +473,132 @@ pub fn origin_art_key(origin: &str) -> String {
     o
 }
 
+fn is_bare_item_name(item: &ItemCardRow) -> bool {
+    let n = item.name.trim();
+    n.is_empty()
+        || n.starts_with(&format!("{} #", item.basket))
+        || n.starts_with("out-")
+        || (n.len() >= 12 && n.contains('…'))
+}
+
+fn is_valid_origin_key(origin_key: &str) -> bool {
+    let Some((txid, vout)) = origin_key.rsplit_once('_') else {
+        return false;
+    };
+    txid.len() == 64
+        && txid.bytes().all(|b| b.is_ascii_hexdigit())
+        && !vout.is_empty()
+        && vout.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Enrich `items` and `item_meta` from the shared TS `handcash.inscriptionResolution.v1` cache
+/// (keyed by outpoint `txid.vout` or origin `txid_vout`). Skips placeholder self-origin entries.
+pub fn apply_inscription_resolutions(
+    raw: &str,
+    items: &mut [ItemCardRow],
+    item_meta: &mut HashMap<String, ItemDisplayMeta>,
+) {
+    let Ok(Value::Object(cache)) = serde_json::from_str::<Value>(raw) else {
+        return;
+    };
+    for item in items.iter_mut() {
+        let out_dot = item.outpoint.trim().to_ascii_lowercase().replace('_', ".");
+        let out_us = origin_art_key(&item.outpoint);
+        let orig_dot = item
+            .origin_outpoint
+            .trim()
+            .to_ascii_lowercase()
+            .replace('_', ".");
+        let orig_us = origin_art_key(&item.origin_outpoint);
+        let hit = [&item.outpoint, &out_dot, &out_us, &item.origin_outpoint, &orig_dot, &orig_us]
+            .into_iter()
+            .filter(|k| !k.trim().is_empty())
+            .find_map(|k| cache.get(k.as_str()).and_then(Value::as_object));
+        let Some(rec) = hit else {
+            continue;
+        };
+        let rec_origin = rec
+            .get("origin")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let rec_mime = rec
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let has_traits = rec
+            .get("traits")
+            .and_then(Value::as_array)
+            .is_some_and(|a| !a.is_empty());
+        // Skip GorillaPool unindexed self-origin placeholders (TS `isPlaceholderResolution`).
+        if let Some(ro) = rec_origin {
+            if origin_art_key(ro) == out_us && rec_mime.is_none() && !has_traits {
+                continue;
+            }
+            if origin_art_key(&item.origin_outpoint) == out_us && origin_art_key(ro) != out_us {
+                item.origin_outpoint = ro.replace('_', ".");
+            }
+        }
+        if let Some(m) = rec_mime {
+            if item.mime.is_empty() || item.mime == "application/octet-stream" {
+                item.mime = m.to_string();
+            }
+        }
+        if let Some(name) = rec
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            if is_bare_item_name(item) {
+                item.name = name.to_string();
+            }
+        }
+        let entry = item_meta.entry(item.outpoint.clone()).or_default();
+        if entry.app.is_none() {
+            entry.app = rec
+                .get("app")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.collection_id.is_none() {
+            entry.collection_id = rec
+                .get("collectionId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.signer.is_none() {
+            entry.signer = rec
+                .get("signer")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+        }
+        if entry.media_origin.is_none() {
+            entry.media_origin = rec
+                .get("content")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(origin_art_key)
+                .filter(|k| is_valid_origin_key(k));
+        }
+    }
+}
+
 /// Fill `item_art` (keyed by outpoint) for items missing art from the shared
-/// `handcash.itemArt.v1` cache (`{ originKey: { mime, b64 } }`). Only `image/*` entries.
-pub fn fill_item_art_from_cache(
+/// `handcash.itemArt.v1` cache (`{ originKey: { mime, b64 } }`), checking derivative
+/// `media_origin`, `origin_outpoint`, and `outpoint`. Only `image/*` entries.
+pub fn fill_item_art_from_cache_with_meta(
     raw: &str,
     items: &[ItemCardRow],
+    item_meta: &HashMap<String, ItemDisplayMeta>,
     item_art: &mut HashMap<String, String>,
 ) {
     let Ok(cache) = serde_json::from_str::<Value>(raw) else {
@@ -477,7 +611,11 @@ pub fn fill_item_art_from_cache(
         if item_art.contains_key(&item.outpoint) {
             continue;
         }
-        let hit = [&item.origin_outpoint, &item.outpoint]
+        let media_orig = item_meta
+            .get(&item.outpoint)
+            .and_then(|m| m.media_origin.as_deref())
+            .unwrap_or("");
+        let hit = [media_orig, item.origin_outpoint.as_str(), item.outpoint.as_str()]
             .into_iter()
             .filter(|o| !o.trim().is_empty())
             .find_map(|o| cache.get(&origin_art_key(o)));
@@ -493,6 +631,16 @@ pub fn fill_item_art_from_cache(
             item_art.insert(item.outpoint.clone(), format!("data:{mime};base64,{b64}"));
         }
     }
+}
+
+/// Fill `item_art` (keyed by outpoint) for items missing art from the shared
+/// `handcash.itemArt.v1` cache (`{ originKey: { mime, b64 } }`). Only `image/*` entries.
+pub fn fill_item_art_from_cache(
+    raw: &str,
+    items: &[ItemCardRow],
+    item_art: &mut HashMap<String, String>,
+) {
+    fill_item_art_from_cache_with_meta(raw, items, &HashMap::new(), item_art);
 }
 
 /// Last resort for items whose bytes never reached this device (legacy-address sweeps):
@@ -575,6 +723,10 @@ pub struct AppServices {
     pub updater: Arc<ReleaseUpdater>,
     pub host_log: Arc<HostLog>,
     pub session: Mutex<Option<ActiveSession>>,
+    /// In-memory session cache of resolved item art (`origin_key -> Some(data_uri) | None` for misses).
+    item_art_mem: Mutex<HashMap<String, Option<String>>>,
+    /// Origins currently being fetched in the background so we never storm indexers.
+    item_art_inflight: Mutex<HashSet<String>>,
     patch_tx: watch::Sender<u64>,
     theme_tx: watch::Sender<ResolvedTheme>,
     fx_tx: watch::Sender<FxRates>,
@@ -640,6 +792,8 @@ impl AppServices {
             updater,
             host_log,
             session: Mutex::new(None),
+            item_art_mem: Mutex::new(HashMap::new()),
+            item_art_inflight: Mutex::new(HashSet::new()),
             patch_tx,
             theme_tx,
             fx_tx,
@@ -1922,6 +2076,7 @@ impl AppServices {
             {
                 // Decode 1Sat inscription artwork & MAP metadata from `cold_blobs` (bounded).
                 let mut item_art = HashMap::new();
+                let mut item_meta: HashMap<String, ItemDisplayMeta> = HashMap::new();
                 for item in &mut items {
                     if let Some(ref hash) = item.art_blob_hash {
                         if let Some(script_bytes) = tb.read_cold_blob(hash) {
@@ -1943,6 +2098,26 @@ impl AppServices {
                                         item.name = map_name.to_string();
                                     }
                                 }
+                                let map_app = ord
+                                    .map_fields
+                                    .get("app")
+                                    .map(String::as_str)
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(ToString::to_string);
+                                let map_col = ord
+                                    .map_fields
+                                    .get("subTypeData.collectionId")
+                                    .or_else(|| ord.map_fields.get("collectionId"))
+                                    .map(String::as_str)
+                                    .map(str::trim)
+                                    .filter(|s| !s.is_empty())
+                                    .map(ToString::to_string);
+                                if map_app.is_some() || map_col.is_some() {
+                                    let entry = item_meta.entry(item.outpoint.clone()).or_default();
+                                    entry.app = map_app;
+                                    entry.collection_id = map_col;
+                                }
                                 let ct = ord.content_type.to_ascii_lowercase();
                                 if ct.starts_with("image/")
                                     && !ord.body.is_empty()
@@ -1963,6 +2138,7 @@ impl AppServices {
                 snap.items = items;
                 snap.items_total = items_total;
                 snap.item_art = item_art;
+                snap.item_meta = item_meta;
                 snap.activity = activity;
                 snap.activity_total = activity_total;
                 loaded_from_toolbox = true;
@@ -2026,13 +2202,45 @@ impl AppServices {
             }
         }
 
-        // 2b. Fill missing collectable art from the shared TS art cache (keyed by origin).
-        if let Some(raw) = self.durable.get("handcash.itemArt.v1") {
-            fill_item_art_from_cache(&raw, &snap.items, &mut snap.item_art);
+        // 2b. Upgrade item authenticity & verified origins from local BRC-150 proven cache
+        //     and shared TS inscription resolution cache BEFORE looking up local art.
+        self.apply_proven_collectables(&summary.chain, &mut snap.items);
+        if let Some(raw) = self.durable.get(INSCRIPTION_RESOLUTION_KEY) {
+            apply_inscription_resolutions(&raw, &mut snap.items, &mut snap.item_meta);
         }
-        fill_item_art_remote(&summary.chain, &snap.items, &mut snap.item_art);
 
-        // 2c. Other-coin balances (read-only) from the shared TS coin-wallet records.
+        // 2c. Fill collectable art from instant local caches (session memory, then durable
+        //     `handcash.itemArt.v1`). Missing image origins are prefetched in a bounded
+        //     background batch rather than stalling Blitz on 100 uncached HTTPS <img> loads.
+        if let Ok(mem) = self.item_art_mem.lock() {
+            for item in &snap.items {
+                if snap.item_art.contains_key(&item.outpoint) {
+                    continue;
+                }
+                let media_orig = snap
+                    .item_meta
+                    .get(&item.outpoint)
+                    .and_then(|m| m.media_origin.as_deref())
+                    .unwrap_or("");
+                let hit = [media_orig, item.origin_outpoint.as_str(), item.outpoint.as_str()]
+                    .into_iter()
+                    .filter(|o| !o.trim().is_empty())
+                    .find_map(|o| mem.get(&origin_art_key(o)).and_then(|v| v.as_ref()));
+                if let Some(uri) = hit {
+                    snap.item_art.insert(item.outpoint.clone(), uri.clone());
+                }
+            }
+        }
+        if let Some(raw) = self.durable.get(ITEM_ART_CACHE_KEY) {
+            fill_item_art_from_cache_with_meta(
+                &raw,
+                &snap.items,
+                &snap.item_meta,
+                &mut snap.item_art,
+            );
+        }
+
+        // 2d. Other-coin balances (read-only) from the shared TS coin-wallet records.
         let coin_units = |coin: &str| {
             let key = format!(
                 "handcash.{coin}.v1:wallet:{}:{}:{}",
@@ -2050,8 +2258,7 @@ impl AppServices {
             doge: coin_units("doge"),
         };
 
-        // 3. Upgrade item authenticity strictly from local BRC-150 proven cache.
-        self.apply_proven_collectables(&summary.chain, &mut snap.items);
+        // 3. Proven collectables already applied in step 2b before art lookup.
 
         // 4. Merge rich appActivity entries from durable store (`handcash.brc100.appActivity:*`).
         self.merge_durable_app_activity(&summary, &mut snap.activity);
@@ -2084,27 +2291,222 @@ impl AppServices {
         snap
     }
 
+    /// Prefetch missing collectable artwork in bounded parallel batches, storing results in
+    /// session memory and persisting bounded entries to the shared `handcash.itemArt.v1` cache.
+    pub fn prefetch_missing_item_art(self: &Arc<Self>, chain: &str, snap: &WalletSnapshot) {
+        let mut missing: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mem_guard = self.item_art_mem.lock().ok();
+        let mut inflight_guard = self.item_art_inflight.lock().ok();
+        for item in &snap.items {
+            if snap.item_art.contains_key(&item.outpoint) {
+                continue;
+            }
+            let mime = item.mime.to_ascii_lowercase();
+            if !(mime.starts_with("image/")
+                || mime.is_empty()
+                || mime == "application/octet-stream")
+            {
+                continue;
+            }
+            let origin = snap
+                .item_meta
+                .get(&item.outpoint)
+                .and_then(|m| m.media_origin.clone())
+                .unwrap_or_else(|| origin_art_key(&item.origin_outpoint));
+            if !is_valid_origin_key(&origin) || !seen.insert(origin.clone()) {
+                continue;
+            }
+            if mem_guard
+                .as_ref()
+                .is_some_and(|m| m.contains_key(&origin))
+            {
+                continue;
+            }
+            if let Some(ref mut inflight) = inflight_guard {
+                if !inflight.insert(origin.clone()) {
+                    continue;
+                }
+            }
+            missing.push(origin);
+            if missing.len() >= 32 {
+                break;
+            }
+        }
+        drop(mem_guard);
+        drop(inflight_guard);
+        if missing.is_empty() {
+            return;
+        }
+        let svc = Arc::clone(self);
+        let base = if chain == "main" {
+            "https://ordinals.gorillapool.io"
+        } else {
+            "https://testnet.ordinals.gorillapool.io"
+        };
+        self.engine.runtime_handle().spawn(async move {
+            let client = match reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(8))
+                .build()
+            {
+                Ok(c) => c,
+                Err(_) => {
+                    if let Ok(mut inf) = svc.item_art_inflight.lock() {
+                        for o in &missing {
+                            inf.remove(o);
+                        }
+                    }
+                    return;
+                }
+            };
+            let mut new_durable: Vec<(String, String, String)> = Vec::new();
+            let mut any_hit = false;
+            for chunk in missing.chunks(6) {
+                let mut handles = Vec::with_capacity(chunk.len());
+                for origin in chunk {
+                    let client = client.clone();
+                    let origin = origin.clone();
+                    let url = format!("{base}/content/{origin}");
+                    handles.push(tokio::spawn(async move {
+                        let resp = client.get(&url).send().await.ok()?;
+                        if !resp.status().is_success() {
+                            return Some((origin, None));
+                        }
+                        let ct = resp
+                            .headers()
+                            .get(reqwest::header::CONTENT_TYPE)
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("")
+                            .split(';')
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_ascii_lowercase();
+                        if !ct.starts_with("image/") {
+                            return Some((origin, None));
+                        }
+                        let bytes = resp.bytes().await.ok()?;
+                        if bytes.is_empty() || bytes.len() > 262_144 {
+                            return Some((origin, None));
+                        }
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                        Some((origin, Some((ct, b64))))
+                    }));
+                }
+                let mut chunk_hit = false;
+                for h in handles {
+                    if let Ok(Some((origin, res))) = h.await {
+                        if let Ok(mut inf) = svc.item_art_inflight.lock() {
+                            inf.remove(&origin);
+                        }
+                        match res {
+                            Some((mime, b64)) => {
+                                let uri = format!("data:{mime};base64,{b64}");
+                                if let Ok(mut mem) = svc.item_art_mem.lock() {
+                                    mem.insert(origin.clone(), Some(uri));
+                                }
+                                new_durable.push((origin, mime, b64));
+                                chunk_hit = true;
+                                any_hit = true;
+                            }
+                            None => {
+                                if let Ok(mut mem) = svc.item_art_mem.lock() {
+                                    mem.insert(origin, None);
+                                }
+                            }
+                        }
+                    }
+                }
+                if chunk_hit {
+                    let next = svc.patch_tx.borrow().wrapping_add(1);
+                    let _ = svc.patch_tx.send(next);
+                }
+            }
+            if let Ok(mut inf) = svc.item_art_inflight.lock() {
+                for o in &missing {
+                    inf.remove(o);
+                }
+            }
+            if any_hit && !new_durable.is_empty() {
+                svc.persist_item_art_cache(&new_durable);
+            }
+        });
+    }
+
+    fn persist_item_art_cache(&self, entries: &[(String, String, String)]) {
+        let mut map = self
+            .durable
+            .get(ITEM_ART_CACHE_KEY)
+            .and_then(|raw| serde_json::from_str::<serde_json::Map<String, Value>>(&raw).ok())
+            .unwrap_or_default();
+        let now = now_ms();
+        for (origin, mime, b64) in entries {
+            map.insert(
+                origin.clone(),
+                serde_json::json!({ "mime": mime, "b64": b64, "at": now }),
+            );
+        }
+        // Respect TS `localItemArt.ts` budget: <= 120 entries and <= 512 KB.
+        let mut order: Vec<(String, u64)> = map
+            .iter()
+            .map(|(k, v)| (k.clone(), v.get("at").and_then(Value::as_u64).unwrap_or(0)))
+            .collect();
+        order.sort_by_key(|(_, at)| *at);
+        let mut drop_idx = 0usize;
+        while map.len() > 120 && drop_idx < order.len() {
+            map.remove(&order[drop_idx].0);
+            drop_idx += 1;
+        }
+        let mut body = serde_json::to_string(&map).unwrap_or_default();
+        while body.len() > 512 * 1024 && map.len() > 1 && drop_idx < order.len() {
+            map.remove(&order[drop_idx].0);
+            drop_idx += 1;
+            body = serde_json::to_string(&map).unwrap_or_default();
+        }
+        if !body.is_empty() {
+            let _ = self.durable.set(ITEM_ART_CACHE_KEY, &body, false);
+        }
+    }
+
     fn apply_proven_collectables(&self, chain: &str, items: &mut [ItemCardRow]) {
         if items.is_empty() {
             return;
         }
-        let mut proven_origins: HashSet<String> = HashSet::new();
+        let mut proven_origins: HashMap<String, Option<String>> = HashMap::new();
         for base in [COLLECTABLE_PROVEN_V2_KEY, COLLECTABLE_PROVEN_V1_KEY] {
             for key in [format!("{base}:{chain}"), base.to_string()] {
                 if let Some(raw) = self.durable.get(&key) {
                     if let Ok(v) = serde_json::from_str::<Value>(&raw) {
                         if let Some(obj) = v.as_object() {
                             for (k, val) in obj {
-                                // Only count entries with proven/brc150 marker or non-null proof object.
-                                let ok = val.is_object() || val.as_bool() == Some(true);
-                                if ok {
-                                    proven_origins.insert(k.replace('_', "."));
+                                let proven_ok = if let Some(vo) = val.as_object() {
+                                    match vo.get("tier").and_then(Value::as_str) {
+                                        Some("brc150" | "brc156") => true,
+                                        Some("unproven") => false,
+                                        _ => true,
+                                    }
+                                } else {
+                                    val.as_bool() == Some(true)
+                                };
+                                if proven_ok {
+                                    let verified_origin = val
+                                        .as_object()
+                                        .and_then(|vo| vo.get("origin"))
+                                        .and_then(Value::as_str)
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .map(|s| s.replace('_', "."));
+                                    proven_origins
+                                        .entry(k.to_ascii_lowercase().replace('_', "."))
+                                        .or_insert(verified_origin);
                                 }
                             }
                         } else if let Some(arr) = v.as_array() {
                             for el in arr {
                                 if let Some(s) = el.as_str() {
-                                    proven_origins.insert(s.replace('_', "."));
+                                    proven_origins
+                                        .entry(s.to_ascii_lowercase().replace('_', "."))
+                                        .or_insert(None);
                                 }
                             }
                         }
@@ -2116,10 +2518,16 @@ impl AppServices {
             return;
         }
         for item in items.iter_mut() {
-            let norm_origin = item.origin_outpoint.replace('_', ".");
-            let norm_out = item.outpoint.replace('_', ".");
-            if proven_origins.contains(&norm_origin) || proven_origins.contains(&norm_out) {
+            let norm_origin = item.origin_outpoint.to_ascii_lowercase().replace('_', ".");
+            let norm_out = item.outpoint.to_ascii_lowercase().replace('_', ".");
+            if let Some(verified_origin) = proven_origins
+                .get(&norm_out)
+                .or_else(|| proven_origins.get(&norm_origin))
+            {
                 item.authenticity_status = "brc150".into();
+                if let Some(vo) = verified_origin {
+                    item.origin_outpoint = vo.clone();
+                }
             }
         }
     }
@@ -4551,6 +4959,51 @@ mod tests {
         assert!(!art.contains_key("t.0"));
         assert!(!art.contains_key("bad.0"));
         assert_eq!(art.get("have.0").map(String::as_str), Some("data:keep"));
+    }
+
+    #[test]
+    fn inscription_resolution_enriches_origin_identity_and_art_lookup() {
+        let tx_tip = "11".repeat(32);
+        let tx_orig = "22".repeat(32);
+        let tx_media = "33".repeat(32);
+        let tip = format!("{tx_tip}.0");
+        let mut row = item(&tip, &tip);
+        row.name = "1sat #42".into();
+        let mut items = vec![row];
+        let mut meta = HashMap::new();
+        let res_raw = serde_json::json!({
+            tip.clone(): {
+                "origin": format!("{tx_orig}_0"),
+                "content": format!("{tx_media}_0"),
+                "name": "Pixel Fox #7",
+                "app": "Haste",
+                "collectionId": "col-foxes",
+                "signer": "1FoxSignerAddr",
+                "mimeType": "image/png",
+                "traits": []
+            }
+        })
+        .to_string();
+        apply_inscription_resolutions(&res_raw, &mut items, &mut meta);
+        assert_eq!(items[0].origin_outpoint, format!("{tx_orig}.0"));
+        assert_eq!(items[0].name, "Pixel Fox #7");
+        assert_eq!(items[0].mime, "image/png");
+        let m = meta.get(&tip).unwrap();
+        assert_eq!(m.app.as_deref(), Some("Haste"));
+        assert_eq!(m.collection_id.as_deref(), Some("col-foxes"));
+        assert_eq!(m.signer.as_deref(), Some("1FoxSignerAddr"));
+        assert_eq!(m.media_origin.as_deref(), Some(format!("{tx_media}_0").as_str()));
+
+        let art_raw = serde_json::json!({
+            format!("{tx_media}_0"): { "mime": "image/png", "b64": "QUJD", "at": 1 }
+        })
+        .to_string();
+        let mut art = HashMap::new();
+        fill_item_art_from_cache_with_meta(&art_raw, &items, &meta, &mut art);
+        assert_eq!(
+            art.get(&tip).map(String::as_str),
+            Some("data:image/png;base64,QUJD")
+        );
     }
 
     #[test]

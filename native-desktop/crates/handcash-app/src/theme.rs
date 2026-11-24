@@ -178,7 +178,6 @@ fn shell_gradient_css(_t: &ResolvedTheme) -> String {
   border-bottom-color: hsl(var(--border));
   box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.28);
 }
-.wallet-nav-titlebar-pill,
 .wallet-nav-actions-pill {
   background-color: var(--hc-bg);
   background-image: none;
@@ -209,11 +208,19 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-deep: {bg};
   --hc-glow: {bg};
   --hc-nav-select: #1a1a1a;
-  --hc-nav-unselected: #000000;
+  --hc-nav-unselected: #16161b;
   --hc-nav-chrome: #1a1a1a;
-  --wallet-nav-select: #1a1a1a;
-  --wallet-nav-unselected: #000000;
+  --wallet-nav-select: #0b0b0d;
+  --wallet-nav-unselected: #16161b;
   --hc-nav-selected-ink: #fafafa;
+  --hc-select-3d-bg: #0b0b0d;
+  --hc-select-3d: linear-gradient(180deg, #27272b 0%, #151518 47%, #060607 53%, #0e0e11 100%);
+  --hc-select-3d-shadow: 0 1px 2px rgba(0, 0, 0, 0.78);
+  --hc-select-3d-top: #3f3f46;
+  --hc-select-3d-bottom: #000000;
+  --hc-unselected-plate: #16161b;
+  --hc-unselected-plate-hover: #202027;
+  --hc-unselected-ink: #8c8c96;
   --wallet-nav-pill-radius: 999px;
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
   --hc-sunken: rgba(0, 0, 0, 0.28);
@@ -239,10 +246,18 @@ pub fn build_theme_override_css(t: &ResolvedTheme) -> String {
   --hc-brand: 148 72% 14%;
   --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, rgba(10, 61, 34, 0.08), transparent 55%), radial-gradient(ellipse 40% 30% at 90% 100%, rgba(10, 61, 34, 0.04), transparent 50%), #fafbfa;
   --hc-nav-select: #eaedea;
-  --hc-nav-unselected: #ffffff;
+  --hc-nav-unselected: #eef1ef;
   --hc-nav-chrome: #eaedea;
-  --wallet-nav-select: #eaedea;
-  --wallet-nav-unselected: #ffffff;
+  --wallet-nav-select: #0b0b0d;
+  --wallet-nav-unselected: #eef1ef;
+  --hc-select-3d-bg: #0b0b0d;
+  --hc-select-3d: linear-gradient(180deg, #27272b 0%, #151518 47%, #060607 53%, #0e0e11 100%);
+  --hc-select-3d-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --hc-select-3d-top: #3f3f46;
+  --hc-select-3d-bottom: #000000;
+  --hc-unselected-plate: #eef1ef;
+  --hc-unselected-plate-hover: #e1e6e2;
+  --hc-unselected-ink: #4a524c;
   --wallet-nav-pill-radius: 999px;
   --hc-cta: #38cb7b;
   --hc-cta-ink: #0a120e;
@@ -388,22 +403,94 @@ html, body {{
   display: block;
   color: var(--hc-text);
 }}
-/* Unified navigation pill & action bar (`src/styles/handcash.css` + unified-navigation-pill insight) */
+/* Unified action bar object: selected tab + label share the glossy black 3D theme;
+   unselected tabs hold a distinct flat theme. Square corners on selected; full-cell hitboxes. */
+.wallet-nav-titlebar-pill,
 .wallet-nav-bar-track {{
-  background-color: var(--hc-nav-select);
+  padding: 0;
+  border: 1.5px solid #32323b;
+  background-color: var(--hc-unselected-plate);
   background-image: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}}
+.wallet-nav-titlebar-label,
+.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {{
+  align-self: stretch;
+  height: 100%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-top: 1px solid var(--hc-select-3d-top);
+  border-bottom: 1px solid var(--hc-select-3d-bottom);
+  border-right: 1px solid #2a2a30;
+  border-radius: 0;
+  color: #fafafa;
+}}
+.wallet-nav-titlebar-pill[data-has-crumbs] .wallet-nav-titlebar-label {{
+  border-right: 0;
+}}
+.wallet-nav-titlebar-tabs {{
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  height: 100%;
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab,
+.wallet-nav-bar-track .wallet-nav-tab {{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: 100%;
+  min-width: 42px;
+  padding: 0 11px;
+  margin: 0;
+  box-sizing: border-box;
+  border: 0;
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  border-radius: 0 !important;
+  cursor: pointer;
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab > svg,
+.wallet-nav-titlebar-pill .wallet-nav-tab > span,
+.wallet-nav-bar-track .wallet-nav-tab > svg,
+.wallet-nav-bar-track .wallet-nav-tab > span {{
+  pointer-events: none;
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]),
 .wallet-nav-bar-track .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]) {{
-  background-color: var(--hc-nav-unselected);
-  color: var(--hc-muted);
+  background-color: var(--hc-unselected-plate);
+  background-image: none;
+  color: var(--hc-unselected-ink);
+  box-shadow: none;
+}}
+.wallet-nav-titlebar-pill .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]):hover,
+.wallet-nav-bar-track .wallet-nav-tab:not([data-selected]):not([aria-selected="true"]):hover {{
+  background-color: var(--hc-unselected-plate-hover);
+  background-image: none;
+  color: var(--hc-text);
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected],
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"],
+.wallet-nav-titlebar-pill .wallet-nav-tab[data-selected]:hover,
+.wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"]:hover,
 .wallet-nav-bar-track .wallet-nav-tab[data-selected],
-.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] {{
-  background-color: transparent;
-  color: var(--hc-nav-selected-ink, var(--hc-text));
+.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"],
+.wallet-nav-bar-track .wallet-nav-tab[data-selected]:hover,
+.wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"]:hover {{
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-top: 1px solid var(--hc-select-3d-top);
+  border-bottom: 1px solid var(--hc-select-3d-bottom);
+  border-left: 1px solid #2a2a30;
+  border-right: 1px solid #2a2a30;
+  box-shadow: var(--hc-select-3d-shadow);
+  border-radius: 0 !important;
+  color: #fafafa;
 }}
 .wallet-nav-titlebar-pill .wallet-nav-tab[data-selected] > svg,
 .wallet-nav-titlebar-pill .wallet-nav-tab[aria-selected="true"] > svg,
@@ -417,6 +504,7 @@ html, body {{
   flex-direction: row;
   align-items: stretch;
   width: 100%;
+  height: 100%;
 }}
 .wallet-action-slot {{
   display: flex;
@@ -424,15 +512,21 @@ html, body {{
   min-width: 0;
 }}
 .wallet-action-slot--neutral > .wallet-nav-tab {{
-  background-color: var(--hc-nav-unselected);
-  color: var(--hc-muted);
+  background-color: var(--hc-unselected-plate);
+  background-image: none;
+  border-color: transparent;
+  color: var(--hc-unselected-ink);
 }}
 .wallet-action-slot--primary[data-highlighted] > .wallet-nav-tab {{
   background-color: var(--hc-cta, var(--hc-accent));
+  background-image: none;
+  border-color: transparent;
   color: var(--hc-cta-ink, #060a08);
 }}
 .wallet-action-slot--danger[data-highlighted] > .wallet-nav-tab {{
   background-color: var(--hc-danger);
+  background-image: none;
+  border-color: transparent;
   color: #ffffff;
 }}
 .wallet-nav-action-badge {{
@@ -678,11 +772,44 @@ html, body {{
   margin-left: auto;
   overflow: visible;
 }}
+.bsv-logo-stack {{
+  overflow: visible;
+  border-radius: 0;
+}}
 .bsv-logo {{
   display: block;
-  border-radius: 8px;
-  object-fit: cover;
+  border-radius: 0;
+  object-fit: contain;
   user-select: none;
+}}
+.bsv-asset-trigger {{
+  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}}
+.bsv-asset-trigger:hover {{
+  background: var(--hc-hover);
+}}
+.bsv-asset-trigger > * {{
+  pointer-events: none;
+}}
+.fiat-currency-trigger > *,
+.wallet-hero-identity > *,
+.wallet-hero-identity-copy > *,
+.wallet-account-option > *,
+[data-aeon-scope="ticker-coins"] [data-aeon-part="coin"] > * {{
+  pointer-events: none;
 }}
 .fiat-currency-menu,
 .ticker-coin-selector {{
@@ -738,6 +865,16 @@ html, body {{
   z-index: 100;
   max-height: 360px;
   overflow-y: auto;
+  padding: 6px;
+  background-color: #000000;
+  background-image: none;
+  border: 1.5px solid #2c2c34;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.85);
+}}
+[data-aeon-mode="light"] .wallet-account-dropdown {{
+  background-color: #ffffff;
+  border-color: var(--hc-border);
+  box-shadow: 0 10px 28px rgba(20, 24, 20, 0.14);
 }}
 .wallet-account-dropdown.fiat-currency-menu-dropdown,
 .wallet-account-dropdown.ticker-coin-dropdown {{
@@ -748,6 +885,53 @@ html, body {{
   max-height: 320px;
   overflow-y: auto;
   z-index: 100;
+}}
+.wallet-account-list {{
+  gap: 2px;
+}}
+.wallet-account-option {{
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background-color: transparent;
+  background-image: none;
+}}
+.wallet-account-option:hover {{
+  background-color: #141418;
+  background-image: none;
+}}
+[data-aeon-mode="light"] .wallet-account-option:hover {{
+  background-color: var(--hc-hover);
+}}
+.wallet-account-option.is-selected,
+.wallet-account-option[aria-selected="true"],
+.wallet-account-option[data-aeon-state="selected"],
+[data-aeon-scope="ticker-coins"] [data-aeon-part="coin"][data-aeon-state="selected"],
+[data-aeon-scope="ticker-coins"] [data-aeon-part="coin"][aria-selected="true"] {{
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border: 1px solid #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
+  box-shadow: var(--hc-select-3d-shadow);
+  border-radius: 0 !important;
+  color: #fafafa;
+}}
+[data-aeon-scope="ticker-coins"] {{
+  background-color: #000000;
+  padding: 6px;
+}}
+[data-aeon-mode="light"] [data-aeon-scope="ticker-coins"] {{
+  background-color: #ffffff;
+}}
+[data-aeon-scope="ticker-coins"] [data-aeon-part="coin"] {{
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 6px;
 }}
 .wallet-nav-shell,
 .wallet-nav,
@@ -799,14 +983,40 @@ html, body {{
   border: 1px solid var(--hc-border);
 }}
 .wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn {{
-  background-color: var(--wallet-nav-unselected);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 16px;
+  box-sizing: border-box;
+  background-color: var(--hc-unselected-plate);
+  background-image: none;
   color: var(--hc-text);
-  border: 1px solid var(--hc-border);
+  border: 1px solid #2b2b34;
+  border-radius: var(--hc-radius);
+  box-shadow: none;
+  cursor: pointer;
 }}
-.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn:hover:not([data-disabled]),
-.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn[aria-pressed="true"] {{
-  background-color: var(--wallet-nav-select);
-  border-color: var(--hc-accent);
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn > * {{
+  pointer-events: none;
+}}
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn:hover:not([data-disabled]):not([aria-pressed="true"]):not([data-aeon-state="selected"]) {{
+  background-color: var(--hc-unselected-plate-hover);
+  background-image: none;
+  border-color: #3d3d48;
+}}
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn[aria-pressed="true"],
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn[data-aeon-state="selected"],
+.wallet-actions [data-aeon-scope="button"][data-aeon-part="root"].btn:active:not([data-disabled]) {{
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border: 1px solid #000000;
+  border-top-color: var(--hc-select-3d-top);
+  border-bottom-color: var(--hc-select-3d-bottom);
+  box-shadow: var(--hc-select-3d-shadow);
+  border-radius: 0 !important;
+  color: #fafafa;
 }}
 [data-aeon-scope="button"][data-aeon-part="root"].btn.btn-ghost:hover:not([data-disabled]) {{
   background-color: var(--hc-hover);
@@ -1050,26 +1260,41 @@ html, body {{
   justify-content: center;
   width: 100%;
   aspect-ratio: 1 / 1;
-  min-height: 92px;
+  min-height: 72px;
   border-radius: 8px;
+  background-color: #1c1c23;
   color: var(--hc-muted);
   overflow: hidden;
 }}
+[data-aeon-mode="light"] .collectable-media {{
+  background-color: #edf0ee;
+}}
 .collectable-media-fallback {{
-  display: grid;
-  place-items: center;
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
   height: 100%;
   border-radius: 8px;
-  background: rgba(127, 127, 127, 0.14);
-  border: 1px solid var(--hc-border);
+  background: #1c1c23;
+  border: 1px solid #2b2b34;
   box-sizing: border-box;
+  color: #9898a4;
+}}
+[data-aeon-mode="light"] .collectable-media-fallback {{
+  background: #edf0ee;
+  border-color: var(--hc-border);
   color: var(--hc-muted);
 }}
 .collectable-img {{
+  position: absolute;
+  inset: 0;
+  z-index: 1;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 8px;
   display: block;
 }}
@@ -1086,32 +1311,91 @@ html, body {{
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
+}}
+[data-aeon-scope="collectables"] {{
+  container-type: normal;
+  container-name: none;
+}}
+.collectables-sort-group {{
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid #2e2e36;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--hc-unselected-plate);
+  flex-shrink: 0;
+}}
+.collectables-sort-btn {{
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--hc-unselected-ink);
+  font-family: var(--hc-font);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}}
+.collectables-sort-btn:hover {{
+  background: var(--hc-unselected-plate-hover);
+  color: var(--hc-text);
+}}
+.collectables-sort-btn[aria-pressed="true"] {{
+  background-color: var(--hc-select-3d-bg);
+  background-image: var(--hc-select-3d);
+  border-top: 1px solid var(--hc-select-3d-top);
+  border-bottom: 1px solid var(--hc-select-3d-bottom);
+  border-radius: 0;
+  color: #fafafa;
+}}
+.collectables-toolbar {{
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 0;
+  flex-shrink: 0;
 }}
 .collectables-grid {{
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   justify-content: start;
-  gap: 8px;
+  gap: 10px;
 }}
 .collectables-grid > .collectable-card {{
   position: relative;
   min-width: 0;
+  background-color: #141418;
+  border: 1px solid #2b2b34;
+  border-radius: var(--hc-radius);
+  overflow: hidden;
+}}
+[data-aeon-mode="light"] .collectables-grid > .collectable-card {{
+  background-color: #ffffff;
+  border-color: var(--hc-border);
 }}
 .collectables-grid .collectable-card .collection-grid-main {{
-  display: grid;
-  justify-items: center;
-  align-items: start;
-  gap: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 6px 6px 8px;
+  width: 100%;
+  box-sizing: border-box;
   text-align: center;
 }}
 .collectables-grid .collectable-card .collectable-media {{
   width: 100%;
-  height: auto;
-  min-height: 0;
   aspect-ratio: 1 / 1;
+  min-height: 92px;
 }}
 .collectables-grid .collectable-card .collection-grid-name {{
   font-size: 11px;
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }}
 .collectables-grid .collectable-card .collect-select {{
   position: relative;
@@ -1396,5 +1680,25 @@ mod tests {
         ));
         assert_eq!(hex_to_rgb_channels("#0a3d22"), "10, 61, 34");
         assert_eq!(hex_to_rgb_channels("oops"), "87, 255, 151");
+    }
+
+    #[test]
+    fn action_bar_dropdowns_logos_and_collectables_theme_invariants() {
+        let css = build_theme_override_css(&ResolvedTheme::dark_handcash());
+        // Opaque obsidian 3D gradient (no translucent white stops or white inset box-shadow that Blitz paints gray)
+        assert!(css.contains("--hc-select-3d: linear-gradient(180deg, #27272b"));
+        assert!(!css.contains("inset 0 1px 0 rgb(255 255 255"));
+        // Action bar is a distinct bordered object with unified label+selected vs flat unselected
+        assert!(css.contains(".wallet-nav-titlebar-label,\n.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs"));
+        assert!(css.contains("background-color: var(--hc-unselected-plate);"));
+        // Dropdowns are pure black with square selected 3D rows
+        assert!(css.contains("background-color: #000000;"));
+        assert!(css.contains("border-radius: 0 !important;"));
+        // BSV logo uses object-fit: contain (not cover)
+        assert!(css.contains(".bsv-logo {\n  display: block;\n  border-radius: 0;\n  object-fit: contain;"));
+        assert!(!css.contains(".bsv-logo {\n  display: block;\n  border-radius: 8px;\n  object-fit: cover;"));
+        // Collectables tiles always have a visible surface and disable container-type in Blitz
+        assert!(css.contains("container-type: normal;"));
+        assert!(css.contains(".collectable-media-fallback {\n  position: absolute;"));
     }
 }

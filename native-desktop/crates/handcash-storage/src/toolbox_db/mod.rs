@@ -333,6 +333,11 @@ impl ToolboxDb {
                                 if !clean.is_empty() && mime.is_empty() {
                                     mime = clean.to_string();
                                 }
+                            } else if let Some(val) = tag.strip_prefix("issuer:") {
+                                let clean = val.trim();
+                                if !clean.is_empty() && issuer_key.is_none() {
+                                    issuer_key = Some(clean.to_string());
+                                }
                             }
                         }
                     }

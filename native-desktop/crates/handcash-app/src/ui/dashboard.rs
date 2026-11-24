@@ -218,6 +218,7 @@ pub fn Dashboard(
                                 variant: button::ButtonVariant::Ghost,
                                 class: "btn btn-ghost btn-icon",
                                 aria_pressed: matches!(active_child, Some(NavChild::Send(_))),
+                                "data-aeon-state": if matches!(active_child, Some(NavChild::Send(_))) { "selected" } else { "idle" },
                                 onclick: move |_| nav_child.set(Some(NavChild::Send(None))),
                                 SendIcon { size: 22 }
                                 span { class: "wallet-action-label", "Send" }
@@ -226,6 +227,7 @@ pub fn Dashboard(
                                 variant: button::ButtonVariant::Ghost,
                                 class: "btn btn-ghost btn-icon wallet-action--swap",
                                 aria_pressed: active_child == Some(NavChild::Swap),
+                                "data-aeon-state": if active_child == Some(NavChild::Swap) { "selected" } else { "idle" },
                                 onclick: move |_| nav_child.set(Some(NavChild::Swap)),
                                 SwapIcon { size: 22 }
                                 span { class: "wallet-action-label", "Swap" }
@@ -234,6 +236,7 @@ pub fn Dashboard(
                                 variant: button::ButtonVariant::Ghost,
                                 class: "btn btn-ghost btn-icon",
                                 aria_pressed: active_child == Some(NavChild::Receive),
+                                "data-aeon-state": if active_child == Some(NavChild::Receive) { "selected" } else { "idle" },
                                 onclick: move |_| nav_child.set(Some(NavChild::Receive)),
                                 ReceiveIcon { size: 22 }
                                 span { class: "wallet-action-label", "Receive" }

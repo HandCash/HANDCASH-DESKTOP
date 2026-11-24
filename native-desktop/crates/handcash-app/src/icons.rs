@@ -90,6 +90,7 @@ pub fn BsvLogoMark(#[props(default = 32)] size: u32) -> Element {
             src: "{src}",
             width: "{size}",
             height: "{size}",
+            style: "width:{size}px;height:{size}px;object-fit:contain;display:block;flex-shrink:0;border-radius:0;",
             alt: "",
             draggable: "false",
         }
@@ -153,6 +154,7 @@ pub fn CoinGlyphIcon(#[props(default = 18)] size: u32) -> Element {
             view_box: "0 0 24 24",
             width: "{size}",
             height: "{size}",
+            style: "display:block;flex-shrink:0;overflow:visible;",
             fill: "currentColor",
             "aria-hidden": "true",
             path { d: "M14.2 6.8V5h-1.5v1.7h-1.2V5H10v1.8H7.8v1.5h1c.5 0 .7.2.7.7v6.1c0 .5-.2.7-.7.7h-1v1.5H10V19h1.5v-1.7h1.2V19h1.5v-1.8c2-.2 3.3-1.2 3.3-2.9 0-1.3-.7-2.2-1.9-2.6.9-.4 1.4-1.2 1.4-2.2 0-1.6-1.1-2.5-2.8-2.7zm-2.7 1.6h1.7c.9 0 1.4.5 1.4 1.3s-.5 1.3-1.4 1.3h-1.7V8.4zm2 7.5h-2v-2.8h2c1 0 1.7.5 1.7 1.4 0 .9-.7 1.4-1.7 1.4z" }
@@ -641,10 +643,11 @@ pub fn ChainMark(coin: String, #[props(default = 18)] size: u32) -> Element {
             view_box: "0 0 32 32",
             width: "{size}",
             height: "{size}",
+            style: "display:block;flex-shrink:0;overflow:visible;",
             "aria-hidden": "true",
             "focusable": "false",
             "data-chain-mark": "{coin}",
-            circle { cx: "16", cy: "16", r: "16", class: "chain-mark-disc", fill: "{disc}" }
+            circle { cx: "16", cy: "16", r: "15.2", class: "chain-mark-disc", fill: "{disc}" }
             for d in glyphs {
                 path { class: "chain-mark-glyph", fill: "#ffffff", d: "{d}" }
             }

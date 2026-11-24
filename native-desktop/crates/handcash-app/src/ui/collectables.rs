@@ -17,7 +17,7 @@ use crate::state::{
     WalletSnapshot,
 };
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
-use crate::ui::primitives::{MiddleEllipsisName, ProfileFingerprint};
+use crate::ui::primitives::{MiddleEllipsisName, ProfileAvatar, ProfileFingerprint};
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -162,49 +162,155 @@ fn set_outpoint_selected(mut selected: Signal<BTreeSet<String>>, outpoint: &str,
     selected.set(next);
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CollectSortMode {
+    #[default]
+    Identity,
+    Name,
+    Recent,
+}
+
+impl CollectSortMode {
+    pub const ALL: [Self; 3] = [Self::Identity, Self::Name, Self::Recent];
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Identity => "By identity",
+            Self::Name => "Name",
+            Self::Recent => "Recent",
+        }
+    }
+}
+
 /// 1:1 port of `src/components/InventoryPanel.tsx`.
-/// One shelf per issuer key, mirroring the TS `IssuerGroupItem` accordion.
-struct IssuerShelf<'a> {
+/// One shelf per issuer identity (verified issuer profile -> signer -> app -> collection -> unverified key).
+struct IdentityShelf<'a> {
     key: String,
-    raw_pubkey: String,
+    rank: u8,
+    fingerprint_id: Option<String>,
+    avatar_url: Option<String>,
+    avatar_key: Option<String>,
     label: String,
     items: Vec<&'a ItemCardRow>,
 }
 
-/// Shelves items by `issuer_key`. Items without a key are returned for the "No issuer" section.
-fn group_by_issuer<'a>(
+fn collection_series_stem(name: &str) -> Option<String> {
+    let (prefix, rest) = name.rsplit_once('#')?;
+    let digits = rest.trim();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let clean = prefix.trim();
+    if clean.len() >= 3 {
+        Some(clean.to_string())
+    } else {
+        None
+    }
+}
+
+/// Shelves items by issuer identity (mirroring TS `groupCollectables` + `issuerPublisherRank`).
+/// Verified issuer profiles come first, then Sigma signers / apps / collections, then raw issuer keys.
+fn group_by_identity<'a>(
     items: &[&'a ItemCardRow],
+    snap: &WalletSnapshot,
     services: &AppServices,
     chain: &str,
-) -> (Vec<IssuerShelf<'a>>, Vec<&'a ItemCardRow>) {
-    let mut buckets: BTreeMap<String, Vec<&'a ItemCardRow>> = BTreeMap::new();
+) -> (Vec<IdentityShelf<'a>>, Vec<&'a ItemCardRow>) {
+    let mut buckets: BTreeMap<String, IdentityShelf<'a>> = BTreeMap::new();
     let mut loose = Vec::new();
-    for item in items {
-        match item
+    for &item in items {
+        let meta = snap.item_meta.get(&item.outpoint);
+        let issuer_key = item
             .issuer_key
             .as_deref()
             .map(str::trim)
-            .filter(|k| !k.is_empty())
-        {
-            Some(key) => buckets.entry(key.to_string()).or_default().push(*item),
-            None => loose.push(*item),
+            .filter(|k| !k.is_empty());
+        let signer = meta
+            .and_then(|m| m.signer.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let app = meta
+            .and_then(|m| m.app.as_deref())
+            .map(str::trim)
+            .filter(|a| !a.is_empty());
+        let collection_id = meta
+            .and_then(|m| m.collection_id.as_deref())
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+
+        let shelf_spec = if let Some(key) = issuer_key {
+            let prof = services.peer_identity_for(chain, key);
+            let (rank, label, avatar_url) = match prof {
+                Some(p) => (0u8, p.name, p.image_data_url),
+                None => (3u8, format!("Issuer {}", truncate_mid(key, 10)), None),
+            };
+            Some((
+                format!("issuer:pubkey:{}", key.to_ascii_lowercase()),
+                rank,
+                Some(key.to_string()),
+                avatar_url,
+                Some(key.to_string()),
+                label,
+            ))
+        } else if let Some(sig) = signer {
+            let label = app
+                .map(ToString::to_string)
+                .unwrap_or_else(|| format!("Signed · {}", truncate_mid(sig, 10)));
+            Some((
+                format!("issuer:signer:{sig}"),
+                2u8,
+                Some(sig.to_string()),
+                None,
+                Some(sig.to_string()),
+                label,
+            ))
+        } else if let Some(a) = app {
+            Some((
+                format!("issuer:app:{}", a.to_ascii_lowercase()),
+                2u8,
+                None,
+                None,
+                None,
+                a.to_string(),
+            ))
+        } else if let Some(cid) = collection_id {
+            let label = collection_series_stem(&item.name)
+                .unwrap_or_else(|| format!("Collection {}", truncate_mid(cid, 10)));
+            Some((
+                format!("issuer:collection:{}", cid.to_ascii_lowercase()),
+                2u8,
+                None,
+                None,
+                None,
+                label,
+            ))
+        } else {
+            None
+        };
+
+        if let Some((key, rank, fingerprint_id, avatar_url, avatar_key, label)) = shelf_spec {
+            buckets
+                .entry(key.clone())
+                .or_insert_with(|| IdentityShelf {
+                    key,
+                    rank,
+                    fingerprint_id,
+                    avatar_url,
+                    avatar_key,
+                    label,
+                    items: Vec::new(),
+                })
+                .items
+                .push(item);
+        } else {
+            loose.push(item);
         }
     }
-    let shelves = buckets
-        .into_iter()
-        .map(|(key, items)| {
-            let label = services
-                .peer_identity_for(chain, &key)
-                .map(|p| p.name)
-                .unwrap_or_else(|| format!("Issuer {}", truncate_mid(&key, 10)));
-            IssuerShelf {
-                key: format!("issuer:pubkey:{key}"),
-                raw_pubkey: key,
-                label,
-                items,
-            }
-        })
-        .collect();
+    let mut shelves: Vec<IdentityShelf<'a>> = buckets.into_values().collect();
+    shelves.sort_by(|a, b| {
+        a.rank
+            .cmp(&b.rank)
+            .then_with(|| a.label.to_ascii_lowercase().cmp(&b.label.to_ascii_lowercase()))
+    });
     (shelves, loose)
 }
 
@@ -248,12 +354,11 @@ fn collect_grid_card(
                     nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
                 },
                 div { class: "collectable-media",
+                    span { class: "collectable-media-fallback", "aria-hidden": "true",
+                        CollectablesIcon { size: 36 }
+                    }
                     if let Some(art_url) = art_url {
                         img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
-                    } else {
-                        span { class: "collectable-media-fallback", "aria-hidden": "true",
-                            CollectablesIcon { size: 36 }
-                        }
                     }
                     CollectableVerifyMark {
                         authenticity_status: item.authenticity_status.clone(),
@@ -311,12 +416,11 @@ fn collect_list_row(
                     nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
                 },
                 div { class: "collectable-media collectable-media-sm",
+                    span { class: "collectable-media-fallback", "aria-hidden": "true",
+                        CollectablesIcon { size: 22 }
+                    }
                     if let Some(art_url) = art_url {
                         img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
-                    } else {
-                        span { class: "collectable-media-fallback", "aria-hidden": "true",
-                            CollectablesIcon { size: 22 }
-                        }
                     }
                     CollectableVerifyMark {
                         authenticity_status: item.authenticity_status.clone(),
@@ -401,27 +505,63 @@ pub fn InventoryPanel(
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut query = use_signal(String::new);
+    let mut sort_mode = use_signal(|| CollectSortMode::Identity);
     let local_selected = use_signal(BTreeSet::<String>::new);
     let mut selected_outpoints = selected_outpoints_ext.unwrap_or(local_selected);
     let mut collapsed = use_signal(BTreeSet::<String>::new);
 
+    // Trigger bounded background prefetch for any items missing cached local data: art.
+    if !snap.items.is_empty() {
+        services.prefetch_missing_item_art(&chain, &snap);
+    }
+
     let q = query.read().trim().to_ascii_lowercase();
     let cur_view = *view.read();
+    let cur_sort = *sort_mode.read();
     let selected_set = selected_outpoints.read().clone();
     let collapsed_set = collapsed.read().clone();
     let grid = cur_view == CollectionView::Grid;
 
-    let filtered: Vec<&ItemCardRow> = snap
+    let mut filtered: Vec<&ItemCardRow> = snap
         .items
         .iter()
         .filter(|item| {
-            q.is_empty()
-                || item.name.to_ascii_lowercase().contains(&q)
+            if q.is_empty() {
+                return true;
+            }
+            let meta = snap.item_meta.get(&item.outpoint);
+            item.name.to_ascii_lowercase().contains(&q)
                 || item.origin_outpoint.to_ascii_lowercase().contains(&q)
                 || item.outpoint.to_ascii_lowercase().contains(&q)
+                || item
+                    .issuer_key
+                    .as_deref()
+                    .is_some_and(|k| k.to_ascii_lowercase().contains(&q))
+                || meta
+                    .and_then(|m| m.app.as_deref())
+                    .is_some_and(|a| a.to_ascii_lowercase().contains(&q))
+                || meta
+                    .and_then(|m| m.collection_id.as_deref())
+                    .is_some_and(|c| c.to_ascii_lowercase().contains(&q))
+                || meta
+                    .and_then(|m| m.signer.as_deref())
+                    .is_some_and(|s| s.to_ascii_lowercase().contains(&q))
         })
         .collect();
-    let (shelves, ungrouped) = group_by_issuer(&filtered, &services, &chain);
+    match cur_sort {
+        CollectSortMode::Name => {
+            filtered.sort_by_key(|a| a.name.to_ascii_lowercase());
+        }
+        CollectSortMode::Recent => {
+            filtered.sort_by_key(|a| std::cmp::Reverse(a.sort_key));
+        }
+        CollectSortMode::Identity => {}
+    }
+    let (shelves, ungrouped) = if cur_sort == CollectSortMode::Identity {
+        group_by_identity(&filtered, &snap, &services, &chain)
+    } else {
+        (Vec::new(), filtered.clone())
+    };
 
     rsx! {
         div {
@@ -442,6 +582,21 @@ pub fn InventoryPanel(
                                 placeholder: "Name, trait or id",
                                 value: "{query}",
                                 oninput: move |e| query.set(e.value()),
+                            }
+                        }
+                        div {
+                            class: "collectables-sort-group",
+                            role: "group",
+                            aria_label: "Sort collectables",
+                            for mode in CollectSortMode::ALL {
+                                button {
+                                    key: "{mode.label()}",
+                                    r#type: "button",
+                                    class: "collectables-sort-btn",
+                                    aria_pressed: cur_sort == mode,
+                                    onclick: move |_| sort_mode.set(mode),
+                                    "{mode.label()}"
+                                }
                             }
                         }
                         CollectionViewToggle { view }
@@ -497,8 +652,17 @@ pub fn InventoryPanel(
                                                     },
                                                     span { class: "collect-collection-body",
                                                         strong { class: "collect-collection-name", style: "display: inline-flex; align-items: center; gap: 6px;",
+                                                            if shelf.avatar_url.is_some() || shelf.avatar_key.is_some() {
+                                                                ProfileAvatar {
+                                                                    label: shelf.label.clone(),
+                                                                    image_url: shelf.avatar_url.clone(),
+                                                                    identity_key: shelf.avatar_key.clone(),
+                                                                }
+                                                            }
                                                             span { class: "collect-collection-name-text", "{shelf.label}" }
-                                                            ProfileFingerprint { id: shelf.raw_pubkey.clone() }
+                                                            if let Some(ref fp_id) = shelf.fingerprint_id {
+                                                                ProfileFingerprint { id: fp_id.clone() }
+                                                            }
                                                         }
                                                         span { class: "collect-collection-meta", "{meta}" }
                                                     }
@@ -536,7 +700,7 @@ pub fn InventoryPanel(
                             if !ungrouped.is_empty() {
                                 section { class: "collect-nested-collection",
                                     if !shelves.is_empty() {
-                                        h3 { class: "collect-section-title", "No issuer" }
+                                        h3 { class: "collect-section-title", "No identity" }
                                     }
                                     {collect_items_list(&ungrouped, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                                 }
@@ -628,15 +792,14 @@ pub fn CollectableDetailsPanel(
 
             div { class: "collectable-details-showcase",
                 div { class: "collectable-media collectable-details-media",
+                    span { class: "collectable-media-fallback", aria_hidden: true,
+                        CollectablesIcon { size: 56 }
+                    }
                     if let Some(art_url) = snap.item_art.get(&item.outpoint) {
                         img {
                             class: "collectable-img",
                             src: "{art_url}",
                             alt: "{item.name}",
-                        }
-                    } else {
-                        span { class: "collectable-media-fallback", aria_hidden: true,
-                            CollectablesIcon { size: 56 }
                         }
                     }
                     CollectableVerifyMark {

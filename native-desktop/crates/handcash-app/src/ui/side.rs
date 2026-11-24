@@ -271,6 +271,7 @@ pub fn WhatIsBsvPanel(
                             div { class: "bsv-asset-row",
                                 button {
                                     r#type: "button",
+                                    class: "bsv-asset-trigger",
                                     "data-aeon-part": "coin-trigger",
                                     aria_haspopup: "listbox",
                                     title: "Choose the coin shown here",
@@ -278,21 +279,21 @@ pub fn WhatIsBsvPanel(
                                         evt.stop_propagation();
                                         choosing.set(true);
                                     },
-                                }
-                                span { class: "bsv-logo-btn", aria_hidden: true,
-                                    if current_coin == MarketCoin::Bsv {
-                                        span { class: "bsv-logo-stack",
-                                            BsvLogoMark { size: 32 }
+                                    span { class: "bsv-logo-btn", aria_hidden: true,
+                                        if current_coin == MarketCoin::Bsv {
+                                            span { class: "bsv-logo-stack",
+                                                BsvLogoMark { size: 32 }
+                                            }
+                                        } else {
+                                            TickerCoinMark { coin: current_coin.as_str(), size: 32 }
                                         }
-                                    } else {
-                                        TickerCoinMark { coin: current_coin.as_str(), size: 32 }
                                     }
-                                }
-                                div { class: "bsv-asset-text",
-                                    span { "data-aeon-part": "coin-name",
-                                        strong { "{current_coin.name()}" }
-                                        span { "data-aeon-part": "caret", aria_hidden: true,
-                                            ExpandMoreIcon { size: 16 }
+                                    div { class: "bsv-asset-text",
+                                        span { "data-aeon-part": "coin-name",
+                                            strong { "{current_coin.name()}" }
+                                            span { "data-aeon-part": "caret", aria_hidden: true,
+                                                ExpandMoreIcon { size: 16 }
+                                            }
                                         }
                                     }
                                 }
@@ -355,26 +356,27 @@ pub fn WhatIsBsvPanel(
                             div { class: "bsv-asset-row",
                                 button {
                                     r#type: "button",
+                                    class: "bsv-asset-trigger",
                                     "data-aeon-part": "coin-trigger",
                                     aria_haspopup: "listbox",
                                     aria_label: "{current_coin.name()}. Choose the coin shown here",
                                     title: "Choose the coin shown here",
                                     onclick: move |_| choosing.set(true),
-                                }
-                                span { class: "bsv-logo-btn", aria_hidden: true,
-                                    if current_coin == MarketCoin::Bsv {
-                                        span { class: "bsv-logo-stack",
-                                            BsvLogoMark { size: 32 }
+                                    span { class: "bsv-logo-btn", aria_hidden: true,
+                                        if current_coin == MarketCoin::Bsv {
+                                            span { class: "bsv-logo-stack",
+                                                BsvLogoMark { size: 32 }
+                                            }
+                                        } else {
+                                            TickerCoinMark { coin: current_coin.as_str(), size: 32 }
                                         }
-                                    } else {
-                                        TickerCoinMark { coin: current_coin.as_str(), size: 32 }
                                     }
-                                }
-                                div { class: "bsv-asset-text",
-                                    span { "data-aeon-part": "coin-name",
-                                        strong { "{current_coin.name()}" }
-                                        span { "data-aeon-part": "caret", aria_hidden: true,
-                                            ExpandMoreIcon { size: 16 }
+                                    div { class: "bsv-asset-text",
+                                        span { "data-aeon-part": "coin-name",
+                                            strong { "{current_coin.name()}" }
+                                            span { "data-aeon-part": "caret", aria_hidden: true,
+                                                ExpandMoreIcon { size: 16 }
+                                            }
                                         }
                                     }
                                 }

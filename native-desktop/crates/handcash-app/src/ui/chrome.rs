@@ -308,6 +308,7 @@ pub fn FiatCurrencyMenu(
                                                 r#type: "button",
                                                 role: "option",
                                                 aria_selected: selected,
+                                                "data-aeon-state": if selected { "selected" } else { "idle" },
                                                 class: if selected { "wallet-account-option is-selected" } else { "wallet-account-option" },
                                                 onclick: move |_| {
                                                     fiat_code.set(opt);
@@ -503,6 +504,7 @@ pub fn WalletAccountMenu(
                                                     r#type: "button",
                                                     role: "option",
                                                     aria_selected: selected,
+                                                    "data-aeon-state": if selected { "selected" } else { "idle" },
                                                     class: if selected { "wallet-account-option is-selected" } else { "wallet-account-option" },
                                                     disabled: is_busy,
                                                     onclick: move |_| {
@@ -717,6 +719,7 @@ pub fn TickerCoinSelector(
                                                 r#type: "button",
                                                 role: "option",
                                                 aria_selected: selected,
+                                                "data-aeon-state": if selected { "selected" } else { "idle" },
                                                 class: if selected {
                                                     "wallet-account-option ticker-coin-row is-selected"
                                                 } else {
