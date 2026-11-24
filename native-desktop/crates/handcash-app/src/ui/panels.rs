@@ -8,7 +8,7 @@ use crate::icons::{
     ActivityIcon, AppsIcon, ArcUsdGlyphIcon, CheckIcon, CodeIcon, CoinGlyphIcon, CopyIcon,
     DarkModeIcon, DevicesIcon, DownloadIcon, EncryptIcon, ExpandMoreIcon, FileIcon,
     FingerprintIcon, InfoIcon, LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon, MonitorIcon,
-    PaletteIcon, RefreshIcon, ScanQrIcon, SwapIcon, SystemUpdateIcon, VolumeUpIcon, WarningIcon,
+    PaletteIcon, RefreshIcon, ScanQrIcon, SystemUpdateIcon, VolumeUpIcon, WarningIcon,
 };
 use crate::machines::{AppSessionMachine, FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
@@ -19,13 +19,450 @@ use crate::state::{
 use crate::theme::AppearancePreference;
 use crate::ui::auth::{KeySliceList, PasswordField};
 use crate::ui::primitives::ProfileIdenticon;
-use crate::ui::EmptyState;
 use aeon_ui::{button, list_row};
 use base64::Engine as _;
 use dioxus::prelude::*;
 use handcash_primitives::brc140::Brc140IssuedSet;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+
+/// Split a dense payload into QR frames mirroring `splitQrFrames` (`src/components/AnimatedQr.tsx`).
+pub fn split_qr_frames(value: &str, chunk_size: usize) -> Vec<String> {
+    let size = chunk_size.max(32);
+    if value.len() <= size {
+        return vec![value.to_string()];
+    }
+    let bytes = value.as_bytes();
+    let total = bytes.len().div_ceil(size);
+    bytes
+        .chunks(size)
+        .enumerate()
+        .map(|(idx, chunk)| {
+            let part = String::from_utf8_lossy(chunk);
+            format!("HCQR:{}/{}:{part}", idx + 1, total)
+        })
+        .collect()
+}
+
+/// 1:1 port of `src/components/AnimatedQr.tsx`.
+#[component]
+pub fn AnimatedQr(
+    value: String,
+    #[props(default = 180)] size: u32,
+    #[props(default = "Animated recovery code".to_string())] alt: String,
+    #[props(default = 10)] fps: u32,
+) -> Element {
+    let frames = split_qr_frames(&value, 220);
+    let count = frames.len().max(1);
+    let mut frame_idx = use_signal(|| 0usize);
+    let hz = fps.clamp(8, 12);
+    let frame_count_bg = count;
+    use_future(move || async move {
+        if frame_count_bg < 2 {
+            return;
+        }
+        let step_ms = (1000 / hz).max(80) as u64;
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(step_ms)).await;
+            let next = (*frame_idx.read() + 1) % frame_count_bg;
+            frame_idx.set(next);
+        }
+    });
+    let cur = (*frame_idx.read()).min(count - 1);
+    let svg = frames.get(cur).map(|f| render_qr_svg(f)).unwrap_or_default();
+    rsx! {
+        div { class: "animated-qr", "data-aeon-part": "animated-qr", aria_label: "{alt}",
+            if !svg.is_empty() {
+                div {
+                    style: "width: {size}px; height: {size}px;",
+                    dangerous_inner_html: "{svg}",
+                }
+            } else {
+                crate::ui::primitives::SkeletonQr { size }
+            }
+            p { class: "animated-qr-count", aria_live: "polite",
+                "{cur + 1} / {count}"
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/LabsPanel.tsx`.
+#[component]
+pub fn LabsPanel() -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+    rsx! {
+        div {
+            class: "nav-section-body settings-nav settings-scroll",
+            "data-aeon-scope": "labs",
+            p { class: "settings-row-desc", "data-aeon-part": "intro",
+                "Experimental features; off by default, on this device only."
+            }
+            ul { class: "settings-list",
+                for feature in LabFeature::ALL {
+                    {
+                        let enabled = services.lab_enabled(feature);
+                        let svc_lab = Arc::clone(&services);
+                        rsx! {
+                            crate::ui::primitives::SettingsControlRow {
+                                key: "{feature.key()}",
+                                label: feature.title().to_string(),
+                                description: Some(feature.description().to_string()),
+                                button {
+                                    r#type: "button",
+                                    role: "switch",
+                                    aria_checked: if enabled { "true" } else { "false" },
+                                    aria_label: "{feature.title()}",
+                                    class: "settings-icon-toggle-btn",
+                                    "data-aeon-part": "lab-switch",
+                                    "data-aeon-state": if enabled { "on" } else { "off" },
+                                    "data-selected": if enabled { Some("") } else { None },
+                                    onclick: move |_| {
+                                        svc_lab.set_lab_enabled(feature, !enabled);
+                                        let next = *rev.read() + 1;
+                                        rev.set(next);
+                                    },
+                                    if enabled { "On" } else { "Off" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/HistoryBackupUrlField.tsx`.
+#[component]
+pub fn HistoryBackupUrlField(
+    #[props(default = "history-backup-url".to_string())] id: String,
+    #[props(default = "History host".to_string())] label: String,
+    #[props(default = true)] show_actions: bool,
+    #[props(default)] current_url: String,
+    #[props(default)] on_saved: Option<EventHandler<String>>,
+) -> Element {
+    let default_host = "https://history.handcash.io";
+    let mut custom_host = use_signal(|| {
+        let t = current_url.trim().trim_end_matches('/');
+        !t.is_empty() && t != default_host
+    });
+    let mut draft = use_signal(|| {
+        if current_url.trim().is_empty() {
+            default_host.to_string()
+        } else {
+            current_url.clone()
+        }
+    });
+    let is_custom = *custom_host.read();
+    let cur_draft = draft.read().clone();
+    rsx! {
+        div { class: "settings-form settings-form-compact", "data-aeon-part": "history-url-field",
+            ul { class: "settings-list",
+                crate::ui::primitives::SettingsControlRow {
+                    label: "Custom history host".to_string(),
+                    icon: Some(rsx! { crate::icons::CloudUploadIcon { size: 20 } }),
+                    description: Some(if is_custom {
+                        "Backups go to the URL below".to_string()
+                    } else {
+                        "Off · backups go to HandCash".to_string()
+                    }),
+                    button {
+                        r#type: "button",
+                        role: "switch",
+                        aria_checked: if is_custom { "true" } else { "false" },
+                        aria_label: "Custom history host",
+                        class: "settings-icon-toggle-btn",
+                        "data-selected": if is_custom { Some("") } else { None },
+                        onclick: move |_| {
+                            let next = !*custom_host.read();
+                            custom_host.set(next);
+                            if !next {
+                                draft.set(default_host.to_string());
+                                if let Some(cb) = on_saved {
+                                    cb.call(default_host.to_string());
+                                }
+                            }
+                        },
+                        if is_custom { "On" } else { "Off" }
+                    }
+                }
+            }
+            if is_custom {
+                aeon_ui::field::Root { class: "field",
+                    aeon_ui::field::Label { r#for: id.clone(), "{label}" }
+                    input {
+                        id: "{id}",
+                        r#type: "url",
+                        "data-aeon-part": "control",
+                        placeholder: "{default_host}",
+                        value: "{cur_draft}",
+                        autocomplete: "off",
+                        spellcheck: "false",
+                        oninput: move |e| draft.set(e.value()),
+                    }
+                }
+            }
+            if show_actions && is_custom {
+                div { class: "actions",
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        onclick: move |_| {
+                            let next = draft.read().trim().to_string();
+                            if let Some(cb) = on_saved {
+                                cb.call(next);
+                            }
+                        },
+                        button::Label { "Save URL" }
+                    }
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
+                        class: "btn btn-ghost",
+                        onclick: move |_| {
+                            custom_host.set(false);
+                            draft.set(default_host.to_string());
+                            if let Some(cb) = on_saved {
+                                cb.call(default_host.to_string());
+                            }
+                        },
+                        button::Label { "Use HandCash" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/LogViewerPanel.tsx`.
+#[component]
+pub fn LogViewerPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut log_rev = use_signal(|| 0u64);
+    let mut filter = use_signal(String::new);
+    let mut upload_url = use_signal(String::new);
+    let _ = *log_rev.read();
+    let payload = services.host_log.read_logs(Some(256 * 1024));
+    let raw_text = payload
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("No log lines yet.")
+        .to_string();
+    let log_path = payload
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let q = filter.read().trim().to_ascii_lowercase();
+    let filtered_text = if q.is_empty() {
+        raw_text.clone()
+    } else {
+        let matched: Vec<&str> = raw_text
+            .lines()
+            .filter(|line| line.to_ascii_lowercase().contains(&q))
+            .collect();
+        if matched.is_empty() {
+            "No matching lines.".to_string()
+        } else {
+            matched.join("\n")
+        }
+    };
+    let copy_text = filtered_text.clone();
+    let svc_open = Arc::clone(&services);
+    let cur_filter = filter.read().clone();
+    let cur_upload = upload_url.read().clone();
+
+    rsx! {
+        div { class: "nav-section-body settings-scroll log-viewer", "data-aeon-scope": "log-viewer",
+            p { class: "settings-hint",
+                "Copy lines for support, or open the log folder. Logs are privacy-scrubbed before writing."
+            }
+            crate::ui::primitives::SettingsSection { title: "Send to support".to_string(), part: "upload",
+                div { class: "settings-form settings-form-compact log-viewer-tools",
+                    aeon_ui::field::Root { class: "field",
+                        aeon_ui::field::Label { r#for: "log-upload-url", "Upload URL" }
+                        input {
+                            id: "log-upload-url",
+                            class: "settings-control-input settings-control-input-block",
+                            r#type: "url",
+                            "data-aeon-part": "log-upload-url",
+                            placeholder: "https://…/v1/logs/hc-…",
+                            value: "{cur_upload}",
+                            oninput: move |e| upload_url.set(e.value()),
+                        }
+                        p { class: "field-hint", "Log upload is not available in this build yet; copy lines or open the log folder instead." }
+                    }
+                    div { class: "actions", "data-aeon-state": "unavailable",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            class: "btn btn-primary",
+                            "data-aeon-part": "upload-logs",
+                            "data-aeon-state": "unavailable",
+                            disabled: true,
+                            button::Label { "Upload session" }
+                        }
+                    }
+                }
+            }
+            crate::ui::primitives::SettingsSection { title: "This session".to_string(), part: "session",
+                div { class: "settings-form settings-form-compact log-viewer-tools",
+                    aeon_ui::field::Root { class: "field",
+                        aeon_ui::field::Label { r#for: "log-filter", "Filter" }
+                        input {
+                            id: "log-filter",
+                            "data-aeon-part": "control",
+                            placeholder: "cloud-backup, sync, error…",
+                            value: "{cur_filter}",
+                            autocomplete: "off",
+                            spellcheck: "false",
+                            oninput: move |e| filter.set(e.value()),
+                        }
+                    }
+                    div { class: "actions log-viewer-actions", "data-aeon-part": "log-actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            "data-aeon-part": "refresh-logs",
+                            onclick: move |_| {
+                                let next = *log_rev.read() + 1;
+                                log_rev.set(next);
+                            },
+                            button::Label { "Refresh" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| match copy_to_clipboard(&copy_text) {
+                                Ok(()) => toast.set(Some(ToastNotice {
+                                    title: "Logs copied".into(),
+                                    body: None,
+                                    tone: "success",
+                                })),
+                                Err(e) => toast.set(Some(ToastNotice {
+                                    title: "Copy failed".into(),
+                                    body: Some(e),
+                                    tone: "error",
+                                })),
+                            },
+                            button::Label { "Copy" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            "data-aeon-part": "open-logs",
+                            onclick: move |_| {
+                                let _ = svc_open.host_log.open_logs();
+                            },
+                            button::Label { "Open folder" }
+                        }
+                    }
+                }
+            }
+            if !log_path.is_empty() {
+                p { class: "settings-log-path mono", title: "{log_path}", "{log_path}" }
+            }
+            pre { class: "log-viewer-pre", tabindex: "0", aria_label: "Log output", "{filtered_text}" }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/StatechartsPanel.tsx` (list view, no Mermaid).
+#[component]
+pub fn StatechartsPanel(profile: SessionSummary, snap: WalletSnapshot) -> Element {
+    let rows = [
+        ("Session", "ready".to_string()),
+        ("Engine", format!("phase {} · gen {}", snap.engine_phase, snap.engine_generation)),
+        ("Account", format!("#{} · {} · {}", profile.account_index, profile.chain, profile.derivation)),
+        ("BRC-100 bridge", snap.bridge_http_url.clone()),
+        ("UTXOs / 1Sat items", format!("{} / {}", snap.balance.spendable_utxo_count, snap.balance.item_count)),
+    ];
+    rsx! {
+        div { class: "nav-child-panel statecharts-panel", "data-aeon-scope": "statecharts",
+            h3 { "Statecharts" }
+            p { class: "settings-row-desc",
+                "Live runtime states of the native Rust wallet machines."
+            }
+            ul { class: "identity-list",
+                for (label, value) in rows {
+                    li { key: "{label}", class: "identity-field",
+                        span { class: "identity-field-label", "{label}" }
+                        strong { class: "mono", "{value}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/ChartAppView.tsx` (state runner view for a verified chart app).
+#[component]
+pub fn ChartAppView(
+    app: crate::state::BuiltinChartApp,
+    state_name: String,
+    on_transition: EventHandler<String>,
+    on_back: EventHandler<()>,
+) -> Element {
+    let state_obj = app.raw_json.get("states").and_then(|s| s.get(&state_name));
+    let copy = state_obj
+        .and_then(|s| s.get("description").or_else(|| s.get("meta").and_then(|m| m.get("copy"))))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let transitions: Vec<(String, String)> = state_obj
+        .and_then(|s| s.get("on"))
+        .and_then(|o| o.as_object())
+        .map(|map| {
+            map.iter()
+                .filter_map(|(evt, target)| {
+                    let t = target
+                        .as_str()
+                        .or_else(|| target.get("target").and_then(|v| v.as_str()))?;
+                    Some((evt.clone(), t.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    rsx! {
+        div { class: "nav-child-panel chart-app-view", "data-aeon-scope": "chart-app-view", "data-aeon-state": "{state_name}",
+            div { class: "connected-panel-head",
+                h3 { "{app.name}" }
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    onclick: move |_| on_back.call(()),
+                    button::Label { "Close" }
+                }
+            }
+            p { class: "settings-row-desc", "{app.summary}" }
+            div { class: "chart-app-state-card",
+                strong { class: "mono", "State: {state_name}" }
+                if !copy.is_empty() {
+                    p { class: "settings-row-desc", "{copy}" }
+                }
+                if !transitions.is_empty() {
+                    div { class: "actions",
+                        for (ev, target) in transitions {
+                            {
+                                let tgt = target.clone();
+                                rsx! {
+                                    button::Root {
+                                        key: "{ev}-{target}",
+                                        variant: button::ButtonVariant::Solid,
+                                        class: "btn btn-primary",
+                                        onclick: move |_| on_transition.call(tgt.clone()),
+                                        button::Label { "{ev} → {target}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// 1:1 port of `src/components/ReceivePanel.tsx`.
 #[component]
@@ -149,12 +586,16 @@ pub fn ReceivePanel(profile: SessionSummary, mut toast: Signal<Option<ToastNotic
 
 #[component]
 pub fn SwapPanel() -> Element {
+    let mut network = use_signal(|| "bsv".to_string());
     rsx! {
-        div { class: "nav-child-panel",
-            EmptyState {
-                icon: Some(rsx! { SwapIcon { size: 28 } }),
-                title: "Swap BSV",
-                body: Some("Cross-chain swaps arrive natively in the next Rust engine milestone.".into()),
+        div { class: "nav-child-panel", "data-aeon-scope": "swap-panel", "data-aeon-state": "unavailable",
+            crate::ui::swaps::NetworkPicker {
+                value: network.read().clone(),
+                on_change: move |next| network.set(next),
+            }
+            crate::ui::swaps::SwapOffersPanel {
+                offers: Vec::new(),
+                swap_gated: true,
             }
         }
     }
@@ -164,18 +605,10 @@ pub fn SwapPanel() -> Element {
 pub fn ScanPanel(mut nav_child: Signal<Option<NavChild>>) -> Element {
     rsx! {
         div { class: "nav-child-panel",
-            EmptyState {
-                icon: Some(rsx! { ScanQrIcon { size: 28 } }),
-                title: "Scan QR code",
-                body: Some("Paste a BSV address or PeerPay URI directly in Send.".into()),
-                action: Some(rsx! {
-                    button::Root {
-                        variant: button::ButtonVariant::Solid,
-                        class: "btn btn-primary",
-                        onclick: move |_| nav_child.set(Some(NavChild::Send(None))),
-                        button::Label { "Open Send" }
-                    }
-                }),
+            crate::ui::devices::QrScanner {
+                hint: "Point your camera at a QR code".to_string(),
+                on_scan: move |raw: String| nav_child.set(Some(NavChild::Send(Some(raw)))),
+                on_cancel: move |_| nav_child.set(None),
             }
         }
     }
@@ -1081,102 +1514,93 @@ pub fn SettingsPanel(
                 }
 
                 // Preferences section
-                section { class: "settings-group", "data-aeon-part": "preferences",
-                    h3 { class: "settings-group-title", "Preferences" }
+                crate::ui::primitives::SettingsSection {
+                    title: "Preferences".to_string(),
+                    part: "preferences",
                     ul { class: "settings-list",
-                        li {
-                            list_row::Root { "data-aeon-layout": "control",
-                                list_row::Leading {
-                                    span { class: "settings-row-icon", "data-tone": "default",
-                                        PaletteIcon { size: 20 }
+                        crate::ui::primitives::SettingsControlRow {
+                            icon: Some(rsx! { PaletteIcon { size: 20 } }),
+                            label: "Appearance".to_string(),
+                            description: Some(match app_pref {
+                                AppearancePreference::System => "Follows Omarchy or your system theme.".to_string(),
+                                AppearancePreference::Dark => "HandCash OLED dark sheet.".to_string(),
+                                AppearancePreference::Light => "HandCash light paper sheet.".to_string(),
+                            }),
+                            crate::ui::primitives::SettingsIconToggle {
+                                aria_label: "Appearance".to_string(),
+                                value: match app_pref {
+                                    AppearancePreference::System => "system".to_string(),
+                                    AppearancePreference::Dark => "dark".to_string(),
+                                    AppearancePreference::Light => "light".to_string(),
+                                },
+                                on_change: {
+                                    let svc_app = Arc::clone(&services);
+                                    move |next: String| {
+                                        let pref = match next.as_str() {
+                                            "dark" => AppearancePreference::Dark,
+                                            "light" => AppearancePreference::Light,
+                                            _ => AppearancePreference::System,
+                                        };
+                                        appearance.set(pref);
+                                        svc_app.save_appearance(pref);
                                     }
-                                }
-                                list_row::Label { "Appearance" }
-                                list_row::Description {
-                                    if app_pref == AppearancePreference::System {
-                                        "Follows Omarchy or your system theme."
-                                    } else if app_pref == AppearancePreference::Dark {
-                                        "HandCash OLED dark sheet."
-                                    } else {
-                                        "HandCash light paper sheet."
-                                    }
-                                }
-                                list_row::Trailing {
-                                    div { class: "settings-icon-toggle", role: "radiogroup", aria_label: "Appearance",
-                                        for (pref, label) in [
-                                            (AppearancePreference::System, "System"),
-                                            (AppearancePreference::Dark, "Dark"),
-                                            (AppearancePreference::Light, "Light"),
-                                        ] {
-                                            {
-                                                let svc_app = Arc::clone(&services);
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "settings-icon-toggle-btn",
-                                                        title: "{label}",
-                                                        aria_label: "{label}",
-                                                        "data-selected": if app_pref == pref { Some("") } else { None },
-                                                        onclick: move |_| {
-                                                            appearance.set(pref);
-                                                            svc_app.save_appearance(pref);
-                                                        },
-                                                        match pref {
-                                                            AppearancePreference::System => rsx! { MonitorIcon { size: 16 } },
-                                                            AppearancePreference::Dark => rsx! { DarkModeIcon { size: 16 } },
-                                                            AppearancePreference::Light => rsx! { LightModeIcon { size: 16 } },
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                },
+                                options: vec![
+                                    crate::ui::primitives::SettingsIconToggleOption {
+                                        value: "system".to_string(),
+                                        label: "System".to_string(),
+                                        icon: rsx! { MonitorIcon { size: 16 } },
+                                    },
+                                    crate::ui::primitives::SettingsIconToggleOption {
+                                        value: "dark".to_string(),
+                                        label: "Dark".to_string(),
+                                        icon: rsx! { DarkModeIcon { size: 16 } },
+                                    },
+                                    crate::ui::primitives::SettingsIconToggleOption {
+                                        value: "light".to_string(),
+                                        label: "Light".to_string(),
+                                        icon: rsx! { LightModeIcon { size: 16 } },
+                                    },
+                                ],
                             }
                         }
 
-                        li {
-                            list_row::Root { "data-aeon-layout": "control",
-                                list_row::Leading {
-                                    span { class: "settings-row-icon", "data-tone": "default",
-                                        CoinGlyphIcon { size: 20 }
+                        crate::ui::primitives::SettingsControlRow {
+                            icon: Some(rsx! { CoinGlyphIcon { size: 20 } }),
+                            label: "Accept".to_string(),
+                            description: Some(format!("{}. {}", accepted_now.title(), accepted_now.description())),
+                            crate::ui::primitives::SettingsIconToggle {
+                                aria_label: "Accept".to_string(),
+                                value: accepted_now.as_str().to_string(),
+                                on_change: {
+                                    let svc_coins = Arc::clone(&services);
+                                    move |next: String| {
+                                        let choice = if next == "all" {
+                                            AcceptedCoins::All
+                                        } else {
+                                            AcceptedCoins::Bitcoin
+                                        };
+                                        accepted.set(choice);
+                                        svc_coins.save_accepted_coins(choice);
                                     }
-                                }
-                                list_row::Label { "Accept" }
-                                list_row::Description {
-                                    "{accepted_now.title()}. {accepted_now.description()}"
-                                }
-                                list_row::Trailing {
-                                    div { class: "settings-icon-toggle", role: "radiogroup", aria_label: "Accept",
-                                        for choice in AcceptedCoins::CHOICES {
-                                            {
-                                                let svc_coins = Arc::clone(&services);
-                                                rsx! {
-                                                    button {
-                                                        r#type: "button",
-                                                        class: "settings-icon-toggle-btn",
-                                                        title: "{choice.title()}",
-                                                        aria_label: "{choice.title()}",
-                                                        "data-selected": if accepted_now == choice { Some("") } else { None },
-                                                        onclick: move |_| {
-                                                            accepted.set(choice);
-                                                            svc_coins.save_accepted_coins(choice);
-                                                        },
-                                                        match choice {
-                                                            AcceptedCoins::Bitcoin => rsx! { CoinGlyphIcon { size: 16 } },
-                                                            AcceptedCoins::All => rsx! {
-                                                                span { class: "accepted-coins-glyphs",
-                                                                    CoinGlyphIcon { size: 12 }
-                                                                    LtcGlyphIcon { size: 12 }
-                                                                }
-                                                            },
-                                                        }
-                                                    }
-                                                }
+                                },
+                                options: vec![
+                                    crate::ui::primitives::SettingsIconToggleOption {
+                                        value: "bitcoin".to_string(),
+                                        label: AcceptedCoins::Bitcoin.title().to_string(),
+                                        icon: rsx! { CoinGlyphIcon { size: 16 } },
+                                    },
+                                    crate::ui::primitives::SettingsIconToggleOption {
+                                        value: "all".to_string(),
+                                        label: AcceptedCoins::All.title().to_string(),
+                                        icon: rsx! {
+                                            span { class: "accepted-coins-glyphs",
+                                                CoinGlyphIcon { size: 12 }
+                                                LtcGlyphIcon { size: 12 }
                                             }
-                                        }
-                                    }
-                                }
+                                        },
+                                    },
+                                ],
                             }
                         }
 
@@ -1365,9 +1789,10 @@ pub fn SettingsPanel(
 }
 
 /// 1:1 port of `src/components/settings/SettingsFiatDropdown.tsx`. Shares the
+/// 1:1 port of `src/components/settings/SettingsFiatDropdown.tsx`, sharing the
 /// durable `fiat_code` signal with the hero `FiatCurrencyMenu`.
 #[component]
-fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
+pub fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut open = use_signal(|| false);
     let is_open = *open.read();
@@ -2548,157 +2973,14 @@ pub fn SettingSubpagePanel(
         SettingSubpage::About => rsx! {
             AboutHandCashPanel { nav_child }
         },
-        SettingSubpage::Labs => {
-            let mut rev = use_signal(|| 0u64);
-            let _ = *rev.read();
-            rsx! {
-                div {
-                    class: "nav-child-panel",
-                    "data-aeon-scope": "settings-labs",
-                    style: "display: flex; flex-direction: column; gap: 14px;",
-                    h3 { "Labs" }
-                    p { class: "settings-row-desc",
-                        "Experimental features, off by default. Stored locally in your durable settings."
-                    }
-                    ul { class: "settings-list",
-                        for feature in LabFeature::ALL {
-                            {
-                                let enabled = services.lab_enabled(feature);
-                                let svc_lab = Arc::clone(&services);
-                                rsx! {
-                                    li { key: "{feature.key()}",
-                                        list_row::Root { "data-aeon-layout": "control",
-                                            list_row::Label { "{feature.title()}" }
-                                            list_row::Description { "{feature.description()}" }
-                                            list_row::Trailing {
-                                                button {
-                                                    r#type: "button",
-                                                    role: "switch",
-                                                    aria_checked: enabled,
-                                                    class: "settings-icon-toggle-btn",
-                                                    style: "padding: 4px 10px; min-width: 52px;",
-                                                    "data-selected": if enabled { Some("") } else { None },
-                                                    onclick: move |_| {
-                                                        svc_lab.set_lab_enabled(feature, !enabled);
-                                                        let next = *rev.read() + 1;
-                                                        rev.set(next);
-                                                    },
-                                                    if enabled { "On" } else { "Off" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        SettingSubpage::Logs => {
-            let mut log_rev = use_signal(|| 0u64);
-            let _ = *log_rev.read();
-            let payload = services.host_log.read_logs(Some(256 * 1024));
-            let log_text = payload
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("No log entries yet.")
-                .to_string();
-            let log_path = payload
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-            let log_copy = log_text.clone();
-            let svc_open = Arc::clone(&services);
-            rsx! {
-                div {
-                    class: "nav-child-panel",
-                    "data-aeon-scope": "settings-logs",
-                    style: "display: flex; flex-direction: column; gap: 12px;",
-                    h3 { "Session logs" }
-                    p { class: "settings-row-desc",
-                        "Logs are privacy-scrubbed before writing (no addresses, amounts, or raw identity keys)."
-                    }
-                    if !log_path.is_empty() {
-                        p { class: "mono settings-row-desc", "{log_path}" }
-                    }
-                    div { class: "actions", style: "display: flex; gap: 8px; flex-wrap: wrap;",
-                        button::Root {
-                            variant: button::ButtonVariant::Solid,
-                            class: "btn btn-primary",
-                            onclick: move |_| match copy_to_clipboard(&log_copy) {
-                                Ok(()) => toast.set(Some(ToastNotice {
-                                    title: "Copied".into(),
-                                    body: Some("Session logs copied.".into()),
-                                    tone: "success",
-                                })),
-                                Err(e) => toast.set(Some(ToastNotice {
-                                    title: "Copy failed".into(),
-                                    body: Some(e),
-                                    tone: "error",
-                                })),
-                            },
-                            button::Label { "Copy logs" }
-                        }
-                        button::Root {
-                            variant: button::ButtonVariant::Ghost,
-                            class: "btn btn-ghost",
-                            onclick: move |_| {
-                                let next = *log_rev.read() + 1;
-                                log_rev.set(next);
-                            },
-                            button::Label { "Refresh" }
-                        }
-                        button::Root {
-                            variant: button::ButtonVariant::Ghost,
-                            class: "btn btn-ghost",
-                            onclick: move |_| {
-                                let _ = svc_open.host_log.open_logs();
-                            },
-                            button::Label { "Open folder" }
-                        }
-                    }
-                    pre {
-                        class: "mono",
-                        style: "padding: 12px; border-radius: 10px; border: 1px solid var(--hc-border); background: var(--hc-field); max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.45;",
-                        "{log_text}"
-                    }
-                }
-            }
-        }
+        SettingSubpage::Labs => rsx! {
+            LabsPanel {}
+        },
+        SettingSubpage::Logs => rsx! {
+            LogViewerPanel { toast }
+        },
         SettingSubpage::Statecharts => rsx! {
-            div {
-                class: "nav-child-panel",
-                "data-aeon-scope": "settings-statecharts",
-                style: "display: flex; flex-direction: column; gap: 12px;",
-                h3 { "Statecharts" }
-                p { class: "settings-row-desc",
-                    "Live runtime states of the native Rust wallet machines."
-                }
-                ul { class: "identity-list",
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "Session" }
-                        strong { class: "mono", "ready" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "Engine" }
-                        strong { class: "mono", "phase {snap.engine_phase} · gen {snap.engine_generation}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "Account" }
-                        strong { class: "mono", "#{profile.account_index} · {profile.chain} · {profile.derivation}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "BRC-100 bridge" }
-                        strong { class: "mono", "{snap.bridge_http_url}" }
-                    }
-                    li { class: "identity-field",
-                        span { class: "identity-field-label", "UTXOs / 1Sat items" }
-                        strong { class: "mono", "{snap.balance.spendable_utxo_count} / {snap.balance.item_count}" }
-                    }
-                }
-            }
+            StatechartsPanel { profile, snap }
         },
         SettingSubpage::RecoverTx => rsx! {
             RecoverTxPanel { snapshot, toast }

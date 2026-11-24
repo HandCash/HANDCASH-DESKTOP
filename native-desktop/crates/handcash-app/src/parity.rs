@@ -441,8 +441,22 @@ mod tests {
         std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("missing fixture {full}: {e}"))
     }
 
+    fn test_services() -> std::sync::Arc<crate::state::AppServices> {
+        static SVC: std::sync::OnceLock<std::sync::Arc<crate::state::AppServices>> =
+            std::sync::OnceLock::new();
+        std::sync::Arc::clone(SVC.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!(
+                "hc-parity-shared-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            crate::state::AppServices::open_in(dir, false).expect("open test AppServices")
+        }))
+    }
+
     fn render(app: fn() -> Element) -> String {
         let mut dom = VirtualDom::new(app);
+        dom.provide_root_context(test_services());
         dom.rebuild_in_place();
         dioxus_ssr::render(&dom)
     }
@@ -644,5 +658,559 @@ mod tests {
             "settings-wallet-health-row/warn.html",
             settings_wallet_health_row_warn,
         );
+    }
+
+    fn fiat_currency_menu_closed() -> Element {
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        let open_menu = use_signal(|| Option::<&'static str>::None);
+        rsx! {
+            crate::ui::chrome::FiatCurrencyMenu {
+                fiat_code,
+                amount_label: "$0.00".to_string(),
+                open_menu,
+            }
+        }
+    }
+
+    #[test]
+    fn fiat_currency_menu_closed_matches_ts_fixture() {
+        assert_parity("fiat-currency-menu/closed.html", fiat_currency_menu_closed);
+    }
+
+    fn fiat_currency_panel_usd() -> Element {
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        rsx! {
+            crate::ui::chrome::FiatCurrencyPanel { fiat_code }
+        }
+    }
+
+    #[test]
+    fn fiat_currency_panel_usd_matches_ts_fixture() {
+        assert_parity("fiat-currency-panel/usd.html", fiat_currency_panel_usd);
+    }
+
+    fn wallet_account_menu_closed() -> Element {
+        let profile = crate::state::SessionSummary {
+            handle: "alice".to_string(),
+            identity_key: "032a32ac11bbbd6b333b19cafc986e2508be3621246d75224e234a0d1a2f15eb75"
+                .to_string(),
+            address: "1Mmd5LJCnFKpkSYkZHdruZBs27koQoRpDj".to_string(),
+            chain: "main".to_string(),
+            account_id: "acc-0".to_string(),
+            account_index: 0,
+            toolbox_db_name: "hc-test".to_string(),
+            generation: 1,
+            has_mnemonic: true,
+            derivation: "brc157".to_string(),
+        };
+        let app_machine = use_signal(|| {
+            crate::machines::AppSessionMachine::new(true, Some(profile.clone()), 0, false)
+        });
+        let snapshot = use_signal(crate::state::WalletSnapshot::default);
+        let nav_section = use_signal(|| crate::machines::NavSection::Activity);
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        let open_menu = use_signal(|| Option::<&'static str>::None);
+        rsx! {
+            crate::ui::chrome::WalletAccountMenu {
+                profile,
+                app_machine,
+                snapshot,
+                nav_section,
+                nav_child,
+                toast,
+                open_menu,
+                identity_label: Some("$alice".to_string()),
+                identity_copy: Some("$alice".to_string()),
+            }
+        }
+    }
+
+    #[test]
+    fn wallet_account_menu_closed_matches_ts_fixture() {
+        assert_parity("wallet-account-menu/closed.html", wallet_account_menu_closed);
+    }
+
+    fn recent_activity_empty() -> Element {
+        let nav_section = use_signal(|| crate::machines::NavSection::Activity);
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        rsx! {
+            crate::ui::activity::ActivityFeed {
+                snap: crate::state::WalletSnapshot::default(),
+                title: "Your activity".to_string(),
+                embedded: false,
+                show_view_all: false,
+                currency: crate::machines::DisplayCurrency::Usd,
+                fiat_code: crate::machines::FiatCode::Usd,
+                fx_rates: crate::state::FxRates::default(),
+                nav_section,
+                nav_child,
+            }
+        }
+    }
+
+    #[test]
+    fn recent_activity_empty_matches_ts_fixture() {
+        assert_parity("recent-activity/empty.html", recent_activity_empty);
+    }
+
+    fn payment_details_not_found() -> Element {
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::activity::PaymentDetailsPanel {
+                entry_id: "missing-entry".to_string(),
+                chain: "main".to_string(),
+                snap: crate::state::WalletSnapshot::default(),
+                currency: crate::machines::DisplayCurrency::Usd,
+                fiat_code: crate::machines::FiatCode::Usd,
+                fx_rates: crate::state::FxRates::default(),
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn payment_details_not_found_matches_ts_fixture() {
+        assert_parity("payment-details/not-found.html", payment_details_not_found);
+    }
+
+    fn friends_empty() -> Element {
+        let view = use_signal(|| crate::machines::CollectionView::List);
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        rsx! {
+            crate::ui::friends::FriendsPanel {
+                chain: "main".to_string(),
+                view,
+                nav_child,
+            }
+        }
+    }
+
+    #[test]
+    fn friends_empty_matches_ts_fixture() {
+        assert_parity("friends/empty.html", friends_empty);
+    }
+
+    fn add_friend_idle() -> Element {
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        let dock_spec = use_signal(|| Option::<crate::ui::chrome::DockSpec>::None);
+        let dock_trigger = use_signal(crate::ui::chrome::DockTrigger::default);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::friends::AddFriendPanel {
+                nav_child,
+                dock_spec,
+                dock_trigger,
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn add_friend_idle_matches_ts_fixture() {
+        assert_parity("add-friend/idle.html", add_friend_idle);
+    }
+
+    fn friend_details_not_found() -> Element {
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        let dock_spec = use_signal(|| Option::<crate::ui::chrome::DockSpec>::None);
+        let dock_trigger = use_signal(crate::ui::chrome::DockTrigger::default);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::friends::FriendDetailsPanel {
+                friend_id: "missing-friend".to_string(),
+                chain: "main".to_string(),
+                nav_child,
+                dock_spec,
+                dock_trigger,
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn friend_details_not_found_matches_ts_fixture() {
+        assert_parity("friend-details/not-found.html", friend_details_not_found);
+    }
+
+    fn connected_apps_empty() -> Element {
+        let view = use_signal(|| crate::machines::CollectionView::List);
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        rsx! {
+            crate::ui::apps::ConnectedAppsPanel {
+                snap: crate::state::WalletSnapshot::default(),
+                view,
+                nav_child,
+            }
+        }
+    }
+
+    #[test]
+    fn connected_apps_empty_matches_ts_fixture() {
+        assert_parity("connected-apps/empty.html", connected_apps_empty);
+    }
+
+    fn app_details_connected() -> Element {
+        let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
+        let dock_spec = use_signal(|| Option::<crate::ui::chrome::DockSpec>::None);
+        let dock_trigger = use_signal(crate::ui::chrome::DockTrigger::default);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        let app = crate::state::ConnectedAppRecord {
+            origin: "https://market.handcash.io".to_string(),
+            name: "HandCash Market".to_string(),
+            connected_at: 1700000000000,
+            accept_incoming_funds: None,
+            expires_at: None,
+        };
+        rsx! {
+            crate::ui::apps::AppDetailsPanel {
+                origin: app.origin.clone(),
+                nav_child,
+                dock_spec,
+                dock_trigger,
+                toast,
+                app_override: Some(app),
+            }
+        }
+    }
+
+    #[test]
+    fn app_details_connected_matches_ts_fixture() {
+        assert_parity("app-details/connected.html", app_details_connected);
+    }
+
+    fn settings_fiat_dropdown_closed() -> Element {
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        rsx! {
+            crate::ui::panels::SettingsFiatDropdown { fiat_code }
+        }
+    }
+
+    #[test]
+    fn settings_fiat_dropdown_closed_matches_ts_fixture() {
+        assert_parity("settings-fiat-dropdown/closed.html", settings_fiat_dropdown_closed);
+    }
+
+    fn settings_preferences_appearance_accept() -> Element {
+        use crate::icons::{CoinGlyphIcon, DarkModeIcon, LightModeIcon, LtcGlyphIcon, MonitorIcon, PaletteIcon};
+        use crate::state::AcceptedCoins;
+        use crate::ui::primitives::{SettingsControlRow, SettingsIconToggle, SettingsIconToggleOption, SettingsSection};
+        rsx! {
+            SettingsSection {
+                title: "Preferences".to_string(),
+                part: "preferences",
+                ul { class: "settings-list",
+                    SettingsControlRow {
+                        icon: Some(rsx! { PaletteIcon { size: 20 } }),
+                        label: "Appearance".to_string(),
+                        description: Some("Follows Omarchy or your system theme.".to_string()),
+                        SettingsIconToggle {
+                            aria_label: "Appearance".to_string(),
+                            value: "system".to_string(),
+                            on_change: move |_| {},
+                            options: vec![
+                                SettingsIconToggleOption {
+                                    value: "system".to_string(),
+                                    label: "System".to_string(),
+                                    icon: rsx! { MonitorIcon { size: 16 } },
+                                },
+                                SettingsIconToggleOption {
+                                    value: "dark".to_string(),
+                                    label: "Dark".to_string(),
+                                    icon: rsx! { DarkModeIcon { size: 16 } },
+                                },
+                                SettingsIconToggleOption {
+                                    value: "light".to_string(),
+                                    label: "Light".to_string(),
+                                    icon: rsx! { LightModeIcon { size: 16 } },
+                                },
+                            ],
+                        }
+                    }
+                    SettingsControlRow {
+                        icon: Some(rsx! { CoinGlyphIcon { size: 20 } }),
+                        label: "Accept".to_string(),
+                        description: Some(format!("{}. {}", AcceptedCoins::Bitcoin.title(), AcceptedCoins::Bitcoin.description())),
+                        SettingsIconToggle {
+                            aria_label: "Accept".to_string(),
+                            value: "bitcoin".to_string(),
+                            on_change: move |_| {},
+                            options: vec![
+                                SettingsIconToggleOption {
+                                    value: "bitcoin".to_string(),
+                                    label: AcceptedCoins::Bitcoin.title().to_string(),
+                                    icon: rsx! { CoinGlyphIcon { size: 16 } },
+                                },
+                                SettingsIconToggleOption {
+                                    value: "all".to_string(),
+                                    label: AcceptedCoins::All.title().to_string(),
+                                    icon: rsx! {
+                                        span { class: "accepted-coins-glyphs",
+                                            CoinGlyphIcon { size: 12 }
+                                            LtcGlyphIcon { size: 12 }
+                                        }
+                                    },
+                                },
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn settings_preferences_appearance_accept_matches_ts_fixture() {
+        assert_parity(
+            "settings-preferences/appearance-accept.html",
+            settings_preferences_appearance_accept,
+        );
+    }
+
+    fn auth_shell_onboard_entry() -> Element {
+        rsx! {
+            crate::ui::auth::AuthShell { state: "onboarding",
+                crate::ui::auth::OnboardEntryPanel {
+                    on_sign_in: move |_| {},
+                    on_create: move |_| {},
+                    on_migrate: move |_| {},
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn auth_shell_onboard_entry_matches_ts_fixture() {
+        assert_parity("auth-shell/onboard-entry.html", auth_shell_onboard_entry);
+    }
+
+    fn auth_create_idle() -> Element {
+        let auth_mode = use_signal(|| crate::machines::AuthFormMode::Create);
+        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(false, None, 0, false));
+        let snapshot = use_signal(crate::state::WalletSnapshot::default);
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        let fresh_mnemonic = use_signal(|| Option::<String>::None);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::auth::AuthFlow {
+                is_locked: false,
+                auth_mode,
+                app_machine,
+                snapshot,
+                fiat_code,
+                fresh_mnemonic,
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn auth_create_idle_matches_ts_fixture() {
+        assert_parity("auth-create/idle.html", auth_create_idle);
+    }
+
+    fn auth_restore_phrase_idle() -> Element {
+        let auth_mode = use_signal(|| crate::machines::AuthFormMode::Phrase);
+        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(false, None, 0, false));
+        let snapshot = use_signal(crate::state::WalletSnapshot::default);
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        let fresh_mnemonic = use_signal(|| Option::<String>::None);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::auth::AuthFlow {
+                is_locked: false,
+                auth_mode,
+                app_machine,
+                snapshot,
+                fiat_code,
+                fresh_mnemonic,
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn auth_restore_phrase_idle_matches_ts_fixture() {
+        assert_parity("auth-restore-phrase/idle.html", auth_restore_phrase_idle);
+    }
+
+    fn auth_unlock_idle() -> Element {
+        let auth_mode = use_signal(|| crate::machines::AuthFormMode::Unlock);
+        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(true, None, 0, false));
+        let snapshot = use_signal(crate::state::WalletSnapshot::default);
+        let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
+        let fresh_mnemonic = use_signal(|| Option::<String>::None);
+        let toast = use_signal(|| Option::<crate::machines::ToastNotice>::None);
+        rsx! {
+            crate::ui::auth::AuthFlow {
+                is_locked: true,
+                auth_mode,
+                app_machine,
+                snapshot,
+                fiat_code,
+                fresh_mnemonic,
+                toast,
+            }
+        }
+    }
+
+    #[test]
+    fn auth_unlock_idle_matches_ts_fixture() {
+        assert_parity("auth-unlock/idle.html", auth_unlock_idle);
+    }
+
+    fn create_keys_backup_phrase() -> Element {
+        rsx! {
+            crate::ui::auth::CreateKeysBackupPanel {
+                mnemonic: "absurd avoid scissors anxiety gather lottery category door army half long cage bachelor another expect people blade school educate curtain scrub monitor lady beyond".to_string(),
+            }
+        }
+    }
+
+    #[test]
+    fn create_keys_backup_phrase_matches_ts_fixture() {
+        assert_parity("create-keys-backup/phrase.html", create_keys_backup_phrase);
+    }
+
+    fn onboard_accept_bitcoin() -> Element {
+        rsx! {
+            crate::ui::auth::OnboardAcceptPanel {
+                initial_choice: Some(crate::state::AcceptedCoins::Bitcoin),
+                bsv_ready: false,
+            }
+        }
+    }
+
+    #[test]
+    fn onboard_accept_bitcoin_matches_ts_fixture() {
+        assert_parity("onboard-accept/bitcoin.html", onboard_accept_bitcoin);
+    }
+
+    fn onboard_fiat_usd() -> Element {
+        rsx! {
+            crate::ui::auth::OnboardFiatPanel {
+                initial_fiat: crate::machines::FiatCode::Usd,
+            }
+        }
+    }
+
+    #[test]
+    fn onboard_fiat_usd_matches_ts_fixture() {
+        assert_parity("onboard-fiat/usd.html", onboard_fiat_usd);
+    }
+
+    fn onboard_protect_none() -> Element {
+        rsx! {
+            crate::ui::auth::OnboardProtectPanel {
+                none_allowed: true,
+                default_mode: "none".to_string(),
+            }
+        }
+    }
+
+    #[test]
+    fn onboard_protect_none_matches_ts_fixture() {
+        assert_parity("onboard-protect/none.html", onboard_protect_none);
+    }
+
+    fn phase_3_to_10_surfaces_smoke() -> Element {
+        use crate::ui::{
+            app_browser::{AppBrowserPanel, AppBrowserTabSwitcher, AppLaunchMenu, AppLaunchPanel, AppsSearchBar, BrowserTabEntry},
+            collectables_extra::{AssetHistoryList, BntAssetView, BntShelf, CollectableListedMark, CollectableSendingMark, DeferredModelViewer, FungibleTokenFace, ItemHistoryEventView},
+            devices::{GoogleEmailRecoveryMethods, GoogleLoginPanel, QrScanner},
+            import::{ImportItemBrowser, ImportPanel, ImportSecretForm, ImportSourceKind, ImportSourceView, ImportedSourceView},
+            permissions::{ActionPermissionDialog, ConnectPermissionDialog, IdentityPublishReview, PendingPromptView, PermissionDetailsPanel},
+            platform_extras::{CallDock, ScreenshotToast, UpdatePrompt},
+            swaps::{CoinDepositDetails, NetworkPicker, SwapDetailPanel, SwapOffersPanel},
+        };
+        let connect_prompt = PendingPromptView {
+            id: 1,
+            kind: "connect".into(),
+            origin: "https://market.handcash.io".into(),
+            app_name: "HandCash Market".into(),
+            method: "connect".into(),
+            title: "Connect".into(),
+            summary: "Connect wallet".into(),
+            details: vec![],
+            grant_duration: "week".into(),
+            amount_primary: None,
+            amount_secondary: None,
+            item_outpoint: None,
+            token_id: None,
+            item_name: None,
+            item_image_url: None,
+            preview_kind: None,
+            monthly_cap: None,
+            signing_required: false,
+        };
+        let mut action_prompt = connect_prompt.clone();
+        action_prompt.kind = "action".into();
+        action_prompt.method = "createAction".into();
+        action_prompt.title = "Pay app".into();
+        action_prompt.signing_required = true;
+        rsx! {
+            div {
+                ConnectPermissionDialog { pending: Some(connect_prompt) }
+                ActionPermissionDialog { pending: Some(action_prompt), signing_gated: true }
+                PermissionDetailsPanel { origin: "https://market.handcash.io".to_string(), scope_id: "identity".to_string() }
+                IdentityPublishReview { stage: Some("reviewing".to_string()), signing_gated: true }
+                QrScanner { on_scan: move |_| {}, on_cancel: move |_| {} }
+                GoogleLoginPanel { on_cancel: move |_| {} }
+                GoogleEmailRecoveryMethods {}
+                ImportPanel {}
+                ImportSecretForm { kind: ImportSourceKind::HandCash, on_submit: move |_| {}, on_back: move |_| {} }
+                ImportSourceView {
+                    source: ImportedSourceView { id: "s1".to_string(), kind: ImportSourceKind::Phrase, label: "Old".to_string(), cash_sats: 1000, item_count: 1, scan_complete: true },
+                    on_open_items: move |_| {},
+                    on_back: move |_| {},
+                }
+                ImportItemBrowser { source_label: "Old".to_string(), items: vec![], on_back: move |_| {} }
+                FungibleTokenFace { token_id: "tok1".to_string(), sym: "TOK".to_string(), size: 72 }
+                DeferredModelViewer { src: "https://example.com/m.glb".to_string(), alt: "Model".to_string() }
+                AssetHistoryList { events: vec![ItemHistoryEventView { id: "e1".to_string(), kind: "received".to_string(), title: "Received".to_string(), detail: "From peer".to_string(), when_label: None, contact_label: None, asset_name: None }] }
+                CollectableSendingMark { sending: true }
+                CollectableListedMark { label: "Listed".to_string() }
+                BntShelf { assets: vec![BntAssetView { asset_id: "a1".to_string(), sym: "BNT".to_string(), name: "Token".to_string(), kind: "ft".to_string(), amount_display: "10".to_string(), supply_label: None, image_url: None }] }
+                AppLaunchMenu { url: "https://market.handcash.io".to_string(), origin: "https://market.handcash.io".to_string(), name: "Market".to_string() }
+                AppLaunchPanel { origin: "https://market.handcash.io".to_string(), name: "Market".to_string(), url: "https://market.handcash.io".to_string() }
+                AppsSearchBar { query: String::new(), on_query_change: move |_| {} }
+                AppBrowserTabSwitcher { tabs: vec![BrowserTabEntry { origin: "https://market.handcash.io".to_string(), name: "Market".to_string(), url: "https://market.handcash.io".to_string(), preview_data_url: None }], on_select: move |_| {}, on_close: move |_| {}, on_done: move |_| {} }
+                AppBrowserPanel { name: "Market".to_string(), origin: "https://market.handcash.io".to_string(), url: "https://market.handcash.io".to_string() }
+                CoinDepositDetails { chain: "ltc".to_string(), title: "Received LTC".to_string(), when_label: "Today".to_string() }
+                NetworkPicker { value: "bsv".to_string(), on_change: move |_| {} }
+                SwapOffersPanel {}
+                SwapDetailPanel {}
+                UpdatePrompt { phase: "available".to_string(), available_version: Some("1.3.722".to_string()) }
+                ScreenshotToast { copied_version: Some("1.3.722".to_string()) }
+                CallDock { state: "active".to_string(), peer_label: "$alice".to_string(), status_label: "Connected".to_string(), elapsed_ms: 12_000, encrypted: true }
+            }
+        }
+    }
+
+    #[test]
+    fn phase_3_to_10_surfaces_render_with_honest_gating() {
+        let html = render(phase_3_to_10_surfaces_smoke);
+        for expected in [
+            "data-aeon-scope=\"connect-permission\"",
+            "data-aeon-scope=\"action-permission\"",
+            "data-aeon-scope=\"permission-details\"",
+            "data-aeon-part=\"identity-publish-review\"",
+            "data-aeon-scope=\"qr-scanner\"",
+            "data-aeon-scope=\"google-login\"",
+            "data-aeon-scope=\"handcash-recovery\"",
+            "data-aeon-scope=\"legacy-import\"",
+            "data-aeon-scope=\"model-viewer\"",
+            "data-aeon-scope=\"item-history\"",
+            "data-aeon-scope=\"bnt-holdings\"",
+            "data-aeon-scope=\"app-browser\"",
+            "data-aeon-scope=\"network-picker\"",
+            "data-aeon-scope=\"swap-offers\"",
+            "data-aeon-scope=\"swap-detail\"",
+            "data-aeon-scope=\"app-update\"",
+            "data-aeon-scope=\"call-dock\"",
+            "data-aeon-state=\"unavailable\"",
+        ] {
+            assert!(html.contains(expected), "missing expected SSR marker: {expected}");
+        }
     }
 }

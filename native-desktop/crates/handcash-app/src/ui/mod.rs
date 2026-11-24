@@ -3,16 +3,24 @@
 //! `src/components/*`, `src/styles/handcash.css`, `src/styles/layout-compact.css`).
 
 pub mod activity;
+pub mod app_browser;
 pub mod apps;
 pub mod auth;
 pub mod chrome;
 pub mod collectables;
+pub mod collectables_extra;
 pub mod dashboard;
+pub mod devices;
 pub mod friends;
+pub mod import;
+pub mod messages;
 pub mod panels;
+pub mod permissions;
+pub mod platform_extras;
 pub mod primitives;
 pub mod send;
 pub mod side;
+pub mod swaps;
 
 use crate::css_scope::{PLATFORM, ROOT_CLASSES, SCOPED_SHEETS};
 use crate::icons::{HandCashBrandMark, LockIcon, ScanQrIcon};

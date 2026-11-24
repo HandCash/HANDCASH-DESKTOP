@@ -362,6 +362,70 @@ pub fn FiatCurrencyMenu(
     }
 }
 
+/// 1:1 port of `src/components/FiatCurrencyPanel.tsx` (full-stage government-currency picker).
+#[component]
+pub fn FiatCurrencyPanel(
+    mut fiat_code: Signal<FiatCode>,
+    #[props(default)] on_picked: Option<EventHandler<FiatCode>>,
+) -> Element {
+    let services = try_use_context::<Arc<AppServices>>();
+    let current = *fiat_code.read();
+
+    rsx! {
+        div {
+            class: "panel fiat-currency-panel",
+            "data-aeon-scope": "fiat-currency",
+            "data-aeon-state": "open",
+            ul {
+                class: "fiat-currency-panel-list",
+                "data-aeon-part": "list",
+                role: "listbox",
+                aria_label: "Government currency",
+                for opt in FiatCode::ALL {
+                    {
+                        let selected = opt == current;
+                        let svc_opt = services.clone();
+                        rsx! {
+                            li { key: "{opt.as_str()}", role: "none",
+                                button {
+                                    r#type: "button",
+                                    role: "option",
+                                    class: "fiat-currency-option",
+                                    aria_selected: if selected { "true" } else { "false" },
+                                    "data-aeon-state": if selected { "selected" } else { "idle" },
+                                    onclick: move |_| {
+                                        fiat_code.set(opt);
+                                        if let Some(ref svc) = svc_opt {
+                                            svc.save_fiat_currency(opt);
+                                            if svc.current_fx_rates().rate_for(opt).is_none() {
+                                                let svc_bg = Arc::clone(svc);
+                                                svc.engine.runtime_handle().spawn(async move {
+                                                    svc_bg.refresh_fx_rates_async().await;
+                                                });
+                                            }
+                                        }
+                                        if let Some(cb) = on_picked {
+                                            cb.call(opt);
+                                        }
+                                    },
+                                    span { class: "fiat-currency-option-flag", aria_hidden: true, "{opt.flag()}" }
+                                    span { class: "fiat-currency-option-copy",
+                                        strong { "{opt.iso()}" }
+                                        span { "{opt.name()}" }
+                                    }
+                                    if selected {
+                                        span { class: "fiat-currency-option-check", aria_hidden: true, "✓" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// 1:1 port of `src/components/WalletAccountMenu.tsx` (multi-account switcher + holding status + Add wallet).
 #[component]
 pub fn WalletAccountMenu(
@@ -372,6 +436,8 @@ pub fn WalletAccountMenu(
     mut nav_child: Signal<Option<NavChild>>,
     mut toast: Signal<Option<ToastNotice>>,
     mut open_menu: Signal<Option<&'static str>>,
+    #[props(default)] identity_label: Option<String>,
+    #[props(default)] identity_copy: Option<String>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut busy = use_signal(|| false);
@@ -399,22 +465,24 @@ pub fn WalletAccountMenu(
             format!("{head}…{tail}")
         }
     };
-    let current_name = current_handle
-        .clone()
+    let current_name = identity_label
+        .or_else(|| current_handle.clone())
         .or_else(|| current_prof.as_ref().map(|p| p.name.clone()))
         .unwrap_or_else(|| short_ik.clone());
     // Copy the pay address: the fully qualified claimed handle, else the identity key.
-    let identity_copy = current_handle
-        .as_ref()
-        .and_then(|_| services.claimed_handle_display_for(&profile.chain, active_index, current_ik))
+    let identity_copy = identity_copy
+        .or_else(|| {
+            current_handle.as_ref().and_then(|_| {
+                services.claimed_handle_display_for(&profile.chain, active_index, current_ik)
+            })
+        })
         .unwrap_or_else(|| current_ik.trim().to_string());
     let copy_title = format!("Copy {identity_copy}");
     let svc_create = Arc::clone(&services);
 
     rsx! {
-        div { class: "wallet-nav-actions-pill wallet-hero-identity-chrome",
-            div {
-                class: "wallet-account-menu",
+        div {
+            class: "wallet-account-menu",
                 "data-aeon-scope": "wallet-account-menu",
                 "data-aeon-state": if is_busy { "switching" } else if open { "open" } else { "closed" },
                 onkeydown: move |e: KeyboardEvent| {
@@ -659,7 +727,6 @@ pub fn WalletAccountMenu(
                         }
                     }
                 }
-            }
         }
     }
 }

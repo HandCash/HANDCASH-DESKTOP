@@ -144,7 +144,8 @@ pub fn SendPanel(
                 "Confirm",
                 ActionTone::Primary,
                 ActionIcon::Check,
-            ),
+            )
+            .disabled(true),
         },
         SendStage::Failure(_) => DockSpec {
             aria_label: "Send failure actions",
@@ -208,29 +209,7 @@ pub fn SendPanel(
                     }
                 }
                 "confirm" => {
-                    let fee = *estimated_fee.read();
-                    let cur_amt = amount_input.read().clone();
-                    let cur_u = *unit.read();
-                    let amt_label = parse_amount_to_sats(&cur_amt, cur_u)
-                        .map(|s| match cur_u {
-                            SendUnit::Sats => format!("{s} sats"),
-                            SendUnit::Bsv => format_bsv(s),
-                        })
-                        .unwrap_or_else(|| "0 sats".into());
-                    let rec_val = recipient_input.read().clone();
-                    let lbl = classify_recipient(&rec_val)
-                        .as_ref()
-                        .map(RecipientKind::display_label)
-                        .unwrap_or(rec_val);
-                    toast.set(Some(ToastNotice {
-                        title: "Payment prepared".into(),
-                        body: Some(format!(
-                            "{amt_label} to {lbl} validated (est. fee {fee} sat). Native ARC broadcast wiring is next."
-                        )),
-                        tone: "success",
-                    }));
-                    dock_spec.set(None);
-                    nav_child.set(None);
+                    // Gated until native ARC broadcast + crypto review (Phase 9).
                 }
                 _ => {}
             }
@@ -372,7 +351,6 @@ pub fn SendPanel(
                         .as_ref()
                         .map(RecipientKind::raw_value)
                         .unwrap_or_else(|| raw_recipient.clone());
-                    let is_p2pkh = matches!(parsed_recipient, Some(RecipientKind::P2pkhAddress(_)));
 
                     rsx! {
                         div { class: "send-stage send-stage-confirm",
@@ -396,12 +374,10 @@ pub fn SendPanel(
                                         strong { "{recipient_label}" }
                                     }
                                     p { class: "mono send-confirm-address", "{target_raw}" }
-                                    p { class: "send-confirm-note",
-                                        if is_p2pkh {
-                                            "Standard BSV P2PKH payment. Cannot be undone once broadcast."
-                                        } else {
-                                            "BRC-29 PeerPay transfer. Native broadcast lands in the next engine milestone."
-                                        }
+                                    p {
+                                        class: "send-confirm-note",
+                                        "data-aeon-state": "unavailable",
+                                        "Sending is not available in this build yet."
                                     }
                                 }
                             }

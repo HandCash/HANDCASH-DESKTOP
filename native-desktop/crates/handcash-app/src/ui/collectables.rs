@@ -1368,7 +1368,8 @@ pub fn SendCollectablePanel(
                     "Confirm",
                     ActionTone::Primary,
                     ActionIcon::Check,
-                ),
+                )
+                .disabled(true),
             }
         } else {
             DockSpec {
@@ -1395,11 +1396,6 @@ pub fn SendCollectablePanel(
 
     {
         let first = items.first().map(|i| i.outpoint.clone());
-        let summary = if batch {
-            format!("{} collectables", items.len())
-        } else {
-            items.first().map(|i| i.name.clone()).unwrap_or_default()
-        };
         use_effect(move || {
             let trig = *dock_trigger.read();
             if trig.seq == *last_seq.peek() {
@@ -1413,15 +1409,7 @@ pub fn SendCollectablePanel(
                 },
                 "review" => confirming.set(true),
                 "confirm" => {
-                    toast.set(Some(ToastNotice {
-                        title: "Item transfer prepared".into(),
-                        body: Some(format!(
-                            "{summary} validated for transfer. Native 1Sat broadcast wiring is next."
-                        )),
-                        tone: "success",
-                    }));
-                    dock_spec.set(None);
-                    nav_child.set(None);
+                    // Gated until native 1Sat broadcast + crypto review (Phase 9).
                 }
                 _ => {}
             }
@@ -1538,6 +1526,11 @@ pub fn SendCollectablePanel(
                             if recipient_label != raw_to {
                                 p { class: "mono send-confirm-address", "{raw_to}" }
                             }
+                            p {
+                                class: "send-confirm-note",
+                                "data-aeon-state": "unavailable",
+                                "Sending is not available in this build yet."
+                            }
                         }
                     }
                 }
@@ -1613,7 +1606,8 @@ pub fn BurnAssetPanel(
                     "Confirm burn",
                     ActionTone::Danger,
                     ActionIcon::Fire,
-                ),
+                )
+                .disabled(true),
             }
         } else {
             DockSpec {
@@ -1639,11 +1633,6 @@ pub fn BurnAssetPanel(
 
     {
         let first = items.first().map(|i| i.outpoint.clone());
-        let summary = if batch {
-            format!("{} collectables", items.len())
-        } else {
-            items.first().map(|i| i.name.clone()).unwrap_or_default()
-        };
         use_effect(move || {
             let trig = *dock_trigger.read();
             if trig.seq == *last_seq.peek() {
@@ -1658,15 +1647,7 @@ pub fn BurnAssetPanel(
                 "review" => confirming.set(true),
                 "back" => confirming.set(false),
                 "confirm-burn" => {
-                    toast.set(Some(ToastNotice {
-                        title: "Burn prepared".into(),
-                        body: Some(format!(
-                            "Burn intent for {summary} validated. Native burn broadcast wiring is next."
-                        )),
-                        tone: "error",
-                    }));
-                    dock_spec.set(None);
-                    nav_child.set(None);
+                    // Gated until native burn broadcast + crypto review (Phase 9).
                 }
                 _ => {}
             }
@@ -1815,8 +1796,10 @@ pub fn BurnAssetPanel(
                             }
                         }
                         if is_confirming {
-                            p { class: "burn-note",
-                                "Destroyed on chain for good — no undo, and History backup cannot bring it back."
+                            p {
+                                class: "burn-note",
+                                "data-aeon-state": "unavailable",
+                                "Burning is not available in this build yet."
                             }
                         } else {
                             p { class: "burn-note",

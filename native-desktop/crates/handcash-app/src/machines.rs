@@ -181,8 +181,8 @@ pub enum AuthFormMode {
 impl AuthFormMode {
     pub const RESTORE_METHODS: [(Self, &'static str); 3] = [
         (Self::Phrase, "Phrase"),
-        (Self::Shares, "Key slices"),
-        (Self::Key, "Emergency key"),
+        (Self::Shares, "Shares"),
+        (Self::Key, "Key"),
     ];
 
     pub const fn is_restore_method(self) -> bool {

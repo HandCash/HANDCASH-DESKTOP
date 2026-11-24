@@ -453,9 +453,1042 @@ pub fn TextOverflowCarousel(
     }
 }
 
+/// 1:1 port of `src/components/CommandConfirmPrompt.tsx` (BRC-218 §4 structured confirmation).
+#[component]
+pub fn CommandConfirmPrompt(
+    open: bool,
+    verb: String,
+    recipient: String,
+    amount_label: String,
+    #[props(default)] sats_label: Option<String>,
+    effect: String,
+    #[props(default)] confirming: bool,
+    on_confirm: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    if !open {
+        return rsx! {};
+    }
+    let status = if confirming {
+        aeon_ui::prompt::PromptStatus::Confirming
+    } else {
+        aeon_ui::prompt::PromptStatus::Pending
+    };
+    rsx! {
+        div { class: "permission-backdrop", onclick: move |_| on_cancel.call(()) }
+        div { class: "permission-positioner",
+            aeon_ui::prompt::Root {
+                status,
+                class: "panel modal permission-modal",
+                aeon_ui::prompt::Eyebrow { "Confirm command" }
+                h2 { "data-aeon-part": "title", "Confirm /{verb}" }
+                aeon_ui::prompt::Verb { "/{verb}" }
+                aeon_ui::prompt::Recipient { "{recipient}" }
+                aeon_ui::prompt::Amount {
+                    strong { "{amount_label}" }
+                    if let Some(ref sats) = sats_label {
+                        span { " · {sats}" }
+                    }
+                }
+                aeon_ui::prompt::Effect { "{effect}" }
+                aeon_ui::prompt::Actions { class: "actions",
+                    aeon_ui::prompt::Secondary {
+                        class: "btn btn-ghost",
+                        onclick: move |_| on_cancel.call(()),
+                        "Cancel"
+                    }
+                    aeon_ui::prompt::Primary {
+                        class: "btn btn-primary",
+                        disabled: confirming,
+                        onclick: move |_| on_confirm.call(()),
+                        if confirming { "Sending…" } else { "Confirm" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Confirmation payload for [`AsyncActionPrompt`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsyncConfirmSpec {
+    pub title: String,
+    pub body: String,
+    pub confirm_label: String,
+    pub cancel_label: Option<String>,
+    pub danger: bool,
+}
+
+/// 1:1 port of `src/components/AsyncActionPrompt.tsx`.
+#[component]
+pub fn AsyncActionPrompt(
+    confirm: Option<AsyncConfirmSpec>,
+    #[props(default = "confirming")] state_attr: &'static str,
+    on_confirm: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let Some(spec) = confirm else {
+        return rsx! {};
+    };
+    let cancel = spec.cancel_label.unwrap_or_else(|| "Cancel".to_string());
+    let primary_class = if spec.danger { "btn btn-danger" } else { "btn btn-primary" };
+    rsx! {
+        div { class: "permission-backdrop", onclick: move |_| on_cancel.call(()) }
+        div { class: "permission-positioner",
+            aeon_ui::prompt::Root {
+                status: aeon_ui::prompt::PromptStatus::Pending,
+                class: "panel modal permission-modal",
+                div { "data-aeon-part": "async-action-confirm", "data-aeon-state": state_attr,
+                    h2 { "data-aeon-part": "title", "{spec.title}" }
+                    aeon_ui::prompt::Effect { "{spec.body}" }
+                    aeon_ui::prompt::Actions { class: "actions",
+                        aeon_ui::prompt::Secondary {
+                            class: "btn btn-ghost",
+                            onclick: move |_| on_cancel.call(()),
+                            "{cancel}"
+                        }
+                        aeon_ui::prompt::Primary {
+                            class: primary_class,
+                            onclick: move |_| on_confirm.call(()),
+                            "{spec.confirm_label}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/CopyableError.tsx`.
+#[component]
+pub fn CopyableError(
+    #[props(default)] text: Option<String>,
+    #[props(default = "error".to_string())] class: String,
+    #[props(default = "alert")] role: &'static str,
+    #[props(default)] inline: bool,
+    children: Element,
+) -> Element {
+    let payload = text.unwrap_or_default();
+    let can_copy = !payload.trim().is_empty();
+    let full_class = format!("{class} copyable-error").trim().to_string();
+    let title_attr = if can_copy { Some("Click to copy") } else { None };
+    let tab_attr = if can_copy { Some("0") } else { None };
+    let copy_click = payload.clone();
+    let copy_key = payload;
+    if inline {
+        return rsx! {
+            span {
+                class: "{full_class}",
+                role: role,
+                title: title_attr,
+                tabindex: tab_attr,
+                onclick: move |_| {
+                    if can_copy {
+                        let _ = crate::state::copy_to_clipboard(&copy_click);
+                    }
+                },
+                onkeydown: move |e: KeyboardEvent| {
+                    if can_copy && (e.key() == Key::Enter || matches!(e.key(), Key::Character(ref s) if s == " ")) {
+                        e.prevent_default();
+                        let _ = crate::state::copy_to_clipboard(&copy_key);
+                    }
+                },
+                {children}
+            }
+        };
+    }
+    rsx! {
+        p {
+            class: "{full_class}",
+            role: role,
+            title: title_attr,
+            tabindex: tab_attr,
+            onclick: move |_| {
+                if can_copy {
+                    let _ = crate::state::copy_to_clipboard(&copy_click);
+                }
+            },
+            onkeydown: move |e: KeyboardEvent| {
+                if can_copy && (e.key() == Key::Enter || matches!(e.key(), Key::Character(ref s) if s == " ")) {
+                    e.prevent_default();
+                    let _ = crate::state::copy_to_clipboard(&copy_key);
+                }
+            },
+            {children}
+        }
+    }
+}
+
+/// 1:1 port of `src/components/searchKeyAction.ts`.
+pub fn search_key_action(key: &str, value: &str) -> Option<&'static str> {
+    if key != "Escape" {
+        return None;
+    }
+    if value.is_empty() {
+        Some("leave")
+    } else {
+        Some("clear")
+    }
+}
+
+/// 1:1 port of `src/components/SearchField.tsx`.
+#[component]
+pub fn SearchField(
+    id: String,
+    label: String,
+    value: String,
+    on_value_change: EventHandler<String>,
+    #[props(default)] placeholder: Option<String>,
+    #[props(default)] disabled: bool,
+    #[props(default)] role: Option<&'static str>,
+    #[props(default)] aria_autocomplete: Option<&'static str>,
+    #[props(default)] aria_expanded: Option<bool>,
+    #[props(default)] aria_controls: Option<String>,
+    #[props(default)] aria_activedescendant: Option<String>,
+    #[props(default)] on_key_down: Option<EventHandler<KeyboardEvent>>,
+    #[props(default)] on_focus: Option<EventHandler<FocusEvent>>,
+    #[props(default)] on_blur: Option<EventHandler<FocusEvent>>,
+) -> Element {
+    let filled = !value.is_empty();
+    let val_for_key = value.clone();
+    rsx! {
+        div {
+            class: "search-field",
+            "data-aeon-scope": "search-field",
+            "data-aeon-state": if filled { "filled" } else { "empty" },
+            label { class: "sr-only", r#for: "{id}", "{label}" }
+            crate::icons::SearchIcon { size: 16, data_aeon_part: "mark" }
+            input {
+                id: "{id}",
+                r#type: "search",
+                autocomplete: "off",
+                spellcheck: "false",
+                placeholder: placeholder,
+                value: "{value}",
+                disabled: disabled,
+                role: role,
+                aria_autocomplete: aria_autocomplete,
+                aria_expanded: aria_expanded.map(|b| if b { "true" } else { "false" }),
+                aria_controls: aria_controls,
+                aria_activedescendant: aria_activedescendant,
+                oninput: move |e| on_value_change.call(e.value()),
+                onfocus: move |e| {
+                    if let Some(cb) = on_focus {
+                        cb.call(e);
+                    }
+                },
+                onblur: move |e| {
+                    if let Some(cb) = on_blur {
+                        cb.call(e);
+                    }
+                },
+                onkeydown: move |e: KeyboardEvent| {
+                    if let Some(cb) = on_key_down {
+                        cb.call(e.clone());
+                    }
+                    if matches!(e.key(), Key::Escape)
+                        && search_key_action("Escape", &val_for_key) == Some("clear")
+                    {
+                        e.prevent_default();
+                        e.stop_propagation();
+                        on_value_change.call(String::new());
+                    }
+                },
+            }
+            if filled {
+                button {
+                    r#type: "button",
+                    "data-aeon-part": "clear",
+                    aria_label: "Clear search",
+                    title: "Clear search",
+                    disabled: disabled,
+                    onclick: move |_| on_value_change.call(String::new()),
+                    crate::icons::CloseIcon { size: 14 }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/TopBarPopover.tsx` wrapping `aeon_ui::popover`.
+#[component]
+pub fn TopBarPopover(
+    aria_label: String,
+    #[props(default)] title: Option<String>,
+    trigger: Element,
+    children: Element,
+    #[props(default)] active: bool,
+    #[props(into, default)] class: Option<String>,
+    #[props(into, default)] trigger_class: Option<String>,
+    #[props(into, default)] content_class: Option<String>,
+    #[props(default)] on_trigger: Option<EventHandler<()>>,
+) -> Element {
+    let mut open = use_signal(|| false);
+    let is_open = *open.read();
+    rsx! {
+        aeon_ui::popover::Root {
+            open: is_open,
+            on_open_change: move |next| open.set(next),
+            class,
+            button {
+                r#type: "button",
+                class: trigger_class,
+                aria_label: "{aria_label}",
+                title: title,
+                aria_expanded: if is_open { "true" } else { "false" },
+                aria_haspopup: "dialog",
+                "data-aeon-scope": "popover",
+                "data-aeon-part": "trigger",
+                "data-aeon-state": if is_open { "open" } else { "closed" },
+                "data-active": if active { Some("") } else { None },
+                onclick: move |_| {
+                    let next = !*open.read();
+                    open.set(next);
+                    if let Some(cb) = on_trigger {
+                        cb.call(());
+                    }
+                },
+                {trigger}
+            }
+            aeon_ui::popover::Positioner {
+                aeon_ui::popover::Content { class: content_class,
+                    {children}
+                }
+            }
+        }
+    }
+}
+
+/// Suggestion item for [`PanelFilter`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SearchSuggestion {
+    pub term: String,
+    pub label: String,
+    pub kind: String,
+    pub count: usize,
+}
+
+/// 1:1 port of `splitPanelQuery` in `src/components/PanelFilter.tsx`.
+pub fn split_panel_query(value: &str) -> (Vec<String>, String) {
+    let mut parts: Vec<&str> = value.split(',').collect();
+    let draft = parts.pop().unwrap_or_default().trim().to_string();
+    let terms = parts
+        .into_iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+    (terms, draft)
+}
+
+/// 1:1 port of `src/components/PanelFilter.tsx`.
+#[component]
+pub fn PanelFilter(
+    id: String,
+    label: String,
+    placeholder: String,
+    value: String,
+    on_value_change: EventHandler<String>,
+    #[props(default)] suggestions: Vec<SearchSuggestion>,
+    shown: usize,
+    total: usize,
+) -> Element {
+    let (terms, draft) = split_panel_query(&value);
+    let mut focused = use_signal(|| false);
+    let mut highlight = use_signal(|| 0usize);
+    let active_suggestions = if draft.is_empty() {
+        Vec::new()
+    } else {
+        suggestions
+    };
+    let open = *focused.read() && !active_suggestions.is_empty();
+    let current = if open {
+        Some((*highlight.read()).min(active_suggestions.len() - 1))
+    } else {
+        None
+    };
+    let list_id = format!("{id}-hints");
+    let active = !value.trim().is_empty();
+    let status_text = if active {
+        format!("{shown} of {total}")
+    } else {
+        String::new()
+    };
+    let suggs_key = active_suggestions.clone();
+    let terms_key = terms.clone();
+
+    rsx! {
+        TopBarPopover {
+            aria_label: label.clone(),
+            title: Some("Search".to_string()),
+            class: Some("panel-search-popover".to_string()),
+            trigger_class: Some("wallet-nav-chrome-btn".to_string()),
+            content_class: Some("panel-search-popover-content".to_string()),
+            active,
+            trigger: rsx! {
+                crate::icons::SearchIcon { size: 16 }
+                if active {
+                    span { class: "wallet-nav-chrome-dot", aria_hidden: true }
+                }
+            },
+            div { class: "panel-filter", "data-aeon-scope": "panel-filter",
+                SearchField {
+                    id,
+                    label,
+                    placeholder: Some(placeholder),
+                    value,
+                    on_value_change: move |next| {
+                        highlight.set(0);
+                        on_value_change.call(next);
+                    },
+                    role: Some("combobox"),
+                    aria_autocomplete: Some("list"),
+                    aria_expanded: Some(open),
+                    aria_controls: Some(list_id.clone()),
+                    aria_activedescendant: current.map(|idx| format!("{list_id}-{idx}")),
+                    on_focus: move |_| focused.set(true),
+                    on_blur: move |_| focused.set(false),
+                    on_key_down: move |e: KeyboardEvent| {
+                        if !open || suggs_key.is_empty() {
+                            return;
+                        }
+                        let len = suggs_key.len();
+                        let cur = (*highlight.read()).min(len - 1);
+                        match e.key() {
+                            Key::ArrowDown => {
+                                e.prevent_default();
+                                highlight.set((cur + 1) % len);
+                            }
+                            Key::ArrowUp => {
+                                e.prevent_default();
+                                highlight.set((cur + len - 1) % len);
+                            }
+                            Key::Enter | Key::Tab => {
+                                e.prevent_default();
+                                let mut joined = terms_key.clone();
+                                joined.push(suggs_key[cur].term.clone());
+                                highlight.set(0);
+                                on_value_change.call(joined.join(", "));
+                            }
+                            _ => {}
+                        }
+                    },
+                }
+                if open {
+                    ul {
+                        id: "{list_id}",
+                        class: "panel-filter-suggestions",
+                        role: "listbox",
+                        aria_label: "Matches",
+                        for (index, s) in active_suggestions.iter().enumerate() {
+                            {
+                                let term = s.term.clone();
+                                let terms_click = terms.clone();
+                                let is_cur = current == Some(index);
+                                rsx! {
+                                    li {
+                                        key: "{s.term}",
+                                        id: "{list_id}-{index}",
+                                        role: "option",
+                                        aria_selected: if is_cur { "true" } else { "false" },
+                                        "data-highlight": if is_cur { Some("") } else { None },
+                                        onmouseenter: move |_| highlight.set(index),
+                                        onclick: move |_| {
+                                            let mut joined = terms_click.clone();
+                                            joined.push(term.clone());
+                                            highlight.set(0);
+                                            on_value_change.call(joined.join(", "));
+                                        },
+                                        span { class: "panel-filter-suggestion-label", "{s.label}" }
+                                        span { class: "panel-filter-suggestion-kind", "{s.kind}" }
+                                        span { class: "panel-filter-suggestion-count", "{s.count}" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                span { class: "sr-only", role: "status", "{status_text}" }
+            }
+        }
+    }
+}
+
+/// Crumb entry for [`NavBreadcrumb`] and [`NavBreadcrumbTrail`].
+#[derive(Clone, PartialEq)]
+pub struct NavCrumb {
+    pub label: String,
+    pub on_click: Option<EventHandler<()>>,
+}
+
+/// 1:1 port of `navBreadcrumbBack` in `src/components/NavBreadcrumb.tsx`.
+pub fn nav_breadcrumb_back(crumbs: &[NavCrumb]) -> Option<EventHandler<()>> {
+    if crumbs.len() < 2 {
+        return None;
+    }
+    for crumb in crumbs[..crumbs.len() - 1].iter().rev() {
+        if let Some(cb) = crumb.on_click {
+            return Some(cb);
+        }
+    }
+    None
+}
+
+/// 1:1 port of `NavBreadcrumbTrail` in `src/components/NavBreadcrumb.tsx`.
+#[component]
+pub fn NavBreadcrumbTrail(
+    crumbs: Vec<NavCrumb>,
+    #[props(default)] leading_sep: bool,
+    #[props(into, default)] class: Option<String>,
+) -> Element {
+    let cls = class.unwrap_or_else(|| "nav-breadcrumb".to_string());
+    let len = crumbs.len();
+    rsx! {
+        h2 { class: "{cls}", aria_label: "Breadcrumb",
+            for (index, crumb) in crumbs.into_iter().enumerate() {
+                {
+                    let last = index + 1 == len;
+                    let show_sep = index > 0 || (leading_sep && index == 0);
+                    let sep_cls = if leading_sep && index == 0 {
+                        "nav-breadcrumb-sep nav-breadcrumb-sep--leading"
+                    } else {
+                        "nav-breadcrumb-sep"
+                    };
+                    rsx! {
+                        span { key: "{crumb.label}-{index}", class: "nav-breadcrumb-item",
+                            if show_sep {
+                                span { class: "{sep_cls}", aria_hidden: true, "/" }
+                            }
+                            if !last {
+                                if let Some(cb) = crumb.on_click {
+                                    button {
+                                        r#type: "button",
+                                        class: "nav-breadcrumb-link",
+                                        onclick: move |_| cb.call(()),
+                                        "{crumb.label}"
+                                    }
+                                } else {
+                                    span { "{crumb.label}" }
+                                }
+                            } else {
+                                span { class: "nav-breadcrumb-current", "{crumb.label}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/NavBreadcrumb.tsx`.
+#[component]
+pub fn NavBreadcrumb(
+    crumbs: Vec<NavCrumb>,
+    #[props(default)] on_back: Option<EventHandler<()>>,
+    #[props(default)] leading_sep: bool,
+) -> Element {
+    let resolved_back = on_back.or_else(|| nav_breadcrumb_back(&crumbs));
+    rsx! {
+        div { class: "connected-panel-head nav-breadcrumb-head",
+            div { class: "wallet-nav-titlebar-pill nav-breadcrumb-path-pill",
+                NavBreadcrumbTrail {
+                    crumbs,
+                    leading_sep,
+                    class: "nav-breadcrumb wallet-nav-titlebar-crumbs",
+                }
+            }
+            if let Some(back_cb) = resolved_back {
+                div { class: "wallet-nav-actions-pill nav-breadcrumb-back-pill",
+                    button {
+                        r#type: "button",
+                        class: "wallet-nav-chrome-btn",
+                        aria_label: "Back",
+                        title: "Back",
+                        onclick: move |_| back_cb.call(()),
+                        crate::icons::BackIcon { size: 18 }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Context owned by [`WalletNavChromeProvider`] (`src/components/WalletNavChrome.tsx`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WalletNavChromeState {
+    pub section: crate::machines::NavSection,
+    pub child_active: bool,
+    pub render_inline: bool,
+}
+
+/// 1:1 port of `WalletNavChromeProvider` in `src/components/WalletNavChrome.tsx`.
+#[component]
+pub fn WalletNavChromeProvider(
+    section: crate::machines::NavSection,
+    #[props(default)] child_active: bool,
+    #[props(default = true)] render_inline: bool,
+    children: Element,
+) -> Element {
+    let mut state = use_signal(|| WalletNavChromeState {
+        section,
+        child_active,
+        render_inline,
+    });
+    let desired = WalletNavChromeState {
+        section,
+        child_active,
+        render_inline,
+    };
+    if *state.peek() != desired {
+        state.set(desired);
+    }
+    use_context_provider(|| state);
+    rsx! { {children} }
+}
+
+/// 1:1 port of `TitlebarActionsSlot` in `src/components/WalletNavChrome.tsx`.
+#[component]
+pub fn TitlebarActionsSlot(#[props(default)] children: Option<Element>) -> Element {
+    rsx! {
+        div { class: "wallet-nav-titlebar-actions-slot",
+            if let Some(inner) = children {
+                {inner}
+            }
+        }
+    }
+}
+
+/// 1:1 port of `TitlebarActions` in `src/components/WalletNavChrome.tsx`.
+#[component]
+pub fn TitlebarActions(
+    section: crate::machines::NavSection,
+    #[props(into, default)] class: Option<String>,
+    #[props(default)] persist_in_child: bool,
+    children: Element,
+) -> Element {
+    let Some(chrome) = try_use_context::<Signal<WalletNavChromeState>>() else {
+        return rsx! {};
+    };
+    let cur = *chrome.read();
+    if cur.section != section || (cur.child_active && !persist_in_child) || !cur.render_inline {
+        return rsx! {};
+    }
+    let mut classes = vec!["wallet-nav-actions-pill"];
+    let extra = class.unwrap_or_default();
+    if !extra.is_empty() {
+        classes.push(&extra);
+    }
+    if persist_in_child {
+        classes.push("wallet-nav-actions-pill--child");
+    }
+    let pill_class = classes.join(" ");
+    rsx! {
+        div { class: "{pill_class}", {children} }
+    }
+}
+
+/// 1:1 port of `src/components/ExclusiveActionRegion.tsx`.
+#[component]
+pub fn ExclusiveActionRegion(
+    scope: &'static str,
+    part: &'static str,
+    #[props(default = "idle")] state_attr: &'static str,
+    #[props(default)] busy: bool,
+    #[props(default)] error: Option<String>,
+    #[props(into, default)] class: Option<String>,
+    #[props(default = "actions".to_string())] actions_class: String,
+    idle_label: String,
+    pending_label: String,
+    #[props(default)] primary_disabled: bool,
+    on_submit: EventHandler<FormEvent>,
+    #[props(default)] secondary_label: Option<String>,
+    #[props(default)] on_secondary: Option<EventHandler<()>>,
+    #[props(default)] confirm: Option<AsyncConfirmSpec>,
+    #[props(default)] on_confirm: Option<EventHandler<()>>,
+    #[props(default)] on_cancel: Option<EventHandler<()>>,
+    children: Element,
+) -> Element {
+    let primary_text = if busy { pending_label } else { idle_label };
+    rsx! {
+        form {
+            class: class,
+            "data-aeon-scope": scope,
+            "data-aeon-part": part,
+            "data-aeon-state": state_attr,
+            onsubmit: move |e| on_submit.call(e),
+            {children}
+            if let Some(ref err) = error {
+                p { class: "error", role: "alert", "{err}" }
+            }
+            div {
+                class: "{actions_class}",
+                "data-aeon-part": "actions",
+                "data-aeon-state": state_attr,
+                button {
+                    r#type: "submit",
+                    class: "btn btn-primary",
+                    "data-aeon-part": "primary",
+                    disabled: busy || primary_disabled,
+                    "{primary_text}"
+                }
+                if let Some(ref sec_label) = secondary_label {
+                    button {
+                        r#type: "button",
+                        class: "btn btn-ghost",
+                        "data-aeon-part": "secondary",
+                        disabled: busy,
+                        onclick: move |_| {
+                            if let Some(cb) = on_secondary {
+                                cb.call(());
+                            }
+                        },
+                        "{sec_label}"
+                    }
+                }
+            }
+            if confirm.is_some() {
+                AsyncActionPrompt {
+                    confirm,
+                    state_attr,
+                    on_confirm: move |_| {
+                        if let Some(cb) = on_confirm {
+                            cb.call(());
+                        }
+                    },
+                    on_cancel: move |_| {
+                        if let Some(cb) = on_cancel {
+                            cb.call(());
+                        }
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/DeferredImage.tsx`.
+#[component]
+pub fn DeferredImage(
+    #[props(default)] src: Option<String>,
+    #[props(default)] alt: String,
+    #[props(into, default)] class: Option<String>,
+    #[props(default)] width: Option<u32>,
+    #[props(default)] height: Option<u32>,
+    #[props(default)] ready: bool,
+    #[props(default)] fallback: Option<Element>,
+    #[props(into, default)] skeleton_class: Option<String>,
+) -> Element {
+    let Some(img_src) = src.filter(|s| !s.is_empty()) else {
+        return rsx! {
+            span {
+                class: "deferred-image deferred-image--fallback",
+                "data-aeon-state": "error",
+                if let Some(fb) = fallback {
+                    {fb}
+                } else {
+                    Skeleton { class: skeleton_class.unwrap_or_default() }
+                }
+            }
+        };
+    };
+    let state = if ready { "ready" } else { "loading" };
+    rsx! {
+        span {
+            class: "deferred-image",
+            "data-aeon-state": state,
+            if !ready {
+                Skeleton { class: skeleton_class.unwrap_or_default() }
+            }
+            img {
+                class: class,
+                src: if ready { Some(img_src) } else { None },
+                alt: "{alt}",
+                width: width.map(|w| w.to_string()),
+                height: height.map(|h| h.to_string()),
+                hidden: !ready,
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/amountPadKey.ts`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AmountPadKey {
+    Digit(char),
+    Decimal,
+    Back,
+}
+
+impl AmountPadKey {
+    pub const ALL: [Self; 12] = [
+        Self::Digit('1'),
+        Self::Digit('2'),
+        Self::Digit('3'),
+        Self::Digit('4'),
+        Self::Digit('5'),
+        Self::Digit('6'),
+        Self::Digit('7'),
+        Self::Digit('8'),
+        Self::Digit('9'),
+        Self::Decimal,
+        Self::Digit('0'),
+        Self::Back,
+    ];
+
+    pub fn aria_label(self) -> String {
+        match self {
+            Self::Back => "Delete".to_string(),
+            Self::Decimal => "Decimal point".to_string(),
+            Self::Digit(c) => c.to_string(),
+        }
+    }
+}
+
+pub fn apply_amount_pad_key(value: &str, key: AmountPadKey) -> String {
+    match key {
+        AmountPadKey::Back => {
+            let mut chars = value.chars();
+            chars.next_back();
+            chars.as_str().to_string()
+        }
+        AmountPadKey::Decimal => {
+            if value.contains('.') {
+                value.to_string()
+            } else if value.is_empty() {
+                "0.".to_string()
+            } else {
+                format!("{value}.")
+            }
+        }
+        AmountPadKey::Digit(c) => {
+            if value == "0" {
+                c.to_string()
+            } else {
+                format!("{value}{c}")
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/AmountPad.tsx`.
+#[component]
+pub fn AmountPad(
+    value: String,
+    on_change: EventHandler<String>,
+    label: String,
+    #[props(default)] disabled: bool,
+) -> Element {
+    rsx! {
+        div {
+            class: "amount-pad",
+            "data-aeon-scope": "amount-pad",
+            role: "group",
+            aria_label: "{label}",
+            for key in AmountPadKey::ALL {
+                {
+                    let cur = value.clone();
+                    let aria = key.aria_label();
+                    rsx! {
+                        button {
+                            key: "{aria}",
+                            r#type: "button",
+                            "data-aeon-part": "key",
+                            aria_label: "{aria}",
+                            disabled: disabled,
+                            onclick: move |_| on_change.call(apply_amount_pad_key(&cur, key)),
+                            match key {
+                                AmountPadKey::Back => rsx! { crate::icons::BackspaceIcon { size: 22 } },
+                                AmountPadKey::Decimal => rsx! { "." },
+                                AmountPadKey::Digit(c) => rsx! { "{c}" },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/SettingsSection.tsx`.
+#[component]
+pub fn SettingsSection(
+    title: String,
+    #[props(into, default)] part: Option<String>,
+    #[props(into, default)] group_key: Option<String>,
+    #[props(into, default)] class: Option<String>,
+    children: Element,
+) -> Element {
+    let cls = match class {
+        Some(c) if !c.is_empty() => format!("settings-group {c}"),
+        _ => "settings-group".to_string(),
+    };
+    let group = group_key.unwrap_or_else(|| title.clone());
+    rsx! {
+        section {
+            class: "{cls}",
+            "data-aeon-part": part,
+            "data-settings-group": "{group}",
+            h3 { class: "settings-group-title", "{title}" }
+            {children}
+        }
+    }
+}
+
+/// 1:1 port of `src/components/settings/SettingsControlRow.tsx`.
+#[component]
+pub fn SettingsControlRow(
+    label: String,
+    #[props(into, default)] description: Option<String>,
+    #[props(default)] icon: Option<Element>,
+    #[props(default)] children: Option<Element>,
+) -> Element {
+    rsx! {
+        li {
+            aeon_ui::list_row::Root { "data-aeon-layout": "control",
+                if let Some(ic) = icon {
+                    aeon_ui::list_row::Leading { "aria-hidden": "true",
+                        span { class: "settings-row-icon", "aria-hidden": "true", "data-tone": "default",
+                            {ic}
+                        }
+                    }
+                }
+                aeon_ui::list_row::Label { "{label}" }
+                if let Some(ref desc) = description {
+                    aeon_ui::list_row::Description { "{desc}" }
+                }
+                if let Some(trailing) = children {
+                    aeon_ui::list_row::Trailing { {trailing} }
+                }
+            }
+        }
+    }
+}
+
+/// Option for [`SettingsIconToggle`].
+#[derive(Clone, PartialEq)]
+pub struct SettingsIconToggleOption {
+    pub value: String,
+    pub label: String,
+    pub icon: Element,
+}
+
+/// 1:1 port of `src/components/settings/SettingsIconToggle.tsx`.
+#[component]
+pub fn SettingsIconToggle(
+    value: String,
+    options: Vec<SettingsIconToggleOption>,
+    on_change: EventHandler<String>,
+    aria_label: String,
+) -> Element {
+    rsx! {
+        div {
+            class: "settings-icon-toggle",
+            role: "radiogroup",
+            aria_label: "{aria_label}",
+            "data-aeon-scope": "radioGroup",
+            "data-aeon-part": "root",
+            for opt in options {
+                {
+                    let selected = opt.value == value;
+                    let opt_val = opt.value.clone();
+                    let cur_val = value.clone();
+                    let state = if selected { "selected" } else { "unselected" };
+                    rsx! {
+                        div {
+                            key: "{opt.value}",
+                            class: "settings-icon-toggle-item",
+                            "data-aeon-part": "item",
+                            "data-aeon-state": state,
+                            span {
+                                role: "radio",
+                                aria_checked: if selected { "true" } else { "false" },
+                                aria_label: "{opt.label}",
+                                title: "{opt.label}",
+                                class: "settings-icon-toggle-btn",
+                                "data-aeon-part": "itemControl",
+                                "data-aeon-state": state,
+                                "data-highlighted": if selected { Some("") } else { None },
+                                "data-selected": if selected { Some("") } else { None },
+                                onclick: move |_| {
+                                    if opt_val != cur_val {
+                                        on_change.call(opt_val.clone());
+                                    }
+                                },
+                                {opt.icon}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `screenshotShortcutKeys` in `src/components/settings/ShortcutHint.tsx`.
+pub fn screenshot_shortcut_keys(platform: Option<&str>) -> Vec<&'static str> {
+    if platform == Some("darwin") {
+        vec!["⌘", "⇧", "S"]
+    } else {
+        vec!["Ctrl", "Shift", "S"]
+    }
+}
+
+/// 1:1 port of `src/components/settings/ShortcutHint.tsx`.
+#[component]
+pub fn ShortcutHint(
+    keys: Vec<String>,
+    #[props(into, default)] class: Option<String>,
+) -> Element {
+    if keys.is_empty() {
+        return rsx! {};
+    }
+    let cls = match class {
+        Some(c) if !c.is_empty() => format!("shortcut-hint {c}"),
+        _ => "shortcut-hint".to_string(),
+    };
+    let aria = keys.join(" + ");
+    rsx! {
+        span { class: "{cls}", aria_label: "{aria}",
+            for (index, key) in keys.into_iter().enumerate() {
+                kbd { key: "{key}-{index}", class: "shortcut-key", "{key}" }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_key_action_matches_ts() {
+        assert_eq!(search_key_action("Escape", "btc"), Some("clear"));
+        assert_eq!(search_key_action("Escape", ""), Some("leave"));
+        assert_eq!(search_key_action("Enter", "btc"), None);
+    }
+
+    #[test]
+    fn split_panel_query_matches_ts() {
+        assert_eq!(
+            split_panel_query("fox,  rare , bsv "),
+            (vec!["fox".into(), "rare".into()], "bsv".into())
+        );
+        assert_eq!(split_panel_query(""), (vec![], String::new()));
+    }
+
+    #[test]
+    fn amount_pad_key_rules_match_ts() {
+        assert_eq!(apply_amount_pad_key("", AmountPadKey::Decimal), "0.");
+        assert_eq!(apply_amount_pad_key("1.2", AmountPadKey::Decimal), "1.2");
+        assert_eq!(apply_amount_pad_key("0", AmountPadKey::Digit('5')), "5");
+        assert_eq!(apply_amount_pad_key("12.3", AmountPadKey::Back), "12.");
+    }
+
+    #[test]
+    fn shortcut_hint_keys_match_platform() {
+        assert_eq!(screenshot_shortcut_keys(Some("darwin")), vec!["⌘", "⇧", "S"]);
+        assert_eq!(screenshot_shortcut_keys(Some("linux")), vec!["Ctrl", "Shift", "S"]);
+    }
 
     #[test]
     fn middle_ellipsis_keeps_numbered_tail() {

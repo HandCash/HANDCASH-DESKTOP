@@ -34,7 +34,7 @@ const AUTH_ENTRY_TAGLINES: &[&str] = &[
     "Present your business your way.",
 ];
 
-const ACCEPT_ALL_COINS: &[&str] = &["bsv", "ltc", "bch", "btc", "doge", "usdc_arc"];
+const ACCEPT_ALL_COINS: &[&str] = &["bsv", "ltc", "bch", "btc", "doge", "arc-usd"];
 const NO_KEYSTORE_TEXT: &str = "Needs a system keyring on this computer, or anyone who can read its files could open this wallet.";
 
 #[derive(Clone, Debug)]
@@ -72,8 +72,11 @@ pub fn AuthShell(
             "data-aeon-state": state,
 
             // Geometric payment-mesh SVG backdrop mirroring `AuthMeshBackground.tsx`
-            div { class: "auth-shell-mesh", "data-aeon-part": "backdrop",
+            div { class: "auth-shell-mesh", "aria-hidden": "true", "data-aeon-part": "backdrop",
                 svg {
+                    class: "auth-mesh-canvas",
+                    "aria-hidden": "true",
+                    "data-aeon-part": "mesh",
                     view_box: "0 0 1200 800",
                     width: "100%",
                     height: "100%",
@@ -128,7 +131,7 @@ pub fn AuthShell(
                 }
             }
 
-            div { class: "auth-shell-scrim", "data-aeon-part": "scrim" }
+            div { class: "auth-shell-scrim", "aria-hidden": "true", "data-aeon-part": "scrim" }
             div { class: "auth-shell-content", "data-aeon-part": "content",
                 {children}
             }
@@ -809,18 +812,19 @@ pub fn AuthFlow(
                     }
                 }
                 p { class: "auth-alt",
-                    button {
-                        r#type: "button",
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
                         class: "auth-alt-link",
                         "data-aeon-part": "migrate",
                         onclick: move |_| {
                             error_msg.set(None);
                             auth_mode.set(AuthFormMode::Create);
                         },
-                        "Recover an old HandCash wallet"
+                        button::Label { "Recover an old HandCash wallet" }
                     }
                 }
                 p {
+                    aria_live: "polite",
                     class: "auth-entry-tagline is-in",
                     "data-aeon-part": "entry-tagline",
                     "{tagline}"
@@ -1132,10 +1136,11 @@ pub fn AuthFlow(
                 // Recovery phrase field
                 if mode == AuthFormMode::Phrase {
                     field::Root { class: "field",
-                        field::Label { "Recovery phrase" }
+                        field::Label { r#for: "mnemonic", "Recovery phrase" }
                         textarea {
                             id: "mnemonic",
                             rows: "3",
+                            "data-aeon-part": "textarea",
                             placeholder: "12 or 24 words separated by spaces",
                             value: "{mnemonic_input}",
                             oninput: move |e| mnemonic_input.set(e.value()),
@@ -1210,8 +1215,8 @@ pub fn AuthFlow(
                     }
                 }
 
-                // Password field on Unlock
-                if mode == AuthFormMode::Unlock {
+                // Password field on Unlock (only when memorable password lock is active)
+                if mode == AuthFormMode::Unlock && services.has_memorable_password() {
                     PasswordField {
                         id: "password",
                         label: "HandCash password",
@@ -1278,6 +1283,381 @@ pub fn AuthFlow(
                     p { class: "auth-lede auth-restore-note",
                         "Next you’ll restore history, then choose how this device unlocks."
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Standalone `src/components/OnboardEntryPanel.tsx` for direct rendering & DOM parity tests.
+#[component]
+pub fn OnboardEntryPanel(
+    on_sign_in: EventHandler<()>,
+    on_create: EventHandler<()>,
+    on_migrate: EventHandler<()>,
+) -> Element {
+    let tagline = AUTH_ENTRY_TAGLINES[0];
+    rsx! {
+        section {
+            class: "auth-screen",
+            "data-aeon-scope": "auth",
+            "data-aeon-state": "onboard-entry",
+            div { class: "auth-entry-brand", "data-aeon-part": "entry-brand",
+                BrandLogo { size: 48, show_wordmark: true }
+            }
+            div { class: "auth-entry-actions", "data-aeon-part": "entry-actions",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary auth-entry-primary",
+                    "data-aeon-part": "sign-in",
+                    onclick: move |_| on_sign_in.call(()),
+                    button::Label { "Sign in" }
+                }
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost auth-entry-secondary",
+                    "data-aeon-part": "create",
+                    onclick: move |_| on_create.call(()),
+                    button::Label { "Create new wallet" }
+                }
+            }
+            p { class: "auth-alt",
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "auth-alt-link",
+                    "data-aeon-part": "migrate",
+                    onclick: move |_| on_migrate.call(()),
+                    button::Label { "Recover an old HandCash wallet" }
+                }
+            }
+            p {
+                aria_live: "polite",
+                class: "auth-entry-tagline is-in",
+                "data-aeon-part": "entry-tagline",
+                "{tagline}"
+            }
+        }
+    }
+}
+
+/// Standalone `src/components/CreateKeysBackupPanel.tsx`.
+#[component]
+pub fn CreateKeysBackupPanel(
+    mnemonic: String,
+    #[props(default)] on_done: Option<EventHandler<()>>,
+) -> Element {
+    let mut backup_kind = use_signal(|| "phrase");
+    let mut phrase_copied = use_signal(|| false);
+    let cur_kind = *backup_kind.read();
+    let words: Vec<String> = mnemonic.split_whitespace().map(ToString::to_string).collect();
+    let can_confirm = *phrase_copied.read();
+    let phrase_for_copy = mnemonic.clone();
+    rsx! {
+        div {
+            class: "wallet-setup-config keys-backup",
+            "data-aeon-scope": "create-keys-backup",
+            header { class: "keys-backup-head",
+                h2 { "Save recovery backup" }
+                div { class: "keys-backup-tabs", role: "tablist", aria_label: "Backup kind",
+                    button {
+                        r#type: "button",
+                        role: "tab",
+                        aria_selected: if cur_kind == "phrase" { "true" } else { "false" },
+                        class: if cur_kind == "phrase" { "btn btn-primary keys-backup-tab" } else { "btn btn-ghost keys-backup-tab" },
+                        onclick: move |_| backup_kind.set("phrase"),
+                        "Phrase"
+                    }
+                    button {
+                        r#type: "button",
+                        role: "tab",
+                        aria_selected: if cur_kind == "split" { "true" } else { "false" },
+                        class: if cur_kind == "split" { "btn btn-primary keys-backup-tab" } else { "btn btn-ghost keys-backup-tab" },
+                        onclick: move |_| backup_kind.set("split"),
+                        "Key slices"
+                    }
+                }
+            }
+            div { class: "keys-backup-body", "data-aeon-scroll": "hover",
+                div { class: "split-backup-shares",
+                    ol { class: "recovery-phrase-grid", "data-words": "{words.len()}",
+                        for (i, word) in words.iter().enumerate() {
+                            li { key: "{i}-{word}",
+                                span { class: "recovery-phrase-index", "{i + 1}" }
+                                span { class: "recovery-phrase-word", "{word}" }
+                            }
+                        }
+                    }
+                }
+            }
+            footer { class: "keys-backup-foot",
+                if cur_kind == "phrase" {
+                    button::Root {
+                        variant: button::ButtonVariant::Ghost,
+                        class: "btn btn-ghost",
+                        onclick: move |_| {
+                            let _ = crate::state::copy_to_clipboard(&phrase_for_copy);
+                            phrase_copied.set(true);
+                        },
+                        button::Label { "Copy phrase" }
+                    }
+                }
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary",
+                    disabled: !can_confirm,
+                    onclick: move |_| {
+                        if let Some(cb) = on_done {
+                            cb.call(());
+                        }
+                    },
+                    button::Label { "I’ve saved it — continue" }
+                }
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    "data-aeon-part": "backup-later",
+                    onclick: move |_| {
+                        if let Some(cb) = on_done {
+                            cb.call(());
+                        }
+                    },
+                    button::Label { "I’ll do this later" }
+                }
+            }
+        }
+    }
+}
+
+/// Standalone `src/components/OnboardAcceptPanel.tsx`.
+#[component]
+pub fn OnboardAcceptPanel(
+    #[props(default)] initial_choice: Option<AcceptedCoins>,
+    #[props(default)] bsv_ready: bool,
+    #[props(default)] on_done: Option<EventHandler<AcceptedCoins>>,
+) -> Element {
+    let mut choice_sig = use_signal(move || initial_choice.unwrap_or(AcceptedCoins::Bitcoin));
+    let choice = *choice_sig.read();
+    rsx! {
+        div {
+            class: "wallet-setup-config",
+            "data-aeon-scope": "onboard-accept",
+            "data-aeon-state": choice.as_str(),
+            h2 { "What do you want to accept?" }
+            p { class: "auth-lede",
+                "Just Bitcoin SV is the default. You can change this later in Settings."
+            }
+            div {
+                class: "wallet-setup-options onboard-accept-options",
+                role: "radiogroup",
+                aria_label: "Accept",
+                for opt in AcceptedCoins::CHOICES {
+                    {
+                        let active = choice == opt;
+                        let cls = if active {
+                            "wallet-setup-option onboard-accept-option is-selected"
+                        } else {
+                            "wallet-setup-option onboard-accept-option"
+                        };
+                        let coins: &[&str] = match opt {
+                            AcceptedCoins::Bitcoin => &["bsv"],
+                            AcceptedCoins::All => ACCEPT_ALL_COINS,
+                        };
+                        rsx! {
+                            label { key: "{opt.as_str()}", class: "{cls}",
+                                input {
+                                    r#type: "radio",
+                                    name: "onboard-accept",
+                                    value: opt.as_str(),
+                                    checked: active,
+                                    onchange: move |_| choice_sig.set(opt),
+                                }
+                                span { class: "onboard-accept-icons", aria_hidden: "true",
+                                    for coin in coins.iter().copied() {
+                                        span {
+                                            key: "{coin}",
+                                            class: "onboard-accept-icon",
+                                            "data-coin": "{coin}",
+                                            if coin == "bsv" {
+                                                crate::ui::primitives::DeferredImage {
+                                                    src: Some(crate::icons::bsv_logo_png_data_uri().to_string()),
+                                                    alt: String::new(),
+                                                    ready: bsv_ready,
+                                                }
+                                            } else {
+                                                TickerCoinMark { coin, size: 28 }
+                                            }
+                                        }
+                                    }
+                                }
+                                span { class: "wallet-setup-option-body",
+                                    strong { "{opt.title()}" }
+                                    span { "{opt.description()}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div {
+                class: "auth-actions",
+                "data-aeon-part": "onboard-accept-actions",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary auth-submit",
+                    onclick: move |_| {
+                        if let Some(cb) = on_done {
+                            cb.call(*choice_sig.read());
+                        }
+                    },
+                    button::Label { "Continue" }
+                }
+            }
+        }
+    }
+}
+
+/// Standalone `src/components/OnboardFiatPanel.tsx`.
+#[component]
+pub fn OnboardFiatPanel(
+    #[props(default = FiatCode::Usd)] initial_fiat: FiatCode,
+    #[props(default)] on_done: Option<EventHandler<FiatCode>>,
+) -> Element {
+    let mut fiat_sig = use_signal(move || initial_fiat);
+    let current_fiat = *fiat_sig.read();
+    rsx! {
+        div {
+            class: "wallet-setup-config",
+            "data-aeon-scope": "onboard-fiat",
+            "data-aeon-state": current_fiat.as_str(),
+            h2 { "Show balances in" }
+            p { class: "auth-lede",
+                "Government currency for totals on the home screen. You can change this anytime from Activity."
+            }
+            div {
+                class: "onboard-fiat-options",
+                role: "listbox",
+                aria_label: "Government currency",
+                "data-aeon-part": "fiat",
+                for code in FiatCode::ALL {
+                    {
+                        let selected = code == current_fiat;
+                        rsx! {
+                            button {
+                                key: "{code.as_str()}",
+                                r#type: "button",
+                                role: "option",
+                                class: "onboard-fiat-option",
+                                aria_selected: if selected { "true" } else { "false" },
+                                aria_label: "{code.iso()} — {code.name()}",
+                                "data-aeon-state": if selected { "selected" } else { "idle" },
+                                onclick: move |_| fiat_sig.set(code),
+                                span { class: "onboard-fiat-flag", aria_hidden: "true", "{code.flag()}" }
+                                span { class: "onboard-fiat-iso", "{code.iso()}" }
+                            }
+                        }
+                    }
+                }
+            }
+            div {
+                class: "auth-actions",
+                "data-aeon-part": "onboard-fiat-actions",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary auth-submit",
+                    onclick: move |_| {
+                        if let Some(cb) = on_done {
+                            cb.call(*fiat_sig.read());
+                        }
+                    },
+                    button::Label { "Continue" }
+                }
+            }
+        }
+    }
+}
+
+/// Standalone `src/components/OnboardProtectPanel.tsx`.
+#[component]
+pub fn OnboardProtectPanel(
+    #[props(default = true)] none_allowed: bool,
+    #[props(default = "none".to_string())] default_mode: String,
+    #[props(default)] on_done: Option<EventHandler<String>>,
+) -> Element {
+    let mut mode_sig = use_signal(move || default_mode);
+    let cur_mode = mode_sig.read().clone();
+    let options: [(&str, &str, &str, bool); 4] = [
+        ("none", "None", "Open this wallet on this computer without a prompt.", false),
+        ("password", "Password", "Unlock with a HandCash password you choose.", false),
+        ("device", "Touch ID", "Unlock with this device’s fingerprint or lock screen.", true),
+        ("both", "Password + Touch ID", "Either your password or this device can unlock.", true),
+    ];
+    rsx! {
+        div {
+            class: "wallet-setup-config",
+            "data-aeon-scope": "onboard-protect",
+            h2 { "Protect this device" }
+            p { class: "auth-lede",
+                "Choose how HandCash unlocks on this computer. You can change this later in Settings."
+            }
+            div {
+                class: "wallet-setup-options",
+                role: "radiogroup",
+                aria_label: "Device lock",
+                for (id, title, desc, needs_device) in options {
+                    {
+                        let no_keystore = id == "none" && !none_allowed;
+                        let disabled = needs_device || no_keystore;
+                        let active = cur_mode == id;
+                        let cls = match (active, disabled) {
+                            (true, true) => "wallet-setup-option is-selected is-disabled",
+                            (true, false) => "wallet-setup-option is-selected",
+                            (false, true) => "wallet-setup-option is-disabled",
+                            (false, false) => "wallet-setup-option",
+                        };
+                        let sub = if no_keystore {
+                            NO_KEYSTORE_TEXT
+                        } else if disabled {
+                            "Touch ID is not available on this device"
+                        } else {
+                            desc
+                        };
+                        let id_owned = id.to_string();
+                        rsx! {
+                            label { key: "{id}", class: "{cls}",
+                                input {
+                                    r#type: "radio",
+                                    name: "onboard-lock",
+                                    value: "{id}",
+                                    checked: active,
+                                    disabled: disabled,
+                                    onchange: move |_| {
+                                        if !disabled {
+                                            mode_sig.set(id_owned.clone());
+                                        }
+                                    },
+                                }
+                                span { class: "wallet-setup-option-body",
+                                    strong { "{title}" }
+                                    span { "{sub}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            div {
+                class: "auth-actions",
+                "data-aeon-part": "onboard-protect-actions",
+                "data-aeon-state": "idle",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary auth-submit",
+                    onclick: move |_| {
+                        if let Some(cb) = on_done {
+                            cb.call(mode_sig.read().clone());
+                        }
+                    },
+                    button::Label { "Continue" }
                 }
             }
         }

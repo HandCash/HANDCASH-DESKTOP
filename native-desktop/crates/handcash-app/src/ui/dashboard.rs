@@ -166,14 +166,16 @@ pub fn Dashboard(
                             open_menu,
                         }
 
-                        chrome::WalletAccountMenu {
-                            profile: profile.clone(),
-                            app_machine,
-                            snapshot,
-                            nav_section,
-                            nav_child,
-                            toast,
-                            open_menu,
+                        div { class: "wallet-nav-actions-pill wallet-hero-identity-chrome",
+                            chrome::WalletAccountMenu {
+                                profile: profile.clone(),
+                                app_machine,
+                                snapshot,
+                                nav_section,
+                                nav_child,
+                                toast,
+                                open_menu,
+                            }
                         }
                     }
 

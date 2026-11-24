@@ -425,10 +425,28 @@ pub fn EditIcon(#[props(default = 16)] size: u32) -> Element {
 }
 
 #[component]
-pub fn SearchIcon(#[props(default = 16)] size: u32) -> Element {
+pub fn SearchIcon(
+    #[props(default = 16)] size: u32,
+    #[props(into, default)] data_aeon_part: Option<String>,
+) -> Element {
+    rsx! {
+        svg {
+            view_box: "0 0 24 24",
+            width: "{size}",
+            height: "{size}",
+            fill: "currentColor",
+            "aria-hidden": "true",
+            "data-aeon-part": data_aeon_part,
+            path { d: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" }
+        }
+    }
+}
+
+#[component]
+pub fn BackspaceIcon(#[props(default = 22)] size: u32) -> Element {
     rsx! {
         svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
-            path { d: "M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" }
+            path { d: "M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-3 12.59L17.59 17 14 13.41 10.41 17 9 15.59 12.59 12 9 8.41 10.41 7 14 10.59 17.59 7 19 8.41 15.41 12 19 15.59z" }
         }
     }
 }
@@ -669,6 +687,51 @@ pub fn ChainMark(coin: String, #[props(default = 18)] size: u32) -> Element {
             for d in glyphs {
                 path { class: "chain-mark-glyph", fill: "#ffffff", d: "{d}" }
             }
+        }
+    }
+}
+
+#[component]
+pub fn PhoneIcon(#[props(default = 16)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1C10.61 21 3 13.39 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.58a1 1 0 0 1-.25 1.01l-2.2 2.2z" }
+        }
+    }
+}
+
+#[component]
+pub fn AttachFileIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M16.5 6v11.5a4 4 0 0 1-8 0V5a2.5 2.5 0 0 1 5 0v10.5a1 1 0 0 1-2 0V6H10v9.5a2.5 2.5 0 0 0 5 0V5a4 4 0 0 0-8 0v12.5a5.5 5.5 0 0 0 11 0V6h-1.5z" }
+        }
+    }
+}
+
+#[component]
+pub fn PayIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z" }
+        }
+    }
+}
+
+#[component]
+pub fn RequestMoneyIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14v-3h3l-4-4-4 4h3v3z" }
+        }
+    }
+}
+
+#[component]
+pub fn CloudUploadIcon(#[props(default = 20)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 0 0 0 14a6 6 0 0 0 6 6h13a5 5 0 0 0 .35-9.96zM14 13v4h-4v-4H7l5-5 5 5h-3z" }
         }
     }
 }

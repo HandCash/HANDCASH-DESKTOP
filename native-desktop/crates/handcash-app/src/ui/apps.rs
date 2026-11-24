@@ -54,19 +54,77 @@ pub fn AppAvatar(
         "sm" => 18,
         _ => 22,
     };
+    let has_http = origin.starts_with("https://") || origin.starts_with("http://");
+    let mut state = use_signal(move || if has_http { "loading" } else { "fallback" });
+    let cur_state = *state.read();
     let initials = app_initials(&origin);
+    let icon_url = format!("{}/favicon.ico", origin.trim_end_matches('/'));
     rsx! {
         div {
             class: "app-avatar app-avatar-{size}",
             "data-aeon-part": "avatar",
-            "data-aeon-state": "fallback",
+            "data-aeon-state": cur_state,
             title: "{name}",
-            span {
-                class: "app-avatar-fallback",
-                aria_label: "{initials}",
-                AppsIcon { size: icon_size }
+            if cur_state == "loading" {
+                crate::ui::primitives::SkeletonAvatar { size: size.to_string() }
+            }
+            if cur_state != "fallback" {
+                img {
+                    class: "app-avatar-img",
+                    src: "{icon_url}",
+                    alt: "",
+                    onload: move |_| state.set("ready"),
+                    onerror: move |_| state.set("fallback"),
+                }
+            } else {
+                span {
+                    class: "app-avatar-fallback",
+                    aria_label: "{initials}",
+                    AppsIcon { size: icon_size }
+                }
             }
         }
+    }
+}
+
+/// 1:1 port of `src/components/GrantExpiryLine.tsx`.
+#[component]
+pub fn GrantExpiryLine(#[props(default)] expires_at: Option<i64>) -> Element {
+    let now = now_ms();
+    let (state, text) = match expires_at {
+        None => ("active", "Connected until you disconnect".to_string()),
+        Some(ts) if ts <= now => ("expired", "Expired".to_string()),
+        Some(ts) => {
+            let rem_ms = ts.saturating_sub(now);
+            let mins = (rem_ms / 60_000).max(1);
+            let label = if mins < 60 {
+                format!("Expires in {mins}m")
+            } else if mins < 24 * 60 {
+                format!("Expires in {}h", mins / 60)
+            } else {
+                format!("Expires in {}d", mins / (24 * 60))
+            };
+            ("active", label)
+        }
+    };
+    rsx! {
+        p {
+            class: "grant-expiry",
+            "data-aeon-scope": "grant-expiry",
+            "data-aeon-state": state,
+            "{text}"
+        }
+    }
+}
+
+/// 1:1 port of `src/components/ScopeIcon.tsx`.
+#[component]
+pub fn ScopeIcon(scope_id: String, #[props(default = 13)] size: u32) -> Element {
+    match scope_id.as_str() {
+        "auto-pay" => rsx! { crate::icons::CoinGlyphIcon { size } },
+        "receive" => rsx! { crate::icons::ReceiveIcon { size } },
+        "items" | "tokens" => rsx! { crate::icons::CollectablesIcon { size } },
+        _ => rsx! { crate::icons::EyeIcon { size } },
     }
 }
 
@@ -152,11 +210,12 @@ pub fn ConnectedAppsPanel(
             class: "nav-section-body nav-section-with-scroll",
             "data-aeon-scope": "connected-apps",
             "data-aeon-state": cur_view.as_str(),
-            "data-view": cur_view.as_str(),
 
             div { class: "connected-panel-head",
                 h2 { "Apps" }
-                div { class: "connected-panel-head-actions", style: "display: flex; align-items: center; gap: 8px;",
+                crate::ui::primitives::TitlebarActions {
+                    section: crate::machines::NavSection::Apps,
+                    class: "connected-panel-head-actions",
                     div { class: "field", style: "margin: 0;",
                         input {
                             r#type: "search",
@@ -398,15 +457,18 @@ pub fn AppDetailsPanel(
     mut dock_spec: Signal<Option<DockSpec>>,
     dock_trigger: Signal<DockTrigger>,
     mut toast: Signal<Option<ToastNotice>>,
+    #[props(default)] app_override: Option<ConnectedAppRecord>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
     let mut confirming_disconnect = use_signal(|| false);
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
-    let app_opt = services
-        .list_connected_apps()
-        .into_iter()
-        .find(|a| a.origin == origin);
+    let app_opt = app_override.or_else(|| {
+        services
+            .list_connected_apps()
+            .into_iter()
+            .find(|a| a.origin == origin)
+    });
 
     let Some(app) = app_opt else {
         if dock_spec.read().is_some() {
@@ -501,9 +563,13 @@ pub fn AppDetailsPanel(
     }
 
     let title = app_title(&app);
-    let now = now_ms();
-    let connected_when = format_relative_time(app.connected_at, now);
-    let incoming_allowed = app.accept_incoming_funds.unwrap_or(true);
+    let incoming_allowed = app.accept_incoming_funds.unwrap_or(false);
+    let launch_label = format!("Launch {title}");
+    let launch_origin = app.origin.clone();
+    let revoke_origin = app.origin.clone();
+    let revoke_title = title.clone();
+    let svc_revoke = Arc::clone(&services);
+    let has_home = app.origin.starts_with("https://") || app.origin.starts_with("http://");
 
     rsx! {
         div {
@@ -515,17 +581,17 @@ pub fn AppDetailsPanel(
                     div { class: "app-details-head-text",
                         h3 { id: "app-details-title", "{title}" }
                         span { class: "mono app-details-host", "{app.origin}" }
-                        span { class: "history-when", "Connected {connected_when}" }
+                        GrantExpiryLine { expires_at: app.expires_at }
                     }
                 }
                 dl { class: "app-activity-stats", aria_label: "Activity",
                     div {
                         dt { "Spent 24h" }
-                        dd { "0 sats" }
+                        dd { "—" }
                     }
                     div {
                         dt { "Earned 24h" }
-                        dd { "0 sats" }
+                        dd { "—" }
                     }
                 }
             }
@@ -533,12 +599,21 @@ pub fn AppDetailsPanel(
             div { class: "app-details-section",
                 p { class: "scope-list-label", "Permissions" }
                 div { class: "permission-chips", aria_label: "Permissions",
-                    span { class: "permission-chip", "Public identity key" }
-                    span { class: "permission-chip", "Sign & encrypt (BRC-100)" }
+                    button {
+                        r#type: "button",
+                        class: "permission-chip",
+                        title: "Use connected, non-spending wallet APIs. Spending, signatures, encryption, identity proofs, and protected inventory require separate approval.",
+                        ScopeIcon { scope_id: "view".to_string(), size: 13 }
+                        "View only, no spending"
+                    }
                     if incoming_allowed {
-                        span { class: "permission-chip", "Receive funds automatically" }
-                    } else {
-                        span { class: "permission-chip", "Prompt before receiving funds" }
+                        button {
+                            r#type: "button",
+                            class: "permission-chip",
+                            title: "Receive funds sent to this wallet without prompting each time.",
+                            ScopeIcon { scope_id: "receive".to_string(), size: 13 }
+                            "Receive automatically"
+                        }
                     }
                 }
             }
@@ -546,6 +621,48 @@ pub fn AppDetailsPanel(
             if is_confirming {
                 p { class: "error", role: "alert",
                     "Disconnect {title} ({app.origin})? Confirm in the action bar above."
+                }
+            }
+
+            div { class: "actions app-details-actions wallet-action-bar",
+                if has_home {
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary btn-icon connected-app-icon-action",
+                        aria_label: launch_label.clone(),
+                        title: launch_label,
+                        onclick: move |_| {
+                            if let Err(e) = open_external_url(&launch_origin) {
+                                toast.set(Some(ToastNotice {
+                                    title: "Open app".into(),
+                                    body: Some(e),
+                                    tone: "error",
+                                }));
+                            }
+                        },
+                        LaunchIcon { size: 17 }
+                    }
+                }
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    onclick: move |_| match svc_revoke.revoke_connected_app(&revoke_origin) {
+                        Ok(()) => {
+                            toast.set(Some(ToastNotice {
+                                title: "Disconnected".into(),
+                                body: Some(revoke_title.clone()),
+                                tone: "success",
+                            }));
+                            dock_spec.set(None);
+                            nav_child.set(None);
+                        }
+                        Err(e) => toast.set(Some(ToastNotice {
+                            title: "Disconnect failed".into(),
+                            body: Some(e),
+                            tone: "error",
+                        })),
+                    },
+                    button::Label { "Disconnect" }
                 }
             }
         }

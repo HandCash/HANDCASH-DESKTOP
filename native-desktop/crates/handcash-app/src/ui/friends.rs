@@ -5,10 +5,10 @@
 //! - `src/components/FriendDetailsPanel.tsx`
 //! - `src/components/MessagesPanel.tsx`
 
-use crate::icons::{CopyIcon, MessagesIcon, PersonAddIcon, SendIcon};
+use crate::icons::{CopyIcon, MessagesIcon, PersonAddIcon};
 use crate::machines::{classify_recipient, CollectionView, NavChild, ToastNotice};
 use crate::state::{
-    copy_to_clipboard, format_relative_time, now_ms, truncate_mid, AppServices, FriendRecord,
+    copy_to_clipboard, truncate_mid, AppServices, FriendRecord,
 };
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
 use crate::ui::collectables::CollectionViewToggle;
@@ -60,17 +60,18 @@ pub fn FriendsPanel(
                         "{friends.len()}"
                     }
                 }
-                div { class: "friends-panel-head-actions panel-icon-toolbar",
+                crate::ui::primitives::TitlebarActions {
+                    section: crate::machines::NavSection::Friends,
+                    class: "friends-panel-head-actions panel-icon-toolbar",
                     if !friends.is_empty() {
-                        div { class: "field", style: "margin: 0;",
-                            input {
-                                id: "friends-search-input",
-                                r#type: "search",
-                                aria_label: "Search friends by name or wallet key",
-                                placeholder: "Name or wallet key",
-                                value: "{query}",
-                                oninput: move |e| query.set(e.value()),
-                            }
+                        crate::ui::primitives::PanelFilter {
+                            id: "friends-search-input".to_string(),
+                            label: "Search friends by name or wallet key".to_string(),
+                            placeholder: "Name or wallet key".to_string(),
+                            value: query.read().clone(),
+                            on_value_change: move |next| query.set(next),
+                            shown: filtered.len(),
+                            total: friends.len(),
                         }
                     }
                     button {
@@ -276,52 +277,98 @@ pub fn AddFriendPanel(
         });
     }
 
+    let svc_form = Arc::clone(&services);
+    let current_err = err_text.read().clone();
+    let state_attr: &'static str = if current_err.is_some() { "failure" } else { "idle" };
+    let on_form_submit = move |e: FormEvent| {
+        e.prevent_default();
+        if !can_submit {
+            return;
+        }
+        err_text.set(None);
+        let rec_val = recipient.read().clone();
+        let lbl_val = label.read().clone();
+        match svc_form.add_friend(&rec_val, Some(lbl_val.as_str())) {
+            Ok(added) => {
+                toast.set(Some(ToastNotice {
+                    title: "Friend added".into(),
+                    body: Some(added.label),
+                    tone: "success",
+                }));
+                dock_spec.set(None);
+                nav_child.set(None);
+            }
+            Err(err) => {
+                err_text.set(Some(err.clone()));
+                toast.set(Some(ToastNotice {
+                    title: "Couldn't add friend".into(),
+                    body: Some(err),
+                    tone: "error",
+                }));
+            }
+        }
+    };
     rsx! {
         div { class: "nav-child-panel add-friend-panel", "data-aeon-scope": "add-friend",
-            div { class: "add-friend-content",
-                header { class: "add-friend-intro",
-                    span { class: "add-friend-intro-icon", aria_hidden: true,
-                        PersonAddIcon { size: 20 }
-                    }
-                    div {
-                        h3 { "Add someone you trust" }
-                        p { "Use their $handle, peer payment link, or wallet key." }
-                    }
-                }
-
-                div { class: "field",
-                    label { r#for: "friend-key", "Handle or wallet key" }
-                    input {
-                        id: "friend-key",
-                        class: "mono",
-                        placeholder: "$alice, peerpay:…, or 02… / 03…",
-                        value: "{raw_recipient}",
-                        oninput: move |e| {
-                            err_text.set(None);
-                            recipient.set(e.value());
-                        },
-                    }
-                    if !trimmed.is_empty() && parsed.is_none() {
-                        p { class: "error", role: "alert",
-                            "Enter a valid $handle, peerpay: URI, or 66-hex wallet key."
+            crate::ui::primitives::ExclusiveActionRegion {
+                scope: "add-friend",
+                part: "add-friend-form",
+                state_attr,
+                class: "friends-add-form",
+                actions_class: "actions add-friend-actions".to_string(),
+                error: current_err,
+                idle_label: "Add friend".to_string(),
+                pending_label: "Adding…".to_string(),
+                primary_disabled: !can_submit,
+                secondary_label: Some("Cancel".to_string()),
+                on_secondary: move |_| {
+                    dock_spec.set(None);
+                    nav_child.set(None);
+                },
+                on_submit: on_form_submit,
+                div { class: "add-friend-content",
+                    header { class: "add-friend-intro",
+                        span { class: "add-friend-intro-icon", aria_hidden: true,
+                            PersonAddIcon { size: 20 }
+                        }
+                        div {
+                            h3 { "Add someone you trust" }
+                            p { "Use their $handle, peer payment link, or wallet key." }
                         }
                     }
-                }
 
-                if !trimmed.is_empty() && !is_handle {
-                    div { class: "field",
-                        label { r#for: "friend-label", "Label (optional)" }
+                    aeon_ui::field::Root { class: "field",
+                        aeon_ui::field::Label { r#for: "friend-key", "Handle or wallet key" }
                         input {
-                            id: "friend-label",
-                            placeholder: "How you'll recognize this peer",
-                            value: "{label}",
-                            oninput: move |e| label.set(e.value()),
+                            id: "friend-key",
+                            class: "mono",
+                            "data-aeon-part": "control",
+                            placeholder: "$alice, peerpay:…, or 02… / 03…",
+                            value: "{raw_recipient}",
+                            oninput: move |e| {
+                                err_text.set(None);
+                                recipient.set(e.value());
+                            },
+                        }
+                        if !trimmed.is_empty() && parsed.is_none() {
+                            p { class: "error", role: "alert",
+                                "Enter a valid $handle, peerpay: URI, or 66-hex wallet key."
+                            }
                         }
                     }
-                }
 
-                if let Some(ref e) = *err_text.read() {
-                    p { class: "error", role: "alert", "{e}" }
+                    if !trimmed.is_empty() && !is_handle {
+                        aeon_ui::field::Root { class: "field",
+                            aeon_ui::field::Label { r#for: "friend-label", "Label (optional)" }
+                            input {
+                                id: "friend-label",
+                                "data-aeon-part": "control",
+                                placeholder: "How you'll recognize this peer",
+                                value: "{label}",
+                                oninput: move |e| label.set(e.value()),
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -358,9 +405,7 @@ pub fn FriendDetailsPanel(
             dock_spec.set(None);
         }
         return rsx! {
-            div { class: "nav-child-panel friend-details", "data-aeon-scope": "friend-details",
-                p { class: "connected-empty-line", "Friend not found" }
-            }
+            p { class: "connected-empty-line", "Friend not found" }
         };
     };
 
@@ -636,121 +681,106 @@ pub fn MessagesPanel(
         .cloned()
         .collect();
 
+    let mut unread_only = use_signal(|| false);
+    let mut thread_section = use_signal(|| crate::ui::messages::ChatThreadSection::Messages);
     let cur_peer_id = active_peer_id.read().clone();
     let active_friend = cur_peer_id
         .as_ref()
         .and_then(|pid| friends.iter().find(|f| &f.id == pid).cloned());
-    let messages = cur_peer_id
+    let raw_messages = cur_peer_id
         .as_ref()
         .map(|pid| services.list_chat_messages(pid))
         .unwrap_or_default();
+    let visible_messages: Vec<crate::ui::messages::ChatMessageView> = raw_messages
+        .iter()
+        .filter(|m| match *thread_section.read() {
+            crate::ui::messages::ChatThreadSection::Messages => true,
+            crate::ui::messages::ChatThreadSection::Files => false,
+            crate::ui::messages::ChatThreadSection::Payments => m.text.starts_with("/pay") || m.text.starts_with("/tip"),
+        })
+        .map(|m| crate::ui::messages::ChatMessageView {
+            id: m.id.clone(),
+            direction: m.direction.clone(),
+            kind: "text".to_string(),
+            text: m.text.clone(),
+            created_at: m.at,
+            amount_label: None,
+            sats_line: None,
+            pay_status: None,
+            memo: None,
+            bound_message_id: None,
+            attachment: None,
+        })
+        .collect();
+    let sidebar_peers: Vec<crate::ui::messages::ChatPeerView> = filtered_friends
+        .iter()
+        .map(|f| {
+            let peer_prof = services.peer_identity_for(&chain, &f.identity_key);
+            let thread_msgs = services.list_chat_messages(&f.id);
+            let last = thread_msgs.last();
+            crate::ui::messages::ChatPeerView {
+                peer_id: f.id.clone(),
+                label: f.label.clone(),
+                identity_key: f.identity_key.clone(),
+                image_url: peer_prof.and_then(|p| p.image_data_url),
+                last_preview: last.map(|m| m.text.clone()).unwrap_or_default(),
+                updated_at: last.map(|m| m.at),
+                unread: 0,
+            }
+        })
+        .filter(|p| !*unread_only.read() || p.unread > 0)
+        .collect();
     let svc_send = Arc::clone(&services);
-    let now = now_ms();
 
     rsx! {
         div {
             class: "chat-shell chat-shell--nested",
             "data-aeon-scope": "messages",
             "data-aeon-state": if active_friend.is_some() { "thread" } else { "empty" },
-            style: "display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 12px; min-height: 360px;",
 
-            aside { class: "chat-sidebar", style: "border-right: 1px solid var(--hc-border); padding-right: 10px; display: flex; flex-direction: column; gap: 8px;",
-                input {
-                    r#type: "search",
-                    placeholder: "Search contacts…",
-                    value: "{query}",
-                    oninput: move |e| query.set(e.value()),
-                }
-                if filtered_friends.is_empty() {
-                    p { class: "settings-row-desc", "No contacts yet." }
-                } else {
-                    ul { class: "friends-list", style: "display: flex; flex-direction: column; gap: 4px;",
-                        for f in filtered_friends.iter() {
-                            {
-                                let fid = f.id.clone();
-                                let selected = cur_peer_id.as_deref() == Some(f.id.as_str());
-                                let peer_prof = services.peer_identity_for(&chain, &f.identity_key);
-                                let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
-                                rsx! {
-                                    li { key: "{f.id}", class: "friend-row",
-                                        button {
-                                            r#type: "button",
-                                            class: if selected { "friend-row-main is-selected" } else { "friend-row-main" },
-                                            "data-selected": if selected { Some("") } else { None },
-                                            onclick: move |_| active_peer_id.set(Some(fid.clone())),
-                                            PeerAvatar { label: f.label.clone(), image_url: img_url }
-                                            div { class: "friend-row-body",
-                                                strong { class: "friend-label", "{f.label}" }
-                                                span { class: "friend-key mono", "{truncate_mid(&f.identity_key, 8)}" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            crate::ui::messages::ChatSidebar {
+                nested_in_nav: true,
+                total_peers: friends.len(),
+                filtered_peers: sidebar_peers,
+                active_peer_id: cur_peer_id,
+                query: query.read().clone(),
+                on_query_change: move |next| query.set(next),
+                unread_only: *unread_only.read(),
+                on_unread_only_change: move |next| unread_only.set(next),
+                on_select_peer: move |pid| active_peer_id.set(Some(pid)),
+                on_add_friend: move |_| nav_child.set(Some(NavChild::AddFriend)),
             }
 
-            section { class: "chat-thread", style: "display: flex; flex-direction: column; justify-content: space-between; gap: 10px;",
+            section { class: "chat-thread",
                 if let Some(ref friend) = active_friend {
                     {
                         let fid_send = friend.id.clone();
                         let fik_pay = friend.identity_key.clone();
                         let peer_prof = services.peer_identity_for(&chain, &friend.identity_key);
                         let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
+                        let cur_sec = *thread_section.read();
                         rsx! {
-                            header {
-                                class: "chat-thread-head",
-                                style: "display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--hc-border);",
-                                div { style: "display: flex; align-items: center; gap: 10px;",
-                                    PeerAvatar { label: friend.label.clone(), image_url: img_url }
-                                    div {
-                                        strong { "{friend.label}" }
-                                        p { class: "mono settings-row-desc", style: "margin: 0;", "{truncate_mid(&friend.identity_key, 10)}" }
-                                    }
-                                }
-                                button::Root {
-                                    variant: button::ButtonVariant::Ghost,
-                                    class: "btn btn-ghost",
-                                    onclick: move |_| nav_child.set(Some(NavChild::Send(Some(fik_pay.clone())))),
-                                    SendIcon { size: 15 }
-                                    button::Label { "Pay" }
-                                }
+                            crate::ui::messages::ChatThreadHeader {
+                                friend: friend.clone(),
+                                image_url: img_url.clone(),
+                                on_pay: move |_| nav_child.set(Some(NavChild::Send(Some(fik_pay.clone())))),
                             }
-
-                            div {
-                                class: "chat-thread-list",
-                                style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 6px 0;",
-                                if messages.is_empty() {
-                                    p { class: "settings-row-desc",
-                                        "No messages with {friend.label} yet. Messages are stored locally and delivered over BRC-33 messagebox when connected."
-                                    }
-                                } else {
-                                    for m in messages.iter() {
-                                        div {
-                                            key: "{m.id}",
-                                            class: if m.direction == "out" { "chat-bubble chat-bubble--out" } else { "chat-bubble chat-bubble--in" },
-                                            style: if m.direction == "out" {
-                                                "align-self: flex-end; background: var(--hc-accent, #38e54d); color: #08120a; padding: 8px 12px; border-radius: 12px; max-width: 80%;"
-                                            } else {
-                                                "align-self: flex-start; background: var(--hc-field); padding: 8px 12px; border-radius: 12px; max-width: 80%;"
-                                            },
-                                            p { style: "margin: 0;", "{m.text}" }
-                                            span {
-                                                style: "font-size: 10px; opacity: 0.75; display: block; margin-top: 2px;",
-                                                "{format_relative_time(m.at, now)}"
-                                            }
-                                        }
-                                    }
-                                }
+                            crate::ui::messages::ChatThreadTabs {
+                                section: cur_sec,
+                                on_section_change: move |sec| thread_section.set(sec),
                             }
-
-                            form {
-                                class: "chat-composer",
-                                style: "display: flex; gap: 8px; align-items: center;",
-                                onsubmit: move |e| {
-                                    e.prevent_default();
+                            crate::ui::messages::ChatThreadList {
+                                section: cur_sec,
+                                visible_messages,
+                                peer_label: friend.label.clone(),
+                                peer_image_url: img_url,
+                            }
+                            crate::ui::messages::ChatComposer {
+                                draft: draft.read().clone(),
+                                peer_label: friend.label.clone(),
+                                can_attach: false,
+                                on_draft_change: move |next| draft.set(next),
+                                on_submit: move |_| {
                                     let text = draft.read().clone();
                                     if text.trim().is_empty() {
                                         return;
@@ -768,19 +798,6 @@ pub fn MessagesPanel(
                                         })),
                                     }
                                 },
-                                input {
-                                    style: "flex: 1;",
-                                    placeholder: "Message {friend.label}…",
-                                    value: "{draft}",
-                                    oninput: move |e| draft.set(e.value()),
-                                }
-                                button::Root {
-                                    variant: button::ButtonVariant::Solid,
-                                    button_type: "submit",
-                                    class: "btn btn-primary",
-                                    disabled: draft.read().trim().is_empty(),
-                                    button::Label { "Send" }
-                                }
                             }
                         }
                     }

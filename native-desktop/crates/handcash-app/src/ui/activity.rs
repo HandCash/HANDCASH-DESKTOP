@@ -396,7 +396,7 @@ pub fn ActivityFeed(
                 EmptyState {
                     icon: Some(rsx! { ActivityIcon { size: 28 } }),
                     title: "No activity yet",
-                    body: Some("Payments and 1Sat items appear here as they arrive.".into()),
+                    body: Some("Sends, receives, connections, and other wallet actions show up here.".into()),
                 }
             }
         } else {
@@ -545,9 +545,7 @@ pub fn PaymentDetailsPanel(
         .cloned()
     else {
         return rsx! {
-            div { class: "nav-child-panel payment-details", "data-aeon-scope": "payment-details",
-                p { class: "connected-empty-line", "Transaction not found" }
-            }
+            p { class: "connected-empty-line", "Transaction not found" }
         };
     };
 
@@ -718,5 +716,514 @@ pub fn PaymentDetailsPanel(
                 }
             }
         }
+    }
+}
+
+/// View model for [`WalletJobRow`] (`src/components/activity/ActivityJobRows.tsx`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletJobView {
+    pub id: String,
+    pub kind: &'static str,
+    pub face: &'static str,
+    pub title: String,
+    pub count: Option<String>,
+    pub detail: Option<String>,
+    pub progress_value: Option<u64>,
+    pub progress_max: Option<u64>,
+}
+
+/// 1:1 port of `WalletJobRow` in `src/components/activity/ActivityJobRows.tsx`.
+#[component]
+pub fn WalletJobRow(
+    job: WalletJobView,
+    #[props(default)] on_open: Option<EventHandler<()>>,
+) -> Element {
+    let live = job.face == "running" || job.face == "waiting";
+    let mut aria_parts = vec![job.title.clone()];
+    if let Some(ref c) = job.count {
+        aria_parts.push(c.clone());
+    }
+    if let Some(ref d) = job.detail {
+        aria_parts.push(d.clone());
+    }
+    let aria_label = aria_parts.join(", ");
+    let pct = match (job.progress_value, job.progress_max) {
+        (Some(v), Some(m)) if m > 0 => ((v.min(m) as f64 / m as f64) * 100.0).round() as u32,
+        _ => 0,
+    };
+    let indeterminate = job.progress_value.is_none();
+    let is_heal = job.kind == "balance-heal";
+
+    rsx! {
+        li {
+            "data-aeon-scope": "wallet-job",
+            "data-aeon-state": job.face,
+            "data-aeon-part": job.kind,
+            "data-activity-key": "{job.id}",
+            "data-activity-pending": if live { Some("") } else { None },
+            button {
+                r#type: "button",
+                class: "history-row history-row-btn",
+                aria_label: "{aria_label}",
+                onclick: move |_| {
+                    if let Some(cb) = on_open {
+                        cb.call(());
+                    }
+                },
+                div { class: "history-icon-wrap",
+                    div { class: "history-icon",
+                        span { class: "history-item-thumb-icon", aria_hidden: true,
+                            if is_heal {
+                                crate::icons::RefreshIcon { size: 18 }
+                            } else {
+                                crate::icons::CollectablesIcon { size: 18 }
+                            }
+                        }
+                    }
+                    if live {
+                        span { class: "history-pending-mark", aria_hidden: true,
+                            LoadingSpinner { size: "sm".to_string() }
+                        }
+                    }
+                }
+                div { class: "history-body history-progress-body",
+                    strong { class: "history-title", "{job.title}" }
+                    div { class: "history-progress-block",
+                        div {
+                            class: "history-progress",
+                            role: "progressbar",
+                            "data-aeon-scope": "progress",
+                            "data-aeon-state": if indeterminate { "indeterminate" } else { "determinate" },
+                            aria_valuenow: if indeterminate { None } else { Some(pct.to_string()) },
+                            aria_valuemin: "0",
+                            aria_valuemax: "100",
+                            div { class: "history-progress-track",
+                                div {
+                                    class: "history-progress-range",
+                                    style: if indeterminate { "width: 35%;".to_string() } else { format!("width: {pct}%;") },
+                                }
+                            }
+                        }
+                    }
+                    if let Some(ref detail) = job.detail {
+                        span { class: "history-when", title: "{detail}", "{detail}" }
+                    }
+                }
+                if let Some(ref count) = job.count {
+                    div { class: "history-amount-block",
+                        span { class: "history-amount history-amount-item", "data-aeon-part": "count", "{count}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `PendingPhraseImportRow` in `src/components/activity/ActivityJobRows.tsx`.
+#[component]
+pub fn PendingPhraseImportRow(
+    source_address: String,
+    moved: u64,
+    offset: u64,
+    failed: u64,
+    skipped: u64,
+    stopped_for_funds: bool,
+    #[props(default)] on_open: Option<EventHandler<()>>,
+) -> Element {
+    let mut parts = vec![format!("{moved} imported"), format!("{offset} scanned")];
+    if failed > 0 {
+        parts.push(format!("{failed} failed"));
+    }
+    if skipped > 0 {
+        parts.push(format!("{skipped} skipped"));
+    }
+    let detail = parts.join(" · ");
+    let status = if stopped_for_funds {
+        "Paused — add BSV to continue"
+    } else {
+        "Paused — review details"
+    };
+    rsx! {
+        li {
+            "data-aeon-scope": "phrase-import",
+            "data-aeon-state": "paused",
+            "data-activity-key": "phrase-import:{source_address}",
+            "data-activity-pending": "",
+            button {
+                r#type: "button",
+                class: "history-row history-row-btn",
+                aria_label: "Review paused collectable import, {detail}",
+                onclick: move |_| {
+                    if let Some(cb) = on_open {
+                        cb.call(());
+                    }
+                },
+                div { class: "history-icon-wrap",
+                    div { class: "history-icon",
+                        span { class: "history-item-thumb-icon", aria_hidden: true,
+                            crate::icons::CollectablesIcon { size: 18 }
+                        }
+                    }
+                    span { class: "history-pending-mark", aria_label: "Import paused", title: "Import paused safely",
+                        LoadingSpinner { size: "sm".to_string() }
+                    }
+                }
+                div { class: "history-body history-progress-body",
+                    strong { class: "history-title", "Collectable import paused" }
+                    span { class: "history-when", title: "{status}. {detail}", "{status} · {detail}" }
+                }
+                div { class: "history-amount-block",
+                    span { class: "history-amount history-amount-item", "Review" }
+                }
+            }
+        }
+    }
+}
+
+/// Single-digit entry filter mirroring `pairingCodeMachine` (`src/components/activity/PairingCodeEntry.tsx`).
+pub fn accept_single_pairing_digit(prev: &str, next: &str, max_len: usize) -> Option<String> {
+    if next.len() + 1 == prev.len() && prev.starts_with(next) {
+        return Some(next.to_string());
+    }
+    if next.len() == prev.len() + 1
+        && next.len() <= max_len
+        && next.starts_with(prev)
+        && next.chars().last().is_some_and(|c| c.is_ascii_digit())
+    {
+        return Some(next.to_string());
+    }
+    None
+}
+
+/// 1:1 port of `src/components/activity/PairingCodeEntry.tsx` (BRC-249).
+#[component]
+pub fn PairingCodeEntry(
+    label: String,
+    length: usize,
+    attempts_left: usize,
+    #[props(default = "idle")] state: &'static str,
+    #[props(default)] error: Option<String>,
+    #[props(default)] on_complete: Option<EventHandler<String>>,
+) -> Element {
+    let mut digits = use_signal(String::new);
+    let busy = state == "verifying" || state == "sending";
+    let placeholder = "•".repeat(length);
+    let cur_digits = digits.read().clone();
+    let attempts_label = if attempts_left == 1 {
+        "1 attempt left".to_string()
+    } else {
+        format!("{attempts_left} attempts left")
+    };
+
+    rsx! {
+        div { "data-aeon-scope": "pairing-code", "data-aeon-state": state,
+            if state == "approved" {
+                p { class: "signin-note", role: "status", "{label} is signed in." }
+            } else if state == "ended" {
+                p { class: "signin-error", role: "alert",
+                    {error.unwrap_or_else(|| format!("{label} was not signed in."))}
+                }
+            } else {
+                p { class: "signin-note",
+                    if state == "sending" {
+                        "Code accepted. Waiting for {label} to install and open its wallet…"
+                    } else {
+                        "Type the numbers shown on {label} to sign it in."
+                    }
+                }
+                input {
+                    class: "signin-code",
+                    r#type: "text",
+                    inputmode: "numeric",
+                    pattern: "[0-9]*",
+                    maxlength: "{length}",
+                    autocomplete: "off",
+                    spellcheck: "false",
+                    name: "pairing-code-not-stored",
+                    aria_label: "Code shown on {label}",
+                    placeholder: "{placeholder}",
+                    value: "{cur_digits}",
+                    disabled: busy,
+                    "data-aeon-part": "digits",
+                    oninput: move |e| {
+                        let prev = digits.read().clone();
+                        let next_val = e.value();
+                        if let Some(accepted) = accept_single_pairing_digit(&prev, &next_val, length) {
+                            let done = accepted.len() == length;
+                            digits.set(accepted.clone());
+                            if done {
+                                if let Some(cb) = on_complete {
+                                    cb.call(accepted);
+                                }
+                            }
+                        }
+                    },
+                }
+                if let Some(ref err) = error {
+                    p { class: "signin-error", role: "alert", "{err}" }
+                }
+                p { class: "signin-note", "data-aeon-part": "attempts", "{attempts_label}" }
+            }
+        }
+    }
+}
+
+/// View model for [`SigninApprovalRows`] (`src/components/activity/SigninApprovalRows.tsx`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SigninApprovalView {
+    pub key: String,
+    pub face: &'static str,
+    pub live: bool,
+    pub title: String,
+    pub detail: String,
+    pub label: String,
+    pub location: String,
+    pub via_local: bool,
+    pub code: Option<String>,
+    pub pairing_length: Option<usize>,
+    pub pairing_attempts: usize,
+    pub requested_at: String,
+    pub expires_at: String,
+}
+
+/// 1:1 port of `SigninApprovalRowItem` in `src/components/activity/SigninApprovalRows.tsx`.
+#[component]
+pub fn SigninApprovalRows(
+    rows: Vec<SigninApprovalView>,
+    #[props(default)] on_approve: Option<EventHandler<String>>,
+    #[props(default)] on_refuse: Option<EventHandler<String>>,
+) -> Element {
+    rsx! {
+        for row in rows {
+            SigninApprovalRowItem {
+                key: "{row.key}",
+                row,
+                on_approve,
+                on_refuse,
+            }
+        }
+    }
+}
+
+#[component]
+pub fn SigninApprovalRowItem(
+    row: SigninApprovalView,
+    #[props(default)] on_approve: Option<EventHandler<String>>,
+    #[props(default)] on_refuse: Option<EventHandler<String>>,
+) -> Element {
+    let default_open = row.face == "claimed" || row.face == "comparing";
+    let mut expanded = use_signal(move || default_open);
+    let is_open = *expanded.read();
+    let loc_text = if row.via_local {
+        "Your local network".to_string()
+    } else if !row.location.is_empty() {
+        format!("{} (approximate, from HandCash's server)", row.location)
+    } else {
+        "Unknown".to_string()
+    };
+    let key_approve = row.key.clone();
+    let key_refuse = row.key.clone();
+
+    rsx! {
+        li {
+            "data-aeon-scope": "signin-request",
+            "data-aeon-state": row.face,
+            "data-activity-key": "{row.key}",
+            "data-activity-pending": if row.live { Some("") } else { None },
+            button {
+                r#type: "button",
+                class: "history-row history-row-btn",
+                aria_expanded: is_open,
+                aria_label: "{row.title}, {row.detail}",
+                onclick: move |_| expanded.set(!is_open),
+                div { class: "history-icon-wrap",
+                    div { class: "history-icon",
+                        span { class: "history-item-thumb-icon", aria_hidden: true,
+                            crate::icons::DevicesIcon { size: 18 }
+                        }
+                    }
+                    if row.live {
+                        span { class: "history-pending-mark", aria_hidden: true,
+                            LoadingSpinner { size: "sm".to_string() }
+                        }
+                    }
+                }
+                div { class: "history-body",
+                    strong { class: "history-title", "{row.title}" }
+                    span { class: "history-when", "{row.detail}" }
+                }
+                div { class: "history-amount-block",
+                    span { class: "history-when", "{row.requested_at}" }
+                }
+            }
+            if is_open {
+                div { class: "signin-detail", "data-aeon-part": "detail",
+                    dl { class: "signin-facts",
+                        dt { "Device" }
+                        dd { "{row.label}" }
+                        dt { "Location" }
+                        dd { "{loc_text}" }
+                        dt { "Requested" }
+                        dd { "{row.requested_at}" }
+                        if row.live {
+                            dt { "Expires" }
+                            dd { "{row.expires_at}" }
+                        }
+                    }
+                    if row.face == "comparing" && row.live {
+                        if let Some(len) = row.pairing_length {
+                            PairingCodeEntry {
+                                label: row.label.clone(),
+                                length: len,
+                                attempts_left: row.pairing_attempts,
+                            }
+                        } else if let Some(ref code) = row.code {
+                            div { class: "signin-code-block",
+                                span { class: "signin-code", "{code}" }
+                                p { class: "signin-note", "Approve only if {row.label} shows this same code." }
+                            }
+                        }
+                    }
+                    if row.face == "claimed" {
+                        p { class: "signin-note", "{row.detail}." }
+                    }
+                    if row.face == "waiting" {
+                        p { class: "signin-note", "Getting the code from {row.label}." }
+                    }
+                    if row.live {
+                        div { class: "signin-actions",
+                            if row.face == "comparing" && row.pairing_length.is_none() {
+                                button {
+                                    r#type: "button",
+                                    class: "btn btn-primary",
+                                    tabindex: "-1",
+                                    onclick: move |_| {
+                                        if let Some(cb) = on_approve {
+                                            cb.call(key_approve.clone());
+                                        }
+                                    },
+                                    "Approve"
+                                }
+                            }
+                            button {
+                                r#type: "button",
+                                class: "btn btn-ghost",
+                                tabindex: "-1",
+                                onclick: move |_| {
+                                    if let Some(cb) = on_refuse {
+                                        cb.call(key_refuse.clone());
+                                    }
+                                },
+                                "Refuse"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// View model for [`SwapActivityRow`] (`src/components/activity/SwapActivityRow.tsx`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SwapActivityView {
+    pub id: String,
+    pub from_coin: String,
+    pub to_coin: String,
+    pub title: String,
+    pub route_label: String,
+    pub status: String,
+    pub tone: &'static str,
+    pub state: &'static str,
+    pub amount: String,
+    pub when: Option<String>,
+}
+
+/// 1:1 port of `src/components/activity/SwapActivityRow.tsx`.
+#[component]
+pub fn SwapActivityRow(
+    swap: SwapActivityView,
+    row_key: String,
+    #[props(default)] newest: bool,
+    #[props(default)] on_open: Option<EventHandler<String>>,
+) -> Element {
+    let moving = swap.tone == "moving";
+    let refunding = moving && (swap.state == "locktime" || swap.state == "refunding");
+    let ended = match swap.tone {
+        "returned" => Some("Refunded"),
+        "stopped" => Some("Stopped"),
+        _ if refunding => Some("Refunding"),
+        _ => None,
+    };
+    let subtitle = format!("{} · {}", swap.route_label, swap.status);
+    let id_click = swap.id.clone();
+    let amount_display = ended
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("+{}", swap.amount));
+    rsx! {
+        li {
+            "data-activity-key": "{row_key}",
+            "data-activity-newest": if newest { Some("") } else { None },
+            "data-activity-pending": if moving { Some("") } else { None },
+            "data-aeon-scope": "activity-row",
+            "data-aeon-part": "swap",
+            "data-aeon-state": swap.tone,
+            button {
+                r#type: "button",
+                class: "history-row history-row-btn",
+                onclick: move |_| {
+                    if let Some(cb) = on_open {
+                        cb.call(id_click.clone());
+                    }
+                },
+                div { class: "history-icon-wrap",
+                    span { class: "swap-pair-mark",
+                        crate::icons::TickerCoinMark { coin: swap.from_coin.clone(), size: 18 }
+                        crate::icons::TickerCoinMark { coin: swap.to_coin.clone(), size: 18 }
+                    }
+                    if moving {
+                        span {
+                            class: "history-pending-mark",
+                            aria_live: "polite",
+                            aria_label: "Swapping",
+                            title: "Swapping",
+                            LoadingSpinner { size: "sm".to_string() }
+                        }
+                    }
+                }
+                div { class: "history-body history-progress-body",
+                    strong { class: "history-title", "{swap.title}" }
+                    span { class: "history-when", title: "{subtitle}", "{subtitle}" }
+                }
+                div { class: "history-amount-block",
+                    span {
+                        class: if ended.is_some() { "history-amount history-amount-item" } else { "history-amount" },
+                        title: "{swap.amount}",
+                        "{amount_display}"
+                    }
+                    if let Some(ref w) = swap.when {
+                        span { class: "history-when", "data-aeon-part": "row-state",
+                            if moving && !refunding { "Swapping…" } else { "{w}" }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod activity_subcomponent_tests {
+    use super::*;
+
+    #[test]
+    fn pairing_code_accepts_only_one_digit_or_backspace() {
+        assert_eq!(accept_single_pairing_digit("", "4", 6), Some("4".into()));
+        assert_eq!(accept_single_pairing_digit("4", "42", 6), Some("42".into()));
+        assert_eq!(accept_single_pairing_digit("42", "4", 6), Some("4".into()));
+        // Reject paste of multiple digits or non-digits
+        assert_eq!(accept_single_pairing_digit("", "123456", 6), None);
+        assert_eq!(accept_single_pairing_digit("4", "4a", 6), None);
+        assert_eq!(accept_single_pairing_digit("123456", "1234567", 6), None);
     }
 }
