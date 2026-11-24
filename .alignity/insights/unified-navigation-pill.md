@@ -2,5 +2,5 @@
 name: unified-navigation-pill
 when: changing navigation pill depth or selection styling
 ---
-The section label/path and selected tab are one continuous surface; put the 3D bevel on the outer pill only, never separate shadows or rounded buttons on those inner parts.
-Keep the original unselected plates; use one tight contact shadow (1px offset, 2px blur) for an embossed feel, without a floating shadow, solid lower lip or doubled lower edge.
+The selected section (activity tab, titlebar pill tab, send/swap/receive when selected) uses the shared `--hc-select-3d` black plate with square corners; unselected plates stay original and flat.
+Dropdown selected rows (ticker coins, fiat options) reuse the same `--hc-select-3d` mask; do not add separate shadows or rounded buttons on inner parts.
