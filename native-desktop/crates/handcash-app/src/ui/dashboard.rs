@@ -85,15 +85,22 @@ pub fn Dashboard(
     let cur_fiat = *fiat_code.read();
     let fx = fx_rates.read().clone();
     let zero_fiat_label = format_fiat_value(0.0, cur_fiat);
+    // TS `formatUsdFromSats`: "—" until a rate for the chosen currency is known.
     let bsv_fiat_label = fx
         .format_sats(snap.balance.displayed_sats, cur_fiat)
-        .unwrap_or_else(|| {
-            if snap.balance.displayed_sats == 0 {
-                zero_fiat_label.clone()
-            } else {
-                format!("{} {}", bsv_num, cur_fiat.iso())
-            }
-        });
+        .unwrap_or_else(|| "—".to_string());
+    // Portfolio total for the chrome pill (TS `usdLabel`). Other coins have no local
+    // price feed, so any non-BSV holding leaves the total unknown ("—"), as TS does
+    // when a held coin is unpriced.
+    let holds_other_coins = {
+        let h = snap.held_coins;
+        [h.ltc, h.bch, h.btc, h.doge].iter().any(|&u| u > 0)
+    };
+    let portfolio_fiat_label = if holds_other_coins {
+        "—".to_string()
+    } else {
+        bsv_fiat_label.clone()
+    };
     let held_units = snap.held_coins.units(selected_coin).unwrap_or(0);
     let active_coin_amount = if selected_coin == MarketCoin::Bsv {
         bsv_num.to_string()
@@ -110,9 +117,9 @@ pub fn Dashboard(
         zero_fiat_label.clone()
     };
     let balance_toggle_title = if cur == DisplayCurrency::Usd {
-        format!("Show in {}", selected_coin.code())
+        "Show in coins".to_string()
     } else {
-        format!("Show in {}", cur_fiat.iso())
+        format!("Show in {}", cur_fiat.name())
     };
     let menu_open_attr = if open_menu.read().is_some() {
         Some("true")
@@ -150,7 +157,7 @@ pub fn Dashboard(
                     div { class: "connected-panel-head wallet-hero-head",
                         chrome::FiatCurrencyMenu {
                             fiat_code,
-                            amount_label: active_fiat_label.clone(),
+                            amount_label: portfolio_fiat_label.clone(),
                             open_menu,
                         }
 
@@ -185,20 +192,23 @@ pub fn Dashboard(
                                             "balance balance-primary balance-fiat"
                                         },
                                         "data-chain": selected_coin.as_str(),
-                                        if cur == DisplayCurrency::Bsv {
-                                            span { class: "balance-unit-mark",
-                                                if selected_coin == MarketCoin::Bsv {
-                                                    CoinGlyphIcon { size: 22 }
-                                                } else {
-                                                    TickerCoinMark { coin: selected_coin.as_str(), size: 22 }
-                                                }
+                                        span { class: "balance-unit-mark", aria_hidden: true,
+                                            if selected_coin == MarketCoin::Bsv {
+                                                CoinGlyphIcon { size: 22 }
+                                            } else {
+                                                TickerCoinMark { coin: selected_coin.as_str(), size: 22 }
                                             }
+                                        }
+                                        if cur == DisplayCurrency::Bsv {
                                             "{active_coin_amount}"
-                                            span { class: "sr-only", " {selected_coin.code()}" }
+                                            if selected_coin != MarketCoin::Bsv {
+                                                span { class: "sr-only", " {selected_coin.code()}" }
+                                            }
                                         } else {
                                             "{active_fiat_label}"
                                         }
                                     }
+                                    span { class: "sr-only", ". {balance_toggle_title}" }
                                 }
                             }
                         }

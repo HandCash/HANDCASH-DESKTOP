@@ -13,7 +13,7 @@ use crate::icons::{
 use crate::machines::{AppSessionMachine, FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
     copy_to_clipboard, load_builtin_chart_apps, open_external_url, render_qr_svg, truncate_mid,
-    AcceptedCoins, AppServices, BuiltinChartApp, IdentityCardItem, LabFeature, RecoverScan,
+    AcceptedCoins, AppServices, IdentityCardItem, LabFeature, RecoverScan,
     SessionSummary, WalletSnapshot, APP_VERSION,
 };
 use crate::theme::AppearancePreference;
@@ -243,7 +243,7 @@ pub fn IdentityCards(
 #[component]
 pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNotice>>) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut rev = use_signal(|| 0u64);
+    let rev = use_signal(|| 0u64);
     let _ = *rev.read();
 
     let details = services.load_identity_details(&profile);

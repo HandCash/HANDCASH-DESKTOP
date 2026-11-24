@@ -62,7 +62,11 @@ mod tests {
         assert!(html_unlocked.contains("data-aeon-scope=\"dashboard-side\""));
         assert!(html_unlocked.contains("data-aeon-scope=\"what-is-bsv\""));
         assert!(html_unlocked.contains("Filters"));
-        assert!(html_unlocked.contains("$alice"));
+        // TS `walletIdentityChip`: no claimed handle → short identity key, not the vault name.
+        let ik = summary.identity_key.trim();
+        let short_ik = format!("{}…{}", &ik[..8], &ik[ik.len() - 6..]);
+        assert!(html_unlocked.contains(&short_ik));
+        assert!(html_unlocked.contains("Copy pay address"));
         assert!(html_unlocked.contains("Your activity"));
 
         // Multi-account creation & switching

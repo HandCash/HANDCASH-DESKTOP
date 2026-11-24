@@ -3010,6 +3010,38 @@ impl AppServices {
 
     // ── Identity Cards, Public Identities, Notes, Messages & Developer Keys ──
 
+    /// Fully qualified claimed handle (`claimed.display`, e.g. `@h@domain`) — the pay
+    /// address `WalletAccountMenu` copies. `None` when no handle is claimed.
+    pub fn claimed_handle_display_for(
+        &self,
+        chain: &str,
+        account_index: u32,
+        identity_key: &str,
+    ) -> Option<String> {
+        let ik_lower = identity_key.trim().to_ascii_lowercase();
+        for key in [
+            format!("handcash.brc100.claimedHandle:wallet:{chain}:{account_index}:{ik_lower}"),
+            format!("handcash.brc100.claimedHandle:wallet:{chain}:{account_index}:{identity_key}"),
+        ] {
+            let Some(v) = self
+                .durable
+                .get(&key)
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            else {
+                continue;
+            };
+            if let Some(d) = v
+                .get("display")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                return Some(d.to_string());
+            }
+        }
+        None
+    }
+
     pub fn claimed_handle_for(
         &self,
         chain: &str,
@@ -3186,21 +3218,54 @@ impl AppServices {
         account_index: u32,
         identity_key: &str,
     ) -> Option<AccountProfileView> {
-        let ik = identity_key.trim().to_ascii_lowercase();
-        let store_key = Self::public_identities_store_key(chain, account_index, &ik);
-        let presented_key = self
-            .durable
-            .get(&store_key)
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .and_then(|v| {
-                v.get("presented")
-                    .or_else(|| v.get("selected"))
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .unwrap_or_else(|| ik.clone());
-        self.identity_profile_for(chain, &presented_key)
-            .or_else(|| self.identity_profile_for(chain, &ik))
+        // Mirrors TS `presentedRow`: the presented row with a live profile, else the
+        // owner row, else any row. `selected` is the issuance signer, not display.
+        let trimmed = identity_key.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let ik = trimmed.to_ascii_lowercase();
+        // TS keys the store by the trimmed (not lowercased) identity key.
+        let store = [
+            format!("handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{trimmed}"),
+            Self::public_identities_store_key(chain, account_index, &ik),
+        ]
+        .iter()
+        .find_map(|key| {
+            self.durable
+                .get(key)
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        });
+        let mut order: Vec<String> = Vec::new();
+        let mut push = |k: &str| {
+            let k = k.trim();
+            if !k.is_empty() && !order.iter().any(|o| o.eq_ignore_ascii_case(k)) {
+                order.push(k.to_string());
+            }
+        };
+        if let Some(ref v) = store {
+            if let Some(p) = v.get("presented").and_then(Value::as_str) {
+                push(p);
+            }
+            if let Some(o) = v.get("owner").and_then(Value::as_str) {
+                push(o);
+            }
+        }
+        push(trimmed);
+        if let Some(rows) = store
+            .as_ref()
+            .and_then(|v| v.get("identities"))
+            .and_then(Value::as_array)
+        {
+            for row in rows {
+                if let Some(k) = row.get("identityKey").and_then(Value::as_str) {
+                    push(k);
+                }
+            }
+        }
+        order
+            .iter()
+            .find_map(|k| self.identity_profile_for(chain, k))
     }
 
     /// Read a contact's shared profile (`handcash.identityCards.v1:{chain}:{identity_key}` or `identityProfiles`).

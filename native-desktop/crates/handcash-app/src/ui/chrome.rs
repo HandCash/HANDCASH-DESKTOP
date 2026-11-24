@@ -271,7 +271,9 @@ pub fn FiatCurrencyMenu(
                 "data-aeon-part": "trigger",
                 aria_haspopup: "dialog",
                 aria_expanded: open,
+                aria_controls: "fiat-currency-dropdown",
                 title: "Choose display currency",
+                aria_label: "{amount_label} {current.iso()} · Choose display currency",
                 onclick: move |_| {
                     let next = if *open_menu.read() == Some("fiat") { None } else { Some("fiat") };
                     open_menu.set(next);
@@ -366,20 +368,28 @@ pub fn WalletAccountMenu(
         .unwrap_or(&profile.identity_key);
     let current_prof = services.account_profile_for(&profile.chain, active_index, current_ik);
     let current_handle = services.claimed_handle_for(&profile.chain, active_index, current_ik);
+    // TS `walletIdentityChip`: claimed handle, else the short identity key.
+    let short_ik = {
+        let k = current_ik.trim();
+        if k.chars().count() <= 16 {
+            k.to_string()
+        } else {
+            let chars: Vec<char> = k.chars().collect();
+            let head: String = chars[..8].iter().collect();
+            let tail: String = chars[chars.len() - 6..].iter().collect();
+            format!("{head}…{tail}")
+        }
+    };
     let current_name = current_handle
         .clone()
         .or_else(|| current_prof.as_ref().map(|p| p.name.clone()))
-        .or_else(|| {
-            current_acc.map(|a| {
-                if a.index == 0 {
-                    format!("${}", profile.handle)
-                } else {
-                    a.name.clone()
-                }
-            })
-        })
-        .unwrap_or_else(|| format!("${}", profile.handle));
-    let identity_copy = profile.identity_key.clone();
+        .unwrap_or_else(|| short_ik.clone());
+    // Copy the pay address: the fully qualified claimed handle, else the identity key.
+    let identity_copy = current_handle
+        .as_ref()
+        .and_then(|_| services.claimed_handle_display_for(&profile.chain, active_index, current_ik))
+        .unwrap_or_else(|| current_ik.trim().to_string());
+    let copy_title = format!("Copy {identity_copy}");
     let svc_create = Arc::clone(&services);
 
     rsx! {
@@ -388,6 +398,11 @@ pub fn WalletAccountMenu(
                 class: "wallet-account-menu",
                 "data-aeon-scope": "wallet-account-menu",
                 "data-aeon-state": if is_busy { "switching" } else if open { "open" } else { "closed" },
+                onkeydown: move |e: KeyboardEvent| {
+                    if e.key() == Key::Escape && *open_menu.read() == Some("account") {
+                        open_menu.set(None);
+                    }
+                },
 
                 div { class: "wallet-hero-identity-row",
                     button {
@@ -420,12 +435,12 @@ pub fn WalletAccountMenu(
                     button {
                         r#type: "button",
                         class: "wallet-hero-identity-copy",
-                        title: "Copy identity key",
+                        title: "{copy_title}",
                         aria_label: "Copy pay address",
                         onclick: move |_| match copy_to_clipboard(&identity_copy) {
                             Ok(()) => toast.set(Some(ToastNotice {
-                                title: "Copied".into(),
-                                body: Some("Wallet identity key copied.".into()),
+                                title: "Copied pay address".into(),
+                                body: None,
                                 tone: "success",
                             })),
                             Err(e) => toast.set(Some(ToastNotice {
@@ -457,11 +472,8 @@ pub fn WalletAccountMenu(
                                     let held_here = acc.held_here;
                                     let acc_prof = services.account_profile_for(&profile.chain, idx, &acc.identity_key);
                                     let acc_handle = services.claimed_handle_for(&profile.chain, idx, &acc.identity_key);
-                                    let fallback_label = if idx == 0 && !profile.handle.is_empty() {
-                                        format!("${}", profile.handle)
-                                    } else {
-                                        acc.name.clone()
-                                    };
+                                    // TS label: account name, else Primary / Wallet N (set by list_vault_accounts).
+                                    let fallback_label = acc.name.clone();
                                     let display_name = acc_prof
                                         .as_ref()
                                         .map(|p| p.name.clone())
@@ -500,9 +512,13 @@ pub fn WalletAccountMenu(
                                                             return;
                                                         }
                                                         if !held_here {
+                                                            // TS runs `moveAccountHere`; the native device mesh is not
+                                                            // ported yet, so report the move honestly as unavailable.
+                                                            let msg = "Moving a wallet held on another device is not available in the native app yet. Release it from that device first.".to_string();
+                                                            menu_error.set(Some(msg.clone()));
                                                             toast.set(Some(ToastNotice {
-                                                                title: "Held elsewhere".into(),
-                                                                body: Some("This wallet is currently held by another device.".into()),
+                                                                title: "Move wallet".into(),
+                                                                body: Some(msg),
                                                                 tone: "error",
                                                             }));
                                                             return;
