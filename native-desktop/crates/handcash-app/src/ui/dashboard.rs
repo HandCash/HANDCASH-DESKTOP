@@ -590,9 +590,18 @@ pub fn Dashboard(
                                             NavChild::FriendDetails(friend_id) => rsx! {
                                                 friends::FriendDetailsPanel {
                                                     friend_id,
+                                                    chain: profile.chain.clone(),
                                                     nav_child,
                                                     dock_spec,
                                                     dock_trigger,
+                                                    toast,
+                                                }
+                                            },
+                                            NavChild::Messages(peer_id) => rsx! {
+                                                friends::MessagesPanel {
+                                                    chain: profile.chain.clone(),
+                                                    initial_peer_id: peer_id,
+                                                    nav_child,
                                                     toast,
                                                 }
                                             },
@@ -603,6 +612,18 @@ pub fn Dashboard(
                                                     dock_spec,
                                                     dock_trigger,
                                                     toast,
+                                                }
+                                            },
+                                            NavChild::Notes => rsx! {
+                                                apps::NotesPanel { toast }
+                                            },
+                                            NavChild::DevKeys => rsx! {
+                                                apps::DevKeysPanel { toast }
+                                            },
+                                            NavChild::ChartApp(app_id) => rsx! {
+                                                panels::ChartAppsPanel {
+                                                    toast,
+                                                    initial_app_id: Some(app_id),
                                                 }
                                             },
                                             NavChild::Setting(sub) => rsx! {
@@ -648,6 +669,7 @@ pub fn Dashboard(
                                             },
                                             NavSection::Collectables => rsx! {
                                                 collectables::InventoryPanel {
+                                                    chain: profile.chain.clone(),
                                                     snap: snap.clone(),
                                                     view: collection_view,
                                                     nav_child,
@@ -656,6 +678,7 @@ pub fn Dashboard(
                                             },
                                             NavSection::Friends => rsx! {
                                                 friends::FriendsPanel {
+                                                    chain: profile.chain.clone(),
                                                     view: collection_view,
                                                     nav_child,
                                                 }

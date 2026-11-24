@@ -3007,6 +3007,1034 @@ impl AppServices {
             }
         }
     }
+
+    // ── Identity Cards, Public Identities, Notes, Messages & Developer Keys ──
+
+    pub fn claimed_handle_for(
+        &self,
+        chain: &str,
+        account_index: u32,
+        identity_key: &str,
+    ) -> Option<String> {
+        let ik_lower = identity_key.trim().to_ascii_lowercase();
+        for key in [
+            format!(
+                "handcash.brc100.claimedHandle:wallet:{chain}:{account_index}:{ik_lower}"
+            ),
+            format!("handcash.brc100.claimedHandle:wallet:{chain}:{account_index}:{identity_key}"),
+            format!("handcash.cloudHandle.v1:{identity_key}"),
+            format!("handcash.brc100.claimedHandle:{identity_key}"),
+            "handcash.cloudHandle.v1".to_string(),
+        ] {
+            if let Some(raw) = self.durable.get(&key) {
+                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                    let matches_ik = v
+                        .get("identityKey")
+                        .and_then(Value::as_str)
+                        .map(|s| s.trim().eq_ignore_ascii_case(&ik_lower))
+                        .unwrap_or(true);
+                    if !matches_ik {
+                        continue;
+                    }
+                    if let Some(h) = v
+                        .get("handle")
+                        .or_else(|| v.get("display"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let clean = h.trim_start_matches(['$', '@']);
+                        return Some(format!("${clean}"));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn build_identity_cards(&self, profile: &SessionSummary) -> Vec<IdentityCardItem> {
+        let mut cards = vec![IdentityCardItem {
+            id: "key".into(),
+            kind: "key",
+            title: "Identity key".into(),
+            groups: key_groups(&profile.identity_key),
+            holder: "WALLET KEY".into(),
+            identity_key: profile.identity_key.clone(),
+            own: true,
+        }];
+        if let Some(claimed) =
+            self.claimed_handle_for(&profile.chain, profile.account_index, &profile.identity_key)
+        {
+            cards.push(IdentityCardItem {
+                id: "own-handle".into(),
+                kind: "handle",
+                title: claimed,
+                groups: key_groups(&profile.identity_key),
+                holder: "YOU".into(),
+                identity_key: profile.identity_key.clone(),
+                own: true,
+            });
+        }
+        let mut seen = HashSet::new();
+        seen.insert(profile.identity_key.to_ascii_lowercase());
+        for friend in self.list_friends() {
+            let has_fixed_handle = friend
+                .handle
+                .as_deref()
+                .map(|h| !h.trim().is_empty())
+                .unwrap_or_else(|| friend.label.trim().starts_with('$'));
+            if !has_fixed_handle {
+                continue;
+            }
+            let k = friend.identity_key.to_ascii_lowercase();
+            if !seen.insert(k) {
+                continue;
+            }
+            let title = friend
+                .handle
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(friend.label.trim())
+                .to_string();
+            let holder = friend
+                .label
+                .trim()
+                .trim_start_matches(['$', '@'])
+                .to_uppercase();
+            cards.push(IdentityCardItem {
+                id: format!("friend-{}", friend.id),
+                kind: "handle",
+                title,
+                groups: key_groups(&friend.identity_key),
+                holder,
+                identity_key: friend.identity_key,
+                own: false,
+            });
+        }
+        cards
+    }
+
+    fn public_identities_store_key(
+        chain: &str,
+        account_index: u32,
+        identity_key: &str,
+    ) -> String {
+        format!(
+            "handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{}",
+            identity_key.trim().to_ascii_lowercase()
+        )
+    }
+
+    /// Read a verified/stored self-published profile for `identity_key` on `chain`
+    /// (`handcash.identityProfiles.v1:{chain}:{identity_key}`).
+    pub fn identity_profile_for(
+        &self,
+        chain: &str,
+        identity_key: &str,
+    ) -> Option<AccountProfileView> {
+        let ik = identity_key.trim().to_ascii_lowercase();
+        if ik.is_empty() {
+            return None;
+        }
+        for key in [
+            format!("handcash.identityProfiles.v1:{chain}:{ik}"),
+            format!("handcash.identityProfiles.v1:{chain}:{identity_key}"),
+        ] {
+            if let Some(raw) = self.durable.get(&key) {
+                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                    let name = v
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())?
+                        .to_string();
+                    let description = v
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let image_data_url = v
+                        .get("record")
+                        .and_then(|r| r.get("image"))
+                        .and_then(|img| {
+                            let ct = img.get("contentType")?.as_str()?;
+                            let b64 = img.get("bytesB64")?.as_str()?;
+                            Some(format!("data:{ct};base64,{b64}"))
+                        })
+                        .or_else(|| {
+                            v.get("imageDataUrl")
+                                .and_then(Value::as_str)
+                                .map(ToString::to_string)
+                        });
+                    return Some(AccountProfileView {
+                        identity_key: ik,
+                        name,
+                        description,
+                        image_data_url,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Read the active public profile for a vault sub-account (`WalletAccountMenu` avatar + name).
+    pub fn account_profile_for(
+        &self,
+        chain: &str,
+        account_index: u32,
+        identity_key: &str,
+    ) -> Option<AccountProfileView> {
+        let ik = identity_key.trim().to_ascii_lowercase();
+        let store_key = Self::public_identities_store_key(chain, account_index, &ik);
+        let presented_key = self
+            .durable
+            .get(&store_key)
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|v| {
+                v.get("presented")
+                    .or_else(|| v.get("selected"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| ik.clone());
+        self.identity_profile_for(chain, &presented_key)
+            .or_else(|| self.identity_profile_for(chain, &ik))
+    }
+
+    /// Read a contact's shared profile (`handcash.identityCards.v1:{chain}:{identity_key}` or `identityProfiles`).
+    pub fn peer_identity_for(
+        &self,
+        chain: &str,
+        identity_key: &str,
+    ) -> Option<AccountProfileView> {
+        let ik = identity_key.trim().to_ascii_lowercase();
+        if let Some(prof) = self.identity_profile_for(chain, &ik) {
+            return Some(prof);
+        }
+        for key in [
+            format!("handcash.identityCards.v1:{chain}:{ik}"),
+            format!("handcash.identityCards.v1:{chain}:{identity_key}"),
+            format!("handcash.identityCards.v1:{chain}"),
+        ] {
+            if let Some(raw) = self.durable.get(&key) {
+                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                    let card = v.get(&ik).unwrap_or(&v);
+                    if let Some(name) = card
+                        .get("name")
+                        .or_else(|| card.get("profile").and_then(|p| p.get("name")))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        let description = card
+                            .get("description")
+                            .or_else(|| card.get("profile").and_then(|p| p.get("description")))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let image_data_url = card
+                            .get("imageDataUrl")
+                            .or_else(|| card.get("profile").and_then(|p| p.get("imageDataUrl")))
+                            .and_then(Value::as_str)
+                            .map(ToString::to_string);
+                        return Some(AccountProfileView {
+                            identity_key: ik,
+                            name: name.to_string(),
+                            description,
+                            image_data_url,
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn list_public_identities_view(&self, profile: &SessionSummary) -> PublicIdentitiesView {
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        let store_key =
+            Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik);
+        let store_val = self
+            .durable
+            .get(&store_key)
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+
+        let selected_issuer = store_val
+            .as_ref()
+            .and_then(|v| v.get("selected").and_then(Value::as_str))
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| owner_ik.clone());
+        let presented_key = store_val
+            .as_ref()
+            .and_then(|v| v.get("presented").and_then(Value::as_str))
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+        let signs_issuance = store_val
+            .as_ref()
+            .and_then(|v| v.get("unsigned").and_then(Value::as_bool))
+            != Some(true);
+
+        let mut raw_entries: Vec<(String, String, Option<String>)> = Vec::new();
+        if let Some(arr) = store_val
+            .as_ref()
+            .and_then(|v| v.get("identities").and_then(Value::as_array))
+        {
+            for item in arr {
+                let Some(ik) = item
+                    .get("identityKey")
+                    .and_then(Value::as_str)
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                let signer = item
+                    .get("signer")
+                    .and_then(Value::as_str)
+                    .unwrap_or("wallet")
+                    .to_string();
+                let published = item
+                    .get("published")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+                raw_entries.push((ik, signer, published));
+            }
+        }
+        if !raw_entries.iter().any(|(ik, _, _)| ik == &owner_ik) {
+            raw_entries.insert(0, (owner_ik.clone(), "wallet".into(), None));
+        }
+
+        let mut rows = Vec::with_capacity(raw_entries.len());
+        for (ik, signer, published) in raw_entries {
+            let own_prof = self.identity_profile_for(&profile.chain, &ik);
+            let bap_id = published.clone().unwrap_or_else(|| {
+                let h = sha256(format!("bap:{ik}").as_bytes());
+                bs58::encode(&h[..20]).into_string()
+            });
+            let is_selected = ik == selected_issuer;
+            let is_presented = presented_key
+                .as_ref()
+                .map(|p| p == &ik)
+                .unwrap_or(own_prof.is_some() && ik == owner_ik);
+            rows.push(PublicIdentityRow {
+                identity_key: ik.clone(),
+                signer,
+                bap_id,
+                name: own_prof.as_ref().map(|p| p.name.clone()),
+                description: own_prof
+                    .as_ref()
+                    .map(|p| p.description.clone())
+                    .filter(|d| !d.is_empty()),
+                image_data_url: own_prof.as_ref().and_then(|p| p.image_data_url.clone()),
+                profile_source: if own_prof.is_some() {
+                    Some("identity-key".into())
+                } else if published.is_some() {
+                    Some("bap".into())
+                } else {
+                    None
+                },
+                is_selected_issuer: is_selected,
+                is_presented,
+                bap_published: published.is_some(),
+            });
+        }
+
+        let effective_presented = presented_key.or_else(|| {
+            rows.iter()
+                .find(|r| r.is_presented)
+                .map(|r| r.identity_key.clone())
+        });
+
+        PublicIdentitiesView {
+            rows,
+            selected_issuer,
+            presented_key: effective_presented,
+            signs_issuance,
+        }
+    }
+
+    fn update_public_identities_store<F>(
+        &self,
+        profile: &SessionSummary,
+        mut f: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&mut serde_json::Map<String, Value>) -> Result<(), String>,
+    {
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        let store_key =
+            Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik);
+        let mut store = self
+            .durable
+            .get(&store_key)
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_else(|| {
+                let mut m = serde_json::Map::new();
+                m.insert("version".into(), Value::from(2));
+                m.insert("owner".into(), Value::from(owner_ik.clone()));
+                m.insert("chain".into(), Value::from(profile.chain.clone()));
+                m.insert("selected".into(), Value::from(owner_ik.clone()));
+                m.insert("identities".into(), Value::Array(Vec::new()));
+                m
+            });
+        store.insert("version".into(), Value::from(2));
+        store.insert("owner".into(), Value::from(owner_ik));
+        store.insert("chain".into(), Value::from(profile.chain.clone()));
+        f(&mut store)?;
+        let json = serde_json::to_string(&Value::Object(store)).map_err(|e| e.to_string())?;
+        if !self.durable.set(&store_key, &json, false) {
+            return Err("Could not save public identities.".into());
+        }
+        Ok(())
+    }
+
+    /// Save a self-published profile for `target_identity_key` (1:1 with `saveIdentityProfile` in `publicIdentities.ts`).
+    pub fn save_public_identity_profile(
+        &self,
+        profile: &SessionSummary,
+        target_identity_key: &str,
+        name: &str,
+        description: &str,
+        image_data_url: Option<&str>,
+    ) -> Result<(), String> {
+        let trimmed_name = name.trim();
+        if trimmed_name.is_empty() {
+            return Err("Enter a profile name.".into());
+        }
+        if trimmed_name.len() > 64 {
+            return Err("Profile name must be 64 characters or fewer.".into());
+        }
+        if trimmed_name.contains('@') && trimmed_name.contains('.') {
+            return Err("Do not use an email address as a public profile name.".into());
+        }
+        let trimmed_desc = description.trim();
+        if trimmed_desc.len() > 160 {
+            return Err("Bio must be 160 characters or fewer.".into());
+        }
+        let ik = target_identity_key.trim().to_ascii_lowercase();
+        let now = now_ms();
+        let issued_at = format!("{now}");
+
+        let mut record_obj = serde_json::Map::new();
+        let sig_hash = encode_hex(&sha256(
+            format!("BRC-248:{ik}:{trimmed_name}:{trimmed_desc}:{issued_at}").as_bytes(),
+        ));
+        record_obj.insert(
+            "certificate".into(),
+            serde_json::json!({
+                "type": base64::engine::general_purpose::STANDARD.encode(sha256(b"BRC-248 identity profile")),
+                "serialNumber": base64::engine::general_purpose::STANDARD.encode(sha256(issued_at.as_bytes())),
+                "subject": ik,
+                "certifier": ik,
+                "revocationOutpoint": format!("{}.0", "00".repeat(32)),
+                "fields": {
+                    "name": trimmed_name,
+                    "description": trimmed_desc,
+                    "issuedAt": issued_at,
+                },
+                "keyring": {},
+                "signature": sig_hash,
+            }),
+        );
+
+        if let Some(data_url) = image_data_url.filter(|u| u.starts_with("data:image/")) {
+            if let Some((meta, b64)) = data_url.split_once(";base64,") {
+                let ct = meta.trim_start_matches("data:");
+                let img_bytes = base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .map_err(|_| "Invalid image data.".to_string())?;
+                if img_bytes.len() > 65_536 {
+                    return Err("Profile image must be 64 KB or smaller.".into());
+                }
+                let uhrp_url = format!("uhrp://{}", encode_hex(&sha256(&img_bytes)));
+                record_obj.insert(
+                    "image".into(),
+                    serde_json::json!({
+                        "url": uhrp_url,
+                        "contentType": ct,
+                        "bytesB64": b64,
+                    }),
+                );
+            }
+        }
+
+        let stored = serde_json::json!({
+            "record": Value::Object(record_obj),
+            "name": trimmed_name,
+            "description": trimmed_desc,
+            "issuedAt": issued_at,
+            "imageDataUrl": image_data_url,
+        });
+        let entry_key = format!("handcash.identityProfiles.v1:{}:{ik}", profile.chain);
+        let stored_json = serde_json::to_string(&stored).map_err(|e| e.to_string())?;
+        if !self.durable.set(&entry_key, &stored_json, false) {
+            return Err("Failed to save profile record.".into());
+        }
+
+        // Update index `handcash.identityProfiles.v1:{chain}` with `pinned: true`.
+        let idx_key = format!("handcash.identityProfiles.v1:{}", profile.chain);
+        let mut idx_val = self
+            .durable
+            .get(&idx_key)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .unwrap_or_else(|| serde_json::json!({ "version": 1, "entries": [] }));
+        if let Some(entries) = idx_val.get_mut("entries").and_then(Value::as_array_mut) {
+            entries.retain(|e| e.get("identityKey").and_then(Value::as_str) != Some(ik.as_str()));
+            entries.push(serde_json::json!({
+                "identityKey": ik,
+                "storedAt": now,
+                "pinned": true,
+            }));
+        }
+        if let Ok(idx_json) = serde_json::to_string(&idx_val) {
+            let _ = self.durable.set(&idx_key, &idx_json, false);
+        }
+
+        // Ensure `presented` is set if nothing was presented yet.
+        let _ = self.update_public_identities_store(profile, |store| {
+            if !store.contains_key("presented") {
+                store.insert("presented".into(), Value::from(ik.clone()));
+                store.insert("presentedAt".into(), Value::from(issued_at.clone()));
+            }
+            Ok(())
+        });
+
+        Ok(())
+    }
+
+    pub fn select_public_identity_issuer(
+        &self,
+        profile: &SessionSummary,
+        target_identity_key: &str,
+    ) -> Result<(), String> {
+        let ik = target_identity_key.trim().to_ascii_lowercase();
+        self.update_public_identities_store(profile, |store| {
+            store.insert("selected".into(), Value::from(ik.clone()));
+            Ok(())
+        })
+    }
+
+    pub fn present_public_identity(
+        &self,
+        profile: &SessionSummary,
+        target_identity_key: &str,
+    ) -> Result<(), String> {
+        let ik = target_identity_key.trim().to_ascii_lowercase();
+        let now_str = format!("{}", now_ms());
+        self.update_public_identities_store(profile, |store| {
+            store.insert("presented".into(), Value::from(ik.clone()));
+            store.insert("presentedAt".into(), Value::from(now_str.clone()));
+            Ok(())
+        })
+    }
+
+    pub fn set_signs_issuance(&self, profile: &SessionSummary, signs: bool) -> Result<(), String> {
+        self.update_public_identities_store(profile, |store| {
+            if signs {
+                store.remove("unsigned");
+            } else {
+                store.insert("unsigned".into(), Value::from(true));
+            }
+            Ok(())
+        })
+    }
+
+    pub fn import_issuer_private_key(
+        &self,
+        profile: &SessionSummary,
+        raw_key: &str,
+    ) -> Result<String, String> {
+        let trimmed = raw_key.trim();
+        if trimmed.is_empty() {
+            return Err("Add a 64-hex private signing key.".into());
+        }
+        let clean = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+            .unwrap_or(trimmed);
+        let sk = handcash_primitives::keys::SecretKeyBytes::from_hex(clean)
+            .map_err(|_| "Enter a valid 64-character hex private signing key.".to_string())?;
+        let pubkey = sk
+            .public_key_hex()
+            .map_err(|e| e.to_string())?
+            .to_ascii_lowercase();
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        if pubkey == owner_ik {
+            return Err("That is already this wallet's primary identity key.".into());
+        }
+        let sealed = base64::engine::general_purpose::STANDARD.encode(
+            serde_json::json!({
+                "kind": "issuer-signing-key",
+                "owner": owner_ik,
+                "privateKey": clean.to_ascii_lowercase(),
+            })
+            .to_string()
+            .as_bytes(),
+        );
+        self.update_public_identities_store(profile, |store| {
+            let arr = store
+                .entry("identities")
+                .or_insert_with(|| Value::Array(Vec::new()))
+                .as_array_mut()
+                .ok_or_else(|| "Invalid identities list.".to_string())?;
+            arr.retain(|e| e.get("identityKey").and_then(Value::as_str) != Some(pubkey.as_str()));
+            arr.push(serde_json::json!({
+                "identityKey": pubkey,
+                "signer": "imported",
+                "sealedKey": sealed,
+            }));
+            store.insert("selected".into(), Value::from(pubkey.clone()));
+            Ok(())
+        })?;
+        Ok(pubkey)
+    }
+
+    pub fn remove_imported_public_identity(
+        &self,
+        profile: &SessionSummary,
+        target_identity_key: &str,
+    ) -> Result<(), String> {
+        let ik = target_identity_key.trim().to_ascii_lowercase();
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        if ik == owner_ik {
+            return Err("The wallet's primary identity key cannot be removed.".into());
+        }
+        self.update_public_identities_store(profile, |store| {
+            if let Some(arr) = store.get_mut("identities").and_then(Value::as_array_mut) {
+                arr.retain(|e| e.get("identityKey").and_then(Value::as_str) != Some(ik.as_str()));
+            }
+            if store.get("selected").and_then(Value::as_str) == Some(ik.as_str()) {
+                store.insert("selected".into(), Value::from(owner_ik.clone()));
+            }
+            if store.get("presented").and_then(Value::as_str) == Some(ik.as_str()) {
+                store.remove("presented");
+                store.remove("presentedAt");
+            }
+            Ok(())
+        })
+    }
+
+    pub fn export_identity_card_json(
+        &self,
+        profile: &SessionSummary,
+        target_identity_key: &str,
+    ) -> Result<String, String> {
+        let ik = target_identity_key.trim().to_ascii_lowercase();
+        let prof = self
+            .identity_profile_for(&profile.chain, &ik)
+            .ok_or_else(|| "Add a profile name before sharing an identity card.".to_string())?;
+        let card = serde_json::json!({
+            "kind": "handcash-identity-card",
+            "v": 2,
+            "chain": profile.chain,
+            "identityKey": ik,
+            "name": prof.name,
+            "description": prof.description,
+            "imageDataUrl": prof.image_data_url,
+            "issuedAt": now_ms(),
+        });
+        serde_json::to_string_pretty(&card).map_err(|e| e.to_string())
+    }
+
+    pub fn import_peer_identity_card_json(
+        &self,
+        chain: &str,
+        friend_identity_key: &str,
+        raw_json: &str,
+    ) -> Result<String, String> {
+        if raw_json.len() > 400 * 1024 {
+            return Err("This file is too large to be an identity card.".into());
+        }
+        let v: Value = serde_json::from_str(raw_json)
+            .map_err(|_| "That file is not a valid HandCash identity card.".to_string())?;
+        let card_ik = v
+            .get("identityKey")
+            .or_else(|| v.get("owner"))
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_ascii_lowercase())
+            .ok_or_else(|| "Identity card is missing its identityKey.".to_string())?;
+        let expected_ik = friend_identity_key.trim().to_ascii_lowercase();
+        if !expected_ik.starts_with('$') && card_ik != expected_ik {
+            return Err("This identity card belongs to a different wallet key.".into());
+        }
+        let name = v
+            .get("name")
+            .or_else(|| v.get("profile").and_then(|p| p.get("name")))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| "Identity card has no profile name.".to_string())?
+            .to_string();
+        let description = v
+            .get("description")
+            .or_else(|| v.get("profile").and_then(|p| p.get("description")))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let image_data_url = v
+            .get("imageDataUrl")
+            .or_else(|| v.get("profile").and_then(|p| p.get("imageDataUrl")))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let key = format!("handcash.identityCards.v1:{chain}:{card_ik}");
+        let stored = serde_json::json!({
+            "identityKey": card_ik,
+            "name": name,
+            "description": description,
+            "imageDataUrl": image_data_url,
+            "verifiedAt": now_ms(),
+        });
+        let json = serde_json::to_string(&stored).map_err(|e| e.to_string())?;
+        if !self.durable.set(&key, &json, false) {
+            return Err("Failed to save contact identity card.".into());
+        }
+        Ok(name)
+    }
+
+    pub fn export_public_identities_backup_json(
+        &self,
+        profile: &SessionSummary,
+    ) -> Result<String, String> {
+        let view = self.list_public_identities_view(profile);
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        let store_key =
+            Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik);
+        let raw_store = self
+            .durable
+            .get(&store_key)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mut profiles = serde_json::Map::new();
+        for row in &view.rows {
+            let ek = format!(
+                "handcash.identityProfiles.v1:{}:{}",
+                profile.chain, row.identity_key
+            );
+            if let Some(p_raw) = self.durable.get(&ek) {
+                if let Ok(pv) = serde_json::from_str::<Value>(&p_raw) {
+                    profiles.insert(row.identity_key.clone(), pv);
+                }
+            }
+        }
+        let doc = serde_json::json!({
+            "kind": "handcash-public-identities-backup",
+            "version": 2,
+            "owner": owner_ik,
+            "chain": profile.chain,
+            "store": raw_store,
+            "profiles": Value::Object(profiles),
+        });
+        serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())
+    }
+
+    pub fn restore_public_identities_backup_json(
+        &self,
+        profile: &SessionSummary,
+        raw_json: &str,
+    ) -> Result<String, String> {
+        if raw_json.len() > 4 * 1024 * 1024 {
+            return Err("Backup file is too large (4 MB maximum).".into());
+        }
+        let v: Value = serde_json::from_str(raw_json)
+            .map_err(|_| "Invalid public identities backup JSON.".to_string())?;
+        if v.get("kind").and_then(Value::as_str) != Some("handcash-public-identities-backup") {
+            return Err("Not a HandCash public identities backup file.".into());
+        }
+        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
+        if let Some(store_val) = v.get("store").filter(|s| s.is_object()) {
+            let store_key =
+                Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik);
+            if let Ok(s_json) = serde_json::to_string(store_val) {
+                let _ = self.durable.set(&store_key, &s_json, false);
+            }
+        }
+        let mut restored_count = 0usize;
+        if let Some(profs) = v.get("profiles").and_then(Value::as_object) {
+            for (ik, pv) in profs {
+                let ek = format!(
+                    "handcash.identityProfiles.v1:{}:{}",
+                    profile.chain,
+                    ik.to_ascii_lowercase()
+                );
+                if let Ok(p_json) = serde_json::to_string(pv) {
+                    let _ = self.durable.set(&ek, &p_json, false);
+                    restored_count += 1;
+                }
+            }
+        }
+        Ok(format!("Restored {restored_count} identity profile(s)."))
+    }
+
+    // ── Notes (`src/wallet/notes/noteStore.ts`) ──
+
+    fn notes_storage_key(&self) -> String {
+        self.account_local_key("handcash.notes.v1")
+            .unwrap_or_else(|| "handcash.notes.v1".to_string())
+    }
+
+    pub fn list_notes(&self) -> Vec<NoteEntry> {
+        let key = self.notes_storage_key();
+        let Some(raw) = self.durable.get(&key) else {
+            return Vec::new();
+        };
+        let mut list: Vec<NoteEntry> = serde_json::from_str(&raw).unwrap_or_default();
+        list.sort_by_key(|n| std::cmp::Reverse(n.saved_at));
+        list
+    }
+
+    pub fn save_note(&self, id: Option<&str>, body: &str) -> Result<Vec<NoteEntry>, String> {
+        let trimmed = body.trim();
+        let mut list = self.list_notes();
+        if trimmed.is_empty() {
+            if let Some(existing_id) = id {
+                list.retain(|n| n.id != existing_id);
+            }
+        } else {
+            let now = now_ms();
+            if let Some(existing_id) = id {
+                if let Some(pos) = list.iter().position(|n| n.id == existing_id) {
+                    list[pos].body = body.to_string();
+                    list[pos].saved_at = now;
+                } else {
+                    list.push(NoteEntry {
+                        id: existing_id.to_string(),
+                        body: body.to_string(),
+                        saved_at: now,
+                    });
+                }
+            } else {
+                list.push(NoteEntry {
+                    id: format!("note-{now}-{}", list.len() + 1),
+                    body: body.to_string(),
+                    saved_at: now,
+                });
+            }
+        }
+        list.sort_by_key(|n| std::cmp::Reverse(n.saved_at));
+        let json = serde_json::to_string(&list).map_err(|e| e.to_string())?;
+        let key = self.notes_storage_key();
+        if !self.durable.set(&key, &json, false) {
+            return Err("Could not save note.".into());
+        }
+        Ok(list)
+    }
+
+    pub fn delete_note(&self, id: &str) -> Result<Vec<NoteEntry>, String> {
+        let mut list = self.list_notes();
+        list.retain(|n| n.id != id);
+        let json = serde_json::to_string(&list).map_err(|e| e.to_string())?;
+        let key = self.notes_storage_key();
+        let _ = self.durable.set(&key, &json, false);
+        Ok(list)
+    }
+
+    // ── Peer Messages (`handcash.messages.v1`) ──
+
+    fn messages_storage_key(&self) -> String {
+        self.account_local_key("handcash.messages.v1")
+            .unwrap_or_else(|| "handcash.messages.v1".to_string())
+    }
+
+    pub fn list_chat_messages(&self, peer_id: &str) -> Vec<ChatMessageEntry> {
+        let key = self.messages_storage_key();
+        let Some(raw) = self.durable.get(&key) else {
+            return Vec::new();
+        };
+        let all: Vec<ChatMessageEntry> = serde_json::from_str(&raw).unwrap_or_default();
+        let mut filtered: Vec<ChatMessageEntry> =
+            all.into_iter().filter(|m| m.peer_id == peer_id).collect();
+        filtered.sort_by_key(|m| m.at);
+        filtered
+    }
+
+    pub fn send_chat_message(
+        &self,
+        peer_id: &str,
+        text: &str,
+    ) -> Result<ChatMessageEntry, String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("Message cannot be empty.".into());
+        }
+        let key = self.messages_storage_key();
+        let mut all: Vec<ChatMessageEntry> = self
+            .durable
+            .get(&key)
+            .and_then(|r| serde_json::from_str(&r).ok())
+            .unwrap_or_default();
+        let now = now_ms();
+        let entry = ChatMessageEntry {
+            id: format!("msg-{now}-{}", all.len() + 1),
+            peer_id: peer_id.to_string(),
+            direction: "out".into(),
+            text: trimmed.to_string(),
+            at: now,
+        };
+        all.push(entry.clone());
+        let json = serde_json::to_string(&all).map_err(|e| e.to_string())?;
+        if !self.durable.set(&key, &json, false) {
+            return Err("Failed to save message.".into());
+        }
+        Ok(entry)
+    }
+
+    // ── Developer Keys (`src/wallet/devKeys.ts`) ──
+
+    fn dev_keys_storage_key(&self) -> String {
+        self.account_local_key("handcash.devKeys.v1")
+            .unwrap_or_else(|| "handcash.devKeys.v1".to_string())
+    }
+
+    pub fn list_dev_keys(&self) -> Vec<DevKeyRecord> {
+        let key = self.dev_keys_storage_key();
+        let Some(raw) = self.durable.get(&key) else {
+            return Vec::new();
+        };
+        let mut list: Vec<DevKeyRecord> = serde_json::from_str(&raw).unwrap_or_default();
+        list.sort_by_key(|k| std::cmp::Reverse(k.created_at));
+        list
+    }
+
+    pub fn create_dev_key(&self, label: &str) -> Result<(DevKeyRecord, String), String> {
+        let wrap = generate_wrap_secret();
+        let sk_bytes = sha256(format!("handcash.devKey.v1|{}|{}", wrap.as_str(), now_ms()).as_bytes());
+        let sk_hex = encode_hex(&sk_bytes);
+        let sk = handcash_primitives::keys::SecretKeyBytes::from_hex(&sk_hex)
+            .map_err(|e| e.to_string())?;
+        let pub_hex = sk.public_key_hex().map_err(|e| e.to_string())?;
+        let now = now_ms();
+        let clean_label = if label.trim().is_empty() {
+            format!("Server key #{}", self.list_dev_keys().len() + 1)
+        } else {
+            label.trim().to_string()
+        };
+        let rec = DevKeyRecord {
+            id: format!("dk-{now}"),
+            public_key: pub_hex.clone(),
+            created_at: now,
+            label: clean_label,
+        };
+        let mut list = self.list_dev_keys();
+        list.insert(0, rec.clone());
+        let json = serde_json::to_string(&list).map_err(|e| e.to_string())?;
+        let key = self.dev_keys_storage_key();
+        if !self.durable.set(&key, &json, false) {
+            return Err("Could not save developer key.".into());
+        }
+        let env_export = format!(
+            "HANDCASH_DEV_PRIVATE_KEY={sk_hex}\nHANDCASH_DEV_PUBLIC_KEY={pub_hex}"
+        );
+        Ok((rec, env_export))
+    }
+
+    pub fn remove_dev_key(&self, id: &str) -> Result<(), String> {
+        let mut list = self.list_dev_keys();
+        list.retain(|k| k.id != id);
+        let json = serde_json::to_string(&list).map_err(|e| e.to_string())?;
+        let key = self.dev_keys_storage_key();
+        let _ = self.durable.set(&key, &json, false);
+        Ok(())
+    }
+}
+
+/// 1:1 port of `keyGroups` in `src/wallet/identityCards.ts`.
+pub fn key_groups(key: &str) -> Vec<String> {
+    let k = key.trim().to_ascii_lowercase();
+    let hex = if k.len() > 32 {
+        format!("{}{}", &k[..16], &k[k.len() - 16..])
+    } else {
+        k
+    };
+    hex.as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).to_string())
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IdentityCardItem {
+    pub id: String,
+    pub kind: &'static str,
+    pub title: String,
+    pub groups: Vec<String>,
+    pub holder: String,
+    pub identity_key: String,
+    pub own: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AccountProfileView {
+    pub identity_key: String,
+    pub name: String,
+    pub description: String,
+    pub image_data_url: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicIdentityRow {
+    pub identity_key: String,
+    pub signer: String,
+    pub bap_id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub image_data_url: Option<String>,
+    pub profile_source: Option<String>,
+    pub is_selected_issuer: bool,
+    pub is_presented: bool,
+    pub bap_published: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PublicIdentitiesView {
+    pub rows: Vec<PublicIdentityRow>,
+    pub selected_issuer: String,
+    pub presented_key: Option<String>,
+    pub signs_issuance: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteEntry {
+    pub id: String,
+    pub body: String,
+    pub saved_at: i64,
+}
+
+pub fn note_title(body: &str) -> String {
+    let first = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("Untitled note");
+    if first.chars().count() > 48 {
+        let head: String = first.chars().take(48).collect();
+        format!("{head}…")
+    } else {
+        first.to_string()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageEntry {
+    pub id: String,
+    pub peer_id: String,
+    pub direction: String,
+    pub text: String,
+    pub at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DevKeyRecord {
+    pub id: String,
+    pub public_key: String,
+    pub created_at: i64,
+    pub label: String,
 }
 
 /// 1:1 port of `historyCryptoSecret` in `src/wallet/historyCryptoSecret.ts`.

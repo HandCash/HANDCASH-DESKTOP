@@ -48,17 +48,17 @@ Last audited: 2026-11-22.
 
 | TS component | Rust | Status | Gap |
 |---|---|---|---|
-| FriendsPanel, AddFriendPanel, FriendDetailsPanel | ui/friends.rs | match | |
-| IdentityPanel | panels.rs | partial | IdentityCards, IdentityPublishReview, PublicIdentitiesPanel |
-| ProfileAvatar, ProfileIdenticon, ProfileFingerprint, PeerAvatar | ui/primitives.rs | partial | PeerAvatar (initial) wired into friends; presented-profile images and PeerIdentityLine pending |
-| MessagesPanel, messages/ChatComposer, ChatSidebar, ChatThread, MessageBubble | — | missing | needs messagebox service (≠ custody) |
-| NotesPanel | — | missing | |
+| FriendsPanel, AddFriendPanel, FriendDetailsPanel | ui/friends.rs | match | shared peer identity cards, import card, toolbar, messages shortcut |
+| IdentityPanel | panels.rs | match | IdentityCards deck, Handle IPT, PublicIdentitiesPanel (create/edit profile, avatar upload, import key, backup/restore, share identity card) |
+| ProfileAvatar, ProfileIdenticon, ProfileFingerprint, PeerAvatar | ui/primitives.rs, chrome.rs, friends.rs, collectables.rs | match | wired into WalletAccountMenu, IdentityPanel, FriendsPanel, FriendDetailsPanel, and Collectables issuer shelves |
+| MessagesPanel, messages/ChatComposer, ChatSidebar, ChatThread, MessageBubble | ui/friends.rs `MessagesPanel` | match | contact sidebar, thread history, pay shortcut, message composer |
+| NotesPanel | ui/apps.rs `NotesPanel` | match | sealed per-account private notes (`handcash.notes.v1`) |
 
 ## Apps / BRC-100
 
 | TS component | Rust | Status | Gap |
 |---|---|---|---|
-| ConnectedAppsPanel, AppDetailsPanel | ui/apps.rs | match | |
+| ConnectedAppsPanel, AppDetailsPanel | ui/apps.rs | match | AppLauncherGrid (Notes + 5 verified chart apps + connected web apps), AppAvatar, Developer keys |
 | ConnectPermissionDialog, ActionPermissionDialog, PermissionRequestPanel, PermissionDetailsPanel, PermissionItemPreview, ConnectScopesList, ScopeIcon, GrantDurationPicker, GrantExpiryLine, WalletRequestTemplate | — | missing | BRC-100 prompts; signing-bearing approvals gated |
 | AppBrowserPanel, AppBrowserTabSwitcher, AppLaunchPanel, AppLaunchMenu, AppLauncherGrid, AppsSearchBar, AppAvatar, apps-page/SettingsAndLaunchButton | — | missing | needs embedded webview story in Blitz |
 | ChartAppsPanel, ChartAppView | panels.rs `ChartAppsPanel` | match | 5 verified built-in chart apps + AppReview + ChartAppView state runner |

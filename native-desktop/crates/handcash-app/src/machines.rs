@@ -423,7 +423,11 @@ pub enum NavChild {
     BurnCollectables(Vec<String>),
     AddFriend,
     FriendDetails(String),
+    Messages(Option<String>),
     AppDetails(String),
+    Notes,
+    DevKeys,
+    ChartApp(String),
     Setting(SettingSubpage),
 }
 
@@ -442,7 +446,11 @@ impl NavChild {
             Self::BurnAsset(_) | Self::BurnCollectables(_) => "Burn",
             Self::AddFriend => "Add friend",
             Self::FriendDetails(_) => "Friend",
+            Self::Messages(_) => "Messages",
             Self::AppDetails(_) => "App",
+            Self::Notes => "Notes",
+            Self::DevKeys => "Developer keys",
+            Self::ChartApp(_) => "App",
             Self::Setting(sub) => sub.label(),
         }
     }
@@ -463,7 +471,11 @@ impl NavChild {
             Self::BurnCollectables(_) => "burn-collectables",
             Self::AddFriend => "add-friend",
             Self::FriendDetails(_) => "friend",
+            Self::Messages(_) => "messages",
             Self::AppDetails(_) => "app",
+            Self::Notes => "notes",
+            Self::DevKeys => "dev-keys",
+            Self::ChartApp(_) => "chart-app",
             Self::Setting(_) => "setting",
         }
     }

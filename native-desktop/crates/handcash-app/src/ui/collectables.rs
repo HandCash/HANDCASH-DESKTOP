@@ -17,7 +17,7 @@ use crate::state::{
     WalletSnapshot,
 };
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
-use crate::ui::primitives::MiddleEllipsisName;
+use crate::ui::primitives::{MiddleEllipsisName, ProfileFingerprint};
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -166,12 +166,17 @@ fn set_outpoint_selected(mut selected: Signal<BTreeSet<String>>, outpoint: &str,
 /// One shelf per issuer key, mirroring the TS `IssuerGroupItem` accordion.
 struct IssuerShelf<'a> {
     key: String,
+    raw_pubkey: String,
     label: String,
     items: Vec<&'a ItemCardRow>,
 }
 
 /// Shelves items by `issuer_key`. Items without a key are returned for the "No issuer" section.
-fn group_by_issuer<'a>(items: &[&'a ItemCardRow]) -> (Vec<IssuerShelf<'a>>, Vec<&'a ItemCardRow>) {
+fn group_by_issuer<'a>(
+    items: &[&'a ItemCardRow],
+    services: &AppServices,
+    chain: &str,
+) -> (Vec<IssuerShelf<'a>>, Vec<&'a ItemCardRow>) {
     let mut buckets: BTreeMap<String, Vec<&'a ItemCardRow>> = BTreeMap::new();
     let mut loose = Vec::new();
     for item in items {
@@ -187,10 +192,17 @@ fn group_by_issuer<'a>(items: &[&'a ItemCardRow]) -> (Vec<IssuerShelf<'a>>, Vec<
     }
     let shelves = buckets
         .into_iter()
-        .map(|(key, items)| IssuerShelf {
-            key: format!("issuer:pubkey:{key}"),
-            label: format!("Issuer {}", truncate_mid(&key, 10)),
-            items,
+        .map(|(key, items)| {
+            let label = services
+                .peer_identity_for(chain, &key)
+                .map(|p| p.name)
+                .unwrap_or_else(|| format!("Issuer {}", truncate_mid(&key, 10)));
+            IssuerShelf {
+                key: format!("issuer:pubkey:{key}"),
+                raw_pubkey: key,
+                label,
+                items,
+            }
         })
         .collect();
     (shelves, loose)
@@ -381,11 +393,13 @@ fn collect_items_list(
 /// 1:1 port of `src/components/InventoryPanel.tsx`: issuer shelves, "No issuer" section, group select.
 #[component]
 pub fn InventoryPanel(
+    #[props(default = "main".to_string())] chain: String,
     snap: WalletSnapshot,
     view: Signal<CollectionView>,
     mut nav_child: Signal<Option<NavChild>>,
     #[props(default)] selected_outpoints_ext: Option<Signal<BTreeSet<String>>>,
 ) -> Element {
+    let services = use_context::<Arc<AppServices>>();
     let mut query = use_signal(String::new);
     let local_selected = use_signal(BTreeSet::<String>::new);
     let mut selected_outpoints = selected_outpoints_ext.unwrap_or(local_selected);
@@ -407,7 +421,7 @@ pub fn InventoryPanel(
                 || item.outpoint.to_ascii_lowercase().contains(&q)
         })
         .collect();
-    let (shelves, ungrouped) = group_by_issuer(&filtered);
+    let (shelves, ungrouped) = group_by_issuer(&filtered, &services, &chain);
 
     rsx! {
         div {
@@ -482,8 +496,9 @@ pub fn InventoryPanel(
                                                         collapsed.set(next);
                                                     },
                                                     span { class: "collect-collection-body",
-                                                        strong { class: "collect-collection-name",
+                                                        strong { class: "collect-collection-name", style: "display: inline-flex; align-items: center; gap: 6px;",
                                                             span { class: "collect-collection-name-text", "{shelf.label}" }
+                                                            ProfileFingerprint { id: shelf.raw_pubkey.clone() }
                                                         }
                                                         span { class: "collect-collection-meta", "{meta}" }
                                                     }

@@ -566,6 +566,26 @@ pub fn WarningIcon(#[props(default = 20)] size: u32) -> Element {
     }
 }
 
+/// Material `chat_bubble_outline` — TS `MessagesIcon`.
+#[component]
+pub fn MessagesIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z" }
+        }
+    }
+}
+
+/// Material `vpn_key` — TS `KeyIcon`.
+#[component]
+pub fn KeyIcon(#[props(default = 18)] size: u32) -> Element {
+    rsx! {
+        svg { view_box: "0 0 24 24", width: "{size}", height: "{size}", fill: "currentColor", "aria-hidden": "true",
+            path { d: "M12.65 10A5.99 5.99 0 0 0 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 0 0 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z" }
+        }
+    }
+}
+
 /// Litecoin glyph (no disc), the `ltc` case of TS `CoinGlyphIcon`
 /// (`cryptocurrency-icons`, CC0; see `src/assets/brand/ATTRIBUTION.md`).
 #[component]

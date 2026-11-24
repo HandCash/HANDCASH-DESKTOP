@@ -12,14 +12,16 @@ use crate::icons::{
 };
 use crate::machines::{AppSessionMachine, FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
-    copy_to_clipboard, load_builtin_chart_apps, render_qr_svg, truncate_mid, AcceptedCoins,
-    AppServices, BuiltinChartApp, LabFeature, RecoverScan, SessionSummary, WalletSnapshot,
-    APP_VERSION,
+    copy_to_clipboard, load_builtin_chart_apps, open_external_url, render_qr_svg, truncate_mid,
+    AcceptedCoins, AppServices, BuiltinChartApp, IdentityCardItem, LabFeature, RecoverScan,
+    SessionSummary, WalletSnapshot, APP_VERSION,
 };
 use crate::theme::AppearancePreference;
 use crate::ui::auth::{KeySliceList, PasswordField};
+use crate::ui::primitives::ProfileIdenticon;
 use crate::ui::EmptyState;
 use aeon_ui::{button, list_row};
+use base64::Engine as _;
 use dioxus::prelude::*;
 use handcash_primitives::brc140::Brc140IssuedSet;
 use std::collections::BTreeSet;
@@ -179,20 +181,82 @@ pub fn ScanPanel(mut nav_child: Signal<Option<NavChild>>) -> Element {
     }
 }
 
-/// 1:1 port of `src/components/IdentityPanel.tsx`.
+/// 1:1 port of `src/components/IdentityCards.tsx`.
+#[component]
+pub fn IdentityCards(
+    cards: Vec<IdentityCardItem>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    rsx! {
+        div {
+            class: "id-deck",
+            "data-aeon-scope": "identity-cards",
+            aria_label: "Identity cards",
+            for c in cards {
+                {
+                    let ik_copy = c.identity_key.clone();
+                    let kind_label = if c.kind == "key" { "KEY" } else { "BRC-169" };
+                    let own_str = if c.own { "true" } else { "false" };
+                    let card_title = format!("Copy identity key\n{}", c.identity_key);
+                    rsx! {
+                        button {
+                            key: "{c.id}",
+                            r#type: "button",
+                            class: "id-card",
+                            "data-aeon-part": "card",
+                            "data-aeon-state": "{c.kind}",
+                            "data-own": "{own_str}",
+                            title: "{card_title}",
+                            onclick: move |_| {
+                                if copy_to_clipboard(&ik_copy).is_ok() {
+                                    toast.set(Some(ToastNotice {
+                                        title: "Copied".into(),
+                                        body: Some("Wallet key copied.".into()),
+                                        tone: "success",
+                                    }));
+                                }
+                            },
+                            span { class: "id-card-top",
+                                span { class: "id-card-title", "{c.title}" }
+                                span { class: "id-card-kind", "{kind_label}" }
+                            }
+                            span { class: "id-card-chip", "aria-hidden": "true" }
+                            span { class: "id-card-number mono",
+                                for (i, g) in c.groups.iter().enumerate() {
+                                    span { key: "{i}", "{g}" }
+                                }
+                            }
+                            span { class: "id-card-bottom",
+                                span { class: "id-card-holder", "{c.holder}" }
+                                span { class: "id-card-mark", "aria-hidden": "true" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/IdentityPanel.tsx`, `src/components/IdentityCards.tsx`,
+/// and `src/components/PublicIdentitiesPanel.tsx`.
 #[component]
 pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNotice>>) -> Element {
     let services = use_context::<Arc<AppServices>>();
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
+
     let details = services.load_identity_details(&profile);
+    let cards = services.build_identity_cards(&profile);
     let qr_svg = render_qr_svg(&profile.identity_key);
-    let handle_str = details
-        .claimed_handle
-        .clone()
-        .unwrap_or_else(|| format!("${}", profile.handle));
-    let handle_copy = handle_str.clone();
-    let id_copy = profile.identity_key.clone();
-    let addr_copy = profile.address.clone();
-    let bap_copy = details.bap_profile_id.clone();
+    let claimed_handle =
+        services.claimed_handle_for(&profile.chain, profile.account_index, &profile.identity_key);
+    let handle_state = if claimed_handle.is_some() {
+        "certificate"
+    } else {
+        "empty"
+    };
+    let bap_profile_id = details.bap_profile_id.clone();
 
     rsx! {
         div {
@@ -202,6 +266,8 @@ pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNoti
                 h2 { "Identity" }
             }
             div { class: "nav-section-scroll-body",
+                IdentityCards { cards, toast }
+
                 section { class: "identity-card", aria_label: "Wallet identity",
                     div { class: "identity-hero",
                         div { class: "identity-qr",
@@ -212,45 +278,65 @@ pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNoti
                         section {
                             class: "handle-ipt",
                             "data-aeon-scope": "handle-ipt",
-                            "data-aeon-state": "held",
+                            "data-aeon-state": "{handle_state}",
+                            aria_label: "Handle",
                             header { "data-aeon-part": "head",
                                 h3 { "data-aeon-part": "title", "Handle" }
-                                span { "data-aeon-part": "profile", "{profile.derivation}" }
+                                span { "data-aeon-part": "profile", "iptnft" }
                             }
-                            div { "data-aeon-part": "held",
-                                button {
-                                    r#type: "button",
-                                    class: "identity-qr-handle",
-                                    "data-aeon-part": "label",
-                                    onclick: move |_| {
-                                        if copy_to_clipboard(&handle_copy).is_ok() {
-                                            toast.set(Some(ToastNotice {
-                                                title: "Copied".into(),
-                                                body: Some(format!("{handle_copy} copied.")),
-                                                tone: "success",
-                                            }));
+                            if let Some(ref handle_str) = claimed_handle {
+                                {
+                                    let h_copy = handle_str.clone();
+                                    let h_title = format!("Click to copy {handle_str}");
+                                    rsx! {
+                                        div { "data-aeon-part": "held",
+                                            button {
+                                                r#type: "button",
+                                                class: "identity-qr-handle",
+                                                "data-aeon-part": "label",
+                                                title: "{h_title}",
+                                                onclick: move |_| {
+                                                    if copy_to_clipboard(&h_copy).is_ok() {
+                                                        toast.set(Some(ToastNotice {
+                                                            title: "Copied".into(),
+                                                            body: Some(format!("{h_copy} copied.")),
+                                                            tone: "success",
+                                                        }));
+                                                    }
+                                                },
+                                                "{handle_str}"
+                                            }
+                                            span {
+                                                "data-aeon-part": "owned",
+                                                title: "Your BRC-169 certificate binds this handle to this wallet",
+                                                "Owned"
+                                            }
                                         }
-                                    },
-                                    "{handle_str}"
+                                    }
                                 }
-                                span { "data-aeon-part": "owned", "Owned" }
+                            } else {
+                                div { "data-aeon-part": "empty",
+                                    p { class: "identity-handle-missing", "No handle yet." }
+                                    button::Root {
+                                        variant: button::ButtonVariant::Ghost,
+                                        class: "btn btn-ghost identity-claim-btn",
+                                        onclick: move |_| {
+                                            if let Err(e) = open_external_url("https://handcash.io") {
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Claim handle".into(),
+                                                    body: Some(e),
+                                                    tone: "error",
+                                                }));
+                                            }
+                                        },
+                                        button::Label { "Claim handle" }
+                                    }
+                                }
                             }
                         }
                     }
 
                     ul { class: "identity-list",
-                        if let Some(ref name) = details.display_name {
-                            li { class: "identity-field",
-                                span { class: "identity-field-label", "Display name" }
-                                strong { "{name}" }
-                            }
-                        }
-                        if let Some(ref bio) = details.bio {
-                            li { class: "identity-field",
-                                span { class: "identity-field-label", "Bio" }
-                                span { class: "settings-row-desc", "{bio}" }
-                            }
-                        }
                         li { class: "identity-field",
                             span { class: "identity-field-label", "Network" }
                             strong {
@@ -263,86 +349,652 @@ pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNoti
                                 }
                             }
                         }
-                        if let Some(ref bap_id) = bap_copy {
-                            {
-                                let bap_c = bap_id.clone();
-                                rsx! {
-                                    li { class: "identity-field",
-                                        span { class: "identity-field-label", "Profile ID (BAP)" }
-                                        button {
-                                            r#type: "button",
-                                            class: "mono identity-bap-id",
-                                            style: "background: transparent; border: none; color: inherit; cursor: pointer; padding: 0;",
-                                            onclick: move |_| {
-                                                if copy_to_clipboard(&bap_c).is_ok() {
-                                                    toast.set(Some(ToastNotice {
-                                                        title: "Copied".into(),
-                                                        body: Some("Profile ID copied.".into()),
-                                                        tone: "success",
-                                                    }));
-                                                }
-                                            },
-                                            "{truncate_mid(bap_id, 12)}"
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        li { class: "identity-field",
-                            span { class: "identity-field-label", "Identity key" }
-                            button {
-                                r#type: "button",
-                                class: "mono identity-bap-id",
-                                style: "background: transparent; border: none; color: inherit; cursor: pointer; padding: 0;",
-                                onclick: move |_| {
-                                    if copy_to_clipboard(&id_copy).is_ok() {
-                                        toast.set(Some(ToastNotice {
-                                            title: "Copied".into(),
-                                            body: Some("Identity key copied.".into()),
-                                            tone: "success",
-                                        }));
-                                    }
-                                },
-                                "{truncate_mid(&profile.identity_key, 12)}"
-                            }
-                        }
-                        li { class: "identity-field",
-                            span { class: "identity-field-label", "Receive address" }
-                            button {
-                                r#type: "button",
-                                class: "mono identity-bap-id",
-                                style: "background: transparent; border: none; color: inherit; cursor: pointer; padding: 0;",
-                                onclick: move |_| {
-                                    if copy_to_clipboard(&addr_copy).is_ok() {
-                                        toast.set(Some(ToastNotice {
-                                            title: "Copied".into(),
-                                            body: Some("Receive address copied.".into()),
-                                            tone: "success",
-                                        }));
-                                    }
-                                },
-                                "{truncate_mid(&profile.address, 12)}"
-                            }
-                        }
-                        li { class: "identity-field",
-                            span { class: "identity-field-label", "Account" }
-                            strong { class: "mono", "#{profile.account_index} · {profile.derivation}" }
-                        }
-                    }
-
-                    if !details.public_identities.is_empty() {
-                        ul { class: "identity-list", style: "margin-top: 10px;",
-                            for (pub_name, pub_id) in details.public_identities.iter() {
-                                li { key: "{pub_id}", class: "identity-field",
-                                    span { class: "identity-field-label", "{pub_name}" }
-                                    span { class: "mono", "{truncate_mid(pub_id, 10)}" }
+                        if let Some(ref bap_id) = bap_profile_id {
+                            li { class: "identity-field",
+                                span { class: "identity-field-label", "Profile ID" }
+                                strong {
+                                    class: "mono identity-bap-id",
+                                    title: "{bap_id}",
+                                    ProfileIdenticon { id: bap_id.clone(), size: 16 }
+                                    "{truncate_mid(bap_id, 10)}"
                                 }
                             }
                         }
                     }
                     p { class: "identity-note",
-                        "People pay your wallet key, and your profile is signed by it: a copycat can borrow your name and picture, never this key."
+                        if bap_profile_id.is_some() {
+                            "People pay your wallet key. Your profile ID is the public name they check: a copycat can borrow your name and picture, never this ID."
+                        } else {
+                            "People pay your wallet key, and your profile is signed by it: a copycat can borrow your name and picture, never this key."
+                        }
                     }
+                }
+
+                PublicIdentitiesPanel {
+                    profile: profile.clone(),
+                    rev,
+                    toast,
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/PublicIdentitiesPanel.tsx`.
+#[component]
+pub fn PublicIdentitiesPanel(
+    profile: SessionSummary,
+    mut rev: Signal<u64>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let _ = *rev.read();
+
+    // Modes: "browsing" | "composing" | "importing"
+    let mut mode = use_signal(|| "browsing");
+    let mut more_open = use_signal(|| false);
+    let mut row_menu_key = use_signal(|| Option::<String>::None);
+    let mut compose_key = use_signal(String::new);
+    let mut draft_name = use_signal(String::new);
+    let mut draft_bio = use_signal(String::new);
+    let mut draft_image = use_signal(|| Option::<String>::None);
+    let mut import_key_input = use_signal(String::new);
+    let mut status_err = use_signal(|| Option::<String>::None);
+
+    let cur_mode = *mode.read();
+    let view = services.list_public_identities_view(&profile);
+    let signs = view.signs_issuance;
+
+    let svc_export = Arc::clone(&services);
+    let svc_restore = Arc::clone(&services);
+    let svc_toggle_sign = Arc::clone(&services);
+    let svc_import_key = Arc::clone(&services);
+    let svc_save_prof = Arc::clone(&services);
+    let prof_export = profile.clone();
+    let prof_restore = profile.clone();
+    let prof_toggle = profile.clone();
+    let prof_import = profile.clone();
+    let prof_save = profile.clone();
+
+    rsx! {
+        section {
+            class: "identity-card identity-compose",
+            "data-aeon-scope": "public-identities",
+            "data-aeon-state": "{cur_mode}",
+            aria_label: "Public identities",
+            div { "data-aeon-part": "actions", "data-aeon-state": "idle",
+                if cur_mode == "browsing" {
+                    div { class: "public-identities-head", "data-aeon-part": "head",
+                        style: "position: relative;",
+                        h3 { class: "identity-compose-title", "Public identities" }
+                        button {
+                            r#type: "button",
+                            class: "btn btn-ghost public-identity-more",
+                            aria_label: "Identity backup and import",
+                            aria_expanded: *more_open.read(),
+                            onclick: move |_| {
+                                let next = !*more_open.read();
+                                more_open.set(next);
+                                row_menu_key.set(None);
+                            },
+                            "More"
+                        }
+                        if *more_open.read() {
+                            div {
+                                class: "wallet-account-dropdown",
+                                style: "position: absolute; right: 0; top: 38px; z-index: 30; min-width: 210px; padding: 6px;",
+                                role: "menu",
+                                button {
+                                    r#type: "button",
+                                    class: "wallet-account-option",
+                                    role: "menuitem",
+                                    onclick: move |_| {
+                                        more_open.set(false);
+                                        match svc_export.export_public_identities_backup_json(&prof_export) {
+                                            Ok(json_str) => {
+                                                if let Some(path) = rfd::FileDialog::new()
+                                                    .set_file_name("handcash-identities-backup.json")
+                                                    .add_filter("JSON", &["json"])
+                                                    .save_file()
+                                                {
+                                                    match std::fs::write(&path, json_str) {
+                                                        Ok(()) => toast.set(Some(ToastNotice {
+                                                            title: "Issuer backup saved".into(),
+                                                            body: Some(path.display().to_string()),
+                                                            tone: "success",
+                                                        })),
+                                                        Err(e) => status_err.set(Some(e.to_string())),
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => status_err.set(Some(e)),
+                                        }
+                                    },
+                                    "Back up identities"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "wallet-account-option",
+                                    role: "menuitem",
+                                    onclick: move |_| {
+                                        more_open.set(false);
+                                        if let Some(path) = rfd::FileDialog::new()
+                                            .add_filter("JSON", &["json"])
+                                            .pick_file()
+                                        {
+                                            match std::fs::read_to_string(&path)
+                                                .map_err(|e| e.to_string())
+                                                .and_then(|raw| svc_restore.restore_public_identities_backup_json(&prof_restore, &raw))
+                                            {
+                                                Ok(msg) => {
+                                                    status_err.set(None);
+                                                    let n = *rev.read() + 1;
+                                                    rev.set(n);
+                                                    toast.set(Some(ToastNotice {
+                                                        title: "Identities restored".into(),
+                                                        body: Some(msg),
+                                                        tone: "success",
+                                                    }));
+                                                }
+                                                Err(e) => status_err.set(Some(e)),
+                                            }
+                                        }
+                                    },
+                                    "Restore backup"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "wallet-account-option",
+                                    role: "menuitem",
+                                    onclick: move |_| {
+                                        more_open.set(false);
+                                        status_err.set(None);
+                                        import_key_input.set(String::new());
+                                        mode.set("importing");
+                                    },
+                                    "Import signing key"
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "wallet-account-option",
+                                    role: "menuitem",
+                                    onclick: move |_| {
+                                        more_open.set(false);
+                                        let next_signs = !signs;
+                                        match svc_toggle_sign.set_signs_issuance(&prof_toggle, next_signs) {
+                                            Ok(()) => {
+                                                let n = *rev.read() + 1;
+                                                rev.set(n);
+                                                toast.set(Some(ToastNotice {
+                                                    title: if next_signs {
+                                                        "New mints are signed by your identity key".into()
+                                                    } else {
+                                                        "New mints will be unsigned".into()
+                                                    },
+                                                    body: None,
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => status_err.set(Some(e)),
+                                        }
+                                    },
+                                    if signs { "Issue new mints unsigned" } else { "Sign new mints" }
+                                }
+                            }
+                        }
+                    }
+
+                    ul { class: "identity-list", "data-aeon-part": "records",
+                        for row in view.rows.iter() {
+                            {
+                                let ik = row.identity_key.clone();
+                                let ik_compose = row.identity_key.clone();
+                                let ik_menu = row.identity_key.clone();
+                                let ik_issuer = row.identity_key.clone();
+                                let ik_present = row.identity_key.clone();
+                                let ik_card = row.identity_key.clone();
+                                let ik_copy = row.identity_key.clone();
+                                let ik_remove = row.identity_key.clone();
+                                let own = row.profile_source.as_deref() == Some("identity-key");
+                                let rec_state = if own {
+                                    "profile"
+                                } else if row.profile_source.is_some() {
+                                    "bap"
+                                } else {
+                                    "draft"
+                                };
+                                let display_name = row.name.clone().unwrap_or_else(|| "No profile".into());
+                                let name_for_compose = row.name.clone().unwrap_or_default();
+                                let bio_for_compose = row.description.clone().unwrap_or_default();
+                                let img_for_compose = row.image_data_url.clone();
+                                let img_avatar = row.image_data_url.clone();
+                                let profile_id = row.identity_key.clone();
+                                let is_issuer = row.is_selected_issuer;
+                                let is_shown = row.is_presented;
+                                let is_imported = row.signer == "imported";
+                                let bap_pub = row.bap_published;
+                                let has_prof = row.name.is_some();
+                                let row_menu_open = row_menu_key.read().as_deref() == Some(ik.as_str());
+                                let svc_row_iss = Arc::clone(&services);
+                                let svc_row_pres = Arc::clone(&services);
+                                let svc_row_card = Arc::clone(&services);
+                                let svc_row_rm = Arc::clone(&services);
+                                let prof_row_iss = profile.clone();
+                                let prof_row_pres = profile.clone();
+                                let prof_row_card = profile.clone();
+                                let prof_row_rm = profile.clone();
+                                let more_aria = format!("More for {}", row.name.as_deref().unwrap_or("this identity"));
+
+                                rsx! {
+                                    li {
+                                        key: "{ik}",
+                                        "data-aeon-part": "record",
+                                        "data-aeon-state": "{rec_state}",
+                                        style: "position: relative;",
+                                        span { class: "public-identity-avatar", "aria-hidden": "true",
+                                            if let Some(ref src) = img_avatar {
+                                                img {
+                                                    src: "{src}",
+                                                    alt: "",
+                                                    width: "44",
+                                                    height: "44",
+                                                    style: "border-radius: 50%; object-fit: cover;",
+                                                }
+                                            } else {
+                                                ProfileIdenticon { id: profile_id.clone(), size: 44 }
+                                            }
+                                        }
+                                        div { class: "public-identity-main",
+                                            strong { class: "public-identity-name", "{display_name}" }
+                                            span {
+                                                class: "public-identity-bap mono",
+                                                title: "{profile_id}",
+                                                "{truncate_mid(&profile_id, 10)}"
+                                            }
+                                            if let Some(ref desc) = row.description {
+                                                p { class: "public-identity-bio", "{desc}" }
+                                            }
+                                            span { class: "public-identity-chips", "data-aeon-part": "chips",
+                                                if is_issuer {
+                                                    span {
+                                                        "data-aeon-part": "chip",
+                                                        "data-aeon-state": if signs { "issuer" } else { "unsigned" },
+                                                        if signs { "Issuer" } else { "Mints unsigned" }
+                                                    }
+                                                }
+                                                if is_shown {
+                                                    span {
+                                                        "data-aeon-part": "chip",
+                                                        "data-aeon-state": "shown",
+                                                        "Shared with contacts"
+                                                    }
+                                                }
+                                                if bap_pub && own {
+                                                    span {
+                                                        "data-aeon-part": "chip",
+                                                        "data-aeon-state": "bap",
+                                                        "On BAP"
+                                                    }
+                                                }
+                                                if is_imported {
+                                                    span {
+                                                        "data-aeon-part": "chip",
+                                                        "data-aeon-state": "imported",
+                                                        "Imported key"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        div { class: "public-identity-actions",
+                                            button::Root {
+                                                variant: if own { button::ButtonVariant::Ghost } else { button::ButtonVariant::Solid },
+                                                class: if own { "btn btn-ghost" } else { "btn btn-primary" },
+                                                onclick: move |_| {
+                                                    status_err.set(None);
+                                                    more_open.set(false);
+                                                    row_menu_key.set(None);
+                                                    compose_key.set(ik_compose.clone());
+                                                    draft_name.set(name_for_compose.clone());
+                                                    draft_bio.set(bio_for_compose.clone());
+                                                    draft_image.set(img_for_compose.clone());
+                                                    mode.set("composing");
+                                                },
+                                                button::Label { if own { "Edit" } else { "Add profile" } }
+                                            }
+                                            button {
+                                                r#type: "button",
+                                                class: "btn btn-ghost public-identity-more",
+                                                aria_label: "{more_aria}",
+                                                onclick: move |_| {
+                                                    more_open.set(false);
+                                                    let cur = row_menu_key.read().clone();
+                                                    if cur.as_deref() == Some(ik_menu.as_str()) {
+                                                        row_menu_key.set(None);
+                                                    } else {
+                                                        row_menu_key.set(Some(ik_menu.clone()));
+                                                    }
+                                                },
+                                                "⋯"
+                                            }
+                                            if row_menu_open {
+                                                div {
+                                                    class: "wallet-account-dropdown",
+                                                    style: "position: absolute; right: 0; top: 48px; z-index: 30; min-width: 210px; padding: 6px;",
+                                                    role: "menu",
+                                                    if !is_issuer {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "wallet-account-option",
+                                                            role: "menuitem",
+                                                            onclick: move |_| {
+                                                                row_menu_key.set(None);
+                                                                if let Err(e) = svc_row_iss.select_public_identity_issuer(&prof_row_iss, &ik_issuer) {
+                                                                    status_err.set(Some(e));
+                                                                } else {
+                                                                    let n = *rev.read() + 1;
+                                                                    rev.set(n);
+                                                                }
+                                                            },
+                                                            "Use as issuer"
+                                                        }
+                                                    }
+                                                    if has_prof && !is_shown {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "wallet-account-option",
+                                                            role: "menuitem",
+                                                            onclick: move |_| {
+                                                                row_menu_key.set(None);
+                                                                if let Err(e) = svc_row_pres.present_public_identity(&prof_row_pres, &ik_present) {
+                                                                    status_err.set(Some(e));
+                                                                } else {
+                                                                    let n = *rev.read() + 1;
+                                                                    rev.set(n);
+                                                                    toast.set(Some(ToastNotice {
+                                                                        title: "Profile shared with contacts".into(),
+                                                                        body: None,
+                                                                        tone: "success",
+                                                                    }));
+                                                                }
+                                                            },
+                                                            "Share this one instead"
+                                                        }
+                                                    }
+                                                    if has_prof && is_shown {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "wallet-account-option",
+                                                            role: "menuitem",
+                                                            onclick: move |_| {
+                                                                row_menu_key.set(None);
+                                                                match svc_row_card.export_identity_card_json(&prof_row_card, &ik_card) {
+                                                                    Ok(card_json) => {
+                                                                        if let Some(path) = rfd::FileDialog::new()
+                                                                            .set_file_name("handcash-identity-card.json")
+                                                                            .add_filter("JSON", &["json"])
+                                                                            .save_file()
+                                                                        {
+                                                                            match std::fs::write(&path, card_json) {
+                                                                                Ok(()) => toast.set(Some(ToastNotice {
+                                                                                    title: "Identity card saved".into(),
+                                                                                    body: Some(path.display().to_string()),
+                                                                                    tone: "success",
+                                                                                })),
+                                                                                Err(e) => status_err.set(Some(e.to_string())),
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Err(e) => status_err.set(Some(e)),
+                                                                }
+                                                            },
+                                                            "Share identity card"
+                                                        }
+                                                    }
+                                                    button {
+                                                        r#type: "button",
+                                                        class: "wallet-account-option",
+                                                        role: "menuitem",
+                                                        onclick: move |_| {
+                                                            row_menu_key.set(None);
+                                                            if copy_to_clipboard(&ik_copy).is_ok() {
+                                                                toast.set(Some(ToastNotice {
+                                                                    title: "Copied".into(),
+                                                                    body: Some("Issuer wallet key copied.".into()),
+                                                                    tone: "success",
+                                                                }));
+                                                            }
+                                                        },
+                                                        "Copy wallet key"
+                                                    }
+                                                    if is_imported {
+                                                        button {
+                                                            r#type: "button",
+                                                            class: "wallet-account-option",
+                                                            role: "menuitem",
+                                                            onclick: move |_| {
+                                                                row_menu_key.set(None);
+                                                                match svc_row_rm.remove_imported_public_identity(&prof_row_rm, &ik_remove) {
+                                                                    Ok(()) => {
+                                                                        let n = *rev.read() + 1;
+                                                                        rev.set(n);
+                                                                        toast.set(Some(ToastNotice {
+                                                                            title: "Signer removed".into(),
+                                                                            body: None,
+                                                                            tone: "info",
+                                                                        }));
+                                                                    }
+                                                                    Err(e) => status_err.set(Some(e)),
+                                                                }
+                                                            },
+                                                            "Remove signer"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if cur_mode == "importing" {
+                    h3 { class: "identity-compose-title", "Import signing key" }
+                    div { class: "field identity-compose-field",
+                        label { r#for: "public-identity-import-key", "Private key" }
+                        input {
+                            id: "public-identity-import-key",
+                            r#type: "password",
+                            placeholder: "64-character hex private key",
+                            autocomplete: "off",
+                            value: "{import_key_input}",
+                            oninput: move |e| import_key_input.set(e.value()),
+                        }
+                    }
+                    div { class: "actions",
+                        button::Root {
+                            variant: button::ButtonVariant::Solid,
+                            class: "btn btn-primary",
+                            disabled: import_key_input.read().trim().is_empty(),
+                            onclick: move |_| {
+                                status_err.set(None);
+                                let raw = import_key_input.read().clone();
+                                match svc_import_key.import_issuer_private_key(&prof_import, &raw) {
+                                    Ok(_) => {
+                                        import_key_input.set(String::new());
+                                        mode.set("browsing");
+                                        let n = *rev.read() + 1;
+                                        rev.set(n);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Signing key imported".into(),
+                                            body: None,
+                                            tone: "success",
+                                        }));
+                                    }
+                                    Err(e) => status_err.set(Some(e)),
+                                }
+                            },
+                            button::Label { "Import" }
+                        }
+                        button::Root {
+                            variant: button::ButtonVariant::Ghost,
+                            class: "btn btn-ghost",
+                            onclick: move |_| {
+                                import_key_input.set(String::new());
+                                status_err.set(None);
+                                mode.set("browsing");
+                            },
+                            button::Label { "Cancel" }
+                        }
+                    }
+                } else {
+                    {
+                        let target_ik = compose_key.read().clone();
+                        let is_edit = view
+                            .rows
+                            .iter()
+                            .find(|r| r.identity_key == target_ik)
+                            .and_then(|r| r.profile_source.as_deref())
+                            == Some("identity-key");
+                        let cur_img = draft_image.read().clone();
+                        let name_empty = draft_name.read().trim().is_empty();
+                        rsx! {
+                            h3 { class: "identity-compose-title",
+                                if is_edit { "Edit profile" } else { "Add profile" }
+                            }
+                            p { class: "identity-note",
+                                "Signed by this identity key and kept on this device; contacts get it with your identity card. No transaction, no fee."
+                            }
+                            div { class: "public-identity-compose", "data-aeon-part": "compose",
+                                div { class: "public-identity-image-col",
+                                    button {
+                                        r#type: "button",
+                                        class: "public-identity-image-pick",
+                                        "data-aeon-part": "image",
+                                        "data-aeon-state": if cur_img.is_some() { "set" } else { "empty" },
+                                        aria_label: if cur_img.is_some() { "Change image" } else { "Choose image" },
+                                        onclick: move |_| {
+                                            if let Some(path) = rfd::FileDialog::new()
+                                                .add_filter("Image (PNG / JPEG / WebP)", &["png", "jpg", "jpeg", "webp"])
+                                                .pick_file()
+                                            {
+                                                match std::fs::read(&path) {
+                                                    Ok(bytes) => {
+                                                        if bytes.len() > 65_536 {
+                                                            status_err.set(Some("Choose an image 64 KB or smaller.".into()));
+                                                            return;
+                                                        }
+                                                        let ext = path
+                                                            .extension()
+                                                            .and_then(|e| e.to_str())
+                                                            .unwrap_or("png")
+                                                            .to_ascii_lowercase();
+                                                        let mime = match ext.as_str() {
+                                                            "jpg" | "jpeg" => "image/jpeg",
+                                                            "webp" => "image/webp",
+                                                            _ => "image/png",
+                                                        };
+                                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                                                        draft_image.set(Some(format!("data:{mime};base64,{b64}")));
+                                                        status_err.set(None);
+                                                    }
+                                                    Err(e) => status_err.set(Some(e.to_string())),
+                                                }
+                                            }
+                                        },
+                                        if let Some(ref src) = cur_img {
+                                            img {
+                                                src: "{src}",
+                                                alt: "",
+                                                width: "88",
+                                                height: "88",
+                                                style: "object-fit: cover; border-radius: 12px;",
+                                            }
+                                        } else {
+                                            span { "aria-hidden": "true", "+" }
+                                        }
+                                        span { class: "public-identity-image-label",
+                                            if cur_img.is_some() { "Change" } else { "Image" }
+                                        }
+                                    }
+                                    if cur_img.is_some() {
+                                        button::Root {
+                                            variant: button::ButtonVariant::Ghost,
+                                            class: "btn btn-ghost public-identity-image-clear",
+                                            onclick: move |_| draft_image.set(None),
+                                            button::Label { "Remove" }
+                                        }
+                                    }
+                                }
+                                div { class: "public-identity-compose-fields",
+                                    div { class: "field identity-compose-field",
+                                        label { r#for: "public-identity-name", "Name" }
+                                        input {
+                                            id: "public-identity-name",
+                                            maxlength: "64",
+                                            value: "{draft_name}",
+                                            oninput: move |e| draft_name.set(e.value()),
+                                        }
+                                    }
+                                    div { class: "field identity-compose-field",
+                                        label { r#for: "public-identity-bio", "Bio" }
+                                        input {
+                                            id: "public-identity-bio",
+                                            maxlength: "160",
+                                            placeholder: "Optional",
+                                            value: "{draft_bio}",
+                                            oninput: move |e| draft_bio.set(e.value()),
+                                        }
+                                    }
+                                }
+                            }
+                            div { class: "actions",
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    disabled: name_empty,
+                                    onclick: move |_| {
+                                        status_err.set(None);
+                                        let tik = compose_key.read().clone();
+                                        let n = draft_name.read().clone();
+                                        let b = draft_bio.read().clone();
+                                        let img = draft_image.read().clone();
+                                        match svc_save_prof.save_public_identity_profile(
+                                            &prof_save,
+                                            &tik,
+                                            &n,
+                                            &b,
+                                            img.as_deref(),
+                                        ) {
+                                            Ok(()) => {
+                                                mode.set("browsing");
+                                                let next = *rev.read() + 1;
+                                                rev.set(next);
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Profile saved".into(),
+                                                    body: None,
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => status_err.set(Some(e)),
+                                        }
+                                    },
+                                    button::Label { "Save" }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        status_err.set(None);
+                                        mode.set("browsing");
+                                    },
+                                    button::Label { "Cancel" }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(ref err) = *status_err.read() {
+                    p { role: "alert", class: "identity-compose-status error", "{err}" }
                 }
             }
         }
@@ -3089,10 +3741,20 @@ fn SigninEmailPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
 
 /// 1:1 port of `src/components/ChartAppsPanel.tsx`, `src/components/AppReview.tsx`, and `src/components/ChartAppView.tsx`.
 #[component]
-fn ChartAppsPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
+pub fn ChartAppsPanel(
+    mut toast: Signal<Option<ToastNotice>>,
+    #[props(default)] initial_app_id: Option<String>,
+) -> Element {
     let apps = use_hook(load_builtin_chart_apps);
-    let mut selected_app = use_signal(|| Option::<BuiltinChartApp>::None);
-    let mut active_state = use_signal(String::new);
+    let initial_selected = initial_app_id
+        .as_ref()
+        .and_then(|id| apps.iter().find(|a| &a.id == id).cloned());
+    let initial_state_val = initial_selected
+        .as_ref()
+        .map(|a| a.initial_state.clone())
+        .unwrap_or_default();
+    let mut selected_app = use_signal(move || initial_selected);
+    let mut active_state = use_signal(move || initial_state_val);
     let mut reviewing = use_signal(|| false);
 
     if let Some(app) = selected_app.read().clone() {

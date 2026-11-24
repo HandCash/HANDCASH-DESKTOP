@@ -13,6 +13,7 @@ use crate::machines::{
     AppSessionEvent, AppSessionMachine, FiatCode, MarketCoin, NavChild, NavSection, ToastNotice,
 };
 use crate::state::{copy_to_clipboard, format_bsv, AppServices, SessionSummary, WalletSnapshot};
+use crate::ui::primitives::ProfileAvatar;
 use dioxus::prelude::*;
 use std::sync::Arc;
 
@@ -359,15 +360,23 @@ pub fn WalletAccountMenu(
 
     let accounts = services.list_vault_accounts();
     let active_index = profile.account_index;
-    let current_name = accounts
-        .iter()
-        .find(|a| a.index == active_index)
-        .map(|a| {
-            if a.index == 0 {
-                format!("${}", profile.handle)
-            } else {
-                a.name.clone()
-            }
+    let current_acc = accounts.iter().find(|a| a.index == active_index);
+    let current_ik = current_acc
+        .map(|a| a.identity_key.as_str())
+        .unwrap_or(&profile.identity_key);
+    let current_prof = services.account_profile_for(&profile.chain, active_index, current_ik);
+    let current_handle = services.claimed_handle_for(&profile.chain, active_index, current_ik);
+    let current_name = current_handle
+        .clone()
+        .or_else(|| current_prof.as_ref().map(|p| p.name.clone()))
+        .or_else(|| {
+            current_acc.map(|a| {
+                if a.index == 0 {
+                    format!("${}", profile.handle)
+                } else {
+                    a.name.clone()
+                }
+            })
         })
         .unwrap_or_else(|| format!("${}", profile.handle));
     let identity_copy = profile.identity_key.clone();
@@ -395,6 +404,13 @@ pub fn WalletAccountMenu(
                             let next = if *open_menu.read() == Some("account") { None } else { Some("account") };
                             open_menu.set(next);
                         },
+                        if let Some(ref prof) = current_prof {
+                            ProfileAvatar {
+                                label: prof.name.clone(),
+                                image_url: prof.image_data_url.clone(),
+                                identity_key: Some(prof.identity_key.clone()),
+                            }
+                        }
                         span { "{current_name}" }
                         ExpandMoreIcon {
                             size: 16,
@@ -439,21 +455,35 @@ pub fn WalletAccountMenu(
                                     let idx = acc.index;
                                     let selected = idx == active_index;
                                     let held_here = acc.held_here;
-                                    let label = if idx == 0 {
+                                    let acc_prof = services.account_profile_for(&profile.chain, idx, &acc.identity_key);
+                                    let acc_handle = services.claimed_handle_for(&profile.chain, idx, &acc.identity_key);
+                                    let fallback_label = if idx == 0 && !profile.handle.is_empty() {
                                         format!("${}", profile.handle)
                                     } else {
                                         acc.name.clone()
                                     };
+                                    let display_name = acc_prof
+                                        .as_ref()
+                                        .map(|p| p.name.clone())
+                                        .unwrap_or_else(|| fallback_label.clone());
                                     let subtitle = if !held_here {
                                         "On another device".to_string()
-                                    } else if idx == 0 {
-                                        format!("{} · {}", profile.chain.to_uppercase(), profile.derivation)
+                                    } else if let Some(ref h) = acc_handle {
+                                        h.clone()
+                                    } else if acc_prof.is_some() {
+                                        fallback_label.clone()
                                     } else {
-                                        format!("Account #{idx}")
+                                        "No public profile".to_string()
                                     };
                                     let svc_switch = Arc::clone(&services);
                                     let svc_edit = Arc::clone(&services);
-                                    let edit_label = format!("Edit {label} profile");
+                                    let edit_label = if acc_prof.is_some() {
+                                        format!("Edit {display_name} profile")
+                                    } else {
+                                        format!("Publish a profile for {display_name}")
+                                    };
+                                    let avatar_img = acc_prof.as_ref().and_then(|p| p.image_data_url.clone());
+                                    let avatar_ik = acc_prof.as_ref().map(|p| p.identity_key.clone());
                                     rsx! {
                                         li { key: "{idx}",
                                             div { class: "wallet-account-row",
@@ -502,8 +532,13 @@ pub fn WalletAccountMenu(
                                                         busy.set(false);
                                                     },
                                                     span { class: "wallet-account-option-lead",
+                                                        ProfileAvatar {
+                                                            label: display_name.clone(),
+                                                            image_url: avatar_img,
+                                                            identity_key: avatar_ik,
+                                                        }
                                                         span { class: "wallet-account-option-copy",
-                                                            strong { "{label}" }
+                                                            strong { "{display_name}" }
                                                             span { "{subtitle}" }
                                                         }
                                                     }

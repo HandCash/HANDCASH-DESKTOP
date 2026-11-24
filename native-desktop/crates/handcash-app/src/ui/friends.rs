@@ -1,14 +1,18 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
-//! 1:1 port of HandCash Desktop Friends & Contacts surfaces:
+//! 1:1 port of HandCash Desktop Friends, Contacts & Peer Messages surfaces:
 //! - `src/components/FriendsPanel.tsx`
 //! - `src/components/AddFriendPanel.tsx`
 //! - `src/components/FriendDetailsPanel.tsx`
+//! - `src/components/MessagesPanel.tsx`
 
-use crate::icons::{CopyIcon, PersonAddIcon};
+use crate::icons::{CopyIcon, MessagesIcon, PersonAddIcon, SendIcon};
 use crate::machines::{classify_recipient, CollectionView, NavChild, ToastNotice};
-use crate::state::{copy_to_clipboard, truncate_mid, AppServices, FriendRecord};
+use crate::state::{
+    copy_to_clipboard, format_relative_time, now_ms, truncate_mid, AppServices, FriendRecord,
+};
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
-use crate::ui::primitives::PeerAvatar;
+use crate::ui::collectables::CollectionViewToggle;
+use crate::ui::primitives::{PeerAvatar, ProfileFingerprint};
 use crate::ui::EmptyState;
 use aeon_ui::button;
 use dioxus::prelude::*;
@@ -17,6 +21,7 @@ use std::sync::Arc;
 /// 1:1 port of `src/components/FriendsPanel.tsx`.
 #[component]
 pub fn FriendsPanel(
+    #[props(default = "main".to_string())] chain: String,
     view: Signal<CollectionView>,
     mut nav_child: Signal<Option<NavChild>>,
 ) -> Element {
@@ -46,13 +51,45 @@ pub fn FriendsPanel(
             "data-aeon-scope": "friends",
             "data-aeon-state": cur_view.as_str(),
 
-            if !friends.is_empty() {
-                div { class: "field", style: "margin-bottom: 10px;",
-                    input {
-                        placeholder: "Search friends by name or wallet key…",
-                        value: "{query}",
-                        oninput: move |e| query.set(e.value()),
+            div { class: "connected-panel-head friends-panel-head",
+                h2 {
+                    "Friends"
+                    span {
+                        class: "friends-count",
+                        aria_label: "{friends.len()} friends",
+                        "{friends.len()}"
                     }
+                }
+                div { class: "friends-panel-head-actions panel-icon-toolbar",
+                    if !friends.is_empty() {
+                        div { class: "field", style: "margin: 0;",
+                            input {
+                                id: "friends-search-input",
+                                r#type: "search",
+                                aria_label: "Search friends by name or wallet key",
+                                placeholder: "Name or wallet key",
+                                value: "{query}",
+                                oninput: move |e| query.set(e.value()),
+                            }
+                        }
+                    }
+                    button {
+                        r#type: "button",
+                        class: "wallet-nav-chrome-btn",
+                        aria_label: "Open messages",
+                        title: "Messages",
+                        onclick: move |_| nav_child.set(Some(NavChild::Messages(None))),
+                        MessagesIcon { size: 16 }
+                    }
+                    button {
+                        r#type: "button",
+                        class: "wallet-nav-chrome-btn",
+                        aria_label: "Add friend",
+                        title: "Add friend",
+                        onclick: move |_| nav_child.set(Some(NavChild::AddFriend)),
+                        PersonAddIcon { size: 16 }
+                    }
+                    CollectionViewToggle { view }
                 }
             }
 
@@ -82,16 +119,30 @@ pub fn FriendsPanel(
                             for friend in filtered.iter() {
                                 {
                                     let fid = friend.id.clone();
+                                    let peer_prof = services.peer_identity_for(&chain, &friend.identity_key);
+                                    let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
                                     rsx! {
                                         li { key: "{friend.id}", class: "collection-grid-card friend-grid-card",
                                             button {
                                                 r#type: "button",
                                                 class: "collection-grid-main",
                                                 onclick: move |_| nav_child.set(Some(NavChild::FriendDetails(fid.clone()))),
-                                                PeerAvatar { label: friend.label.clone(), class: "friend-avatar friend-avatar-lg" }
+                                                PeerAvatar {
+                                                    label: friend.label.clone(),
+                                                    class: "friend-avatar friend-avatar-lg",
+                                                    image_url: img_url,
+                                                }
                                                 strong { class: "collection-grid-name", "{friend.label}" }
-                                                span { class: "collection-grid-host friend-key mono",
-                                                    "{truncate_mid(&friend.identity_key, 8)}"
+                                                if let Some(ref prof) = peer_prof {
+                                                    span { class: "collection-grid-host friend-key",
+                                                        "{prof.name}"
+                                                    }
+                                                } else {
+                                                    span {
+                                                        class: "collection-grid-host friend-key mono",
+                                                        title: "{friend.identity_key}",
+                                                        "{truncate_mid(&friend.identity_key, 8)}"
+                                                    }
                                                 }
                                             }
                                         }
@@ -104,17 +155,30 @@ pub fn FriendsPanel(
                             for friend in filtered.iter() {
                                 {
                                     let fid = friend.id.clone();
+                                    let peer_prof = services.peer_identity_for(&chain, &friend.identity_key);
+                                    let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
                                     rsx! {
                                         li { key: "{friend.id}", class: "friend-row",
                                             button {
                                                 r#type: "button",
                                                 class: "friend-row-main",
                                                 onclick: move |_| nav_child.set(Some(NavChild::FriendDetails(fid.clone()))),
-                                                PeerAvatar { label: friend.label.clone() }
+                                                PeerAvatar {
+                                                    label: friend.label.clone(),
+                                                    image_url: img_url,
+                                                }
                                                 div { class: "friend-row-body",
                                                     strong { class: "friend-label", "{friend.label}" }
-                                                    span { class: "friend-key mono",
-                                                        "{truncate_mid(&friend.identity_key, 12)}"
+                                                    if let Some(ref prof) = peer_prof {
+                                                        span { class: "friend-key",
+                                                            "{prof.name}"
+                                                        }
+                                                    } else {
+                                                        span {
+                                                            class: "friend-key mono",
+                                                            title: "{friend.identity_key}",
+                                                            "{truncate_mid(&friend.identity_key, 12)}"
+                                                        }
                                                     }
                                                 }
                                             }
@@ -268,12 +332,15 @@ pub fn AddFriendPanel(
 #[component]
 pub fn FriendDetailsPanel(
     friend_id: String,
+    #[props(default = "main".to_string())] chain: String,
     mut nav_child: Signal<Option<NavChild>>,
     mut dock_spec: Signal<Option<DockSpec>>,
     dock_trigger: Signal<DockTrigger>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
+    let mut rev = use_signal(|| 0u64);
+    let _ = *rev.read();
     let friend_opt = services
         .list_friends()
         .into_iter()
@@ -374,16 +441,26 @@ pub fn FriendDetailsPanel(
         });
     }
 
+    let peer_prof = services.peer_identity_for(&chain, &friend.identity_key);
+    let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
     let key_copy = friend.identity_key.clone();
+    let friend_ik_import = friend.identity_key.clone();
+    let chain_import = chain.clone();
     let svc_save = Arc::clone(&services);
+    let svc_import = Arc::clone(&services);
     let fid_save = friend.id.clone();
+    let fid_msg = friend.id.clone();
 
     rsx! {
         div { class: "nav-child-panel friend-details", "data-aeon-scope": "friend-details",
-            section { class: "friend-details-overview",
-                PeerAvatar { label: friend.label.clone(), class: "friend-avatar friend-avatar-lg" }
+            section { class: "friend-details-overview", aria_labelledby: "friend-overview-name",
+                PeerAvatar {
+                    label: friend.label.clone(),
+                    class: "friend-avatar friend-avatar-lg",
+                    image_url: img_url,
+                }
                 div {
-                    h3 { "{friend.label}" }
+                    h3 { id: "friend-overview-name", "{friend.label}" }
                     if handle_fixed {
                         p { class: "history-when", "Handle contact" }
                     }
@@ -423,14 +500,75 @@ pub fn FriendDetailsPanel(
                 }
             }
 
+            section {
+                class: "friend-copy-row friend-identity-card",
+                "data-aeon-part": "peer-identity-card",
+                "data-aeon-state": "idle",
+                aria_label: "Shared identity",
+                div {
+                    span { class: "field-static-label", "Shared identity" }
+                    if let Some(ref prof) = peer_prof {
+                        div { style: "display: flex; align-items: center; gap: 6px; margin-top: 4px;",
+                            strong { "{prof.name}" }
+                            ProfileFingerprint { id: prof.identity_key.clone() }
+                        }
+                        if !prof.description.is_empty() {
+                            p { class: "friend-identity-bio", "{prof.description}" }
+                        }
+                    } else {
+                        p { class: "friend-identity-bio",
+                            "Not shared with you. A contact can send a signed identity card from their wallet."
+                        }
+                    }
+                }
+                div { class: "friend-identity-actions",
+                    button {
+                        r#type: "button",
+                        class: "friend-copy-action",
+                        onclick: move |_| {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("HandCash Identity Card (.json)", &["json"])
+                                .pick_file()
+                            {
+                                match std::fs::read_to_string(&path)
+                                    .map_err(|e| e.to_string())
+                                    .and_then(|raw| svc_import.import_peer_identity_card_json(&chain_import, &friend_ik_import, &raw))
+                                {
+                                    Ok(name) => {
+                                        let next = *rev.read() + 1;
+                                        rev.set(next);
+                                        toast.set(Some(ToastNotice {
+                                            title: "Identity card verified".into(),
+                                            body: Some(name),
+                                            tone: "success",
+                                        }));
+                                    }
+                                    Err(e) => toast.set(Some(ToastNotice {
+                                        title: "Import failed".into(),
+                                        body: Some(e),
+                                        tone: "error",
+                                    })),
+                                }
+                            }
+                        },
+                        "Import card"
+                    }
+                }
+            }
+
             div { class: "friend-copy-row",
                 div {
                     span { class: "field-static-label", "Wallet key" }
-                    p { class: "mono", "{truncate_mid(&friend.identity_key, 16)}" }
+                    span {
+                        class: "mono wallet-detail-value",
+                        title: "{friend.identity_key}",
+                        "{friend.identity_key}"
+                    }
                 }
                 button {
                     r#type: "button",
                     class: "friend-copy-action",
+                    aria_label: "Copy wallet key",
                     onclick: move |_| match copy_to_clipboard(&key_copy) {
                         Ok(()) => toast.set(Some(ToastNotice {
                             title: "Copied".into(),
@@ -443,14 +581,224 @@ pub fn FriendDetailsPanel(
                             tone: "error",
                         })),
                     },
-                    CopyIcon { size: 14 }
+                    CopyIcon { size: 16 }
                     span { "Copy" }
+                }
+            }
+
+            div { class: "actions friend-details-actions",
+                button::Root {
+                    variant: button::ButtonVariant::Solid,
+                    class: "btn btn-primary",
+                    onclick: move |_| {
+                        dock_spec.set(None);
+                        nav_child.set(Some(NavChild::Messages(Some(fid_msg.clone()))));
+                    },
+                    MessagesIcon { size: 16 }
+                    button::Label { "Message" }
                 }
             }
 
             if is_confirming_remove {
                 p { class: "error", role: "alert",
                     "Remove {friend.label} from your friends list? Confirm in the action bar above."
+                }
+            }
+        }
+    }
+}
+
+/// 1:1 port of `src/components/MessagesPanel.tsx`.
+#[component]
+pub fn MessagesPanel(
+    #[props(default = "main".to_string())] chain: String,
+    #[props(default)] initial_peer_id: Option<String>,
+    mut nav_child: Signal<Option<NavChild>>,
+    mut toast: Signal<Option<ToastNotice>>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let friends = services.list_friends();
+    let default_peer = initial_peer_id.or_else(|| friends.first().map(|f| f.id.clone()));
+    let mut active_peer_id = use_signal(move || default_peer);
+    let mut query = use_signal(String::new);
+    let mut draft = use_signal(String::new);
+    let mut msg_rev = use_signal(|| 0u64);
+    let _ = *msg_rev.read();
+
+    let q = query.read().trim().to_ascii_lowercase();
+    let filtered_friends: Vec<FriendRecord> = friends
+        .iter()
+        .filter(|f| {
+            q.is_empty()
+                || f.label.to_ascii_lowercase().contains(&q)
+                || f.identity_key.to_ascii_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect();
+
+    let cur_peer_id = active_peer_id.read().clone();
+    let active_friend = cur_peer_id
+        .as_ref()
+        .and_then(|pid| friends.iter().find(|f| &f.id == pid).cloned());
+    let messages = cur_peer_id
+        .as_ref()
+        .map(|pid| services.list_chat_messages(pid))
+        .unwrap_or_default();
+    let svc_send = Arc::clone(&services);
+    let now = now_ms();
+
+    rsx! {
+        div {
+            class: "chat-shell chat-shell--nested",
+            "data-aeon-scope": "messages",
+            "data-aeon-state": if active_friend.is_some() { "thread" } else { "empty" },
+            style: "display: grid; grid-template-columns: minmax(180px, 240px) 1fr; gap: 12px; min-height: 360px;",
+
+            aside { class: "chat-sidebar", style: "border-right: 1px solid var(--hc-border); padding-right: 10px; display: flex; flex-direction: column; gap: 8px;",
+                input {
+                    r#type: "search",
+                    placeholder: "Search contacts…",
+                    value: "{query}",
+                    oninput: move |e| query.set(e.value()),
+                }
+                if filtered_friends.is_empty() {
+                    p { class: "settings-row-desc", "No contacts yet." }
+                } else {
+                    ul { class: "friends-list", style: "display: flex; flex-direction: column; gap: 4px;",
+                        for f in filtered_friends.iter() {
+                            {
+                                let fid = f.id.clone();
+                                let selected = cur_peer_id.as_deref() == Some(f.id.as_str());
+                                let peer_prof = services.peer_identity_for(&chain, &f.identity_key);
+                                let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
+                                rsx! {
+                                    li { key: "{f.id}", class: "friend-row",
+                                        button {
+                                            r#type: "button",
+                                            class: if selected { "friend-row-main is-selected" } else { "friend-row-main" },
+                                            "data-selected": if selected { Some("") } else { None },
+                                            onclick: move |_| active_peer_id.set(Some(fid.clone())),
+                                            PeerAvatar { label: f.label.clone(), image_url: img_url }
+                                            div { class: "friend-row-body",
+                                                strong { class: "friend-label", "{f.label}" }
+                                                span { class: "friend-key mono", "{truncate_mid(&f.identity_key, 8)}" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            section { class: "chat-thread", style: "display: flex; flex-direction: column; justify-content: space-between; gap: 10px;",
+                if let Some(ref friend) = active_friend {
+                    {
+                        let fid_send = friend.id.clone();
+                        let fik_pay = friend.identity_key.clone();
+                        let peer_prof = services.peer_identity_for(&chain, &friend.identity_key);
+                        let img_url = peer_prof.as_ref().and_then(|p| p.image_data_url.clone());
+                        rsx! {
+                            header {
+                                class: "chat-thread-head",
+                                style: "display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--hc-border);",
+                                div { style: "display: flex; align-items: center; gap: 10px;",
+                                    PeerAvatar { label: friend.label.clone(), image_url: img_url }
+                                    div {
+                                        strong { "{friend.label}" }
+                                        p { class: "mono settings-row-desc", style: "margin: 0;", "{truncate_mid(&friend.identity_key, 10)}" }
+                                    }
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| nav_child.set(Some(NavChild::Send(Some(fik_pay.clone())))),
+                                    SendIcon { size: 15 }
+                                    button::Label { "Pay" }
+                                }
+                            }
+
+                            div {
+                                class: "chat-thread-list",
+                                style: "flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 6px 0;",
+                                if messages.is_empty() {
+                                    p { class: "settings-row-desc",
+                                        "No messages with {friend.label} yet. Messages are stored locally and delivered over BRC-33 messagebox when connected."
+                                    }
+                                } else {
+                                    for m in messages.iter() {
+                                        div {
+                                            key: "{m.id}",
+                                            class: if m.direction == "out" { "chat-bubble chat-bubble--out" } else { "chat-bubble chat-bubble--in" },
+                                            style: if m.direction == "out" {
+                                                "align-self: flex-end; background: var(--hc-accent, #38e54d); color: #08120a; padding: 8px 12px; border-radius: 12px; max-width: 80%;"
+                                            } else {
+                                                "align-self: flex-start; background: var(--hc-field); padding: 8px 12px; border-radius: 12px; max-width: 80%;"
+                                            },
+                                            p { style: "margin: 0;", "{m.text}" }
+                                            span {
+                                                style: "font-size: 10px; opacity: 0.75; display: block; margin-top: 2px;",
+                                                "{format_relative_time(m.at, now)}"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            form {
+                                class: "chat-composer",
+                                style: "display: flex; gap: 8px; align-items: center;",
+                                onsubmit: move |e| {
+                                    e.prevent_default();
+                                    let text = draft.read().clone();
+                                    if text.trim().is_empty() {
+                                        return;
+                                    }
+                                    match svc_send.send_chat_message(&fid_send, &text) {
+                                        Ok(_) => {
+                                            draft.set(String::new());
+                                            let next = *msg_rev.read() + 1;
+                                            msg_rev.set(next);
+                                        }
+                                        Err(err) => toast.set(Some(ToastNotice {
+                                            title: "Send failed".into(),
+                                            body: Some(err),
+                                            tone: "error",
+                                        })),
+                                    }
+                                },
+                                input {
+                                    style: "flex: 1;",
+                                    placeholder: "Message {friend.label}…",
+                                    value: "{draft}",
+                                    oninput: move |e| draft.set(e.value()),
+                                }
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    button_type: "submit",
+                                    class: "btn btn-primary",
+                                    disabled: draft.read().trim().is_empty(),
+                                    button::Label { "Send" }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    div { class: "chat-placeholder",
+                        EmptyState {
+                            title: "Messages",
+                            body: Some("Pick a friend to open a thread.".into()),
+                            action: Some(rsx! {
+                                button::Root {
+                                    variant: button::ButtonVariant::Solid,
+                                    class: "btn btn-primary",
+                                    onclick: move |_| nav_child.set(Some(NavChild::AddFriend)),
+                                    button::Label { "Add friend" }
+                                }
+                            }),
+                        }
+                    }
                 }
             }
         }
