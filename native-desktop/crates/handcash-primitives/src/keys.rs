@@ -960,6 +960,106 @@ pub fn sign_brc77_anyone(privkey: &SecretKeyBytes, message: &[u8]) -> Result<Vec
     Ok(out)
 }
 
+/// Sign `SHA256(message)` with RFC 6979 low-S secp256k1 ECDSA and return 64-byte compact `r || s`
+/// (matches `@bsv/sdk` `PrivateKey.sign` + `compactHexFromSig` used by BRC-33/BRC-103 messagebox auth).
+pub fn sign_ecdsa_compact(privkey: &SecretKeyBytes, message: &[u8]) -> Result<[u8; 64], KeyError> {
+    let digest = sha256(message);
+    let signing_key = SigningKey::from_slice(privkey.as_bytes())
+        .map_err(|e| KeyError::InvalidPrivateKey(e.to_string()))?;
+    let sig: Signature = signing_key
+        .sign_prehash(&digest)
+        .map_err(|e| KeyError::CryptoFailed(e.to_string()))?;
+    let normalized = sig.normalize_s().unwrap_or(sig);
+    let mut out = [0u8; 64];
+    out.copy_from_slice(&normalized.to_bytes());
+    Ok(out)
+}
+
+/// BRC-78 `EncryptedMessage.encrypt` wire format (`0x42421033 || senderPub(33) || recipientPub(33) || keyID(32) || brc2_ciphertext`).
+pub fn brc78_encrypt(
+    plaintext: &[u8],
+    sender: &SecretKeyBytes,
+    recipient_pub_hex: &str,
+) -> Result<Vec<u8>, KeyError> {
+    let sender_pub = sender.public_key_compressed()?;
+    let recip_pt = parse_public_key_hex(recipient_pub_hex)?;
+    let recip_pub = compress_point(&recip_pt)?;
+    let mut key_id = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut key_id);
+    let key_id_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_id);
+    let kd = KeyDeriver::new(sender.clone());
+    let encrypted = kd.encrypt(
+        (2, "message encryption"),
+        &key_id_b64,
+        Counterparty::PublicKeyHex(encode_hex(&recip_pub)),
+        plaintext,
+    )?;
+    let mut out = Vec::with_capacity(4 + 33 + 33 + 32 + encrypted.len());
+    out.extend_from_slice(&[0x42, 0x42, 0x10, 0x33]);
+    out.extend_from_slice(&sender_pub);
+    out.extend_from_slice(&recip_pub);
+    out.extend_from_slice(&key_id);
+    out.extend_from_slice(&encrypted);
+    Ok(out)
+}
+
+/// BRC-78 `EncryptedMessage.decrypt`: verifies version and recipient key, then decrypts the BRC-2 payload.
+pub fn brc78_decrypt(
+    ciphertext: &[u8],
+    recipient: &SecretKeyBytes,
+) -> Result<Vec<u8>, KeyError> {
+    if ciphertext.len() < 4 + 33 + 33 + 32 + 48 {
+        return Err(KeyError::CryptoFailed("BRC-78 ciphertext too short".into()));
+    }
+    if ciphertext[0..4] != [0x42, 0x42, 0x10, 0x33] {
+        return Err(KeyError::CryptoFailed("BRC-78 version mismatch".into()));
+    }
+    let sender_pub = &ciphertext[4..37];
+    let expected_recip = &ciphertext[37..70];
+    let actual_recip = recipient.public_key_compressed()?;
+    if expected_recip != actual_recip.as_slice() {
+        return Err(KeyError::CryptoFailed("BRC-78 recipient key mismatch".into()));
+    }
+    let key_id_b64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &ciphertext[70..102]);
+    let payload = &ciphertext[102..];
+    let kd = KeyDeriver::new(recipient.clone());
+    kd.decrypt(
+        (2, "message encryption"),
+        &key_id_b64,
+        Counterparty::PublicKeyHex(encode_hex(sender_pub)),
+        payload,
+    )
+}
+
+/// Encode bytes into a BRC-26 / UHRP URL (`base58check(0xce00 || sha256(bytes))`).
+pub fn uhrp_url_for_bytes(bytes: &[u8]) -> String {
+    let digest = sha256(bytes);
+    let mut payload = [0u8; 34];
+    payload[0] = 0xce;
+    payload[1] = 0x00;
+    payload[2..].copy_from_slice(&digest);
+    bs58::encode(payload).with_check().into_string()
+}
+
+/// Decode a UHRP URL (with optional `uhrp://` prefix) back into its 32-byte SHA-256 hash.
+pub fn uhrp_hash_from_url(url: &str) -> Option<[u8; 32]> {
+    let mut s = url.trim();
+    if s.len() >= 5 && s[..5].eq_ignore_ascii_case("uhrp:") {
+        s = &s[5..];
+    }
+    if let Some(rest) = s.strip_prefix("//") {
+        s = rest;
+    }
+    let decoded = bs58::decode(s).with_check(None).into_vec().ok()?;
+    if decoded.len() != 34 || decoded[0] != 0xce || decoded[1] != 0x00 {
+        return None;
+    }
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&decoded[2..]);
+    Some(hash)
+}
+
 /// Canonical BAP ID for a root address: `base58(RIPEMD160(SHA256(address_utf8)))`.
 pub fn bap_id_for_address(address: &str) -> String {
     bs58::encode(hash160(address.as_bytes())).into_string()
@@ -975,6 +1075,32 @@ pub fn bap_id_for_deriver(deriver: &KeyDeriver) -> Result<String, KeyError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brc78_encrypt_and_decrypt_roundtrip_and_reject_wrong_recipient() {
+        let alice = SecretKeyBytes::from_hex(&"11".repeat(32)).unwrap();
+        let bob = SecretKeyBytes::from_hex(&"22".repeat(32)).unwrap();
+        let eve = SecretKeyBytes::from_hex(&"33".repeat(32)).unwrap();
+        let bob_pub = bob.public_key_hex().unwrap();
+        let ct = brc78_encrypt(b"hello identity card", &alice, &bob_pub).unwrap();
+        assert_eq!(&ct[0..4], &[0x42, 0x42, 0x10, 0x33]);
+        let pt = brc78_decrypt(&ct, &bob).unwrap();
+        assert_eq!(pt, b"hello identity card");
+        assert!(brc78_decrypt(&ct, &eve).is_err());
+        // Self-encryption roundtrip (own-box)
+        let alice_pub = alice.public_key_hex().unwrap();
+        let ct_self = brc78_encrypt(b"vault identities", &alice, &alice_pub).unwrap();
+        assert_eq!(brc78_decrypt(&ct_self, &alice).unwrap(), b"vault identities");
+    }
+
+    #[test]
+    fn uhrp_url_roundtrips_sha256_hash() {
+        let data = b"handcash-avatar-png";
+        let url = uhrp_url_for_bytes(data);
+        assert_eq!(uhrp_hash_from_url(&url), Some(sha256(data)));
+        assert_eq!(uhrp_hash_from_url(&format!("uhrp://{url}")), Some(sha256(data)));
+        assert!(uhrp_hash_from_url("not-a-uhrp-url").is_none());
+    }
 
     #[test]
     fn brc157_and_brc75_match_bsv_sdk_golden_vectors() {
@@ -1193,6 +1319,147 @@ mod tests {
         assert_eq!(
             reserved_key_refusal("getPublicKey", Some("my app proto"), Some("anyone"), None),
             None
+        );
+    }
+
+    // Ported 1:1 from `src/wallet/primitives/base58check.test.ts`
+    #[test]
+    fn p2pkh_base58check_matches_zero_hash_vector_and_rejects_invalid_addresses() {
+        let zero_addr = "1111111111111111111114oLvT2";
+        assert_eq!(p2pkh_address_from_hash160(&[0u8; 20], false), zero_addr);
+        assert_eq!(decode_p2pkh_address(zero_addr).unwrap(), (0x00, [0u8; 20]));
+        for bad in [
+            "",
+            "0OIl",
+            "1",
+            "1111111111111111111114oLvT3",
+            &"1".repeat(129),
+        ] {
+            assert!(decode_p2pkh_address(bad).is_err(), "bad={bad}");
+        }
+    }
+
+    // Ported 1:1 from `src/wallet/primitives/hashes.test.ts`
+    #[test]
+    fn hashes_match_empty_composition_vectors_and_lengths() {
+        assert_eq!(
+            encode_hex(&sha256(&sha256(&[]))),
+            "5df6e0e2761359d30a8275058e299fcc0381534545f55cf43e41983f5d4c9456"
+        );
+        assert_eq!(
+            encode_hex(&hash160(&[])),
+            "b472a266d0bd89c13706a4132ccfb16f7c3b9fcb"
+        );
+        for len in [0usize, 1, 31, 55, 56, 63, 64, 65, 119, 120, 127, 128, 129, 1024, 65536] {
+            let storage: Vec<u8> = (0..len + 6).map(|i| ((i * 37 + 11) % 256) as u8).collect();
+            let slice = &storage[3..len + 3];
+            let d1 = sha256(&sha256(slice));
+            let d2 = sha256(&sha256(slice));
+            assert_eq!(d1, d2);
+            assert_eq!(hash160(slice), hash160(slice));
+        }
+    }
+
+    // Ported 1:1 from `src/wallet/primitives/coinCrypto.test.ts`
+    #[test]
+    fn coin_crypto_preserves_legacy_self_keys_and_brc42_vector() {
+        let root = SecretKeyBytes::from_hex(&"11".repeat(32)).unwrap();
+        let deriver = KeyDeriver::new(root.clone());
+        for (name, expected_hex) in [
+            ("wltc reserve", "1f5c57e2fe75c32612bfe0f467d41d7a0b62dd30f016f14fa3f32ef2357578f0"),
+            ("btc coin", "cc772b2f9244754ceb6fc10f10761eff32ed8ab714c64d2446ddcf06ac56ac35"),
+            ("bch coin", "f8d61ba7b5c6a3101e750bec6effb2001f19a6ebe0f94018aa3fd493728fdbd7"),
+            ("doge coin", "c01e4444a8357298fa6311d80cb25668c9f0161785184a8dd92529148a6486df"),
+            ("arc usd", "fc7973577a39d802f16f73d28f66c857534bfd7becf38325bb7f829b0c20b007"),
+        ] {
+            let derived = deriver
+                .derive_private_key((2, name), "1", Counterparty::parse(Some("self"), true))
+                .unwrap();
+            assert_eq!(derived.to_hex().as_str(), expected_hex, "protocol={name}");
+        }
+
+        // Published BRC-42 mathematical vector
+        let recipient = SecretKeyBytes::from_hex(
+            "6a1751169c111b4667a6539ee1be6b7cd9f6e9c8fe011a5f2fe31e03a15e0ede",
+        )
+        .unwrap();
+        let recipient_deriver = KeyDeriver::new(recipient.clone());
+        let sender_pt = parse_public_key_hex(
+            "033f9160df035156f1c48e75eae99914fa1a1546bec19781e8eddb900200bff9d1",
+        )
+        .unwrap();
+        let tweak = recipient_deriver
+            .brc42_tweak(&sender_pt, "f3WCaUmnN9U=")
+            .unwrap();
+        let child = recipient.scalar().unwrap() + tweak;
+        assert_eq!(
+            encode_hex(&child.to_bytes()),
+            "761656715bbfa172f8f9f58f5af95d9d0dfd69014cfdcacc9a245a10ff8893ef"
+        );
+    }
+
+    // Ported 1:1 from `src/wallet/primitives/coinCrypto.test.ts`
+    #[test]
+    fn coin_crypto_reciprocity_deterministic_low_s_der_and_rejections() {
+        let root = SecretKeyBytes::from_hex(&"11".repeat(32)).unwrap();
+        let peer = SecretKeyBytes::from_hex(&"33".repeat(32)).unwrap();
+        let sender_deriver = KeyDeriver::new(root.clone());
+        let peer_deriver = KeyDeriver::new(peer.clone());
+
+        let sent_pub = sender_deriver
+            .derive_public_key(
+                (2, "btc payment"),
+                "receipt-1",
+                Counterparty::parse(Some(&peer.public_key_hex().unwrap()), true),
+                false,
+            )
+            .unwrap();
+        let paid_priv = peer_deriver
+            .derive_private_key(
+                (2, "btc payment"),
+                "receipt-1",
+                Counterparty::parse(Some(&root.public_key_hex().unwrap()), true),
+            )
+            .unwrap();
+        assert_eq!(paid_priv.public_key_compressed().unwrap(), sent_pub);
+
+        let digest_vec = decode_hex(&"22".repeat(32)).unwrap();
+        let digest: [u8; 32] = digest_vec.try_into().unwrap();
+        let sig = sign_ecdsa_der(&root, &digest).unwrap();
+        assert_eq!(
+            encode_hex(&sig),
+            "3045022100cfd18ee918d6729134adbc61212142cf71fcf186dfc3123cfca8f7062e0fad5a0220703cc467d9857349ddb6e148bd1663f5050f3f6b9d788d64349c357f14eb4a5f"
+        );
+        let root_pub = root.public_key_compressed().unwrap();
+        assert!(verify_ecdsa_der(&root_pub, &digest, &sig).unwrap());
+        let wrong_digest: [u8; 32] = decode_hex(&"23".repeat(32)).unwrap().try_into().unwrap();
+        assert!(!verify_ecdsa_der(&root_pub, &wrong_digest, &sig).unwrap());
+
+        for bad_key in ["", "0", &"ff".repeat(32), &"01".repeat(33), "zz"] {
+            assert!(SecretKeyBytes::from_hex(bad_key).is_err(), "bad_key={bad_key}");
+        }
+        for bad_der in [
+            "",
+            "3006020100020100",
+            "3006020180020101",
+            "300702020001020101",
+            "300602010102010100",
+        ] {
+            let bytes = decode_hex(bad_der).unwrap();
+            assert!(!verify_ecdsa_der(&root_pub, &digest, &bytes).unwrap(), "bad_der={bad_der}");
+        }
+        for bad_proto in ["tiny", "btc  coin", "btc protocol", "btc/coin"] {
+            assert!(
+                sender_deriver
+                    .derive_private_key((2, bad_proto), "1", Counterparty::parse(Some("self"), true))
+                    .is_err(),
+                "bad_proto={bad_proto}"
+            );
+        }
+        assert!(
+            sender_deriver
+                .derive_private_key((2, "btc coin"), "", Counterparty::parse(Some("self"), true))
+                .is_err()
         );
     }
 }

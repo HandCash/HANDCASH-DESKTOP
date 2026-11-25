@@ -713,4 +713,51 @@ mod tests {
         assert_eq!(unsealed, issued);
         assert_eq!(slice_set_label(1_700_000_000_000), "Set issued 2023-11-14");
     }
+
+    // Ported 1:1 from `src/wallet/brc140Backup.test.ts`
+    #[test]
+    fn reads_slices_from_pasted_emails_names_failures_and_refuses_other_wallet_extend() {
+        let set = create_brc140_shares(SAMPLE_ROOT_HEX, 2, 3).unwrap();
+        let email = format!(
+            "HandCash key slice 1/3\nIntegrity: {}\n\n{}\n",
+            set.integrity, set.shares[0]
+        );
+        let file = format!("# USB\n# integrity {}\n{}\n", set.integrity, set.shares[2]);
+        let combined = format!("{email}\n{file}\n{}", set.shares[0]);
+        assert_eq!(
+            extract_brc140_shares(&combined),
+            vec![set.shares[0].clone(), set.shares[2].clone()]
+        );
+        let recovered = recover_root_key_from_brc140_shares(&[email, file]).unwrap();
+        assert_eq!(recovered.root_key_hex, SAMPLE_ROOT_HEX);
+
+        let other_hex = "201f1e1d1c1b1a191817161514131211100f0e0d0c0b0a090807060504030201";
+        let other = create_brc140_shares(other_hex, 2, 3).unwrap();
+        assert_eq!(
+            recover_root_key_from_brc140_shares(&[set.shares[0].clone()])
+                .unwrap_err()
+                .reason,
+            Brc140RecoveryFailure::TooFew
+        );
+        assert_eq!(
+            recover_root_key_from_brc140_shares(&[
+                set.shares[0].clone(),
+                format!("  {}  ", set.shares[0])
+            ])
+            .unwrap_err()
+            .reason,
+            Brc140RecoveryFailure::TooFew
+        );
+        assert_eq!(
+            recover_root_key_from_brc140_shares(&[set.shares[0].clone(), other.shares[1].clone()])
+                .unwrap_err()
+                .reason,
+            Brc140RecoveryFailure::MixedWallets
+        );
+        let ext_err = extend_brc140_shares(SAMPLE_ROOT_HEX, &other.shares[..2], 3).unwrap_err();
+        assert!(
+            ext_err.message.contains("do not reconstruct") || !ext_err.message.is_empty(),
+            "unexpected extend error: {ext_err}"
+        );
+    }
 }

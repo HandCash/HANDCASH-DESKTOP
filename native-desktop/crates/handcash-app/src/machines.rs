@@ -146,26 +146,6 @@ impl AppSessionMachine {
     }
 }
 
-/// Mirrors `src/machines/unlockMachine.ts`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UnlockState {
-    Idle,
-    Opening,
-    Failed,
-    Success,
-}
-
-impl UnlockState {
-    pub const fn as_attr(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Opening => "opening",
-            Self::Failed => "failed",
-            Self::Success => "success",
-        }
-    }
-}
-
 /// Mirrors `src/components/auth/authModes.ts` (`entry | unlock | create | signin | phrase | shares | key`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthFormMode {
@@ -973,4 +953,77 @@ pub struct ToastNotice {
     pub title: String,
     pub body: Option<String>,
     pub tone: &'static str,
+}
+
+#[cfg(test)]
+mod payment_filters_ts_port_tests {
+    use super::*;
+    use handcash_storage::ActivityRow;
+
+    fn entry(id: &str, status: &str) -> ActivityRow {
+        ActivityRow {
+            activity_id: id.to_string(),
+            txid: None,
+            kind: "payment".to_string(),
+            direction: "out".to_string(),
+            satoshis: -1000,
+            status: status.to_string(),
+            title: "send".to_string(),
+            counterparty: None,
+            app_origin: Some("wallet".to_string()),
+            sort_ts_ms: 1_700_000_000_000,
+        }
+    }
+
+    // Ported 1:1 from `src/wallet/paymentFilters.test.ts`
+    #[test]
+    fn filters_failed_rows_only() {
+        let now = 1_700_000_000_000;
+        let rows = [
+            entry("ok", "complete"),
+            entry("bad", "failed"),
+            entry("live", "pending"),
+        ];
+        let f = PaymentFilters {
+            status: PaymentStatusFilter::Failed,
+            ..Default::default()
+        };
+        let ids: Vec<&str> = rows
+            .iter()
+            .filter(|r| f.matches(r, now))
+            .map(|r| r.activity_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["bad"]);
+    }
+
+    #[test]
+    fn filters_success_rows_without_failed() {
+        let now = 1_700_000_000_000;
+        let rows = [
+            entry("ok", "complete"),
+            entry("bad", "failed"),
+            entry("live", "pending"),
+        ];
+        let f = PaymentFilters {
+            status: PaymentStatusFilter::Success,
+            ..Default::default()
+        };
+        let ids: Vec<&str> = rows
+            .iter()
+            .filter(|r| f.matches(r, now))
+            .map(|r| r.activity_id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["ok", "live"]);
+    }
+
+    #[test]
+    fn matches_failed_status_directly() {
+        let now = 1_700_000_000_000;
+        let f = PaymentFilters {
+            status: PaymentStatusFilter::Failed,
+            ..Default::default()
+        };
+        assert!(f.matches(&entry("bad", "failed"), now));
+        assert!(!f.matches(&entry("ok", "complete"), now));
+    }
 }

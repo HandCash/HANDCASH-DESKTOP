@@ -192,4 +192,27 @@ mod tests {
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
+
+    // Ported 1:1 from `src/wallet/hexBinary.test.ts`
+    #[test]
+    fn hex_binary_u32_le_and_txid_byte_order_roundtrip() {
+        assert_eq!(encode_hex(&0u32.to_le_bytes()), "00000000");
+        assert_eq!(encode_hex(&1u32.to_le_bytes()), "01000000");
+        assert_eq!(encode_hex(&0x12345678u32.to_le_bytes()), "78563412");
+        let b = decode_hex("01000000").unwrap();
+        assert_eq!(u32::from_le_bytes(b.try_into().unwrap()), 1);
+
+        let txid = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+        let mut rev_bytes = decode_hex(txid).unwrap();
+        rev_bytes.reverse();
+        let rev = encode_hex(&rev_bytes);
+        assert_eq!(
+            rev,
+            "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100"
+        );
+        let mut back = decode_hex(&rev).unwrap();
+        back.reverse();
+        assert_eq!(encode_hex(&back), txid);
+        assert_eq!(encode_hex(&decode_hex("deadbeef").unwrap()), "deadbeef");
+    }
 }

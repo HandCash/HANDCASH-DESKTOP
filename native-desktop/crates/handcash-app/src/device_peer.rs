@@ -6,7 +6,8 @@
 use crate::state::{AppServices, SessionSummary, DEVICE_ID_STORAGE_KEY, DEVICE_WALLETS_STORAGE_KEY};
 use base64::Engine as _;
 use handcash_bitcoin::issuer::{
-    normalize_bap_id, normalize_issuer_identity_key, verify_issuer_identity_package,
+    normalize_bap_id, normalize_issuer_identity_key, verify_and_decrypt_profile_certificate,
+    verify_issuer_identity_package,
 };
 use handcash_primitives::encoding::{decode_hex, encode_hex};
 use handcash_primitives::keys::{Counterparty, KeyDeriver, SecretKeyBytes};
@@ -190,6 +191,15 @@ fn local_platform() -> &'static str {
 /// Export this device's verified identity profiles, BAP issuer packages, identity card links,
 /// and non-secret own-presentation metadata in the shared `/handcash-device/v1/identities` schema.
 pub fn export_local_identity_bundle(services: &AppServices, summary: &SessionSummary) -> Value {
+    export_local_identity_bundle_with_limit(services, summary, MAX_LAN_BUNDLE_BYTES)
+}
+
+/// Export local identity bundle capped at `max_bytes` (e.g. 1.2 MB over LAN, 180 KB over messagebox).
+pub fn export_local_identity_bundle_with_limit(
+    services: &AppServices,
+    summary: &SessionSummary,
+    max_bytes: usize,
+) -> Value {
     let chain = &summary.chain;
     let mut profiles: Vec<Value> = Vec::new();
     let mut bap_packages: Vec<Value> = Vec::new();
@@ -303,7 +313,7 @@ pub fn export_local_identity_bundle(services: &AppServices, summary: &SessionSum
                 "issuedAt": issued_at,
             });
             let sz = item.to_string().len() + 2;
-            if used_bytes + sz <= MAX_LAN_BUNDLE_BYTES {
+            if used_bytes + sz <= max_bytes {
                 profiles.push(item);
                 used_bytes += sz;
             }
@@ -337,7 +347,7 @@ pub fn export_local_identity_bundle(services: &AppServices, summary: &SessionSum
                 continue;
             }
             let sz = pkg.to_string().len() + 2;
-            if used_bytes + sz <= MAX_LAN_BUNDLE_BYTES {
+            if used_bytes + sz <= max_bytes {
                 bap_packages.push(pkg);
                 used_bytes += sz;
             }
@@ -394,14 +404,6 @@ pub fn merge_remote_identity_bundle(
             else {
                 continue;
             };
-            let Some(name) = item
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty() && s.len() <= 64)
-            else {
-                continue;
-            };
             let Some(record) = item.get("record") else {
                 continue;
             };
@@ -419,14 +421,48 @@ pub fn merge_remote_identity_bundle(
             if cert_sub.as_deref() != Some(ik.as_str()) || cert_iss.as_deref() != Some(ik.as_str()) {
                 continue;
             }
-            let issued_at = item
-                .get("issuedAt")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            let description = item
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let has_keyring = cert
+                .get("keyring")
+                .and_then(Value::as_object)
+                .is_some_and(|m| !m.is_empty());
+            let (final_name, final_desc, final_issued, final_record) = if has_keyring {
+                let imgs: Vec<Value> = record.get("image").cloned().into_iter().collect();
+                let Some(verified) = verify_and_decrypt_profile_certificate(&ik, cert, &imgs)
+                else {
+                    continue;
+                };
+                let mut rec_obj = serde_json::Map::new();
+                rec_obj.insert("certificate".into(), verified.certificate);
+                if let Some(img) = verified.image {
+                    rec_obj.insert("image".into(), img);
+                }
+                (
+                    verified.name,
+                    verified.description,
+                    verified.issued_at,
+                    Value::Object(rec_obj),
+                )
+            } else {
+                let Some(name) = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && s.len() <= 64)
+                else {
+                    continue;
+                };
+                let issued_at = item
+                    .get("issuedAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let description = item
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                (name.to_string(), description, issued_at, record.clone())
+            };
             let entry_key = format!("handcash.identityProfiles.v1:{chain}:{ik}");
             let existing_issued = services
                 .durable
@@ -434,15 +470,15 @@ pub fn merge_remote_identity_bundle(
                 .and_then(|r| serde_json::from_str::<Value>(&r).ok())
                 .and_then(|v| v.get("issuedAt").and_then(Value::as_str).map(ToString::to_string));
             if let Some(ref prev) = existing_issued {
-                if prev.as_str() >= issued_at && !prev.is_empty() {
+                if prev.as_str() >= final_issued.as_str() && !prev.is_empty() {
                     continue;
                 }
             }
             let stored = json!({
-                "record": record,
-                "name": name,
-                "description": description,
-                "issuedAt": issued_at,
+                "record": final_record,
+                "name": final_name,
+                "description": final_desc,
+                "issuedAt": final_issued,
             });
             if let Ok(raw) = serde_json::to_string(&stored) {
                 if services.durable.set(&entry_key, &raw, false) {
@@ -693,9 +729,25 @@ pub fn install_direct_device_peer_handler(services: &Arc<AppServices>) {
 }
 
 /// Fetch missing identity profiles, BAP packages, and card links from all connected
-/// same-identity peer devices in `handcash.deviceWallets.v1`.
+/// devices: LAN peers in `handcash.deviceWallets.v1` and same-vault BRC-33 messagebox
+/// (`inbox` identity cards + own-box `vault-identities`).
 pub async fn sync_identities_from_connected_peers(
     services: &Arc<AppServices>,
+) -> Result<IdentityMergeStats, String> {
+    sync_identities_inner(services, false).await
+}
+
+/// Manual sync triggered by user action (requests fresh identity cards from sibling accounts
+/// and friends immediately and performs a short follow-up inbox poll).
+pub async fn sync_identities_from_connected_peers_manual(
+    services: &Arc<AppServices>,
+) -> Result<IdentityMergeStats, String> {
+    sync_identities_inner(services, true).await
+}
+
+async fn sync_identities_inner(
+    services: &Arc<AppServices>,
+    manual: bool,
 ) -> Result<IdentityMergeStats, String> {
     let (root_key, summary) = {
         let guard = services.session.lock().map_err(|e| e.to_string())?;
@@ -730,53 +782,61 @@ pub async fn sync_identities_from_connected_peers(
         .collect();
 
     let mut totals = IdentityMergeStats::default();
-    if peers.is_empty() {
-        return Ok(totals);
+
+    if !peers.is_empty() {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(6))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let route = "/handcash-device/v1/identities";
+
+        for base_url in peers {
+            let Ok((auth_hdr, nonce)) = create_device_auth(&root_key, "GET", route, now_ms())
+            else {
+                continue;
+            };
+            let url = format!("{base_url}{route}");
+            let Ok(resp) = client
+                .get(&url)
+                .header(DEVICE_PEER_AUTH_HEADER, auth_hdr)
+                .header("accept", "application/json")
+                .send()
+                .await
+            else {
+                continue;
+            };
+            if !resp.status().is_success() {
+                continue;
+            }
+            let Ok(body_val) = resp.json::<Value>().await else {
+                continue;
+            };
+            let Some(sealed) = body_val.get("sealed").and_then(Value::as_str) else {
+                continue;
+            };
+            let Ok(bundle) = open_from_peer(&root_key, &nonce, sealed) else {
+                continue;
+            };
+            let peer_ik = bundle
+                .get("identityKey")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !peer_ik.eq_ignore_ascii_case(&summary.identity_key) {
+                continue;
+            }
+            let merged = merge_remote_identity_bundle(services, &summary.chain, &bundle);
+            totals.profiles_added += merged.profiles_added;
+            totals.bap_packages_added += merged.bap_packages_added;
+            totals.cards_added += merged.cards_added;
+        }
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(6))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let route = "/handcash-device/v1/identities";
-
-    for base_url in peers {
-        let Ok((auth_hdr, nonce)) = create_device_auth(&root_key, "GET", route, now_ms()) else {
-            continue;
-        };
-        let url = format!("{base_url}{route}");
-        let Ok(resp) = client
-            .get(&url)
-            .header(DEVICE_PEER_AUTH_HEADER, auth_hdr)
-            .header("accept", "application/json")
-            .send()
-            .await
-        else {
-            continue;
-        };
-        if !resp.status().is_success() {
-            continue;
-        }
-        let Ok(body_val) = resp.json::<Value>().await else {
-            continue;
-        };
-        let Some(sealed) = body_val.get("sealed").and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(bundle) = open_from_peer(&root_key, &nonce, sealed) else {
-            continue;
-        };
-        let peer_ik = bundle
-            .get("identityKey")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        if !peer_ik.eq_ignore_ascii_case(&summary.identity_key) {
-            continue;
-        };
-        let merged = merge_remote_identity_bundle(services, &summary.chain, &bundle);
-        totals.profiles_added += merged.profiles_added;
-        totals.bap_packages_added += merged.bap_packages_added;
-        totals.cards_added += merged.cards_added;
+    // Always sync via BRC-33 messagebox (`inbox` identity cards + vault-level `vault-identities`),
+    // which reaches connected same-vault devices even without LAN pairing or WebRTC.
+    if let Ok(mb_stats) = crate::messagebox::sync_messagebox_identities(services, manual).await {
+        totals.profiles_added += mb_stats.profiles_added;
+        totals.bap_packages_added += mb_stats.bap_packages_added;
+        totals.cards_added += mb_stats.cards_added;
     }
 
     if totals.profiles_added > 0 || totals.bap_packages_added > 0 || totals.cards_added > 0 {

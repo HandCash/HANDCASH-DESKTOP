@@ -17,7 +17,7 @@ import {
   probeDevicePeer,
   type DevicePeerSnapshot,
 } from './devicePeer'
-import { mergeRemoteIdentityBundle, requestIdentitiesOverVaultLink } from './identityPeerSync'
+import { mergeRemoteIdentityBundle, requestIdentitiesOverVaultLink, syncVaultIdentitiesBox } from './identityPeerSync'
 import { openVaultLinkDevices } from './vaultLink'
 
 
@@ -137,6 +137,7 @@ export function startDeviceMesh(identityKey: string): () => void {
     notifySnapshots()
   }
   void enrollLocalFromBridge(identityKey).then(() => pollDeviceMeshOnce())
+  void syncVaultIdentitiesBox().catch(() => {})
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = setInterval(() => {
     void pollDeviceMeshOnce()
@@ -193,6 +194,14 @@ export async function syncIdentitiesFromConnectedPeers(args?: {
     identityKeys: args?.identityKeys,
     bapIds: args?.bapIds,
   }).catch(() => {})
+  const boxRes = await syncVaultIdentitiesBox().catch(() => ({
+    profilesAdded: 0,
+    bapPackagesAdded: 0,
+    cardsAdded: 0,
+  }))
+  totals.profilesAdded += boxRes.profilesAdded
+  totals.bapPackagesAdded += boxRes.bapPackagesAdded
+  totals.cardsAdded += boxRes.cardsAdded
   return totals
 }
 

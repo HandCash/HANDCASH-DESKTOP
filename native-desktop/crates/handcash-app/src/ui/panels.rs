@@ -19,9 +19,20 @@ use crate::state::{
 use crate::theme::AppearancePreference;
 use crate::ui::auth::{KeySliceList, PasswordField};
 use crate::ui::primitives::ProfileIdenticon;
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, list_row};
 use base64::Engine as _;
 use dioxus::prelude::*;
+use handcash_machines::fiat_currency_menu::{
+    FiatCurrencyMenuEvent, FiatCurrencyMenuMachine, FiatCurrencyMenuState,
+};
+use handcash_machines::settings_preferences::{
+    AppearancePreference as MachineAppearance, SettingsPreferencePath, SettingsPreferences,
+    SettingsPreferencesEvent, SettingsPreferencesMachine,
+};
+use handcash_machines::wipe::{
+    WipeEvent, WipeHistoryGate, WipeHistoryGateKind, WipeMachine,
+};
 use handcash_primitives::brc140::Brc140IssuedSet;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -368,27 +379,37 @@ pub fn LogViewerPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
     }
 }
 
-/// 1:1 port of `src/components/StatechartsPanel.tsx` (list view, no Mermaid).
+/// 1:1 port of `src/components/StatechartsPanel.tsx` (list view backed by `handcash_machines::manifest::migrated_charts()`).
 #[component]
 pub fn StatechartsPanel(profile: SessionSummary, snap: WalletSnapshot) -> Element {
+    let charts = handcash_machines::manifest::migrated_charts();
     let rows = [
         ("Session", "ready".to_string()),
         ("Engine", format!("phase {} · gen {}", snap.engine_phase, snap.engine_generation)),
         ("Account", format!("#{} · {} · {}", profile.account_index, profile.chain, profile.derivation)),
         ("BRC-100 bridge", snap.bridge_http_url.clone()),
         ("UTXOs / 1Sat items", format!("{} / {}", snap.balance.spendable_utxo_count, snap.balance.item_count)),
+        ("Migrated statecharts", format!("{} / {}", charts.len(), handcash_machines::manifest::TS_MANIFEST_IDS.len())),
     ];
     rsx! {
         div { class: "nav-child-panel statecharts-panel", "data-aeon-scope": "statecharts",
             h3 { "Statecharts" }
             p { class: "settings-row-desc",
-                "Live runtime states of the native Rust wallet machines."
+                "Live runtime states and executable Aeon statechart catalog ({charts.len()} charts)."
             }
             ul { class: "identity-list",
                 for (label, value) in rows {
                     li { key: "{label}", class: "identity-field",
                         span { class: "identity-field-label", "{label}" }
                         strong { class: "mono", "{value}" }
+                    }
+                }
+            }
+            ul { class: "identity-list", "data-aeon-part": "catalog",
+                for chart in charts {
+                    li { key: "{chart.manifest_id}", class: "identity-field",
+                        span { class: "identity-field-label mono", "{chart.manifest_id}" }
+                        strong { class: "mono", "{chart.top_level_states.join(\" · \")}" }
                     }
                 }
             }
@@ -985,7 +1006,7 @@ pub fn PublicIdentitiesPanel(
                                                 more_open.set(false);
                                                 let svc = Arc::clone(&svc_sync);
                                                 spawn(async move {
-                                                    match crate::device_peer::sync_identities_from_connected_peers(&svc).await {
+                                                    match crate::device_peer::sync_identities_from_connected_peers_manual(&svc).await {
                                                         Ok(stats) => {
                                                             let total = stats.profiles_added + stats.bap_packages_added + stats.cards_added;
                                                             let n = *rev.read() + 1;
@@ -1481,8 +1502,20 @@ pub fn SettingsPanel(
     let app_pref = *appearance.read();
     let mut accepted = use_signal(|| services.load_accepted_coins());
     let accepted_now = *accepted.read();
-    let mut sfx_enabled = use_signal(|| services.sfx_enabled());
-    let sfx_now = *sfx_enabled.read();
+    let prefs_chart = use_aeon_machine::<SettingsPreferencesMachine>();
+    let init_appearance = match *appearance.peek() {
+        AppearancePreference::System => MachineAppearance::System,
+        AppearancePreference::Dark => MachineAppearance::Dark,
+        AppearancePreference::Light => MachineAppearance::Light,
+    };
+    let init_sound = services.sfx_enabled();
+    use_hook(move || {
+        prefs_chart.send(SettingsPreferencesEvent::Sync(SettingsPreferences {
+            appearance: init_appearance,
+            sound: init_sound,
+        }));
+    });
+    let sfx_now = prefs_chart.context().sound;
     let mut updater_rev = use_signal(|| 0u64);
     let _ = *updater_rev.read();
     let updater_status = services.updater.status();
@@ -1571,11 +1604,14 @@ pub fn SettingsPanel(
                                 on_change: {
                                     let svc_app = Arc::clone(&services);
                                     move |next: String| {
-                                        let pref = match next.as_str() {
-                                            "dark" => AppearancePreference::Dark,
-                                            "light" => AppearancePreference::Light,
-                                            _ => AppearancePreference::System,
+                                        let (pref, m_pref) = match next.as_str() {
+                                            "dark" => (AppearancePreference::Dark, MachineAppearance::Dark),
+                                            "light" => (AppearancePreference::Light, MachineAppearance::Light),
+                                            _ => (AppearancePreference::System, MachineAppearance::System),
                                         };
+                                        prefs_chart.send(SettingsPreferencesEvent::Choose(
+                                            SettingsPreferencePath::Appearance(m_pref),
+                                        ));
                                         appearance.set(pref);
                                         svc_app.save_appearance(pref);
                                     }
@@ -1676,7 +1712,9 @@ pub fn SettingsPanel(
                                                 "data-selected": if sfx_now { Some("") } else { None },
                                                 onclick: move |_| {
                                                     let next = !sfx_now;
-                                                    sfx_enabled.set(next);
+                                                    prefs_chart.send(SettingsPreferencesEvent::Choose(
+                                                        SettingsPreferencePath::Sound(next),
+                                                    ));
                                                     svc_sfx.set_sfx_enabled(next);
                                                 },
                                                 if sfx_now { "On" } else { "Off" }
@@ -1829,18 +1867,19 @@ pub fn SettingsPanel(
 #[component]
 pub fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut open = use_signal(|| false);
-    let is_open = *open.read();
+    let fiat_menu = use_aeon_machine::<FiatCurrencyMenuMachine>();
+    let is_open = matches!(fiat_menu.state(), FiatCurrencyMenuState::Open);
+    let state_attr = fiat_menu.state_attr();
     let current = *fiat_code.read();
 
     rsx! {
         div {
             class: "wallet-account-menu settings-fiat-menu",
             "data-aeon-scope": "wallet-account-menu",
-            "data-aeon-state": if is_open { "open" } else { "closed" },
+            "data-aeon-state": "{state_attr}",
             onkeydown: move |e: KeyboardEvent| {
                 if e.key() == Key::Escape {
-                    open.set(false);
+                    fiat_menu.send(FiatCurrencyMenuEvent::Close);
                 }
             },
             button {
@@ -1851,7 +1890,7 @@ pub fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
                 aria_expanded: is_open,
                 aria_haspopup: "listbox",
                 aria_label: "Currency: {current.iso()}",
-                onclick: move |_| open.set(!is_open),
+                onclick: move |_| fiat_menu.send(FiatCurrencyMenuEvent::Toggle),
                 span { class: "settings-fiat-flag", aria_hidden: true, "{current.flag()}" }
                 span { "{current.iso()}" }
                 ExpandMoreIcon {
@@ -1890,7 +1929,9 @@ pub fn SettingsFiatDropdown(mut fiat_code: Signal<FiatCode>) -> Element {
                                                         svc_bg.refresh_fx_rates_async().await;
                                                     });
                                                 }
-                                                open.set(false);
+                                                fiat_menu.send(FiatCurrencyMenuEvent::Choose {
+                                                    code: opt.as_str().to_string(),
+                                                });
                                             },
                                             span { class: "wallet-account-option-lead",
                                                 span { class: "settings-fiat-flag", aria_hidden: true, "{opt.flag()}" }
@@ -3447,14 +3488,20 @@ fn WipeWalletPanel(
     let _ = toast;
     let services = use_context::<Arc<AppServices>>();
     let no_lock = services.is_no_device_lock();
-    let mut gate_verified = use_signal(|| no_lock);
+    let wipe_chart = use_aeon_machine::<WipeMachine>();
+    use_hook(move || {
+        if no_lock {
+            wipe_chart.send(WipeEvent::Verified { password: None });
+        }
+    });
     let gate_pw = use_signal(String::new);
-    let mut confirm_text = use_signal(String::new);
     let mut gate_warning = use_signal(|| Option::<String>::None);
     let mut error_msg = use_signal(|| Option::<String>::None);
 
-    let is_verified = *gate_verified.read();
-    let typed_delete = confirm_text.read().trim() == "DELETE";
+    let wipe_ctx = wipe_chart.context();
+    let is_verified = wipe_ctx.unlocked;
+    let confirm_val = wipe_ctx.confirm_text.clone();
+    let typed_delete = confirm_val.trim() == "DELETE";
     let svc_verify = Arc::clone(&services);
     let svc_wipe = Arc::clone(&services);
     let svc_sync_wipe = Arc::clone(&services);
@@ -3474,7 +3521,7 @@ fn WipeWalletPanel(
                         let pw = gate_pw.read().clone();
                         match svc_verify.verify_password(&pw) {
                             Ok(()) => {
-                                gate_verified.set(true);
+                                wipe_chart.send(WipeEvent::Verified { password: Some(pw) });
                                 gate_warning.set(svc_verify.check_wipe_history_gate().err());
                             }
                             Err(err) => error_msg.set(Some(err)),
@@ -3540,10 +3587,12 @@ fn WipeWalletPanel(
                 input {
                     class: "mono",
                     placeholder: "DELETE",
-                    value: "{confirm_text}",
+                    value: "{confirm_val}",
                     oninput: move |e| {
                         error_msg.set(None);
-                        confirm_text.set(e.value());
+                        wipe_chart.send(WipeEvent::ChangeConfirm {
+                            confirm_text: e.value(),
+                        });
                     },
                 }
             }
@@ -3560,17 +3609,28 @@ fn WipeWalletPanel(
                         disabled: !typed_delete,
                         onclick: move |_| {
                             error_msg.set(None);
+                            wipe_chart.send(WipeEvent::Submit);
                             let _ = svc_sync_wipe.create_brc39_backup_bytes();
                             svc_sync_wipe.mark_history_backup_confirmed();
+                            wipe_chart.send(WipeEvent::Synced {
+                                gate: WipeHistoryGate {
+                                    kind: WipeHistoryGateKind::Synced,
+                                    checked_at: 0,
+                                },
+                            });
                             let pw = gate_pw.read().clone();
                             let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
                             match svc_sync_wipe.wipe_all_wallet_data(pw_opt) {
                                 Ok(()) => {
+                                    wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_sync_wipe.read_snapshot());
                                     nav_child.set(None);
                                     app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
                                 }
-                                Err(e) => error_msg.set(Some(e)),
+                                Err(e) => {
+                                    wipe_chart.send(WipeEvent::Fail { error: e.clone() });
+                                    error_msg.set(Some(e));
+                                }
                             }
                         },
                         button::Label { "Snapshot and wipe" }
@@ -3581,15 +3641,26 @@ fn WipeWalletPanel(
                         disabled: !typed_delete,
                         onclick: move |_| {
                             error_msg.set(None);
+                            wipe_chart.send(WipeEvent::Submit);
+                            wipe_chart.send(WipeEvent::Synced {
+                                gate: WipeHistoryGate {
+                                    kind: WipeHistoryGateKind::Overridden,
+                                    checked_at: 0,
+                                },
+                            });
                             let pw = gate_pw.read().clone();
                             let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
                             match svc_force_wipe.wipe_all_wallet_data(pw_opt) {
                                 Ok(()) => {
+                                    wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_force_wipe.read_snapshot());
                                     nav_child.set(None);
                                     app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
                                 }
-                                Err(e) => error_msg.set(Some(e)),
+                                Err(e) => {
+                                    wipe_chart.send(WipeEvent::Fail { error: e.clone() });
+                                    error_msg.set(Some(e));
+                                }
                             }
                         },
                         button::Label { "Wipe anyway" }
@@ -3601,15 +3672,26 @@ fn WipeWalletPanel(
                         disabled: !typed_delete,
                         onclick: move |_| {
                             error_msg.set(None);
+                            wipe_chart.send(WipeEvent::Submit);
+                            wipe_chart.send(WipeEvent::Synced {
+                                gate: WipeHistoryGate {
+                                    kind: WipeHistoryGateKind::NothingToLose,
+                                    checked_at: 0,
+                                },
+                            });
                             let pw = gate_pw.read().clone();
                             let pw_opt = if no_lock { None } else { Some(pw.as_str()) };
                             match svc_wipe.wipe_all_wallet_data(pw_opt) {
                                 Ok(()) => {
+                                    wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_wipe.read_snapshot());
                                     nav_child.set(None);
                                     app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
                                 }
-                                Err(e) => error_msg.set(Some(e)),
+                                Err(e) => {
+                                    wipe_chart.send(WipeEvent::Fail { error: e.clone() });
+                                    error_msg.set(Some(e));
+                                }
                             }
                         },
                         button::Label { "Wipe wallet" }

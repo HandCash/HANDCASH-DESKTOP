@@ -68,6 +68,9 @@ export type IdentityBundleMergeResult = {
 const MAX_LAN_BUNDLE_BYTES = 1_200_000
 const MAX_LINK_BUNDLE_BYTES = 180_000
 const REQUEST_COOLDOWN_MS = 15_000
+export const VAULT_IDENTITIES_BOX = 'vault-identities'
+const OWN_BOX_STALE_MS = 7 * 24 * 60 * 60 * 1000
+const lastVaultBoxHash = new Map<string, string>()
 
 type VaultLinkIdentityRequest = {
   type: 'identity-sync-request'
@@ -402,4 +405,107 @@ export function resetIdentityPeerSyncForTests(): void {
   vaultLinkUnsub?.()
   vaultLinkUnsub = null
   lastRequestedAt.clear()
+  lastVaultBoxHash.clear()
+}
+
+/**
+ * Pull remote vault identity snapshots and publish this device's latest
+ * verified profiles/BAP packages/cards into the vault's BRC-78-sealed
+ * `vault-identities` own-box so connected devices sync even without LAN/WebRTC.
+ */
+export async function syncVaultIdentitiesBox(): Promise<IdentityBundleMergeResult> {
+  const totals: IdentityBundleMergeResult = { profilesAdded: 0, bapPackagesAdded: 0, cardsAdded: 0 }
+  const active = getActiveWallet()
+  if (!active?.vaultMaster) return totals
+  try {
+    const [
+      { acknowledgeOwnBox, listOwnBox, openFromSelf, sealToSelf, sendToOwnBox },
+      { rootKeyHexForAccount },
+      { getOrCreateDeviceId },
+      { Hash, Utils },
+    ] = await Promise.all([
+      import('./messageTransport'),
+      import('./vaultAccounts'),
+      import('./deviceWallets'),
+      import('@bsv/sdk'),
+    ])
+    const vaultRootHex = rootKeyHexForAccount(active.vaultMaster, 0)
+    const deviceId = getOrCreateDeviceId()
+    const now = Date.now()
+    const listed = await listOwnBox(vaultRootHex, VAULT_IDENTITIES_BOX)
+    const ownIds: Array<{ createdAt: number; id: string }> = []
+    const staleIds: string[] = []
+    let latestOwnHash: string | null = null
+    if (Array.isArray(listed)) {
+      for (const m of listed) {
+        const inner = openFromSelf(vaultRootHex, m.body)
+        if (!inner) continue
+        let frame: Record<string, unknown>
+        try {
+          frame = JSON.parse(inner) as Record<string, unknown>
+        } catch {
+          continue
+        }
+        if (frame.type !== 'vault-identity-snapshot') continue
+        const frameChain = typeof frame.chain === 'string' ? frame.chain : ''
+        const frameDev = typeof frame.deviceId === 'string' ? frame.deviceId : ''
+        const createdAt = Number(m.createdAt) || 0
+        if (frameChain === active.chain && frame.bundle) {
+          const res = await mergeRemoteIdentityBundle(active.chain, frame.bundle, {
+            allowUncheckedBapHeaders: true,
+          })
+          totals.profilesAdded += res.profilesAdded
+          totals.bapPackagesAdded += res.bapPackagesAdded
+          totals.cardsAdded += res.cardsAdded
+        }
+        if (m.messageId) {
+          const id = String(m.messageId)
+          if (frameDev === deviceId && frameChain === active.chain) {
+            ownIds.push({ createdAt, id })
+            if (typeof frame.bundleHash === 'string') latestOwnHash = frame.bundleHash
+          } else if (createdAt > 0 && now - createdAt > OWN_BOX_STALE_MS) {
+            staleIds.push(id)
+          }
+        }
+      }
+    }
+    const bundle = exportLocalIdentityBundle({
+      chain: active.chain,
+      accountIndex: active.accountIndex,
+      identityKey: active.identityKey,
+      maxBytes: MAX_LINK_BUNDLE_BYTES,
+    })
+    const hasData =
+      bundle.profiles.length > 0 ||
+      bundle.bapPackages.length > 0 ||
+      (bundle.cards != null && Object.keys(bundle.cards).length > 0)
+    if (hasData) {
+      const { exportedAt: _omit, ...stable } = bundle
+      const bundleHash = Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(stable), 'utf8')))
+      const cacheKey = `${active.chain}:${deviceId}`
+      const already = lastVaultBoxHash.get(cacheKey) === bundleHash || latestOwnHash === bundleHash
+      if (!already) {
+        const frame = {
+          type: 'vault-identity-snapshot',
+          v: 1,
+          deviceId,
+          chain: active.chain,
+          bundleHash,
+          bundle,
+        }
+        await sendToOwnBox(vaultRootHex, VAULT_IDENTITIES_BOX, sealToSelf(vaultRootHex, JSON.stringify(frame)))
+        lastVaultBoxHash.set(cacheKey, bundleHash)
+        for (const old of ownIds) staleIds.push(old.id)
+      } else if (ownIds.length > 1) {
+        ownIds.sort((a, b) => b.createdAt - a.createdAt)
+        for (const old of ownIds.slice(1)) staleIds.push(old.id)
+      }
+    }
+    if (staleIds.length > 0) {
+      await acknowledgeOwnBox(vaultRootHex, VAULT_IDENTITIES_BOX, staleIds).catch(() => {})
+    }
+  } catch {
+    /* best-effort background sync */
+  }
+  return totals
 }

@@ -9,8 +9,12 @@
 use crate::icons::{DevicesIcon, ScanQrIcon};
 use crate::state::{render_qr_svg, AppServices};
 use crate::ui::EmptyState;
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, field, status_banner};
 use dioxus::prelude::*;
+use handcash_machines::device_backup::{
+    DeviceBackupEvent, DeviceBackupMachine, DeviceBackupState,
+};
 use std::sync::Arc;
 
 /// 1:1 port of `src/components/QrScanner.tsx`.
@@ -102,11 +106,12 @@ pub fn format_device_platform(raw: Option<&str>) -> String {
 #[component]
 pub fn PairDevicePanel() -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut view = use_signal(|| "list");
-    let mut show_my_code = use_signal(|| false);
+    let backup = use_aeon_machine::<DeviceBackupMachine>();
     let mut status_msg = use_signal(|| Option::<String>::None);
-    let mut error_msg = use_signal(|| Option::<String>::None);
 
+    let backup_state = backup.state();
+    let backup_ctx = backup.context();
+    let state_attr = backup.state_attr();
     let peers = services.list_peer_devices();
     let pair_json = services.build_local_pair_qr_json().unwrap_or_default();
     let qr_svg = if pair_json.is_empty() {
@@ -115,23 +120,24 @@ pub fn PairDevicePanel() -> Element {
         Some(render_qr_svg(&pair_json))
     };
 
-    if *view.read() == "scanning" {
+    if matches!(backup_state, DeviceBackupState::Scanning) {
         let svc_scan = Arc::clone(&services);
         return rsx! {
-            div { class: "device-backup", "data-aeon-scope": "device-backup", "data-aeon-state": "scanning",
+            div { class: "device-backup", "data-aeon-scope": "device-backup", "data-aeon-state": "{state_attr}",
                 QrScanner {
                     hint: "Point at the other device’s code".to_string(),
-                    on_cancel: move |_| view.set("list"),
+                    on_cancel: move |_| backup.send(DeviceBackupEvent::ScanCancel),
                     on_scan: move |raw: String| {
                         match svc_scan.link_peer_from_json(&raw) {
                             Ok(row) => {
                                 status_msg.set(Some(format!("Linked {}", row.label)));
-                                error_msg.set(None);
-                                view.set("list");
+                                backup.send(DeviceBackupEvent::Scanned {
+                                    peer_device_id: None,
+                                });
                             }
                             Err(err) => {
-                                error_msg.set(Some(err));
-                                view.set("list");
+                                backup.send(DeviceBackupEvent::ScanCancel);
+                                backup.send(DeviceBackupEvent::Fail { error: err });
                             }
                         }
                     },
@@ -141,7 +147,7 @@ pub fn PairDevicePanel() -> Element {
     }
 
     rsx! {
-        div { class: "device-backup", "data-aeon-scope": "device-backup", "data-aeon-state": "list",
+        div { class: "device-backup", "data-aeon-scope": "device-backup", "data-aeon-state": "{state_attr}",
             header { class: "device-backup-head",
                 h3 { "Pair a device" }
                 p { "Link devices, then give one wallet a sealed recovery copy." }
@@ -151,7 +157,7 @@ pub fn PairDevicePanel() -> Element {
                     status_banner::Copy { status_banner::Body { "{msg}" } }
                 }
             }
-            if let Some(err) = error_msg.read().as_ref() {
+            if let Some(err) = backup_ctx.error.as_ref() {
                 status_banner::Root { tone: status_banner::StatusTone::Danger, status: Some("failed".to_string()),
                     status_banner::Copy { status_banner::Body { "{err}" } }
                 }
@@ -160,21 +166,18 @@ pub fn PairDevicePanel() -> Element {
                 button::Root {
                     variant: button::ButtonVariant::Solid,
                     class: "btn btn-primary",
-                    onclick: move |_| view.set("scanning"),
+                    onclick: move |_| backup.send(DeviceBackupEvent::Scan),
                     ScanQrIcon { size: 16 }
                     button::Label { "Add device" }
                 }
                 button::Root {
                     variant: button::ButtonVariant::Ghost,
                     class: "btn btn-ghost",
-                    onclick: move |_| {
-                        let cur = *show_my_code.read();
-                        show_my_code.set(!cur);
-                    },
-                    button::Label { if *show_my_code.read() { "Hide my code" } else { "Show my code" } }
+                    onclick: move |_| backup.send(DeviceBackupEvent::ToggleMyCode),
+                    button::Label { if backup_ctx.show_my_code { "Hide my code" } else { "Show my code" } }
                 }
             }
-            if *show_my_code.read() {
+            if backup_ctx.show_my_code {
                 div { class: "qr-card",
                     if let Some(svg) = qr_svg {
                         div { class: "qr-svg", dangerous_inner_html: "{svg}" }

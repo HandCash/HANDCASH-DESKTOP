@@ -505,6 +505,10 @@ fn is_bare_item_name(item: &ItemCardRow) -> bool {
         || n.starts_with(&format!("{} #", item.basket))
         || n.starts_with("out-")
         || (n.len() >= 12 && n.contains('…'))
+        || n.eq_ignore_ascii_case("Migrated collectable")
+        || n.eq_ignore_ascii_case("Market item to buyer")
+        || n.eq_ignore_ascii_case("Imported collectable")
+        || n.eq_ignore_ascii_case("HandCash collectable")
 }
 
 fn is_valid_origin_key(origin_key: &str) -> bool {
@@ -671,14 +675,26 @@ pub fn apply_inscription_resolutions(
                 }
             }
         }
-        if entry.extras.is_empty() {
-            if let Some(arr) = rec.get("extras").and_then(Value::as_array) {
-                for t in arr {
-                    let name = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
-                    let val = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
-                    if !name.is_empty() && !val.is_empty() {
-                        entry.extras.push((name.to_string(), val.to_string()));
+        if let Some(arr) = rec.get("extras").and_then(Value::as_array) {
+            let fill_extras = entry.extras.is_empty();
+            for t in arr {
+                let name = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                let val = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                if name.is_empty() || val.is_empty() {
+                    continue;
+                }
+                if item.issuer_key.is_none() && (name.eq_ignore_ascii_case("issuer") || name.eq_ignore_ascii_case("issuerKey")) {
+                    if let Some(iss) = normalize_issuer_identity_key(val) {
+                        item.issuer_key = Some(iss);
                     }
+                }
+                if entry.bap_id.is_none() && name.eq_ignore_ascii_case("bapId") {
+                    if let Some(bid) = normalize_bap_id(val) {
+                        entry.bap_id = Some(bid);
+                    }
+                }
+                if fill_extras {
+                    entry.extras.push((name.to_string(), val.to_string()));
                 }
             }
         }
@@ -820,6 +836,8 @@ pub struct AppServices {
     item_art_mem: Mutex<HashMap<String, Option<String>>>,
     /// Origins currently being fetched in the background so we never storm indexers.
     item_art_inflight: Mutex<HashSet<String>>,
+    /// Origins already queried against GorillaPool `/api/txos/outpoints` this session.
+    meta_backfill_asked: Mutex<HashSet<String>>,
     /// Epoch ms of the last automatic peer identity sync attempt (30 s cooldown).
     last_peer_identity_sync_ms: std::sync::atomic::AtomicI64,
     patch_tx: watch::Sender<u64>,
@@ -889,6 +907,7 @@ impl AppServices {
             session: Mutex::new(None),
             item_art_mem: Mutex::new(HashMap::new()),
             item_art_inflight: Mutex::new(HashSet::new()),
+            meta_backfill_asked: Mutex::new(HashSet::new()),
             last_peer_identity_sync_ms: std::sync::atomic::AtomicI64::new(0),
             patch_tx,
             theme_tx,
@@ -1026,7 +1045,34 @@ impl AppServices {
     pub fn load_identity_details(&self, profile: &SessionSummary) -> IdentityDetails {
         let mut details = IdentityDetails::default();
 
-        // 1. Read `handcash.publicIdentities.v1` (scoped or unscoped).
+        // 0. Canonical public identities view + presented account profile (BRC-248 / BAP / card).
+        let view = self.list_public_identities_view(profile);
+        if let Some(prof) =
+            self.account_profile_for(&profile.chain, profile.account_index, &profile.identity_key)
+        {
+            details.display_name = Some(prof.name);
+            if !prof.description.trim().is_empty() {
+                details.bio = Some(prof.description);
+            }
+        }
+        for row in &view.rows {
+            if details.bap_profile_id.is_none() && row.bap_published {
+                details.bap_profile_id = Some(row.bap_id.clone());
+            }
+            if details.display_name.is_none() {
+                details.display_name = row.name.clone();
+            }
+            if details.bio.is_none() {
+                details.bio = row.description.clone().filter(|s| !s.trim().is_empty());
+            }
+            if let Some(ref n) = row.name {
+                details
+                    .public_identities
+                    .push((n.clone(), row.identity_key.clone()));
+            }
+        }
+
+        // 1. Read legacy `handcash.publicIdentities.v1` shapes if still empty.
         for key in [
             format!(
                 "handcash.publicIdentities.v1:{}:{}",
@@ -2236,12 +2282,12 @@ impl AppServices {
         let mut loaded_from_toolbox = false;
         if let Ok(Some(tb)) = self.toolbox.open_if_exists(&summary.toolbox_db_name) {
             if let Ok((bal, mut items, items_total, activity, activity_total)) =
-                tb.read_wallet_snapshot(100, 100)
+                tb.read_wallet_snapshot(2000, 100)
             {
                 // Decode 1Sat inscription artwork, MAP metadata, and BRC-247/Sigma issuer attribution.
                 let mut item_art = HashMap::new();
                 let mut item_meta: HashMap<String, ItemDisplayMeta> = HashMap::new();
-                let ci_map = tb.read_item_custom_instructions(100);
+                let ci_map = tb.read_item_custom_instructions(2000);
                 for item in &mut items {
                     if let Some(ref existing_iss) = item.issuer_key {
                         item.issuer_key = normalize_issuer_identity_key(existing_iss);
@@ -2450,9 +2496,10 @@ impl AppServices {
             }
         }
 
-        // 2b. Upgrade item authenticity & verified origins from local BRC-150 proven cache
-        //     and shared TS inscription resolution cache BEFORE looking up local art.
+        // 2b. Upgrade item authenticity & verified origins from local BRC-150 proven cache,
+        //     shared TS collectables list cache, and inscription resolution cache BEFORE art lookup.
         self.apply_proven_collectables(&summary.chain, &mut snap.items);
+        self.apply_collectables_list_cache(&summary, &mut snap.items, &mut snap.item_meta);
         if let Some(raw) = self.durable.get(INSCRIPTION_RESOLUTION_KEY) {
             apply_inscription_resolutions(&raw, &mut snap.items, &mut snap.item_meta);
         }
@@ -2714,6 +2761,386 @@ impl AppServices {
         if !body.is_empty() {
             let _ = self.durable.set(ITEM_ART_CACHE_KEY, &body, false);
         }
+    }
+
+    fn apply_collectables_list_cache(
+        &self,
+        summary: &SessionSummary,
+        items: &mut [ItemCardRow],
+        item_meta: &mut HashMap<String, ItemDisplayMeta>,
+    ) {
+        if items.is_empty() {
+            return;
+        }
+        let trimmed = summary.identity_key.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let raw = [
+            format!(
+                "handcash.collectables.list.v1:wallet:{}:{}:{trimmed}",
+                summary.chain, summary.account_index
+            ),
+            format!(
+                "handcash.collectables.list.v1:wallet:{}:{}:{lower}",
+                summary.chain, summary.account_index
+            ),
+        ]
+        .into_iter()
+        .find_map(|k| self.durable.get(&k));
+        let Some(raw) = raw else {
+            return;
+        };
+        let Ok(parsed) = serde_json::from_str::<Value>(&raw) else {
+            return;
+        };
+        let Some(arr) = parsed
+            .as_array()
+            .or_else(|| parsed.get("items").and_then(Value::as_array))
+        else {
+            return;
+        };
+        let mut by_key: HashMap<String, &serde_json::Map<String, Value>> = HashMap::new();
+        for el in arr {
+            let Some(obj) = el.as_object() else {
+                continue;
+            };
+            if let Some(op) = obj.get("outpoint").and_then(Value::as_str) {
+                let k = op.trim().to_ascii_lowercase().replace('_', ".");
+                if !k.is_empty() {
+                    by_key.insert(k, obj);
+                }
+            }
+            if let Some(orig) = obj.get("origin").and_then(Value::as_str) {
+                let k = origin_art_key(orig);
+                if !k.is_empty() {
+                    by_key.entry(k).or_insert(obj);
+                }
+            }
+        }
+        if by_key.is_empty() {
+            return;
+        }
+        for item in items.iter_mut() {
+            let out_dot = item.outpoint.trim().to_ascii_lowercase().replace('_', ".");
+            let orig_us = origin_art_key(&item.origin_outpoint);
+            let Some(rec) = by_key.get(&out_dot).or_else(|| by_key.get(&orig_us)) else {
+                continue;
+            };
+            if let Some(ro) = rec
+                .get("origin")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if origin_art_key(&item.origin_outpoint) == origin_art_key(&item.outpoint)
+                    && origin_art_key(ro) != origin_art_key(&item.outpoint)
+                {
+                    item.origin_outpoint = ro.replace('_', ".");
+                }
+            }
+            if let Some(name) = rec
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if is_bare_item_name(item) && !(name.len() >= 12 && name.contains('…')) {
+                    item.name = name.to_string();
+                }
+            }
+            if let Some(m) = rec
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                if item.mime.is_empty() || item.mime == "application/octet-stream" {
+                    item.mime = m.to_string();
+                }
+            }
+            if rec.get("proven").and_then(Value::as_bool) == Some(true)
+                || rec.get("authenticity").and_then(Value::as_str) == Some("brc150")
+            {
+                item.authenticity_status = "brc150".into();
+            }
+            if item.issuer_key.is_none() {
+                if let Some(iss) = rec
+                    .get("issuer")
+                    .or_else(|| rec.get("issuerKey"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key)
+                {
+                    item.issuer_key = Some(iss);
+                }
+            }
+            let entry = item_meta.entry(item.outpoint.clone()).or_default();
+            if entry.app.is_none() {
+                entry.app = rec
+                    .get("app")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+            }
+            if entry.collection_id.is_none() {
+                entry.collection_id = rec
+                    .get("collectionId")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+            }
+            if entry.signer.is_none() {
+                entry.signer = rec
+                    .get("signer")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+            }
+            if entry.bap_id.is_none() {
+                entry.bap_id = rec
+                    .get("bapId")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_bap_id);
+            }
+            if rec.get("issuerAttested").and_then(Value::as_bool) == Some(true) {
+                entry.issuer_attested = true;
+            }
+            if entry.item_type.is_none() {
+                entry.item_type = rec
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+            }
+            if entry.sub_type.is_none() {
+                entry.sub_type = rec
+                    .get("subType")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+            }
+            if entry.traits.is_empty() {
+                if let Some(t_arr) = rec.get("traits").and_then(Value::as_array) {
+                    for t in t_arr {
+                        let n = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                        let v = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                        if !n.is_empty() && !v.is_empty() {
+                            entry.traits.push((n.to_string(), v.to_string()));
+                        }
+                    }
+                }
+            }
+            if entry.extras.is_empty() {
+                if let Some(e_arr) = rec.get("extras").and_then(Value::as_array) {
+                    for t in e_arr {
+                        let n = t.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                        let v = t.get("value").and_then(Value::as_str).map(str::trim).unwrap_or("");
+                        if !n.is_empty() && !v.is_empty() {
+                            entry.extras.push((n.to_string(), v.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bulk-resolve missing origin/app/signer/name metadata from GorillaPool once per session
+    /// (mirrors TS `src/wallet/originSigners.ts`), persisting hits to `handcash.inscriptionResolution.v1`.
+    pub fn backfill_missing_inscription_metadata(
+        self: &Arc<Self>,
+        chain: &str,
+        snap: &WalletSnapshot,
+    ) {
+        let mut candidates: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let Ok(mut asked) = self.meta_backfill_asked.lock() else {
+            return;
+        };
+        for item in &snap.items {
+            let meta = snap.item_meta.get(&item.outpoint);
+            let has_attribution = item.issuer_key.is_some()
+                || meta.is_some_and(|m| m.signer.is_some() || m.app.is_some());
+            if has_attribution && !is_bare_item_name(item) {
+                continue;
+            }
+            for cand in [
+                origin_art_key(&item.origin_outpoint),
+                origin_art_key(&item.outpoint),
+            ] {
+                if is_valid_origin_key(&cand) && !asked.contains(&cand) && seen.insert(cand.clone()) {
+                    asked.insert(cand.clone());
+                    candidates.push(cand);
+                }
+            }
+            if candidates.len() >= 100 {
+                break;
+            }
+        }
+        drop(asked);
+        if candidates.is_empty() {
+            return;
+        }
+        let svc = Arc::clone(self);
+        let base = if chain == "main" {
+            "https://ordinals.gorillapool.io"
+        } else {
+            "https://testnet.ordinals.gorillapool.io"
+        };
+        self.engine.runtime_handle().spawn(async move {
+            let Ok(client) = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(12))
+                .build()
+            else {
+                return;
+            };
+            let url = format!("{base}/api/txos/outpoints?script=false");
+            let Ok(resp) = client
+                .post(&url)
+                .header("content-type", "application/json")
+                .header("accept", "application/json")
+                .json(&candidates)
+                .send()
+                .await
+            else {
+                return;
+            };
+            if !resp.status().is_success() {
+                return;
+            }
+            let Ok(Value::Array(rows)) = resp.json::<Value>().await else {
+                return;
+            };
+            let mut updates: Vec<(String, Value)> = Vec::new();
+            for row in rows {
+                let Some(obj) = row.as_object() else {
+                    continue;
+                };
+                let Some(outpoint) = obj.get("outpoint").and_then(Value::as_str) else {
+                    continue;
+                };
+                let origin_obj = obj.get("origin").and_then(Value::as_object);
+                let origin_op = origin_obj
+                    .and_then(|o| o.get("outpoint").and_then(Value::as_str))
+                    .unwrap_or(outpoint);
+                let data = origin_obj
+                    .and_then(|o| o.get("data"))
+                    .or_else(|| obj.get("data"))
+                    .and_then(Value::as_object);
+                let Some(data) = data else {
+                    continue;
+                };
+                let map = data.get("map").and_then(Value::as_object);
+                let insc_file = data
+                    .get("insc")
+                    .and_then(|i| i.get("file"))
+                    .and_then(Value::as_object);
+                let mime = insc_file
+                    .and_then(|f| f.get("type"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let name = map
+                    .and_then(|m| {
+                        m.get("name")
+                            .or_else(|| m.get("subTypeData").and_then(|s| s.get("name")))
+                    })
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let app = map
+                    .and_then(|m| m.get("app"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let collection_id = map
+                    .and_then(|m| {
+                        m.get("subTypeData")
+                            .and_then(|s| s.get("collectionId"))
+                            .or_else(|| m.get("collectionId"))
+                    })
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let signer = data
+                    .get("sigma")
+                    .and_then(Value::as_array)
+                    .and_then(|arr| arr.first())
+                    .and_then(|s| s.get("address"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let issuer = map
+                    .and_then(|m| m.get("issuer").or_else(|| m.get("issuerKey")))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key);
+                let bap_id = map
+                    .and_then(|m| m.get("bapId"))
+                    .and_then(Value::as_str)
+                    .and_then(normalize_bap_id);
+                if name.is_none() && app.is_none() && signer.is_none() && issuer.is_none() && mime.is_none() {
+                    continue;
+                }
+                let mut rec = serde_json::Map::new();
+                rec.insert("origin".into(), Value::String(origin_op.to_string()));
+                if let Some(n) = name {
+                    rec.insert("name".into(), Value::String(n.to_string()));
+                }
+                if let Some(a) = app {
+                    rec.insert("app".into(), Value::String(a.to_string()));
+                }
+                if let Some(c) = collection_id {
+                    rec.insert("collectionId".into(), Value::String(c.to_string()));
+                }
+                if let Some(s) = signer {
+                    rec.insert("signer".into(), Value::String(s.to_string()));
+                }
+                if let Some(m) = mime {
+                    rec.insert("mimeType".into(), Value::String(m.to_string()));
+                }
+                if let Some(iss) = issuer {
+                    rec.insert("issuer".into(), Value::String(iss));
+                }
+                if let Some(bid) = bap_id {
+                    rec.insert("bapId".into(), Value::String(bid));
+                }
+                let rec_val = Value::Object(rec);
+                updates.push((origin_art_key(outpoint), rec_val.clone()));
+                if origin_art_key(origin_op) != origin_art_key(outpoint) {
+                    updates.push((origin_art_key(origin_op), rec_val));
+                }
+            }
+            if updates.is_empty() {
+                return;
+            }
+            let mut cache = svc
+                .durable
+                .get(INSCRIPTION_RESOLUTION_KEY)
+                .and_then(|raw| serde_json::from_str::<serde_json::Map<String, Value>>(&raw).ok())
+                .unwrap_or_default();
+            let mut changed = false;
+            for (k, v) in updates {
+                if !cache.contains_key(&k) {
+                    cache.insert(k, v);
+                    changed = true;
+                }
+            }
+            if changed {
+                while cache.len() > 2000 {
+                    if let Some(first_key) = cache.keys().next().cloned() {
+                        cache.remove(&first_key);
+                    } else {
+                        break;
+                    }
+                }
+                if let Ok(body) = serde_json::to_string(&Value::Object(cache)) {
+                    let _ = svc.durable.set(INSCRIPTION_RESOLUTION_KEY, &body, false);
+                }
+                svc.bump_patch();
+            }
+        });
     }
 
     fn apply_proven_collectables(&self, chain: &str, items: &mut [ItemCardRow]) {
@@ -3908,6 +4335,8 @@ impl AppServices {
             }
         }
         push(trimmed);
+        // Collect any published BAP IDs keyed by identityKey in the store.
+        let mut published_bap: HashMap<String, String> = HashMap::new();
         if let Some(rows) = store
             .as_ref()
             .and_then(|v| v.get("identities"))
@@ -3916,12 +4345,56 @@ impl AppServices {
             for row in rows {
                 if let Some(k) = row.get("identityKey").and_then(Value::as_str) {
                     push(k);
+                    if let Some(bap_id) = row.get("published").and_then(Value::as_str) {
+                        published_bap.insert(k.trim().to_ascii_lowercase(), bap_id.to_string());
+                    }
                 }
             }
         }
-        order
-            .iter()
-            .find_map(|k| self.identity_profile_for(chain, k))
+        let bap_to_view = |key: &str, bap: handcash_bitcoin::issuer::VerifiedBapIdentity| {
+            AccountProfileView {
+                identity_key: key.to_ascii_lowercase(),
+                name: bap.name,
+                description: bap.description,
+                image_data_url: bap.image_data_url,
+            }
+        };
+        for k in &order {
+            if let Some(p) = self.identity_profile_for(chain, k) {
+                return Some(p);
+            }
+            let k_lower = k.to_ascii_lowercase();
+            if let Some(bap) = published_bap
+                .get(&k_lower)
+                .and_then(|bid| self.bap_identity_for(chain, bid))
+                .or_else(|| self.linked_bap_identity_for_key(chain, &k_lower))
+            {
+                return Some(bap_to_view(&k_lower, bap));
+            }
+        }
+        // Fallback: check identity cards received from sibling accounts held on other devices.
+        let cards_key = format!("handcash.identityCards.v1:{chain}");
+        if let Some(link) = self
+            .durable
+            .get(&cards_key)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .and_then(|v| v.get("links")?.get(&ik).cloned())
+        {
+            if let Some(presented_key) = link.get("key").and_then(Value::as_str) {
+                if let Some(p) = self.identity_profile_for(chain, presented_key) {
+                    return Some(p);
+                }
+                if let Some(bap) = self.linked_bap_identity_for_key(chain, presented_key) {
+                    return Some(bap_to_view(presented_key, bap));
+                }
+            }
+            if let Some(bap_id) = link.get("bapId").and_then(Value::as_str) {
+                if let Some(bap) = self.bap_identity_for(chain, bap_id) {
+                    return Some(bap_to_view(&ik, bap));
+                }
+            }
+        }
+        None
     }
 
         /// Read and cryptographically verify `handcash.verifiedIssuers.v1` against the pinned HandCash certifier.
@@ -3961,6 +4434,60 @@ impl AppServices {
             if let Some(bap) = self.bap_identity_for(chain, bap_id) {
                 if bap.linked_identity_keys.iter().any(|k| k.eq_ignore_ascii_case(&ik)) {
                     return Some(bap);
+                }
+            }
+        }
+        None
+    }
+
+    /// Resolve a locally controlled wallet identity key's published BAP identity
+    /// (`handcash.publicIdentities.v1:wallet:{chain}:{idx}:{owner}`), matching TS `profileForKey`.
+    fn published_bap_for_own_key(&self, chain: &str, identity_key: &str) -> Option<VerifiedBapIdentity> {
+        let target = normalize_issuer_identity_key(identity_key)?;
+        let mut stores: Vec<(u32, String)> = self
+            .list_vault_accounts()
+            .into_iter()
+            .map(|a| (a.index, a.identity_key))
+            .collect();
+        if let Some(cur) = self.current_session_summary() {
+            if !stores.iter().any(|(i, _)| *i == cur.account_index) {
+                stores.push((cur.account_index, cur.identity_key));
+            }
+        }
+        for (idx, owner) in stores {
+            let trimmed = owner.trim();
+            let lower = trimmed.to_ascii_lowercase();
+            let store = [
+                format!("handcash.publicIdentities.v1:wallet:{chain}:{idx}:{trimmed}"),
+                Self::public_identities_store_key(chain, idx, &lower),
+            ]
+            .into_iter()
+            .find_map(|k| {
+                self.durable
+                    .get(&k)
+                    .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            });
+            let Some(rows) = store
+                .as_ref()
+                .and_then(|v| v.get("identities"))
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            for row in rows {
+                let Some(row_ik) = row
+                    .get("identityKey")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key)
+                else {
+                    continue;
+                };
+                if row_ik == target {
+                    if let Some(bid) = row.get("published").and_then(Value::as_str) {
+                        if let Some(bap) = self.bap_identity_for(chain, bid) {
+                            return Some(bap);
+                        }
+                    }
                 }
             }
         }
@@ -4023,7 +4550,8 @@ impl AppServices {
         let bap_identity = norm_bap
             .as_deref()
             .and_then(|id| self.bap_identity_for(chain, id))
-            .or_else(|| self.linked_bap_identity_for_key(chain, &norm_key));
+            .or_else(|| self.linked_bap_identity_for_key(chain, &norm_key))
+            .or_else(|| self.published_bap_for_own_key(chain, &norm_key));
 
         let verified_list = self.verified_issuers();
         let known_names = self.known_identity_names(chain);
@@ -4383,46 +4911,83 @@ impl AppServices {
         }
         let ik = target_identity_key.trim().to_ascii_lowercase();
         let now = now_ms();
-        let issued_at = format!("{now}");
+        let issued_at = crate::messagebox::iso_utc_from_ms(now);
 
-        let mut record_obj = serde_json::Map::new();
-        let sig_hash = encode_hex(&sha256(
-            format!("BRC-248:{ik}:{trimmed_name}:{trimmed_desc}:{issued_at}").as_bytes(),
-        ));
-        record_obj.insert(
-            "certificate".into(),
-            serde_json::json!({
-                "type": base64::engine::general_purpose::STANDARD.encode(sha256(b"BRC-248 identity profile")),
-                "serialNumber": base64::engine::general_purpose::STANDARD.encode(sha256(issued_at.as_bytes())),
-                "subject": ik,
-                "certifier": ik,
-                "revocationOutpoint": format!("{}.0", "00".repeat(32)),
-                "fields": {
-                    "name": trimmed_name,
-                    "description": trimmed_desc,
-                    "issuedAt": issued_at,
-                },
-                "keyring": {},
-                "signature": sig_hash,
-            }),
-        );
-
-        if let Some(data_url) = image_data_url.filter(|u| u.starts_with("data:image/")) {
+        let decoded_image: Option<(String, Vec<u8>)> = if let Some(data_url) =
+            image_data_url.filter(|u| u.starts_with("data:image/"))
+        {
             if let Some((meta, b64)) = data_url.split_once(";base64,") {
-                let ct = meta.trim_start_matches("data:");
+                let ct = meta.trim_start_matches("data:").to_string();
                 let img_bytes = base64::engine::general_purpose::STANDARD
                     .decode(b64)
                     .map_err(|_| "Invalid image data.".to_string())?;
                 if img_bytes.len() > 65_536 {
                     return Err("Profile image must be 64 KB or smaller.".into());
                 }
-                let uhrp_url = format!("uhrp://{}", encode_hex(&sha256(&img_bytes)));
+                Some((ct, img_bytes))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let signing_key = {
+            let guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+            guard.as_ref().and_then(|active| {
+                if active.summary.identity_key.eq_ignore_ascii_case(&ik) {
+                    Some(active.deriver.root_key().clone())
+                } else {
+                    None
+                }
+            })
+        };
+
+        let mut record_obj = serde_json::Map::new();
+        if let Some(ref sk) = signing_key {
+            let img_arg = decoded_image
+                .as_ref()
+                .map(|(ct, bytes)| (ct.as_str(), bytes.as_slice()));
+            let (cert, pkg_img) = handcash_bitcoin::issuer::sign_profile_certificate(
+                sk,
+                trimmed_name,
+                trimmed_desc,
+                &issued_at,
+                img_arg,
+            )?;
+            record_obj.insert("certificate".into(), cert);
+            if let Some(img) = pkg_img {
+                record_obj.insert("image".into(), img);
+            }
+        } else {
+            let sig_hash = encode_hex(&sha256(
+                format!("BRC-248:{ik}:{trimmed_name}:{trimmed_desc}:{issued_at}").as_bytes(),
+            ));
+            record_obj.insert(
+                "certificate".into(),
+                serde_json::json!({
+                    "type": base64::engine::general_purpose::STANDARD.encode(sha256(b"BRC-248 identity profile")),
+                    "serialNumber": base64::engine::general_purpose::STANDARD.encode(sha256(issued_at.as_bytes())),
+                    "subject": ik,
+                    "certifier": ik,
+                    "revocationOutpoint": format!("{}.0", "00".repeat(32)),
+                    "fields": {
+                        "name": trimmed_name,
+                        "description": trimmed_desc,
+                        "issuedAt": issued_at,
+                    },
+                    "keyring": {},
+                    "signature": sig_hash,
+                }),
+            );
+            if let Some((ct, bytes)) = decoded_image {
+                let uhrp_url = handcash_primitives::keys::uhrp_url_for_bytes(&bytes);
                 record_obj.insert(
                     "image".into(),
                     serde_json::json!({
                         "url": uhrp_url,
                         "contentType": ct,
-                        "bytesB64": b64,
+                        "bytesB64": base64::engine::general_purpose::STANDARD.encode(&bytes),
                     }),
                 );
             }
@@ -5578,5 +6143,47 @@ mod tests {
         assert_eq!(apps.len(), 5);
         assert!(apps.iter().all(|a| a.verified));
         assert_eq!(apps[0].id, "payment-request");
+    }
+
+    #[test]
+    fn migrated_collectable_placeholder_replaced_and_extras_issuer_extracted() {
+        let tx_tip = "c".repeat(64);
+        let tip = format!("{tx_tip}.14");
+        let ik = format!("02{}", "ab".repeat(32));
+        let mut items = vec![ItemCardRow {
+            outpoint: tip.clone(),
+            origin_outpoint: tip.clone(),
+            basket: "1sat".into(),
+            authenticity_status: "brc150".into(),
+            authenticity_reason: None,
+            verified_at_ms: None,
+            issuer_key: None,
+            name: "Migrated collectable".into(),
+            mime: "application/octet-stream".into(),
+            art_blob_hash: None,
+            sort_key: 1,
+        }];
+        let res_raw = serde_json::json!({
+            tip.clone(): {
+                "origin": format!("{}_0", "d".repeat(64)),
+                "name": "Dual Berettas | Contractor",
+                "app": "SigmaSkins",
+                "signer": "1G8N1C9Rp3DkQScR1FvNfFtXjVDtmo5244",
+                "mimeType": "image/png",
+                "extras": [
+                    { "name": "issuer", "value": ik.clone() },
+                    { "name": "bapId", "value": "32fY3nAdH2qLMogchEUGTYDap6XR" }
+                ]
+            }
+        })
+        .to_string();
+        let mut meta = HashMap::new();
+        apply_inscription_resolutions(&res_raw, &mut items, &mut meta);
+        assert_eq!(items[0].name, "Dual Berettas | Contractor");
+        assert_eq!(items[0].issuer_key.as_deref(), Some(ik.as_str()));
+        let m = meta.get(&tip).unwrap();
+        assert_eq!(m.app.as_deref(), Some("SigmaSkins"));
+        assert_eq!(m.signer.as_deref(), Some("1G8N1C9Rp3DkQScR1FvNfFtXjVDtmo5244"));
+        assert_eq!(m.bap_id.as_deref(), Some("32fY3nAdH2qLMogchEUGTYDap6XR"));
     }
 }

@@ -23,6 +23,7 @@ dioxus = { version = "0.7.10", default-features = false, features = ["macro", "h
 dioxus-native = "0.7.10"
 handcash-bitcoin = { path = "../handcash-bitcoin" }
 handcash-engine = { path = "../handcash-engine" }
+handcash-machines = { path = "../handcash-machines" }
 handcash-net = { path = "../handcash-net" }
 handcash-primitives = { path = "../handcash-primitives" }
 handcash-shell = { path = "../..", default-features = false }

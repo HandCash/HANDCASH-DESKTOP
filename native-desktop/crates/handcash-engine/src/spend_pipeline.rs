@@ -317,9 +317,113 @@ pub struct SignedTx {
     pub fact_id: String,
 }
 
+/// Lossless port of `src/wallet/spendVerdict/classify.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpendArcadeKind {
+    Accepted,
+    AncestryIncomplete,
+    GhostMissingInputs,
+    AlreadySpent,
+    Unknown,
+}
+
+fn contains_with_optional_sep(lower: &str, left: &str, right: &str) -> bool {
+    let mut start = 0;
+    while let Some(pos) = lower[start..].find(left) {
+        let after = start + pos + left.len();
+        let tail = &lower[after..];
+        if tail.starts_with(right) {
+            return true;
+        }
+        if let Some(ch) = tail.chars().next() {
+            if tail[ch.len_utf8()..].starts_with(right) {
+                return true;
+            }
+        }
+        start = after;
+    }
+    false
+}
+
+pub fn classify_spend_failure_message(reason: &str) -> SpendArcadeKind {
+    let text = reason.trim();
+    if text.is_empty() {
+        return SpendArcadeKind::Unknown;
+    }
+    let lower = text.to_ascii_lowercase();
+    if contains_with_optional_sep(&lower, "ancestry", "incomplete")
+        || lower.contains("beef_ancestry_incomplete")
+        || lower.contains("beef ancestry incomplete")
+    {
+        return SpendArcadeKind::AncestryIncomplete;
+    }
+    let already_spent = contains_with_optional_sep(&lower, "already", "spent")
+        || contains_with_optional_sep(&lower, "double", "spend")
+        || lower.contains("doublespend");
+    let missing_inputs = contains_with_optional_sep(&lower, "missing", "inputs")
+        || lower.contains("missingorspent")
+        || lower.contains("mempool-conflict");
+    if already_spent {
+        return SpendArcadeKind::AlreadySpent;
+    }
+    if missing_inputs {
+        return SpendArcadeKind::GhostMissingInputs;
+    }
+    SpendArcadeKind::Unknown
+}
+
+/// Listing / market: MissingInputs-only is not already-spent.
+pub fn is_already_spent_listing_failure(reason: &str) -> bool {
+    classify_spend_failure_message(reason) == SpendArcadeKind::AlreadySpent
+}
+
+pub fn is_ghost_missing_inputs_message(reason: &str) -> bool {
+    classify_spend_failure_message(reason) == SpendArcadeKind::GhostMissingInputs
+}
+
+/// createAction hide-inputs: missing inputs *or* already spent.
+pub fn is_already_spent_input_error(message: &str) -> bool {
+    matches!(
+        classify_spend_failure_message(message),
+        SpendArcadeKind::AlreadySpent | SpendArcadeKind::GhostMissingInputs
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Ported 1:1 from `src/wallet/spendVerdict/classify.test.ts`
+    #[test]
+    fn classify_spend_failure_message_matches_ts_matrix() {
+        for (reason, expected) in [
+            ("Already spent", SpendArcadeKind::AlreadySpent),
+            ("ARCADE_HARD_REJECT: Already spent", SpendArcadeKind::AlreadySpent),
+            ("double spend detected", SpendArcadeKind::AlreadySpent),
+            ("doubleSpend", SpendArcadeKind::AlreadySpent),
+            ("missing inputs on vin 2", SpendArcadeKind::GhostMissingInputs),
+            ("ARCADE_HARD_REJECT: MissingInputs", SpendArcadeKind::GhostMissingInputs),
+            ("bad-txns-inputs-missingorspent", SpendArcadeKind::GhostMissingInputs),
+            ("txn-mempool-conflict", SpendArcadeKind::GhostMissingInputs),
+            ("BEEF_ANCESTRY_INCOMPLETE: MissingInputs", SpendArcadeKind::AncestryIncomplete),
+            ("ARCADE_HARD_REJECT: Not sent", SpendArcadeKind::Unknown),
+            ("ITEM_ORIGIN_UNPROVEN", SpendArcadeKind::Unknown),
+            ("ACTION_DENIED", SpendArcadeKind::Unknown),
+        ] {
+            assert_eq!(classify_spend_failure_message(reason), expected, "reason={reason}");
+        }
+    }
+
+    #[test]
+    fn already_spent_listing_and_input_error_helpers_match_ts() {
+        assert!(!is_already_spent_listing_failure("missing inputs on vin 2"));
+        assert!(is_already_spent_listing_failure("Already spent"));
+        assert!(is_already_spent_input_error("Missing inputs"));
+        assert!(is_already_spent_input_error("input already spent"));
+        assert!(!is_already_spent_input_error("Insufficient funds"));
+        assert!(is_ghost_missing_inputs_message("MissingInputs"));
+        assert!(!is_ghost_missing_inputs_message("Already spent"));
+    }
     use handcash_storage::{UtxoRecord, UtxoState};
     use std::time::{SystemTime, UNIX_EPOCH};
 

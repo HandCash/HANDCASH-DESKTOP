@@ -14,7 +14,11 @@ use crate::machines::{
 };
 use crate::state::{copy_to_clipboard, format_bsv, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::primitives::ProfileAvatar;
+use aeon_dioxus::use_aeon_machine;
 use dioxus::prelude::*;
+use handcash_machines::wallet_account_menu::{
+    WalletAccountMenuEvent, WalletAccountMenuMachine, WalletAccountMenuState,
+};
 use std::sync::Arc;
 
 /// Tone for a docked CTA inside `WalletActionBar` (`placement="nav"`).
@@ -440,10 +444,23 @@ pub fn WalletAccountMenu(
     #[props(default)] identity_copy: Option<String>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut busy = use_signal(|| false);
-    let mut menu_error = use_signal(|| Option::<String>::None);
-    let open = *open_menu.read() == Some("account");
-    let is_busy = *busy.read();
+    let menu_chart = use_aeon_machine::<WalletAccountMenuMachine>();
+    let menu_state = menu_chart.state();
+    let menu_ctx = menu_chart.context();
+    let is_busy = matches!(
+        menu_state,
+        WalletAccountMenuState::Moving
+            | WalletAccountMenuState::Switching
+            | WalletAccountMenuState::Creating
+    );
+    let open = *open_menu.read() == Some("account") || is_busy;
+    let state_attr = if is_busy {
+        menu_chart.state_attr()
+    } else if open {
+        "open".to_string()
+    } else {
+        "closed".to_string()
+    };
 
     let accounts = services.list_vault_accounts();
     let active_index = profile.account_index;
@@ -484,9 +501,10 @@ pub fn WalletAccountMenu(
         div {
             class: "wallet-account-menu",
                 "data-aeon-scope": "wallet-account-menu",
-                "data-aeon-state": if is_busy { "switching" } else if open { "open" } else { "closed" },
+                "data-aeon-state": "{state_attr}",
                 onkeydown: move |e: KeyboardEvent| {
                     if e.key() == Key::Escape && *open_menu.read() == Some("account") {
+                        menu_chart.send(WalletAccountMenuEvent::Close);
                         open_menu.set(None);
                     }
                 },
@@ -502,9 +520,15 @@ pub fn WalletAccountMenu(
                         disabled: is_busy,
                         title: "Switch wallet",
                         onclick: move |_| {
-                            menu_error.set(None);
-                            let next = if *open_menu.read() == Some("account") { None } else { Some("account") };
-                            open_menu.set(next);
+                            if *open_menu.read() == Some("account") {
+                                menu_chart.send(WalletAccountMenuEvent::Close);
+                                open_menu.set(None);
+                            } else {
+                                if matches!(menu_chart.state(), WalletAccountMenuState::Closed) {
+                                    menu_chart.send(WalletAccountMenuEvent::Toggle);
+                                }
+                                open_menu.set(Some("account"));
+                            }
                         },
                         if let Some(ref prof) = current_prof {
                             ProfileAvatar {
@@ -594,16 +618,20 @@ pub fn WalletAccountMenu(
                                                     class: if selected { "wallet-account-option is-selected" } else { "wallet-account-option" },
                                                     disabled: is_busy,
                                                     onclick: move |_| {
-                                                        menu_error.set(None);
                                                         if selected {
+                                                            menu_chart.send(WalletAccountMenuEvent::Close);
                                                             open_menu.set(None);
                                                             return;
+                                                        }
+                                                        if matches!(menu_chart.state(), WalletAccountMenuState::Closed) {
+                                                            menu_chart.send(WalletAccountMenuEvent::Toggle);
                                                         }
                                                         if !held_here {
                                                             // TS runs `moveAccountHere`; the native device mesh is not
                                                             // ported yet, so report the move honestly as unavailable.
                                                             let msg = "Moving a wallet held on another device is not available in the native app yet. Release it from that device first.".to_string();
-                                                            menu_error.set(Some(msg.clone()));
+                                                            menu_chart.send(WalletAccountMenuEvent::Move { account_index: idx });
+                                                            menu_chart.send(WalletAccountMenuEvent::Fail { error: msg.clone() });
                                                             toast.set(Some(ToastNotice {
                                                                 title: "Move wallet".into(),
                                                                 body: Some(msg),
@@ -611,7 +639,7 @@ pub fn WalletAccountMenu(
                                                             }));
                                                             return;
                                                         }
-                                                        busy.set(true);
+                                                        menu_chart.send(WalletAccountMenuEvent::Choose { account_index: idx });
                                                         match svc_switch.switch_vault_account(idx) {
                                                             Ok(next_profile) => {
                                                                 let next_snap = svc_switch.read_snapshot();
@@ -621,11 +649,13 @@ pub fn WalletAccountMenu(
                                                                     profile: next_profile,
                                                                     balance_sats: sats,
                                                                 });
+                                                                svc_switch.spawn_sync_identities_from_peers();
                                                                 nav_child.set(None);
+                                                                menu_chart.send(WalletAccountMenuEvent::Switched);
                                                                 open_menu.set(None);
                                                             }
                                                             Err(e) => {
-                                                                menu_error.set(Some(e.clone()));
+                                                                menu_chart.send(WalletAccountMenuEvent::Fail { error: e.clone() });
                                                                 toast.set(Some(ToastNotice {
                                                                     title: "Switch wallet".into(),
                                                                     body: Some(e),
@@ -633,7 +663,6 @@ pub fn WalletAccountMenu(
                                                                 }));
                                                             }
                                                         }
-                                                        busy.set(false);
                                                     },
                                                     span { class: "wallet-account-option-lead",
                                                         ProfileAvatar {
@@ -688,8 +717,10 @@ pub fn WalletAccountMenu(
                             class: "wallet-account-create",
                             disabled: is_busy,
                             onclick: move |_| {
-                                menu_error.set(None);
-                                busy.set(true);
+                                if matches!(menu_chart.state(), WalletAccountMenuState::Closed) {
+                                    menu_chart.send(WalletAccountMenuEvent::Toggle);
+                                }
+                                menu_chart.send(WalletAccountMenuEvent::Create);
                                 match svc_create.create_vault_account() {
                                     Ok((row, next_profile)) => {
                                         let next_snap = svc_create.read_snapshot();
@@ -700,6 +731,7 @@ pub fn WalletAccountMenu(
                                             balance_sats: sats,
                                         });
                                         nav_child.set(None);
+                                        menu_chart.send(WalletAccountMenuEvent::Created);
                                         open_menu.set(None);
                                         toast.set(Some(ToastNotice {
                                             title: "Wallet created".into(),
@@ -708,7 +740,7 @@ pub fn WalletAccountMenu(
                                         }));
                                     }
                                     Err(e) => {
-                                        menu_error.set(Some(e.clone()));
+                                        menu_chart.send(WalletAccountMenuEvent::Fail { error: e.clone() });
                                         toast.set(Some(ToastNotice {
                                             title: "Create wallet".into(),
                                             body: Some(e),
@@ -716,13 +748,12 @@ pub fn WalletAccountMenu(
                                         }));
                                     }
                                 }
-                                busy.set(false);
                             },
                             AddIcon { size: 16 }
                             span { "Add wallet" }
                         }
 
-                        if let Some(ref err) = *menu_error.read() {
+                        if let Some(ref err) = menu_ctx.error {
                             p { class: "wallet-account-error", role: "alert", "{err}" }
                         }
                     }

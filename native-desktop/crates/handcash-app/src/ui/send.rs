@@ -3,11 +3,15 @@
 //! with CTAs baked directly into the `WalletNav` action bar via `WalletActionBarNav`.
 
 use crate::machines::{
-    classify_recipient, NavChild, RecipientKind, SendStage, SendUnit, ToastNotice,
+    classify_recipient, NavChild, RecipientKind, SendUnit, ToastNotice,
 };
 use crate::state::{format_bsv, AppServices, WalletSnapshot};
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
+use aeon_dioxus::use_aeon_machine;
 use dioxus::prelude::*;
+use handcash_machines::send::{
+    SendEdit, SendEditingState, SendEvent, SendMachine, SendState,
+};
 use std::sync::Arc;
 
 fn parse_amount_to_sats(raw: &str, unit: SendUnit) -> Option<u64> {
@@ -52,28 +56,34 @@ pub fn SendPanel(
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
+    let send_chart = use_aeon_machine::<SendMachine>();
     let initial_rec = initial_recipient.unwrap_or_default();
-    let start_stage = if classify_recipient(&initial_rec).is_some() {
-        SendStage::EditingAmount
-    } else {
-        SendStage::EditingDestination
-    };
-    let mut stage = use_signal(move || start_stage);
-    let mut recipient_input = use_signal(move || initial_rec);
-    let mut amount_input = use_signal(String::new);
+    use_hook(|| {
+        if !initial_rec.is_empty() {
+            send_chart.send(SendEvent::Edit(SendEdit {
+                to: Some(initial_rec.clone()),
+                ..Default::default()
+            }));
+            if classify_recipient(&initial_rec).is_some() {
+                send_chart.send(SendEvent::Next);
+            }
+        }
+    });
     let mut unit = use_signal(|| SendUnit::Sats);
     let mut estimated_fee = use_signal(|| 0u64);
     let mut estimated_total = use_signal(|| 0u64);
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
-    let current_stage = stage.read().clone();
+    let current_state = send_chart.state();
+    let current_ctx = send_chart.context();
+    let state_attr = send_chart.state_attr();
     let current_unit = *unit.read();
-    let raw_recipient = recipient_input.read().clone();
+    let raw_recipient = current_ctx.to.clone();
     let parsed_recipient = classify_recipient(&raw_recipient);
     let recipient_non_empty = !raw_recipient.trim().is_empty();
     let recipient_invalid = recipient_non_empty && parsed_recipient.is_none();
 
-    let raw_amount = amount_input.read().clone();
+    let raw_amount = current_ctx.amount.clone();
     let parsed_sats = parse_amount_to_sats(&raw_amount, current_unit);
     let over_held = parsed_sats
         .map(|s| s > snap.balance.spendable_sats)
@@ -98,8 +108,8 @@ pub fn SendPanel(
         .unwrap_or_else(|| "0 sats".into());
 
     // Bake CTAs into the WalletNav action bar (`wallet-nav-titlebar-tabs[data-permission=""]`).
-    let desired_dock = match &current_stage {
-        SendStage::EditingDestination => DockSpec {
+    let desired_dock = match current_state {
+        SendState::Editing(SendEditingState::Destination) => DockSpec {
             aria_label: "Send actions",
             secondary: Some(DockActionSpec::new(
                 "cancel",
@@ -115,7 +125,7 @@ pub fn SendPanel(
             )
             .disabled(parsed_recipient.is_none()),
         },
-        SendStage::EditingAmount => DockSpec {
+        SendState::Editing(SendEditingState::Amount(_)) => DockSpec {
             aria_label: "Send actions",
             secondary: Some(DockActionSpec::new(
                 "back",
@@ -131,7 +141,7 @@ pub fn SendPanel(
             )
             .disabled(parsed_sats.is_none() || over_held),
         },
-        SendStage::Confirming => DockSpec {
+        SendState::Confirming | SendState::Handoff => DockSpec {
             aria_label: "Confirm transaction",
             secondary: Some(DockActionSpec::new(
                 "cancel",
@@ -147,7 +157,7 @@ pub fn SendPanel(
             )
             .disabled(true),
         },
-        SendStage::Failure(_) => DockSpec {
+        SendState::Failure => DockSpec {
             aria_label: "Send failure actions",
             secondary: Some(DockActionSpec::new(
                 "cancel",
@@ -176,36 +186,43 @@ pub fn SendPanel(
                     nav_child.set(None);
                 }
                 "continue" => {
-                    if classify_recipient(&recipient_input.read()).is_some() {
-                        stage.set(SendStage::EditingAmount);
+                    let rec = send_chart.peek_snapshot().context.to;
+                    if classify_recipient(&rec).is_some() {
+                        send_chart.send(SendEvent::Next);
                     }
                 }
-                "back" => stage.set(SendStage::EditingDestination),
-                "edit" => stage.set(SendStage::EditingAmount),
+                "back" | "edit" => send_chart.send(SendEvent::Back),
                 "review" => {
-                    let cur_amt = amount_input.read().clone();
+                    let ctx = send_chart.peek_snapshot().context;
                     let cur_u = *unit.read();
-                    let Some(sats) = parse_amount_to_sats(&cur_amt, cur_u) else {
+                    let Some(sats) = parse_amount_to_sats(&ctx.amount, cur_u) else {
                         return;
                     };
-                    let rec_val = recipient_input.read().clone();
-                    match classify_recipient(&rec_val) {
+                    match classify_recipient(&ctx.to) {
                         Some(RecipientKind::P2pkhAddress(addr)) => {
                             match svc_review.preview_send(&addr, sats) {
                                 Ok((total, fee)) => {
                                     estimated_fee.set(fee);
                                     estimated_total.set(total);
-                                    stage.set(SendStage::Confirming);
+                                    send_chart.send(SendEvent::Review);
                                 }
-                                Err(e) => stage.set(SendStage::Failure(e)),
+                                Err(error) => {
+                                    send_chart.send(SendEvent::Review);
+                                    send_chart.send(SendEvent::Fail { error });
+                                }
                             }
                         }
                         Some(_) => {
                             estimated_fee.set(1);
                             estimated_total.set(sats.saturating_add(1));
-                            stage.set(SendStage::Confirming);
+                            send_chart.send(SendEvent::Review);
                         }
-                        None => stage.set(SendStage::Failure("Invalid recipient.".into())),
+                        None => {
+                            send_chart.send(SendEvent::Review);
+                            send_chart.send(SendEvent::Fail {
+                                error: "Invalid recipient.".into(),
+                            });
+                        }
                     }
                 }
                 "confirm" => {
@@ -220,11 +237,11 @@ pub fn SendPanel(
         div {
             class: "nav-child-panel send-panel",
             "data-aeon-scope": "send",
-            "data-aeon-state": current_stage.as_attr(),
+            "data-aeon-state": "{state_attr}",
             "data-chain": "bsv",
 
-            match current_stage {
-                SendStage::EditingDestination => rsx! {
+            match current_state {
+                SendState::Editing(SendEditingState::Destination) => rsx! {
                     div { class: "send-stage send-stage-edit",
                         div { class: "send-layout",
                             header { class: "send-panel-intro",
@@ -238,7 +255,10 @@ pub fn SendPanel(
                                             id: "send-to",
                                             placeholder: "BSV address (1…), peerpay:, $handle, or wallet key",
                                             value: "{raw_recipient}",
-                                            oninput: move |e| recipient_input.set(e.value()),
+                                            oninput: move |e| send_chart.send(SendEvent::Edit(SendEdit {
+                                                to: Some(e.value()),
+                                                ..Default::default()
+                                            })),
                                         }
                                     }
                                     if recipient_invalid {
@@ -262,7 +282,7 @@ pub fn SendPanel(
                     }
                 },
 
-                SendStage::EditingAmount => rsx! {
+                SendState::Editing(SendEditingState::Amount(_)) => rsx! {
                     div { class: "send-stage send-stage-edit",
                         div { class: "send-layout",
                             header { class: "send-panel-intro",
@@ -279,7 +299,10 @@ pub fn SendPanel(
                                         class: "send-amount-input",
                                         placeholder: "0",
                                         value: "{raw_amount}",
-                                        oninput: move |e| amount_input.set(e.value()),
+                                        oninput: move |e| send_chart.send(SendEvent::Edit(SendEdit {
+                                            amount: Some(e.value()),
+                                            ..Default::default()
+                                        })),
                                     }
                                 }
                                 div { class: "send-currency-toggle", role: "group", aria_label: "Amount unit",
@@ -290,9 +313,12 @@ pub fn SendPanel(
                                         aria_pressed: current_unit == SendUnit::Bsv,
                                         onclick: move |_| {
                                             if current_unit != SendUnit::Bsv {
-                                                let cur_val = amount_input.read().clone();
+                                                let cur_val = send_chart.peek_snapshot().context.amount;
                                                 if let Some(s) = parse_amount_to_sats(&cur_val, current_unit) {
-                                                    amount_input.set(format_sats_for_unit(s, SendUnit::Bsv));
+                                                    send_chart.send(SendEvent::Edit(SendEdit {
+                                                        amount: Some(format_sats_for_unit(s, SendUnit::Bsv)),
+                                                        ..Default::default()
+                                                    }));
                                                 }
                                                 unit.set(SendUnit::Bsv);
                                             }
@@ -306,9 +332,12 @@ pub fn SendPanel(
                                         aria_pressed: current_unit == SendUnit::Sats,
                                         onclick: move |_| {
                                             if current_unit != SendUnit::Sats {
-                                                let cur_val = amount_input.read().clone();
+                                                let cur_val = send_chart.peek_snapshot().context.amount;
                                                 if let Some(s) = parse_amount_to_sats(&cur_val, current_unit) {
-                                                    amount_input.set(format_sats_for_unit(s, SendUnit::Sats));
+                                                    send_chart.send(SendEvent::Edit(SendEdit {
+                                                        amount: Some(format_sats_for_unit(s, SendUnit::Sats)),
+                                                        ..Default::default()
+                                                    }));
                                                 }
                                                 unit.set(SendUnit::Sats);
                                             }
@@ -344,7 +373,7 @@ pub fn SendPanel(
                     }
                 },
 
-                SendStage::Confirming => {
+                SendState::Confirming | SendState::Handoff => {
                     let fee = *estimated_fee.read();
                     let total = *estimated_total.read();
                     let target_raw = parsed_recipient
@@ -385,14 +414,17 @@ pub fn SendPanel(
                     }
                 }
 
-                SendStage::Failure(ref err) => rsx! {
-                    div { class: "send-stage send-stage-failure",
-                        div { class: "send-stage-body send-stage-body-center",
-                            p { class: "send-status-title", "Couldn't send" }
-                            p { class: "error send-failure-error", "{err}" }
+                SendState::Failure => {
+                    let err = current_ctx.error.as_deref().unwrap_or("Couldn't prepare send");
+                    rsx! {
+                        div { class: "send-stage send-stage-failure",
+                            div { class: "send-stage-body send-stage-body-center",
+                                p { class: "send-status-title", "Couldn't send" }
+                                p { class: "error send-failure-error", "{err}" }
+                            }
                         }
                     }
-                },
+                }
             }
         }
     }

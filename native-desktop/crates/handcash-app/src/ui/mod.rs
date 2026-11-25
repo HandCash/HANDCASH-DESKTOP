@@ -43,13 +43,17 @@ pub fn HandCashApp() -> Element {
 
     // Auto-unlock passwordless vaults (mirrors `src/App.tsx` + `src/wallet/deviceLockPrefs.ts`).
     let initial_session = use_hook(|| {
-        if let Some(s) = services.current_session_summary() {
+        let s = if let Some(s) = services.current_session_summary() {
             Some(s)
         } else if let Some(Ok(s)) = services.try_auto_unlock() {
             Some(s)
         } else {
             None
+        };
+        if s.is_some() {
+            services.spawn_sync_identities_from_peers();
         }
+        s
     });
 
     let mut snapshot = use_signal(|| services.read_snapshot());

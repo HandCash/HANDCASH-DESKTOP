@@ -16,8 +16,10 @@ use crate::state::{
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
 use crate::ui::collectables::CollectionViewToggle;
 use crate::ui::EmptyState;
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::button;
 use dioxus::prelude::*;
+use handcash_machines::notes::{Note as MachineNote, NotesEvent, NotesMachine, NotesState};
 use std::sync::Arc;
 
 fn app_title(app: &ConnectedAppRecord) -> String {
@@ -673,36 +675,56 @@ pub fn AppDetailsPanel(
 #[component]
 pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut notes = use_signal(|| services.list_notes());
-    let mut editing_id = use_signal(|| Option::<Option<String>>::None);
-    let mut draft = use_signal(String::new);
-    let mut err_msg = use_signal(|| Option::<String>::None);
+    let notes_chart = use_aeon_machine::<NotesMachine>();
+    let initial_notes: Vec<MachineNote> = services
+        .list_notes()
+        .into_iter()
+        .map(|n| MachineNote {
+            id: n.id,
+            body: n.body,
+            saved_at: n.saved_at.max(0) as u64,
+        })
+        .collect();
+    use_hook(move || {
+        notes_chart.send(NotesEvent::OpenDone {
+            notes: initial_notes,
+            unreadable: 0,
+        });
+    });
 
-    let cur_editing = editing_id.read().clone();
-    let cur_notes = notes.read().clone();
+    let cur_state = notes_chart.state();
+    let cur_ctx = notes_chart.context();
+    let state_attr = notes_chart.state_attr();
+    let is_editing = matches!(
+        cur_state,
+        NotesState::Editing | NotesState::Saving | NotesState::Deleting
+    );
     let svc_save = Arc::clone(&services);
     let svc_del = Arc::clone(&services);
     let now = now_ms();
 
-    let delete_label = if cur_editing.is_some() { "Delete" } else { "Discard" };
-    let id_for_delete: Option<String> = cur_editing.clone().flatten();
+    let delete_label = if cur_ctx.note_id.is_some() { "Delete" } else { "Discard" };
+    let id_for_delete = cur_ctx.note_id.clone();
+    let id_for_save = cur_ctx.note_id.clone();
+    let draft_val = cur_ctx.draft.clone();
+    let changed = cur_ctx.draft != cur_ctx.original;
     rsx! {
         div {
             class: "nav-section-body settings-detail settings-scroll",
             "data-aeon-scope": "notes",
-            "data-aeon-state": if cur_editing.is_some() { "editing" } else { "list" },
+            "data-aeon-state": "{state_attr}",
 
-            if let Some(active_id_opt) = cur_editing.clone() {
+            if is_editing {
                 div { class: "settings-form", "data-aeon-part": "editor",
                     textarea {
                         class: "input notes-editor",
                         aria_label: "Note",
                         placeholder: "Write a note",
                         rows: "8",
-                        value: "{draft}",
-                        oninput: move |e| draft.set(e.value()),
+                        value: "{draft_val}",
+                        oninput: move |e| notes_chart.send(NotesEvent::Edit { body: e.value() }),
                     }
-                    if let Some(ref e) = *err_msg.read() {
+                    if let Some(ref e) = cur_ctx.error {
                         p { class: "permission-note", role: "alert", "{e}" }
                     }
                     div { class: "actions",
@@ -711,19 +733,12 @@ pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
                             class: "btn btn-ghost",
                             "data-aeon-part": "delete",
                             onclick: move |_| {
-                                err_msg.set(None);
+                                notes_chart.send(NotesEvent::Delete);
                                 if let Some(ref id_str) = id_for_delete {
                                     match svc_del.delete_note(id_str) {
-                                        Ok(next_list) => {
-                                            notes.set(next_list);
-                                            editing_id.set(None);
-                                            draft.set(String::new());
-                                        }
-                                        Err(e) => err_msg.set(Some(e)),
+                                        Ok(_) => notes_chart.send(NotesEvent::DeleteDone),
+                                        Err(e) => notes_chart.send(NotesEvent::DeleteError { error: e }),
                                     }
-                                } else {
-                                    editing_id.set(None);
-                                    draft.set(String::new());
                                 }
                             },
                             button::Label {
@@ -735,20 +750,25 @@ pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
                             class: "btn btn-primary",
                             "data-aeon-part": "done",
                             onclick: move |_| {
-                                err_msg.set(None);
-                                let body_val = draft.read().clone();
-                                match svc_save.save_note(active_id_opt.as_deref(), &body_val) {
-                                    Ok(next_list) => {
-                                        notes.set(next_list);
-                                        editing_id.set(None);
-                                        draft.set(String::new());
-                                        toast.set(Some(ToastNotice {
-                                            title: "Note saved".into(),
-                                            body: None,
-                                            tone: "success",
-                                        }));
+                                let body_val = notes_chart.context().draft.clone();
+                                notes_chart.send(NotesEvent::Done);
+                                if changed {
+                                    match svc_save.save_note(id_for_save.as_deref(), &body_val) {
+                                        Ok(next_list) => {
+                                            let saved = next_list.into_iter().next().map(|n| MachineNote {
+                                                id: n.id,
+                                                body: n.body,
+                                                saved_at: n.saved_at.max(0) as u64,
+                                            });
+                                            notes_chart.send(NotesEvent::SaveDone { note: saved });
+                                            toast.set(Some(ToastNotice {
+                                                title: "Note saved".into(),
+                                                body: None,
+                                                tone: "success",
+                                            }));
+                                        }
+                                        Err(e) => notes_chart.send(NotesEvent::SaveError { error: e }),
                                     }
-                                    Err(e) => err_msg.set(Some(e)),
                                 }
                             },
                             button::Label { "Done" }
@@ -764,24 +784,19 @@ pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
                         variant: button::ButtonVariant::Solid,
                         class: "btn btn-primary btn-compact",
                         "data-aeon-part": "new",
-                        onclick: move |_| {
-                            err_msg.set(None);
-                            draft.set(String::new());
-                            editing_id.set(Some(None));
-                        },
+                        onclick: move |_| notes_chart.send(NotesEvent::New),
                         button::Label { "New note" }
                     }
                 }
-                if cur_notes.is_empty() {
+                if cur_ctx.notes.is_empty() {
                     p { class: "settings-section-lede", "data-aeon-part": "empty", "No notes yet." }
                 } else {
                     ul { class: "settings-list", "data-aeon-part": "list",
-                        for note in cur_notes {
+                        for note in cur_ctx.notes {
                             {
                                 let nid = note.id.clone();
-                                let nbody = note.body.clone();
                                 let ntitle = note_title(&note.body);
-                                let nwhen = format_relative_time(note.saved_at, now);
+                                let nwhen = format_relative_time(note.saved_at as i64, now);
                                 rsx! {
                                     li { key: "{nid}", class: "settings-nav-item",
                                         button {
@@ -789,11 +804,7 @@ pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
                                             class: "settings-nav-row",
                                             "data-aeon-scope": "listRow",
                                             "data-aeon-part": "root",
-                                            onclick: move |_| {
-                                                err_msg.set(None);
-                                                draft.set(nbody.clone());
-                                                editing_id.set(Some(Some(nid.clone())));
-                                            },
+                                            onclick: move |_| notes_chart.send(NotesEvent::Open { id: nid.clone() }),
                                             span {
                                                 "aria-hidden": "true",
                                                 "data-aeon-scope": "listRow",

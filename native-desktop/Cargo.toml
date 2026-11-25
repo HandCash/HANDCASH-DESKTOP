@@ -6,6 +6,7 @@ members = [
     "crates/handcash-storage",
     "crates/handcash-net",
     "crates/handcash-engine",
+    "crates/handcash-machines",
     "crates/handcash-app",
 ]
 resolver = "2"

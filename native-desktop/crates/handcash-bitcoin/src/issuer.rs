@@ -4,12 +4,14 @@
 //! signature checking, and issuer trust-state classification.
 
 use crate::beef::Beef;
+use crate::ord::parse_ord_envelope;
 use crate::tx::Transaction;
 use base64::Engine as _;
-use handcash_primitives::encoding::{decode_hex, sha256};
+use handcash_primitives::encoding::{decode_hex, encode_hex, sha256};
 use handcash_primitives::keys::{
-    anyone_private_key, bap_id_for_address, p2pkh_address_from_pubkey, parse_public_key_point,
-    verify_brc77_anyone, verify_bsm, Counterparty, KeyDeriver,
+    anyone_private_key, bap_id_for_address, decrypt_brc2, encrypt_brc2, p2pkh_address_from_pubkey,
+    parse_public_key_point, uhrp_hash_from_url, uhrp_url_for_bytes, verify_brc77_anyone,
+    verify_bsm, Counterparty, KeyDeriver, SecretKeyBytes,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,6 +23,8 @@ const MAP_PREFIX: &[u8] = b"1PuQa7K62MiKCtssSLKy1kh56WWU7MtUR5";
 const BAP_PREFIX: &[u8] = b"1BAPSuaPnfGnSBM3GLV9yhxUdYe4vGbdMT";
 /// AIP protocol prefix (`15PciHG22SNLQJXMoSUaWVi7WSqc7hCfva`).
 const AIP_PREFIX: &[u8] = b"15PciHG22SNLQJXMoSUaWVi7WSqc7hCfva";
+/// B:// file protocol prefix (`19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut`).
+const B_FILE_PREFIX: &[u8] = b"19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut";
 const SIGMA_PREFIX: &[u8] = b"SIGMA";
 const ISSUER_PUSH: &[u8] = &[0x06, b'i', b's', b's', b'u', b'e', b'r'];
 const OP_RETURN: u8 = 0x6a;
@@ -611,12 +615,39 @@ pub fn verify_issuer_identity_package(raw: &Value) -> Option<VerifiedBapIdentity
     let mut revoked = false;
     let mut name = String::new();
     let mut description = String::new();
+    let mut image_ref: Option<String> = None;
     let mut image_data_url: Option<String> = None;
     let mut linked_keys: HashMap<String, bool> = HashMap::new();
+    let mut b_files: HashMap<String, String> = HashMap::new();
+    let mut ord_images: HashMap<String, String> = HashMap::new();
 
-    for (_height, _txid, tx) in &txs {
+    for (_height, txid, tx) in &txs {
+        let txid_lower = txid.to_ascii_lowercase();
         for (vout, output) in tx.outputs.iter().enumerate() {
             let chunks = parse_script_chunks(&output.locking_script);
+            // Index B:// image outputs (`19HxigV4QyBv3tHpQVcUEQyq1pzZVdoAut <bytes> <mime> [binary]`).
+            if let Some(b_i) = chunks.iter().position(|c| c.data == Some(B_FILE_PREFIX)) {
+                if let Some(bytes) = chunks.get(b_i + 1).and_then(|c| c.data) {
+                    let mime = chunk_text(&chunks, b_i + 2).trim().to_ascii_lowercase();
+                    if !bytes.is_empty() && bytes.len() <= 64 * 1024 && mime.starts_with("image/") {
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+                        b_files
+                            .entry(txid_lower.clone())
+                            .or_insert_with(|| format!("data:{mime};base64,{b64}"));
+                    }
+                }
+            }
+            // Index `ord://<txid>_<vout>` inscription image outputs.
+            if let Some(ord) = parse_ord_envelope(&output.locking_script) {
+                let mime = ord.content_type.trim().to_ascii_lowercase();
+                if !ord.body.is_empty() && ord.body.len() <= 64 * 1024 && mime.starts_with("image/") {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&ord.body);
+                    ord_images.insert(
+                        format!("{txid_lower}_{vout}"),
+                        format!("data:{mime};base64,{b64}"),
+                    );
+                }
+            }
             if let Some(bap_i) = chunks.iter().position(|c| c.data == Some(BAP_PREFIX)) {
                 let action = chunk_text(&chunks, bap_i + 1);
                 let Some(signer_addr) = verify_aip_on_bap_chunks(&chunks, bap_i) else {
@@ -627,6 +658,15 @@ pub fn verify_issuer_identity_package(raw: &Value) -> Option<VerifiedBapIdentity
                         let id_field = chunk_text(&chunks, bap_i + 2);
                         let next_addr = chunk_text(&chunks, bap_i + 3).trim();
                         if id_field != bap_id || next_addr.is_empty() {
+                            continue;
+                        }
+                        if next_addr == "0" {
+                            if bap_id_for_address(&signer_addr) == bap_id
+                                || valid_addresses.first().map(String::as_str)
+                                    == Some(signer_addr.as_str())
+                            {
+                                revoked = true;
+                            }
                             continue;
                         }
                         if valid_addresses.is_empty() {
@@ -680,9 +720,13 @@ pub fn verify_issuer_identity_package(raw: &Value) -> Option<VerifiedBapIdentity
                                 .get("image")
                                 .and_then(Value::as_str)
                                 .map(str::trim)
-                                .filter(|s| s.starts_with("data:image/"))
+                                .filter(|s| !s.is_empty())
                             {
-                                image_data_url = Some(img.to_string());
+                                if img.starts_with("data:image/") {
+                                    image_data_url = Some(img.to_string());
+                                } else {
+                                    image_ref = Some(img.to_string());
+                                }
                             }
                         }
                     }
@@ -710,6 +754,23 @@ pub fn verify_issuer_identity_package(raw: &Value) -> Option<VerifiedBapIdentity
         }
     }
 
+    if image_data_url.is_none() {
+        if let Some(ref raw_ref) = image_ref {
+            let lower = raw_ref.to_ascii_lowercase();
+            if let Some(rest) = lower.strip_prefix("b://") {
+                let txid_ref = rest.split(['/', '_', '.']).next().unwrap_or(rest);
+                if let Some(url) = b_files.get(txid_ref) {
+                    image_data_url = Some(url.clone());
+                }
+            } else if let Some(rest) = lower.strip_prefix("ord://") {
+                let norm = rest.replace('.', "_");
+                if let Some(url) = ord_images.get(&norm) {
+                    image_data_url = Some(url.clone());
+                }
+            }
+        }
+    }
+
     let active_address = valid_addresses.last()?.clone();
     if name.is_empty() {
         return None;
@@ -727,6 +788,281 @@ pub fn verify_issuer_identity_package(raw: &Value) -> Option<VerifiedBapIdentity
         revoked,
         linked_identity_keys,
     })
+}
+
+// ---------------------------------------------------------------------------
+// BRC-52 / BRC-248 Self-Published Identity Profile Certificate Verification
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedSelfProfile {
+    pub identity_key: String,
+    pub name: String,
+    pub description: String,
+    pub issued_at: String,
+    pub image: Option<Value>,
+    pub certificate: Value,
+}
+
+fn write_cert_varint(out: &mut Vec<u8>, n: usize) {
+    if n < 0xfd {
+        out.push(n as u8);
+    } else if n <= 0xffff {
+        out.push(0xfd);
+        out.extend_from_slice(&(n as u16).to_le_bytes());
+    } else if n <= 0xffff_ffff {
+        out.push(0xfe);
+        out.extend_from_slice(&(n as u32).to_le_bytes());
+    } else {
+        out.push(0xff);
+        out.extend_from_slice(&(n as u64).to_le_bytes());
+    }
+}
+
+/// Verify a BRC-52 self-signed profile certificate and decrypt its public `anyone` keyring fields
+/// (`name`, `description`, `issuedAt`, optional `profilePhoto` matched in `images`).
+pub fn verify_and_decrypt_profile_certificate(
+    identity_key: &str,
+    cert: &Value,
+    images: &[Value],
+) -> Option<VerifiedSelfProfile> {
+    let key = normalize_issuer_identity_key(identity_key)?;
+    let cert_type = cert.get("type")?.as_str()?;
+    let serial = cert.get("serialNumber")?.as_str()?;
+    let subject = normalize_issuer_identity_key(cert.get("subject")?.as_str()?)?;
+    let certifier = normalize_issuer_identity_key(cert.get("certifier")?.as_str()?)?;
+    let revocation = cert.get("revocationOutpoint")?.as_str()?;
+    let fields = cert.get("fields")?.as_object()?;
+    let keyring = cert.get("keyring")?.as_object()?;
+    let sig_hex = cert.get("signature")?.as_str()?;
+    if subject != key || certifier != key {
+        return None;
+    }
+
+    let type_bytes = base64::engine::general_purpose::STANDARD.decode(cert_type).ok()?;
+    let serial_bytes = base64::engine::general_purpose::STANDARD.decode(serial).ok()?;
+    let subject_bytes = decode_hex(&subject).ok()?;
+    let certifier_bytes = decode_hex(&certifier).ok()?;
+    if type_bytes.len() != 32 || serial_bytes.len() != 32 || subject_bytes.len() != 33 || certifier_bytes.len() != 33 {
+        return None;
+    }
+    let mut rev_parts = revocation.split('.');
+    let rev_txid_hex = rev_parts.next()?;
+    let rev_vout: usize = rev_parts.next().unwrap_or("0").parse().ok()?;
+    let rev_txid = decode_hex(rev_txid_hex).ok()?;
+    if rev_txid.len() != 32 {
+        return None;
+    }
+    let sig_der = decode_hex(sig_hex).ok()?;
+
+    // Build exact Certificate.toBinary(false) preimage
+    let mut preimage = Vec::with_capacity(256);
+    preimage.extend_from_slice(&type_bytes);
+    preimage.extend_from_slice(&serial_bytes);
+    preimage.extend_from_slice(&subject_bytes);
+    preimage.extend_from_slice(&certifier_bytes);
+    preimage.extend_from_slice(&rev_txid);
+    write_cert_varint(&mut preimage, rev_vout);
+    let mut field_names: Vec<&String> = fields.keys().collect();
+    field_names.sort();
+    write_cert_varint(&mut preimage, field_names.len());
+    for fname in &field_names {
+        let fval = fields.get(*fname)?.as_str()?;
+        write_cert_varint(&mut preimage, fname.len());
+        preimage.extend_from_slice(fname.as_bytes());
+        write_cert_varint(&mut preimage, fval.len());
+        preimage.extend_from_slice(fval.as_bytes());
+    }
+
+    let anyone = KeyDeriver::new(anyone_private_key());
+    let sig_ok = anyone
+        .verify_signature(
+            (2, "certificate signature"),
+            &format!("{cert_type} {serial}"),
+            Counterparty::PublicKeyHex(certifier.clone()),
+            false,
+            Some(&preimage),
+            None,
+            &sig_der,
+        )
+        .ok()?;
+    if !sig_ok {
+        return None;
+    }
+
+    // Decrypt selectively revealed fields using the verifier `anyone` wallet
+    let mut plain: HashMap<String, String> = HashMap::new();
+    for (fname, enc_key_val) in keyring {
+        let Some(enc_key_b64) = enc_key_val.as_str() else {
+            continue;
+        };
+        let Some(enc_field_b64) = fields.get(fname).and_then(Value::as_str) else {
+            continue;
+        };
+        let enc_key = base64::engine::general_purpose::STANDARD.decode(enc_key_b64).ok()?;
+        let enc_field = base64::engine::general_purpose::STANDARD.decode(enc_field_b64).ok()?;
+        let rev_key = anyone
+            .decrypt(
+                (2, "certificate field encryption"),
+                &format!("{serial} {fname}"),
+                Counterparty::PublicKeyHex(subject.clone()),
+                &enc_key,
+            )
+            .ok()?;
+        if rev_key.len() != 32 {
+            return None;
+        }
+        let mut sym = [0u8; 32];
+        sym.copy_from_slice(&rev_key);
+        let decrypted = decrypt_brc2(&sym, &enc_field).ok()?;
+        let text = String::from_utf8(decrypted).ok()?;
+        plain.insert(fname.clone(), text);
+    }
+
+    let name = plain.get("name")?.trim().to_string();
+    let issued_at = plain.get("issuedAt")?.trim().to_string();
+    if name.is_empty() || name.len() > 80 || issued_at.is_empty() {
+        return None;
+    }
+    let description = plain.get("description").map(|s| s.trim().to_string()).unwrap_or_default();
+    let matched_image = if let Some(photo_url) = plain.get("profilePhoto").map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let expected_hash = uhrp_hash_from_url(photo_url)?;
+        let found = images
+            .iter()
+            .find(|img| img.get("url").and_then(Value::as_str) == Some(photo_url))?;
+        let ct = found.get("contentType").and_then(Value::as_str)?;
+        if !matches!(ct, "image/webp" | "image/png" | "image/jpeg") {
+            return None;
+        }
+        let b64 = found.get("bytesB64").and_then(Value::as_str)?;
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+        if bytes.is_empty() || bytes.len() > 64 * 1024 || sha256(&bytes) != expected_hash {
+            return None;
+        }
+        Some(found.clone())
+    } else {
+        None
+    };
+    Some(VerifiedSelfProfile {
+        identity_key: key,
+        name,
+        description,
+        issued_at,
+        image: matched_image,
+        certificate: cert.clone(),
+    })
+}
+
+/// Sign a BRC-52 / BRC-248 self-published identity profile certificate (compatible with TS `signIdentityProfile`).
+/// Returns `(certificate_json, optional_package_image_json)`.
+pub fn sign_profile_certificate(
+    privkey: &SecretKeyBytes,
+    name: &str,
+    description: &str,
+    issued_at: &str,
+    image: Option<(&str, &[u8])>,
+) -> Result<(Value, Option<Value>), String> {
+    let subject = privkey.public_key_hex().map_err(|e| e.to_string())?;
+    let subject_bytes = decode_hex(&subject).map_err(|e| e.to_string())?;
+    let type_bytes = sha256(b"BRC-248 identity profile");
+    let cert_type = base64::engine::general_purpose::STANDARD.encode(type_bytes);
+    let mut serial_bytes = [0u8; 32];
+    getrandom_fill(&mut serial_bytes);
+    let serial = base64::engine::general_purpose::STANDARD.encode(serial_bytes);
+    let rev_txid = [0u8; 32];
+    let revocation = format!("{}.0", "00".repeat(32));
+
+    let mut plain_fields: Vec<(&str, String)> = vec![
+        ("name", name.trim().to_string()),
+        ("issuedAt", issued_at.trim().to_string()),
+    ];
+    if !description.trim().is_empty() {
+        plain_fields.push(("description", description.trim().to_string()));
+    }
+    let mut pkg_image = None;
+    if let Some((ct, bytes)) = image {
+        if bytes.is_empty() || bytes.len() > 64 * 1024 {
+            return Err("Profile image must be 64 KB or smaller.".into());
+        }
+        let uhrp_url = uhrp_url_for_bytes(bytes);
+        plain_fields.push(("profilePhoto", uhrp_url.clone()));
+        pkg_image = Some(serde_json::json!({
+            "url": uhrp_url,
+            "contentType": ct,
+            "bytesB64": base64::engine::general_purpose::STANDARD.encode(bytes),
+        }));
+    }
+
+    let kd = KeyDeriver::new(privkey.clone());
+    let mut fields_map = serde_json::Map::new();
+    let mut keyring_map = serde_json::Map::new();
+    for (fname, fval) in &plain_fields {
+        let mut sym = [0u8; 32];
+        getrandom_fill(&mut sym);
+        let enc_field = encrypt_brc2(&sym, fval.as_bytes()).map_err(|e| e.to_string())?;
+        let enc_key = kd
+            .encrypt(
+                (2, "certificate field encryption"),
+                &format!("{serial} {fname}"),
+                Counterparty::Anyone,
+                &sym,
+            )
+            .map_err(|e| e.to_string())?;
+        fields_map.insert(
+            (*fname).to_string(),
+            Value::String(base64::engine::general_purpose::STANDARD.encode(enc_field)),
+        );
+        keyring_map.insert(
+            (*fname).to_string(),
+            Value::String(base64::engine::general_purpose::STANDARD.encode(enc_key)),
+        );
+    }
+
+    // Build exact Certificate.toBinary(false) preimage
+    let mut preimage = Vec::with_capacity(256);
+    preimage.extend_from_slice(&type_bytes);
+    preimage.extend_from_slice(&serial_bytes);
+    preimage.extend_from_slice(&subject_bytes);
+    preimage.extend_from_slice(&subject_bytes);
+    preimage.extend_from_slice(&rev_txid);
+    write_cert_varint(&mut preimage, 0);
+    let mut field_names: Vec<&String> = fields_map.keys().collect();
+    field_names.sort();
+    write_cert_varint(&mut preimage, field_names.len());
+    for fname in &field_names {
+        let fval = fields_map.get(*fname).and_then(Value::as_str).unwrap_or("");
+        write_cert_varint(&mut preimage, fname.len());
+        preimage.extend_from_slice(fname.as_bytes());
+        write_cert_varint(&mut preimage, fval.len());
+        preimage.extend_from_slice(fval.as_bytes());
+    }
+
+    let sig_der = kd
+        .create_signature(
+            (2, "certificate signature"),
+            &format!("{cert_type} {serial}"),
+            Counterparty::Anyone,
+            Some(&preimage),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+
+    let cert = serde_json::json!({
+        "type": cert_type,
+        "serialNumber": serial,
+        "subject": subject,
+        "certifier": subject,
+        "revocationOutpoint": revocation,
+        "fields": Value::Object(fields_map),
+        "keyring": Value::Object(keyring_map),
+        "signature": encode_hex(&sig_der),
+    });
+    Ok((cert, pkg_image))
+}
+
+fn getrandom_fill(out: &mut [u8; 32]) {
+    let k = SecretKeyBytes::random();
+    out.copy_from_slice(k.as_bytes());
 }
 
 // ---------------------------------------------------------------------------
@@ -990,5 +1326,44 @@ mod tests {
             compute_issuer_trust_state("02ee", "UniqueStudio", None, &list, &[]),
             "verified"
         );
+    }
+
+    #[test]
+    fn brc52_profile_certificate_sign_verify_and_photo_hash_check() {
+        let sk = SecretKeyBytes::from_hex(&"44".repeat(32)).unwrap();
+        let ik = sk.public_key_hex().unwrap();
+        let img_bytes = b"\x89PNG\r\n\x1a\nfake-avatar-bytes";
+        let (cert, img) = sign_profile_certificate(
+            &sk,
+            "Kindred Studio",
+            "Independent creator",
+            "2026-11-24T12:00:00.000Z",
+            Some(("image/png", img_bytes)),
+        )
+        .unwrap();
+        let img_val = img.expect("package image emitted");
+        let verified = verify_and_decrypt_profile_certificate(&ik, &cert, std::slice::from_ref(&img_val))
+            .expect("signed BRC-52 certificate verifies");
+        assert_eq!(verified.name, "Kindred Studio");
+        assert_eq!(verified.description, "Independent creator");
+        assert_eq!(verified.issued_at, "2026-11-24T12:00:00.000Z");
+        assert!(verified.image.is_some());
+
+        // Missing image when profilePhoto is declared must fail
+        assert!(verify_and_decrypt_profile_certificate(&ik, &cert, &[]).is_none());
+
+        // Tampered image bytes must fail UHRP hash check
+        let mut bad_img = img_val.clone();
+        bad_img["bytesB64"] = serde_json::Value::String(
+            base64::engine::general_purpose::STANDARD.encode(b"tampered"),
+        );
+        assert!(verify_and_decrypt_profile_certificate(&ik, &cert, &[bad_img]).is_none());
+
+        // Wrong identity key must fail
+        let other = SecretKeyBytes::from_hex(&"55".repeat(32))
+            .unwrap()
+            .public_key_hex()
+            .unwrap();
+        assert!(verify_and_decrypt_profile_certificate(&other, &cert, &[img_val]).is_none());
     }
 }

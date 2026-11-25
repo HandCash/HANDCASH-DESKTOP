@@ -9,12 +9,16 @@
 use crate::icons::{EyeIcon, EyeOffIcon, ExpandMoreIcon, TickerCoinMark};
 use crate::machines::{
     AppSessionEvent, AppSessionMachine, AuthFormMode, FiatCode, OnboardStep, RestoreRole,
-    ToastNotice, UnlockState,
+    ToastNotice,
 };
 use crate::state::{AcceptedCoins, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::BrandLogo;
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, field, list_row};
 use dioxus::prelude::*;
+use handcash_machines::unlock::{
+    password_progress, UnlockEvent, UnlockMachine, UnlockSetupFactor, UnlockState as MachineUnlockState,
+};
 use handcash_primitives::brc140::{
     extract_brc140_shares, share_download_filename, slice_set_label, Brc140IssuedSet,
     BRC140_DESTINATION_HINTS,
@@ -152,7 +156,7 @@ pub fn AuthFlow(
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
 
-    let mut unlock_state = use_signal(|| UnlockState::Idle);
+    let unlock_chart = use_aeon_machine::<UnlockMachine>();
     let mut error_msg = use_signal(|| Option::<String>::None);
     let mut password = use_signal(String::new);
     let handle = use_signal(String::new);
@@ -894,7 +898,7 @@ pub fn AuthFlow(
         AuthFormMode::Create => "Your keys stay on this device.",
         AuthFormMode::Unlock | AuthFormMode::Entry | AuthFormMode::Signin => {
             if (services.should_auto_unlock() || services.is_no_device_lock())
-                && *unlock_state.read() != UnlockState::Failed
+                && unlock_chart.state() != MachineUnlockState::Failed
             {
                 "Opening your wallet on this device."
             } else if services.has_memorable_password() {
@@ -913,7 +917,8 @@ pub fn AuthFlow(
         "Unlock"
     };
 
-    let submitting = *unlock_state.read() == UnlockState::Opening;
+    let submitting = unlock_chart.state() == MachineUnlockState::Opening;
+    let unlock_state_attr = unlock_chart.state_attr();
     let submit_label = if submitting {
         "Working…"
     } else {
@@ -926,7 +931,7 @@ pub fn AuthFlow(
         section {
             class: "auth-screen",
             "data-aeon-scope": "auth",
-            "data-aeon-state": unlock_state.read().as_attr(),
+            "data-aeon-state": "{unlock_state_attr}",
 
             div { class: "auth-copy",
                 h1 { class: "auth-title", "{title}" }
@@ -939,7 +944,20 @@ pub fn AuthFlow(
                 onsubmit: move |e| {
                     e.prevent_default();
                     error_msg.set(None);
-                    unlock_state.set(UnlockState::Opening);
+                    if unlock_chart.state() == MachineUnlockState::Failed {
+                        unlock_chart.send(UnlockEvent::Retry);
+                    }
+                    let setup_factor = match mode {
+                        AuthFormMode::Create => UnlockSetupFactor::Create,
+                        AuthFormMode::Phrase | AuthFormMode::Key | AuthFormMode::Shares => {
+                            UnlockSetupFactor::Restore
+                        }
+                        _ => UnlockSetupFactor::Approved,
+                    };
+                    unlock_chart.send(UnlockEvent::Start {
+                        factor: setup_factor,
+                        progress: password_progress(),
+                    });
 
                     match mode {
                         AuthFormMode::Unlock | AuthFormMode::Entry | AuthFormMode::Signin => {
@@ -947,7 +965,7 @@ pub fn AuthFlow(
                             match svc_submit.unlock_with_password(&pw) {
                                 Ok(sum) => {
                                     password.set(String::new());
-                                    unlock_state.set(UnlockState::Success);
+                                    unlock_chart.send(UnlockEvent::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
@@ -955,9 +973,14 @@ pub fn AuthFlow(
                                         profile: sum,
                                         balance_sats: sats,
                                     });
+                                    svc_submit.spawn_sync_identities_from_peers();
                                 }
                                 Err(err) => {
-                                    unlock_state.set(UnlockState::Failed);
+                                    unlock_chart.send(UnlockEvent::Fail {
+                                        error: err.clone(),
+                                        cancelled: false,
+                                        blocked: false,
+                                    });
                                     offer_restore_on_lock.set(true);
                                     error_msg.set(Some(err));
                                 }
@@ -971,7 +994,7 @@ pub fn AuthFlow(
                                 Ok((sum, phrase, wrap_pw)) => {
                                     fresh_mnemonic.set(phrase.clone());
                                     phrase_copied.set(false);
-                                    unlock_state.set(UnlockState::Success);
+                                    unlock_chart.send(UnlockEvent::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
@@ -985,7 +1008,11 @@ pub fn AuthFlow(
                                     }));
                                 }
                                 Err(err) => {
-                                    unlock_state.set(UnlockState::Failed);
+                                    unlock_chart.send(UnlockEvent::Fail {
+                                        error: err.clone(),
+                                        cancelled: false,
+                                        blocked: false,
+                                    });
                                     error_msg.set(Some(err));
                                 }
                             }
@@ -1004,7 +1031,7 @@ pub fn AuthFlow(
                             match svc_submit.restore_vault_onboard(&eff_handle, &m, &pass, &c, sch) {
                                 Ok((sum, wrap_pw)) => {
                                     mnemonic_input.set(String::new());
-                                    unlock_state.set(UnlockState::Success);
+                                    unlock_chart.send(UnlockEvent::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
@@ -1018,7 +1045,11 @@ pub fn AuthFlow(
                                     }));
                                 }
                                 Err(err) => {
-                                    unlock_state.set(UnlockState::Failed);
+                                    unlock_chart.send(UnlockEvent::Fail {
+                                        error: err.clone(),
+                                        cancelled: false,
+                                        blocked: false,
+                                    });
                                     error_msg.set(Some(err));
                                 }
                             }
@@ -1031,7 +1062,7 @@ pub fn AuthFlow(
                             match svc_submit.restore_vault_root_key_onboard(&eff_handle, &rk, &c) {
                                 Ok((sum, wrap_pw)) => {
                                     root_key_input.set(String::new());
-                                    unlock_state.set(UnlockState::Success);
+                                    unlock_chart.send(UnlockEvent::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
@@ -1045,7 +1076,11 @@ pub fn AuthFlow(
                                     }));
                                 }
                                 Err(err) => {
-                                    unlock_state.set(UnlockState::Failed);
+                                    unlock_chart.send(UnlockEvent::Fail {
+                                        error: err.clone(),
+                                        cancelled: false,
+                                        blocked: false,
+                                    });
                                     error_msg.set(Some(err));
                                 }
                             }
@@ -1062,7 +1097,7 @@ pub fn AuthFlow(
                             ) {
                                 Ok((sum, wrap_pw)) => {
                                     shares_input.set(String::new());
-                                    unlock_state.set(UnlockState::Success);
+                                    unlock_chart.send(UnlockEvent::Success);
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
@@ -1076,7 +1111,11 @@ pub fn AuthFlow(
                                     }));
                                 }
                                 Err(err) => {
-                                    unlock_state.set(UnlockState::Failed);
+                                    unlock_chart.send(UnlockEvent::Fail {
+                                        error: err.clone(),
+                                        cancelled: false,
+                                        blocked: false,
+                                    });
                                     error_msg.set(Some(err));
                                 }
                             }
@@ -1234,7 +1273,7 @@ pub fn AuthFlow(
                     button_type: "submit",
                     class: "btn btn-primary auth-submit",
                     "data-aeon-part": "trigger",
-                    "data-aeon-state": unlock_state.read().as_attr(),
+                    "data-aeon-state": "{unlock_state_attr}",
                     disabled: submitting,
                     button::Label { "{submit_label}" }
                 }

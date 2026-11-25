@@ -20,8 +20,13 @@ use crate::ui::primitives::{
     profile_fingerprint, MiddleEllipsisName, ProfileAvatar, ProfileFingerprint, ProfileIdenticon,
 };
 use crate::ui::EmptyState;
+use aeon_dioxus::use_aeon_machine;
 use base64::Engine as _;
 use dioxus::prelude::*;
+use handcash_machines::asset_burn_ui::{
+    AssetBurnUiEvent, AssetBurnUiMachine, AssetBurnUiState,
+};
+use handcash_machines::asset_send::{AssetSendEvent, AssetSendMachine, AssetSendState};
 use handcash_storage::ItemCardRow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -174,18 +179,31 @@ fn issuer_view_for(
     chain: &str,
 ) -> Option<IssuerView> {
     let meta = snap.item_meta.get(&item.outpoint);
-    let key = non_empty(item.issuer_key.as_deref())
-        .or_else(|| non_empty(meta.and_then(|m| m.signer.as_deref())))?;
     let attested = meta.is_some_and(|m| m.issuer_attested);
     let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref()));
-    let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
+    if let Some(key) = non_empty(item.issuer_key.as_deref()) {
+        let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
+        return Some(IssuerView {
+            identity_key: resolved.identity_key,
+            label: resolved.label,
+            state: resolved.state,
+            profile_id: resolved.profile_id,
+            image_url: resolved.image_url,
+            issuer_attested: resolved.issuer_attested,
+        });
+    }
+    // Legacy HandCash cloud-minted items carry a Sigma BSM address + MAP app name (no BRC-247 pubkey).
+    let signer = non_empty(meta.and_then(|m| m.signer.as_deref()))?;
+    let app = non_empty(meta.and_then(|m| m.app.as_deref()));
     Some(IssuerView {
-        identity_key: resolved.identity_key,
-        label: resolved.label,
-        state: resolved.state,
-        profile_id: resolved.profile_id,
-        image_url: resolved.image_url,
-        issuer_attested: resolved.issuer_attested,
+        identity_key: signer.to_string(),
+        label: app
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("Signed · {}", truncate_mid(signer, 10))),
+        state: if attested { "key" } else { "claim" },
+        profile_id: None,
+        image_url: None,
+        issuer_attested: attested,
     })
 }
 
@@ -467,11 +485,19 @@ fn group_by_identity<'a>(
         };
 
         match shelf {
-            Some(shelf) => buckets
-                .entry(shelf.key.clone())
-                .or_insert(shelf)
-                .items
-                .push(item),
+            Some(shelf) => {
+                let entry = buckets.entry(shelf.key.clone()).or_insert(shelf);
+                // If an earlier item in the same Sigma signer shelf lacked an app label, adopt it from a later item.
+                if entry.label.starts_with("Signed · ") {
+                    if let Some(a) = app {
+                        entry.label = a.to_string();
+                        if let Some(sig) = signer {
+                            entry.title = format!("{a} · signed by {sig}, as the index reports it");
+                        }
+                    }
+                }
+                entry.items.push(item);
+            }
             None => loose.push(item),
         }
     }
@@ -737,10 +763,11 @@ pub fn InventoryPanel(
     let mut open_shelf = use_signal(|| Option::<String>::None);
     let mut last_seq = use_signal(|| dock_trigger.map(|t| t.read().seq).unwrap_or_default());
 
-    // Trigger bounded background prefetch for any items missing cached local data: art
-    // and rate-limited connected-device sync when an asset has an unknown issuer profile.
+    // Trigger bounded background prefetch for any items missing cached local data: art,
+    // origin/signer metadata from GorillaPool (TS `originSigners.ts`), and rate-limited peer sync.
     if !snap.items.is_empty() {
         services.prefetch_missing_item_art(&chain, &snap);
+        services.backfill_missing_inscription_metadata(&chain, &snap);
         services.maybe_sync_missing_identities_from_peers(&chain, &snap);
     }
 
@@ -1248,9 +1275,10 @@ pub fn CollectableDetailsPanel(
     let collection_id = non_empty(meta.collection_id.as_deref()).map(ToString::to_string);
     let app_line = non_empty(meta.app.as_deref()).map(ToString::to_string);
 
-    let missing_issuer_profile = issuer
-        .as_ref()
-        .is_some_and(|v| matches!(v.state, "key" | "claim" | "unconfirmed"));
+    let missing_issuer_profile = (non_empty(item.issuer_key.as_deref()).is_some() || bap_id.is_some())
+        && issuer
+            .as_ref()
+            .is_some_and(|v| matches!(v.state, "key" | "claim" | "unconfirmed"));
     let svc_sync = Arc::clone(&services);
     let mut toast_sync = toast;
 
@@ -1283,7 +1311,7 @@ pub fn CollectableDetailsPanel(
                             onclick: move |_| {
                                 let svc = Arc::clone(&svc_sync);
                                 spawn(async move {
-                                    match crate::device_peer::sync_identities_from_connected_peers(&svc).await {
+                                    match crate::device_peer::sync_identities_from_connected_peers_manual(&svc).await {
                                         Ok(stats) => {
                                             let total = stats.profiles_added + stats.bap_packages_added + stats.cards_added;
                                             toast_sync.set(Some(ToastNotice {
@@ -1379,15 +1407,15 @@ pub fn SendCollectablePanel(
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut confirming = use_signal(|| false);
-    let mut recipient_input = use_signal(String::new);
+    let send_chart = use_aeon_machine::<AssetSendMachine>();
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
     let items = pick_items(&snap, &outpoints);
     let batch = items.len() > 1;
-    let raw_to = recipient_input.read().clone();
+    let raw_to = send_chart.context().to.clone();
     let parsed = classify_recipient(&raw_to);
-    let is_confirming = *confirming.read();
+    let is_confirming = matches!(send_chart.state(), AssetSendState::Confirming);
+    let state_attr = send_chart.state_attr();
 
     let desired_dock = (!items.is_empty()).then(|| {
         if is_confirming {
@@ -1443,7 +1471,7 @@ pub fn SendCollectablePanel(
                     (false, Some(op)) => nav_child.set(Some(NavChild::CollectableDetails(op))),
                     _ => nav_child.set(None),
                 },
-                "review" => confirming.set(true),
+                "review" => send_chart.send(AssetSendEvent::Review),
                 "confirm" => {
                     // Gated until native 1Sat broadcast + crypto review (Phase 9).
                 }
@@ -1487,7 +1515,7 @@ pub fn SendCollectablePanel(
         div {
             class: "nav-child-panel send-panel send-collectable-panel",
             "data-aeon-scope": "send-collectable",
-            "data-aeon-state": if is_confirming { "confirming" } else { "editing" },
+            "data-aeon-state": "{state_attr}",
 
             if !is_confirming {
                 div { class: "send-stage send-stage-edit",
@@ -1522,7 +1550,14 @@ pub fn SendCollectablePanel(
                                         autocomplete: "off",
                                         spellcheck: false,
                                         value: "{raw_to}",
-                                        oninput: move |e| recipient_input.set(e.value()),
+                                        oninput: move |e| {
+                                            send_chart.send(AssetSendEvent::Edit {
+                                                to: Some(e.value()),
+                                                quantity: None,
+                                                friend_label: None,
+                                                payee_identity_key: None,
+                                            });
+                                        },
                                     }
                                 }
                                 if let Some(ref kind) = parsed {
@@ -1618,14 +1653,18 @@ pub fn BurnAssetPanel(
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
     let services = use_context::<Arc<AppServices>>();
-    let mut confirming = use_signal(|| false);
+    let burn_chart = use_aeon_machine::<AssetBurnUiMachine>();
+    use_hook(move || {
+        burn_chart.send(AssetBurnUiEvent::Open { amount: None });
+    });
     let mut last_seq = use_signal(|| dock_trigger.read().seq);
 
     let wanted: BTreeSet<&str> = outpoints.iter().map(String::as_str).collect();
     let items = pick_items(&snap, &outpoints);
     let batch = wanted.len() > 1;
     let complete = !items.is_empty() && items.len() == wanted.len();
-    let is_confirming = *confirming.read();
+    let is_confirming = matches!(burn_chart.state(), AssetBurnUiState::Confirming);
+    let state_attr = burn_chart.state_attr();
 
     let desired_dock = complete.then(|| {
         if is_confirming {
@@ -1680,8 +1719,8 @@ pub fn BurnAssetPanel(
                     (false, Some(op)) => nav_child.set(Some(NavChild::CollectableDetails(op))),
                     _ => nav_child.set(None),
                 },
-                "review" => confirming.set(true),
-                "back" => confirming.set(false),
+                "review" => burn_chart.send(AssetBurnUiEvent::Review),
+                "back" => burn_chart.send(AssetBurnUiEvent::Back),
                 "confirm-burn" => {
                     // Gated until native burn broadcast + crypto review (Phase 9).
                 }
@@ -1762,7 +1801,7 @@ pub fn BurnAssetPanel(
         div {
             class: "nav-child-panel send-panel burn-panel",
             "data-aeon-scope": "asset-burn",
-            "data-aeon-state": if is_confirming { "confirming" } else { "editing" },
+            "data-aeon-state": "{state_attr}",
 
             div { class: if is_confirming { "send-stage send-stage-confirm" } else { "send-stage send-stage-edit" },
                 div { class: if is_confirming { "send-layout send-layout-confirm" } else { "send-layout" },
@@ -1846,5 +1885,26 @@ pub fn BurnAssetPanel(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod burn_economics_ts_port_tests {
+    use super::*;
+
+    // Ported 1:1 from `src/wallet/burnEconomics.test.ts`
+    #[test]
+    fn separates_token_protocol_outputs_from_physical_sats_recovered() {
+        let preview = estimate_burn_economics(3, 1, true, None);
+        assert_eq!(preview.gross_asset_sats, 3);
+        assert_eq!(preview.protocol_output_sats, 1);
+        assert_eq!(preview.recoverable_sats, 2);
+    }
+
+    #[test]
+    fn one_item_burn_costs_more_pay_than_it_recovers() {
+        let preview = estimate_burn_economics(1, 0, true, None);
+        assert_eq!(preview.recoverable_sats, 1);
+        assert!(preview.recoverable_sats < preview.estimated_fee_sats);
     }
 }

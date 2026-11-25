@@ -1,12 +1,15 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
 //! 100% Pure-Rust HandCash Desktop wallet built on Aeon UI + Dioxus Native.
 
+#[cfg(test)]
+mod aeon_adherence;
 pub mod brc100_native;
 pub mod css_scope;
 pub mod device_peer;
 pub mod health;
 pub mod icons;
 pub mod machines;
+pub mod messagebox;
 pub mod parity;
 pub mod state;
 pub mod theme;
