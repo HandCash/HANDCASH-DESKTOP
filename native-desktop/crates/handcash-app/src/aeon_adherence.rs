@@ -13,21 +13,21 @@ use std::path::Path;
 /// Per-file `use_signal(` ceilings across `handcash-app/src/ui/*.rs`.
 /// Baseline total was 198; drive ceilings strictly downward as panels adopt `use_aeon_machine`.
 const UI_USE_SIGNAL_CEILINGS: &[(&str, usize)] = &[
-    ("panels.rs", 58), // ratcheted down 62 -> 58 via FiatCurrencyMenuMachine + WipeMachine + SettingsPreferencesMachine
+    ("panels.rs", 51), // ratcheted down 62 -> 58 -> 51 via FiatCurrencyMenu + Wipe + SettingsPreferences + PublicIdentities + ChartApps
     ("auth.rs", 28), // ratcheted down 29 -> 28 via UnlockMachine
     ("friends.rs", 15),
-    ("mod.rs", 14),
-    ("apps.rs", 8), // ratcheted down 12 -> 8 via NotesMachine
+    ("mod.rs", 12), // ratcheted down 14 -> 12 via AppMachine + WalletStatusMachine
     ("dashboard.rs", 8),
-    ("import.rs", 8),
+    ("apps.rs", 7), // ratcheted down 12 -> 8 -> 7 via Notes + GrantExpiry + AppLauncher + DevKeysPanel
     ("collectables.rs", 7), // ratcheted down 10 -> 7 via AssetSendMachine + AssetBurnUiMachine
     ("primitives.rs", 7),
-    ("permissions.rs", 5),
-    ("activity.rs", 4),
+    ("import.rs", 5), // ratcheted down 8 -> 5 via LegacyImportMachine
+    ("permissions.rs", 5), // wired to PermissionDecisionMachine
     ("send.rs", 4), // ratcheted down 7 -> 4 via SendMachine
+    ("activity.rs", 3), // ratcheted down 4 -> 3 via PairingCodeMachine
     ("collectables_extra.rs", 3),
     ("side.rs", 3),
-    ("devices.rs", 2), // ratcheted down 5 -> 2 via DeviceBackupMachine
+    ("devices.rs", 2), // ratcheted down 5 -> 2 via DeviceBackupMachine + QrScannerMachine
     ("chrome.rs", 1), // ratcheted down 3 -> 1 via WalletAccountMenuMachine
     ("messages.rs", 1),
     ("platform_extras.rs", 1),
@@ -85,8 +85,8 @@ fn ui_use_signal_counts_never_exceed_ratchet_ceilings() {
         }
     }
     assert!(
-        total <= 178,
-        "Total UI use_signal( count ({total}) regressed above current ratchet ceiling (178, down from 198 baseline)"
+        total <= 164,
+        "Total UI use_signal( count ({total}) regressed above current ratchet ceiling (164, down from 198 baseline)"
     );
 }
 
@@ -120,6 +120,24 @@ fn migrated_panels_bind_to_handcash_machines_and_aeon_dioxus() {
         panels_src.contains("use_aeon_machine::<SettingsPreferencesMachine>()"),
         "ui/panels.rs must drive SettingsPanel preferences from SettingsPreferencesMachine"
     );
+    assert!(
+        panels_src.contains("use_aeon_machine::<PublicIdentitiesMachine>()"),
+        "ui/panels.rs must drive PublicIdentitiesPanel from PublicIdentitiesMachine"
+    );
+    assert!(
+        panels_src.contains("use_aeon_machine_with::<ChartAppsMachine>"),
+        "ui/panels.rs must drive ChartAppsPanel from ChartAppsMachine"
+    );
+
+    let mod_src = std::fs::read_to_string(dir.join("mod.rs")).expect("read mod.rs");
+    assert!(
+        mod_src.contains("use_aeon_machine::<AppMachine>()"),
+        "ui/mod.rs must drive App from handcash_machines::app::AppMachine"
+    );
+    assert!(
+        mod_src.contains("use_aeon_machine_with::<WalletStatusMachine>"),
+        "ui/mod.rs must drive wallet status from WalletStatusMachine"
+    );
 
     let auth_src = std::fs::read_to_string(dir.join("auth.rs")).expect("read auth.rs");
     assert!(
@@ -131,6 +149,14 @@ fn migrated_panels_bind_to_handcash_machines_and_aeon_dioxus() {
     assert!(
         !machines_src.contains("pub enum UnlockState"),
         "src/machines.rs must not reintroduce hand-rolled UnlockState enum"
+    );
+    assert!(
+        !machines_src.contains("pub enum AppSessionState"),
+        "src/machines.rs must not reintroduce hand-rolled AppSessionState enum"
+    );
+    assert!(
+        !machines_src.contains("pub struct AppSessionMachine"),
+        "src/machines.rs must not reintroduce hand-rolled AppSessionMachine"
     );
 
     let chrome_src = std::fs::read_to_string(dir.join("chrome.rs")).expect("read chrome.rs");
@@ -144,11 +170,47 @@ fn migrated_panels_bind_to_handcash_machines_and_aeon_dioxus() {
         devices_src.contains("use_aeon_machine::<DeviceBackupMachine>()"),
         "ui/devices.rs must drive PairDevicePanel from DeviceBackupMachine"
     );
+    assert!(
+        devices_src.contains("use_aeon_machine::<QrScannerMachine>()"),
+        "ui/devices.rs must drive QrScanner from QrScannerMachine"
+    );
 
     let apps_src = std::fs::read_to_string(dir.join("apps.rs")).expect("read apps.rs");
     assert!(
         apps_src.contains("use_aeon_machine::<NotesMachine>()"),
         "ui/apps.rs must drive NotesPanel from NotesMachine"
+    );
+    assert!(
+        apps_src.contains("use_aeon_machine_with::<GrantExpiryMachine>"),
+        "ui/apps.rs must drive AppDetailsPanel grant expiry from GrantExpiryMachine"
+    );
+    assert!(
+        apps_src.contains("use_aeon_machine::<AppLauncherMachine>()"),
+        "ui/apps.rs must drive AppsPanel from AppLauncherMachine"
+    );
+    assert!(
+        apps_src.contains("use_aeon_machine::<DevKeysPanelMachine>()"),
+        "ui/apps.rs must drive DevKeysPanel from DevKeysPanelMachine"
+    );
+
+    let import_src = std::fs::read_to_string(dir.join("import.rs")).expect("read import.rs");
+    assert!(
+        import_src.contains("use_aeon_machine::<LegacyImportMachine>()"),
+        "ui/import.rs must drive ImportPanel from LegacyImportMachine"
+    );
+
+    let permissions_src =
+        std::fs::read_to_string(dir.join("permissions.rs")).expect("read permissions.rs");
+    assert!(
+        permissions_src.contains("use_aeon_machine::<PermissionDecisionMachine>()"),
+        "ui/permissions.rs must drive PermissionRequestPanel from PermissionDecisionMachine"
+    );
+
+    let activity_src =
+        std::fs::read_to_string(dir.join("activity.rs")).expect("read activity.rs");
+    assert!(
+        activity_src.contains("use_aeon_machine_with::<PairingCodeMachine>"),
+        "ui/activity.rs must drive PairingCodeEntry from PairingCodeMachine"
     );
 
     let collectables_src =

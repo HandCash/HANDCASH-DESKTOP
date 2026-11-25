@@ -17,7 +17,8 @@ use crate::machines::{classify_recipient, CollectionView, NavChild, RecipientKin
 use crate::state::{copy_to_clipboard, truncate_mid, AppServices, WalletSnapshot};
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
 use crate::ui::primitives::{
-    profile_fingerprint, MiddleEllipsisName, ProfileAvatar, ProfileFingerprint, ProfileIdenticon,
+    profile_fingerprint, MiddleEllipsisName, ProfileFingerprint, ProfileIdenticon,
+    SignerFingerprint,
 };
 use crate::ui::EmptyState;
 use aeon_dioxus::use_aeon_machine;
@@ -351,7 +352,13 @@ fn CollectSelect(
                 aria_checked: if mixed { "mixed" } else if checked { "true" } else { "false" },
                 onchange: move |evt| on_change.call(evt.checked()),
             }
-            span { "aria-hidden": "true" }
+            span { "aria-hidden": "true",
+                if mixed {
+                    "−"
+                } else if checked {
+                    CheckIcon { size: 11 }
+                }
+            }
         }
     }
 }
@@ -372,7 +379,6 @@ struct IdentityShelf<'a> {
     rank: u8,
     fingerprint_id: Option<String>,
     avatar_url: Option<String>,
-    avatar_key: Option<String>,
     label: String,
     /// TS `issuerViewState` for the trust badge.
     trust_state: &'static str,
@@ -433,7 +439,6 @@ fn group_by_identity<'a>(
                 rank,
                 fingerprint_id: resolved.profile_id.clone().or_else(|| Some(resolved.identity_key.clone())),
                 avatar_url: resolved.image_url,
-                avatar_key: Some(resolved.identity_key.clone()),
                 title: format!("{label} · issuer attribution: {}", resolved.identity_key),
                 label,
                 trust_state: resolved.state,
@@ -448,7 +453,6 @@ fn group_by_identity<'a>(
                 rank: 2,
                 fingerprint_id: Some(sig.to_string()),
                 avatar_url: None,
-                avatar_key: Some(sig.to_string()),
                 title: format!("{label} · signed by {sig}, as the index reports it"),
                 label,
                 trust_state: if attested { "key" } else { "claim" },
@@ -460,7 +464,6 @@ fn group_by_identity<'a>(
                 rank: 2,
                 fingerprint_id: None,
                 avatar_url: None,
-                avatar_key: None,
                 title: a.to_string(),
                 label: a.to_string(),
                 trust_state: "claim",
@@ -474,7 +477,6 @@ fn group_by_identity<'a>(
                 rank: 2,
                 fingerprint_id: None,
                 avatar_url: None,
-                avatar_key: None,
                 title: label.clone(),
                 label,
                 trust_state: "claim",
@@ -585,11 +587,12 @@ fn collect_grid_card(
                     nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
                 },
                 div { class: "collectable-media",
-                    span { class: "collectable-media-fallback", "aria-hidden": "true",
-                        CollectablesIcon { size: 36 }
-                    }
                     if let Some(art_url) = art_url {
                         img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 36 }
+                        }
                     }
                     CollectableVerifyMark {
                         authenticity_status: item.authenticity_status.clone(),
@@ -647,11 +650,12 @@ fn collect_list_row(
                     nav_child.set(Some(NavChild::CollectableDetails(outpoint.clone())));
                 },
                 div { class: "collectable-media collectable-media-sm",
-                    span { class: "collectable-media-fallback", "aria-hidden": "true",
-                        CollectablesIcon { size: 22 }
-                    }
                     if let Some(art_url) = art_url {
                         img { class: "collectable-img", src: "{art_url}", alt: "{item.name}" }
+                    } else {
+                        span { class: "collectable-media-fallback", "aria-hidden": "true",
+                            CollectablesIcon { size: 22 }
+                        }
                     }
                     CollectableVerifyMark {
                         authenticity_status: item.authenticity_status.clone(),
@@ -938,11 +942,14 @@ pub fn InventoryPanel(
                                                             };
                                                             open_shelf.set(next);
                                                         },
-                                                        if shelf.avatar_url.is_some() {
-                                                            ProfileAvatar {
-                                                                label: shelf.label.clone(),
-                                                                image_url: shelf.avatar_url.clone(),
-                                                                identity_key: shelf.avatar_key.clone(),
+                                                        if let Some(ref src) = shelf.avatar_url {
+                                                            img {
+                                                                class: "collect-issuer-icon",
+                                                                src: "{src}",
+                                                                alt: "",
+                                                                width: 40,
+                                                                height: 40,
+                                                                decoding: "async",
                                                             }
                                                         } else {
                                                             CollectFacepile { faces }
@@ -957,7 +964,19 @@ pub fn InventoryPanel(
                                                             }
                                                             span { class: "collect-collection-meta",
                                                                 if let Some(ref fp_id) = shelf.fingerprint_id {
-                                                                    ProfileFingerprint { id: fp_id.clone(), class: Some("collect-issuer-fingerprint".to_string()) }
+                                                                    if shelf.key.starts_with("issuer:signer:") {
+                                                                        SignerFingerprint {
+                                                                            address: fp_id.clone(),
+                                                                            class: Some("collect-issuer-fingerprint".to_string()),
+                                                                        }
+                                                                    } else {
+                                                                        ProfileFingerprint {
+                                                                            id: fp_id.clone(),
+                                                                            class: Some("collect-issuer-fingerprint".to_string()),
+                                                                            show_id: matches!(shelf.trust_state, "listed" | "verified" | "imitation" | "shared-name"),
+                                                                            state: Some(shelf.trust_state.to_string()),
+                                                                        }
+                                                                    }
                                                                 }
                                                                 "{shelf_quantity_label(&shelf.items)}"
                                                                 if shelf_selected > 0 {

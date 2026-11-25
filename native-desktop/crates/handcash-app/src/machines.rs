@@ -1,148 +1,33 @@
 // Copyright HandCash. Licensed under the Apache License, Version 2.0.
-//! Executable Rust statecharts mirroring `src/machines/appMachine.ts`,
-//! `src/machines/unlockMachine.ts`, `src/machines/walletStatusMachine.ts`, and `src/wallet/navStore.ts`.
+//! App-level UI view models and adapters over pure-Rust `handcash-machines` statecharts
+//! (`appMachine`, `unlockMachine`, `walletStatusMachine`, `navStore`).
 
 use crate::state::SessionSummary;
+use handcash_machines::app::{AppState, Chain, WalletProfile};
+use handcash_machines::wallet_status::{WalletSession, WalletStatusState};
 
-/// Mirrors `src/machines/appMachine.ts` (`boot -> onboarding | locked | ready | failure`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum AppSessionState {
-    Boot,
-    Onboarding,
-    Locked,
-    Ready,
-    Failure,
-}
-
-impl AppSessionState {
-    pub const fn as_attr(&self) -> &'static str {
-        match self {
-            Self::Boot => "boot",
-            Self::Onboarding => "onboarding",
-            Self::Locked => "locked",
-            Self::Ready => "ready",
-            Self::Failure => "failure",
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct AppSessionMachine {
-    pub state: AppSessionState,
-    pub profile: Option<SessionSummary>,
-    pub balance_sats: u64,
-    pub bridge_online: bool,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub enum AppSessionEvent {
-    Bootstrapped {
-        has_vault: bool,
-    },
-    Unlocked {
-        profile: SessionSummary,
-        balance_sats: u64,
-    },
-    Created {
-        profile: SessionSummary,
-        balance_sats: u64,
-    },
-    Switched {
-        profile: SessionSummary,
-        balance_sats: u64,
-    },
-    Lock,
-    Refreshed {
-        balance_sats: u64,
-    },
-    Bridge {
-        online: bool,
-    },
-    Fail {
-        error: String,
-    },
-    ClearError,
-}
-
-impl AppSessionMachine {
-    pub fn new(
-        has_vault: bool,
-        initial_profile: Option<SessionSummary>,
-        balance_sats: u64,
-        bridge_online: bool,
-    ) -> Self {
-        let state = if initial_profile.is_some() {
-            AppSessionState::Ready
-        } else if has_vault {
-            AppSessionState::Locked
+/// Project a runtime [`SessionSummary`] into `handcash_machines::app::WalletProfile`.
+pub fn session_to_wallet_profile(s: &SessionSummary) -> WalletProfile {
+    WalletProfile {
+        handle: s.handle.clone(),
+        identity_key: s.identity_key.clone(),
+        address: s.address.clone(),
+        chain: if s.chain.eq_ignore_ascii_case("test") {
+            Chain::Test
         } else {
-            AppSessionState::Onboarding
-        };
-        Self {
-            state,
-            profile: initial_profile,
-            balance_sats,
-            bridge_online,
-            error: None,
-        }
+            Chain::Main
+        },
     }
+}
 
-    pub fn send(&mut self, event: AppSessionEvent) {
-        match event {
-            AppSessionEvent::Bridge { online } => {
-                self.bridge_online = online;
-            }
-            AppSessionEvent::Bootstrapped { has_vault } => {
-                if self.state == AppSessionState::Boot {
-                    self.state = if has_vault {
-                        AppSessionState::Locked
-                    } else {
-                        AppSessionState::Onboarding
-                    };
-                    self.error = None;
-                }
-            }
-            AppSessionEvent::Unlocked {
-                profile,
-                balance_sats,
-            }
-            | AppSessionEvent::Created {
-                profile,
-                balance_sats,
-            }
-            | AppSessionEvent::Switched {
-                profile,
-                balance_sats,
-            } => {
-                self.profile = Some(profile);
-                self.balance_sats = balance_sats;
-                self.error = None;
-                self.state = AppSessionState::Ready;
-            }
-            AppSessionEvent::Lock => {
-                if self.state == AppSessionState::Ready {
-                    self.profile = None;
-                    self.balance_sats = 0;
-                    self.error = None;
-                    self.state = AppSessionState::Locked;
-                }
-            }
-            AppSessionEvent::Refreshed { balance_sats } => {
-                if self.state == AppSessionState::Ready {
-                    self.balance_sats = balance_sats;
-                }
-            }
-            AppSessionEvent::Fail { error } => {
-                self.error = Some(error);
-                if self.state == AppSessionState::Boot {
-                    self.state = AppSessionState::Failure;
-                }
-            }
-            AppSessionEvent::ClearError => {
-                self.error = None;
-            }
-        }
+/// Map [`AppState`] onto [`WalletSession`] for [`handcash_machines::wallet_status::WalletStatusMachine`].
+pub const fn app_state_to_wallet_session(state: AppState) -> WalletSession {
+    match state {
+        AppState::Boot => WalletSession::Boot,
+        AppState::Onboarding => WalletSession::Onboarding,
+        AppState::Locked => WalletSession::Locked,
+        AppState::Ready => WalletSession::Ready,
+        AppState::Failure => WalletSession::Failure,
     }
 }
 
@@ -233,60 +118,98 @@ pub struct WalletStatusView {
     pub detail: &'static str,
 }
 
-pub fn resolve_wallet_status(
-    session: &AppSessionState,
-    bridge_online: bool,
-    syncing: bool,
-) -> WalletStatusView {
-    match session {
-        AppSessionState::Boot => WalletStatusView {
-            state_attr: "opening",
+pub fn resolve_wallet_status(state: WalletStatusState) -> WalletStatusView {
+    match state {
+        WalletStatusState::Opening => WalletStatusView {
+            state_attr: state.as_str(),
             label: "Opening",
             tone: StatusTone::Busy,
             detail: "Starting HandCash",
         },
-        AppSessionState::Failure => WalletStatusView {
-            state_attr: "failed",
+        WalletStatusState::Failed => WalletStatusView {
+            state_attr: state.as_str(),
             label: "Failed",
             tone: StatusTone::Error,
             detail: "App hit an error — retry",
         },
-        AppSessionState::Onboarding => WalletStatusView {
-            state_attr: "setup",
+        WalletStatusState::Offline => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Offline",
+            tone: StatusTone::Warn,
+            detail: "No internet connection",
+        },
+        WalletStatusState::Refreshing | WalletStatusState::Syncing => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Syncing",
+            tone: StatusTone::Busy,
+            detail: "Refreshing funds and history against the network",
+        },
+        WalletStatusState::CatchingUp => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Catching up",
+            tone: StatusTone::Busy,
+            detail: "Syncing wallet state and items",
+        },
+        WalletStatusState::SyncFailed => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Sync failed",
+            tone: StatusTone::Error,
+            detail: "Network refresh failed — tap to retry",
+        },
+        WalletStatusState::BackupFailed => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Backup error",
+            tone: StatusTone::Error,
+            detail: "History backup failed — check Settings",
+        },
+        WalletStatusState::BackupDelayed => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Backup delayed",
+            tone: StatusTone::Warn,
+            detail: "History backup is catching up",
+        },
+        WalletStatusState::WaitingToSend => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Sending",
+            tone: StatusTone::Busy,
+            detail: "Waiting to submit transaction",
+        },
+        WalletStatusState::Setup => WalletStatusView {
+            state_attr: state.as_str(),
             label: "Setup",
             tone: StatusTone::Muted,
             detail: "Create or restore a wallet",
         },
-        AppSessionState::Locked => WalletStatusView {
-            state_attr: "locked",
+        WalletStatusState::Locked => WalletStatusView {
+            state_attr: state.as_str(),
             label: "Locked",
             tone: StatusTone::Muted,
             detail: "Unlock to spend or connect apps",
         },
-        AppSessionState::Ready => {
-            if syncing {
-                WalletStatusView {
-                    state_attr: "refreshing",
-                    label: "Syncing",
-                    tone: StatusTone::Busy,
-                    detail: "Refreshing funds and history against the network",
-                }
-            } else if bridge_online {
-                WalletStatusView {
-                    state_attr: "synced",
-                    label: "Synced",
-                    tone: StatusTone::Ok,
-                    detail: "Chain OK — BRC-100 bridge online — tap to refresh",
-                }
-            } else {
-                WalletStatusView {
-                    state_attr: "bridge-off",
-                    label: "Bridge off",
-                    tone: StatusTone::Warn,
-                    detail: "Local BRC-100 bridge is not listening — tap to refresh",
-                }
-            }
-        }
+        WalletStatusState::BridgeOff => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Bridge off",
+            tone: StatusTone::Warn,
+            detail: "Local BRC-100 bridge is not listening — tap to refresh",
+        },
+        WalletStatusState::ItemArriving => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Item arriving",
+            tone: StatusTone::Busy,
+            detail: "Verifying incoming collectable proof",
+        },
+        WalletStatusState::NetworkSlow => WalletStatusView {
+            state_attr: state.as_str(),
+            label: "Network slow",
+            tone: StatusTone::Warn,
+            detail: "Chain refresh timed out — tap to retry",
+        },
+        WalletStatusState::Synced | WalletStatusState::Ready => WalletStatusView {
+            state_attr: "synced",
+            label: "Synced",
+            tone: StatusTone::Ok,
+            detail: "Chain OK — BRC-100 bridge online — tap to refresh",
+        },
     }
 }
 

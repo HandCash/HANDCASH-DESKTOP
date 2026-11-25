@@ -19,6 +19,8 @@ import {
 } from './devicePeer'
 import { mergeRemoteIdentityBundle, requestIdentitiesOverVaultLink, syncVaultIdentitiesBox } from './identityPeerSync'
 import { openVaultLinkDevices } from './vaultLink'
+import { holdingOf, isHeldHere, readVaultAccounts, rootKeyHexForAccount } from './vaultAccounts'
+import { vaultIdentityKey } from './vaultMaster'
 
 
 const POLL_MS = 8_000
@@ -137,7 +139,7 @@ export function startDeviceMesh(identityKey: string): () => void {
     notifySnapshots()
   }
   void enrollLocalFromBridge(identityKey).then(() => pollDeviceMeshOnce())
-  void syncVaultIdentitiesBox().catch(() => {})
+  void syncIdentitiesFromConnectedPeers().catch(() => {})
   if (pollTimer) clearInterval(pollTimer)
   pollTimer = setInterval(() => {
     void pollDeviceMeshOnce()
@@ -158,34 +160,99 @@ export function clearRemoteSnapshots(): void {
   notifySnapshots()
 }
 
-/** Pull missing identity profiles and BAP packages from connected LAN and vaultLink peers now. */
+/** Pull missing identity profiles and BAP packages from connected LAN, vaultLink, and messagebox peers for all connected wallets. */
 export async function syncIdentitiesFromConnectedPeers(args?: {
   identityKeys?: string[]
   bapIds?: string[]
 }): Promise<{ profilesAdded: number; bapPackagesAdded: number; cardsAdded: number }> {
   const active = getActiveWallet()
   const totals = { profilesAdded: 0, bapPackagesAdded: 0, cardsAdded: 0 }
-  if (!active) return totals
-  const peers = listDeviceWallets().filter(
-    (w) => !w.isLocal && w.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
-  )
-  await Promise.all(
-    peers.map(async (peer) => {
-      if (!peer.peerBaseUrl) return
+  if (!active || !active.chain) return totals
+
+  const vaultStore = active.vaultMaster ? readVaultAccounts(vaultIdentityKey(active.vaultMaster)) : null
+  const vaultAccounts = vaultStore?.accounts ?? []
+  const vaultKeys = new Set<string>([active.identityKey.toLowerCase()])
+  if (active.vaultMaster) vaultKeys.add(vaultIdentityKey(active.vaultMaster).toLowerCase())
+  for (const acc of vaultAccounts) vaultKeys.add(acc.identityKey.toLowerCase())
+
+  const activeAccount = vaultAccounts.find((a) => a.index === active.accountIndex)
+  const activeHeldHere = activeAccount ? isHeldHere(activeAccount) : true
+
+  // Candidate auth keys for non-custodial /identities fetches: locally held accounts + vault coordination key (account 0).
+  const authCandidates: Array<{ identityKey: string; rootKeyHex: string }> = []
+  const seenAuth = new Set<string>()
+  const pushAuth = (ik: string, rootHex: string) => {
+    const low = ik.toLowerCase()
+    if (!seenAuth.has(low)) {
+      seenAuth.add(low)
+      authCandidates.push({ identityKey: low, rootKeyHex: rootHex })
+    }
+  }
+  if (activeHeldHere && active.rootKeyHex) pushAuth(active.identityKey, active.rootKeyHex)
+  if (active.vaultMaster) {
+    for (const acc of vaultAccounts) {
+      if (!isHeldHere(acc)) continue
       try {
-        const bundle = await fetchDevicePeerIdentities(peer.peerBaseUrl, active.identityKey, active.rootKeyHex)
-        const res = await mergeRemoteIdentityBundle(active.chain, bundle, { allowUncheckedBapHeaders: true })
-        totals.profilesAdded += res.profilesAdded
-        totals.bapPackagesAdded += res.bapPackagesAdded
-        totals.cardsAdded += res.cardsAdded
-        lastIdentitySyncByPeer.set(peer.deviceId, Date.now())
+        pushAuth(acc.identityKey, rootKeyHexForAccount(active.vaultMaster, acc.index))
       } catch {
-        /* peer unreachable or older version */
+        /* ignore */
       }
-    }),
-  )
+    }
+    try {
+      pushAuth(vaultIdentityKey(active.vaultMaster), rootKeyHexForAccount(active.vaultMaster, 0))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const seenUrls = new Set<string>()
+  const peers = listDeviceWallets().filter((w) => {
+    if (w.isLocal || !w.peerBaseUrl) return false
+    if (!vaultKeys.has(w.identityKey.toLowerCase())) return false
+    const url = w.peerBaseUrl.trim().replace(/\/+$/, '')
+    if (!url || seenUrls.has(url)) return false
+    seenUrls.add(url)
+    return true
+  })
+  if (typeof fetchDevicePeerIdentities === 'function' && authCandidates.length > 0) {
+    await Promise.all(
+      peers.map(async (peer) => {
+        if (!peer.peerBaseUrl) return
+        const peerIk = peer.identityKey.toLowerCase()
+        const ordered = [
+          ...authCandidates.filter((c) => c.identityKey === peerIk),
+          ...authCandidates.filter((c) => c.identityKey !== peerIk),
+        ]
+        for (const cand of ordered) {
+          try {
+            const bundle = await fetchDevicePeerIdentities(
+              peer.peerBaseUrl,
+              peer.identityKey,
+              cand.rootKeyHex,
+              undefined,
+              vaultKeys,
+            )
+            const res = await mergeRemoteIdentityBundle(active.chain, bundle, { allowUncheckedBapHeaders: true })
+            totals.profilesAdded += res.profilesAdded
+            totals.bapPackagesAdded += res.bapPackagesAdded
+            totals.cardsAdded += res.cardsAdded
+            lastIdentitySyncByPeer.set(peer.deviceId, Date.now())
+            break
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : ''
+            if (!msg.includes('(401)')) break
+          }
+        }
+      }),
+    )
+  }
+  const holderDevices = vaultAccounts.flatMap((acc) => {
+    const h = holdingOf(acc)
+    return h.kind === 'elsewhere' && h.deviceId ? [h.deviceId] : []
+  })
   const linkDevices = new Set<string>([
     ...peers.map((p) => p.deviceId),
+    ...holderDevices,
     ...(typeof openVaultLinkDevices === 'function' ? openVaultLinkDevices() : []),
   ])
   await requestIdentitiesOverVaultLink({
@@ -194,6 +261,31 @@ export async function syncIdentitiesFromConnectedPeers(args?: {
     identityKeys: args?.identityKeys,
     bapIds: args?.bapIds,
   }).catch(() => {})
+
+  // Ask sibling vault accounts (especially those held on other devices or missing a local profile)
+  // for their identity card over the peer inbox when the active account is held locally.
+  if (activeHeldHere && vaultAccounts.length > 1) {
+    const activeIk = active.identityKey.toLowerCase()
+    try {
+      const [{ accountProfile }, { requestIdentityCard }] = await Promise.all([
+        import('./publicIdentities'),
+        import('./identityCardShare'),
+      ])
+      const siblings = vaultAccounts.filter((acc) => {
+        const ik = acc.identityKey.toLowerCase()
+        if (ik === activeIk) return false
+        return !isHeldHere(acc) || !accountProfile({ identityKey: acc.identityKey, accountIndex: acc.index, chain: active.chain })
+      })
+      await Promise.all(
+        siblings.map((acc) =>
+          requestIdentityCard({ identityKey: acc.identityKey, messagebox: null }).catch(() => false),
+        ),
+      )
+    } catch {
+      /* ignore in minimal test environments */
+    }
+  }
+
   const boxRes = await syncVaultIdentitiesBox().catch(() => ({
     profilesAdded: 0,
     bapPackagesAdded: 0,

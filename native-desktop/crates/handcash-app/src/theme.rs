@@ -1405,7 +1405,9 @@ html, body {{
   margin-bottom: 0;
   flex-shrink: 0;
 }}
+[data-aeon-scope="collectables"] .collection-grid.collectables-grid,
 .collectables-grid {{
+  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   justify-content: start;
   gap: 10px;
@@ -1461,25 +1463,30 @@ html, body {{
   pointer-events: none;
 }}
 .collect-select > span {{
-  display: grid;
+  display: inline-flex;
   width: 17px;
   height: 17px;
-  place-items: center;
+  align-items: center;
+  justify-content: center;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 65%, transparent);
   border-radius: var(--hc-radius-sm);
   background: var(--hc-surface);
-  transition: 120ms ease;
-}}
-.collect-select input:checked + span {{
-  border-color: var(--hc-accent);
-  background: var(--hc-accent);
-}}
-.collect-select input:checked + span::after {{
-  content: '✓';
-  color: hsl(var(--background));
+  color: #060a08;
   font-size: 12px;
   font-weight: 900;
   line-height: 1;
+  transition: 120ms ease;
+}}
+.collect-select[data-state="checked"] > span,
+.collect-select[data-state="indeterminate"] > span,
+.collect-select input:checked + span {{
+  border-color: var(--hc-accent);
+  background: var(--hc-accent);
+  color: #060a08;
+}}
+.collect-select input:checked + span::after,
+.collect-select input:indeterminate + span::after {{
+  content: none;
 }}
 .collect-select input:focus-visible + span {{
   outline: 2px solid color-mix(in srgb, var(--hc-accent) 50%, transparent);
@@ -1535,7 +1542,7 @@ html, body {{
   display: grid;
   width: 100%;
   align-items: center;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 10px 12px;
   border: 0;
@@ -1543,6 +1550,50 @@ html, body {{
   color: inherit;
   cursor: pointer;
   text-align: left;
+}}
+.collect-issuer-icon {{
+  display: block;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  object-fit: cover;
+  border-radius: var(--hc-radius);
+  flex-shrink: 0;
+}}
+.collect-facepile {{
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 2px;
+}}
+.collect-facepile-face {{
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  border-radius: 8px;
+  background: #1c1c23;
+  box-shadow: 0 0 0 2px var(--hc-surface-2, var(--hc-surface));
+  overflow: hidden;
+  flex-shrink: 0;
+  margin-left: -20px;
+}}
+.collect-facepile-face:first-child {{
+  margin-left: 0;
+}}
+.collect-facepile-face > img {{
+  display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 8px;
 }}
 .collect-collection-trigger:hover {{
   background: var(--hc-surface-hover, rgb(255 255 255 / 4%));
@@ -1552,13 +1603,12 @@ html, body {{
   min-width: 0;
   gap: 2px;
 }}
-.collect-collection-name,
-.collect-collection-meta {{
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}}
 .collect-collection-name {{
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--hc-text-md);
 }}
 .collect-collection-name-text {{
@@ -1568,6 +1618,14 @@ html, body {{
   white-space: nowrap;
 }}
 .collect-collection-meta {{
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--hc-muted);
   font-size: var(--hc-text-xs);
 }}
@@ -1638,17 +1696,12 @@ html, body {{
   }}
   .collectables-grid .collectable-card:hover .collectable-card-actions > *,
   .collectables-grid .collectable-card:focus-within .collectable-card-actions > *,
+  .collectables-grid .collectable-card.is-selected .collectable-card-actions > *,
+  .collectables-grid .collectable-card-actions .collect-select[data-state="checked"],
   .collectables-grid .collectable-card-actions .collect-select:has(input:checked),
   .collectables-grid .collectable-card-actions .collectable-send-btn:disabled {{
     opacity: 1;
   }}
-}}
-.collection-grid-host {{
-  color: var(--hc-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }}
 .connected-app-list {{
   list-style: none;
@@ -1753,5 +1806,10 @@ mod tests {
         // Collectables tiles always have a visible surface and disable container-type in Blitz
         assert!(css.contains("container-type: normal;"));
         assert!(css.contains(".collectable-media-fallback {\n  position: absolute;"));
+        // Collectables issuer shelf triggers keep all 3 columns (avatar/facepile, body, indicator)
+        assert!(css.contains(".collect-collection-trigger {\n  display: grid;\n  width: 100%;\n  align-items: center;\n  grid-template-columns: auto minmax(0, 1fr) auto;"));
+        assert!(css.contains(".collect-issuer-icon {\n  display: block;\n  width: 40px;\n  height: 40px;"));
+        assert!(css.contains(".collect-facepile-face > img {\n  display: block;\n  width: 36px;\n  height: 36px;"));
+        assert!(css.contains("[data-aeon-scope=\"collectables\"] .collection-grid.collectables-grid,"));
     }
 }

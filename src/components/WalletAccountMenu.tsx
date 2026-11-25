@@ -10,6 +10,8 @@ import { readTrustedBalance } from '../wallet/balanceSnapshot'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
+import { subscribeIdentityCards } from '../wallet/identityCard'
+import { subscribeIdentityProfiles } from '../wallet/identityProfiles'
 import { subscribeIssuerIdentities } from '../wallet/issuerIdentities'
 import { setNavSection } from '../wallet/navStore'
 import { accountProfile, subscribePublicIdentities, type AccountProfile } from '../wallet/publicIdentities'
@@ -127,11 +129,15 @@ export function WalletAccountMenu({
   useEffect(() => {
     refreshList()
     const offPublic = subscribePublicIdentities(refreshList)
+    const offProfiles = subscribeIdentityProfiles(refreshList)
+    const offCards = subscribeIdentityCards(refreshList)
     const offIssuers = subscribeIssuerIdentities(refreshList)
     const offHandle = subscribeClaimedCloudHandle(refreshList)
     const offAccounts = subscribeVaultAccounts(refreshList)
     return () => {
       offPublic()
+      offProfiles()
+      offCards()
       offIssuers()
       offHandle()
       offAccounts()

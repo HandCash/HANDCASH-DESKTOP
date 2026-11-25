@@ -703,9 +703,8 @@ mod tests {
             has_mnemonic: true,
             derivation: "brc157".to_string(),
         };
-        let app_machine = use_signal(|| {
-            crate::machines::AppSessionMachine::new(true, Some(profile.clone()), 0, false)
-        });
+        let app_machine = aeon_dioxus::use_aeon_machine::<handcash_machines::app::AppMachine>();
+        let _ = &profile;
         let snapshot = use_signal(crate::state::WalletSnapshot::default);
         let nav_section = use_signal(|| crate::machines::NavSection::Activity);
         let nav_child = use_signal(|| Option::<crate::machines::NavChild>::None);
@@ -986,7 +985,7 @@ mod tests {
 
     fn auth_create_idle() -> Element {
         let auth_mode = use_signal(|| crate::machines::AuthFormMode::Create);
-        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(false, None, 0, false));
+        let app_machine = aeon_dioxus::use_aeon_machine::<handcash_machines::app::AppMachine>();
         let snapshot = use_signal(crate::state::WalletSnapshot::default);
         let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
         let fresh_mnemonic = use_signal(|| Option::<String>::None);
@@ -1011,7 +1010,7 @@ mod tests {
 
     fn auth_restore_phrase_idle() -> Element {
         let auth_mode = use_signal(|| crate::machines::AuthFormMode::Phrase);
-        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(false, None, 0, false));
+        let app_machine = aeon_dioxus::use_aeon_machine::<handcash_machines::app::AppMachine>();
         let snapshot = use_signal(crate::state::WalletSnapshot::default);
         let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
         let fresh_mnemonic = use_signal(|| Option::<String>::None);
@@ -1036,7 +1035,7 @@ mod tests {
 
     fn auth_unlock_idle() -> Element {
         let auth_mode = use_signal(|| crate::machines::AuthFormMode::Unlock);
-        let app_machine = use_signal(|| crate::machines::AppSessionMachine::new(true, None, 0, false));
+        let app_machine = aeon_dioxus::use_aeon_machine::<handcash_machines::app::AppMachine>();
         let snapshot = use_signal(crate::state::WalletSnapshot::default);
         let fiat_code = use_signal(|| crate::machines::FiatCode::Usd);
         let fresh_mnemonic = use_signal(|| Option::<String>::None);

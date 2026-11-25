@@ -25,13 +25,18 @@ pub mod swaps;
 use crate::css_scope::{PLATFORM, ROOT_CLASSES, SCOPED_SHEETS};
 use crate::icons::{HandCashBrandMark, LockIcon, ScanQrIcon};
 use crate::machines::{
-    resolve_wallet_status, AppSessionEvent, AppSessionMachine, AppSessionState, AuthFormMode,
+    app_state_to_wallet_session, resolve_wallet_status, session_to_wallet_profile, AuthFormMode,
     DisplayCurrency, NavChild, NavSection, ToastNotice,
 };
-use crate::state::AppServices;
+use crate::state::{AppServices, SessionSummary};
 use crate::theme::{build_theme_override_css, read_resolved_theme};
+use aeon_dioxus::{use_aeon_machine, use_aeon_machine_with};
 use aeon_ui::{button, AeonTheme, AeonThemeProvider};
 use dioxus::prelude::*;
+use handcash_machines::app::{AppEvent, AppMachine, AppState};
+use handcash_machines::wallet_status::{
+    WalletStatusEvent, WalletStatusInput, WalletStatusMachine,
+};
 use std::sync::Arc;
 
 #[component]
@@ -57,17 +62,33 @@ pub fn HandCashApp() -> Element {
     });
 
     let mut snapshot = use_signal(|| services.read_snapshot());
-    let mut app_machine = use_signal(|| {
-        let snap = snapshot.read();
-        AppSessionMachine::new(
-            existing_vault.read().is_some(),
-            initial_session.clone(),
-            snap.balance.displayed_sats,
-            snap.bridge_online,
-        )
+    let app_machine = use_aeon_machine::<AppMachine>();
+    use_hook(|| {
+        let snap = snapshot.peek().clone();
+        let has_vault = existing_vault.peek().is_some();
+        app_machine.send(AppEvent::Bridge {
+            online: snap.bridge_online,
+        });
+        app_machine.send(AppEvent::Bootstrapped {
+            has_vault,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            orphaned_toolbox: false,
+        });
+        if let Some(ref s) = initial_session {
+            app_machine.send(AppEvent::Unlocked {
+                profile: session_to_wallet_profile(s),
+                balance_sats: snap.balance.displayed_sats,
+            });
+        }
     });
 
-    let mut syncing = use_signal(|| false);
+    let wallet_status = use_aeon_machine_with::<WalletStatusMachine>(WalletStatusInput {
+        session: app_state_to_wallet_session(app_machine.peek_snapshot().value),
+        network_online: true,
+        bridge_online: snapshot.peek().bridge_online,
+        ..Default::default()
+    });
+
     let mut nav_section = use_signal(|| NavSection::Activity);
     let mut nav_child = use_signal(|| Option::<NavChild>::None);
     let currency = use_signal(|| DisplayCurrency::Usd);
@@ -82,6 +103,13 @@ pub fn HandCashApp() -> Element {
         AuthFormMode::Entry
     };
     let mut auth_mode = use_signal(move || initial_auth_mode);
+
+    // Keep WalletStatusMachine synchronized with AppMachine session transitions.
+    use_effect(move || {
+        wallet_status.send(WalletStatusEvent::Session {
+            session: app_state_to_wallet_session(app_machine.state()),
+        });
+    });
 
     // Live FX rate updates + initial background fetch (12 fiat currencies).
     {
@@ -113,9 +141,9 @@ pub fn HandCashApp() -> Element {
                     let sats = next.balance.displayed_sats;
                     let online = next.bridge_online;
                     snapshot.set(next);
-                    let mut m = app_machine.write();
-                    m.send(AppSessionEvent::Bridge { online });
-                    m.send(AppSessionEvent::Refreshed { balance_sats: sats });
+                    app_machine.send(AppEvent::Bridge { online });
+                    app_machine.send(AppEvent::Refreshed { balance_sats: sats });
+                    wallet_status.send(WalletStatusEvent::Bridge { online });
                 }
             }
         });
@@ -138,10 +166,13 @@ pub fn HandCashApp() -> Element {
     let resolved = os_theme.read().with_preference(*appearance.read());
     let theme_override_css = build_theme_override_css(&resolved);
 
-    let machine_view = app_machine.read().clone();
-    let snap = snapshot.read().clone();
-    let status_view =
-        resolve_wallet_status(&machine_view.state, snap.bridge_online, *syncing.read());
+    let app_state = app_machine.state();
+    let app_ctx = app_machine.context();
+    let app_state_attr = app_machine.state_attr();
+    let status_state = wallet_status.state();
+    let status_ctx = wallet_status.context();
+    let status_view = resolve_wallet_status(status_state);
+    let is_refreshing = status_ctx.refreshing;
 
     let svc_sync = Arc::clone(&services);
     let svc_lock = Arc::clone(&services);
@@ -167,7 +198,7 @@ pub fn HandCashApp() -> Element {
             div {
                 class: "app-shell",
                 "data-aeon-scope": "app",
-                "data-aeon-state": machine_view.state.as_attr(),
+                "data-aeon-state": "{app_state_attr}",
 
                 // ── Top Titlebar (`src/App.tsx` lines 399-436) ──
                 header { class: "titlebar aeon-titlebar",
@@ -175,7 +206,7 @@ pub fn HandCashApp() -> Element {
 
                     div { class: "titlebar-end", "data-aeon-no-drag": "",
                         // WalletStatusPill
-                        if machine_view.state == AppSessionState::Ready {
+                        if app_state == AppState::Ready {
                             button {
                                 r#type: "button",
                                 class: "status-pill status-pill-btn",
@@ -183,15 +214,18 @@ pub fn HandCashApp() -> Element {
                                 "data-aeon-state": status_view.state_attr,
                                 "data-tone": status_view.tone.as_str(),
                                 title: "{status_view.detail}",
-                                disabled: *syncing.read(),
+                                disabled: is_refreshing,
                                 onclick: move |_| {
-                                    syncing.set(true);
+                                    wallet_status.send(WalletStatusEvent::Refresh);
                                     match svc_sync.sync_now() {
                                         Ok(msg) => {
                                             let next = svc_sync.read_snapshot();
                                             let sats = next.balance.displayed_sats;
+                                            let online = next.bridge_online;
                                             snapshot.set(next);
-                                            app_machine.write().send(AppSessionEvent::Refreshed { balance_sats: sats });
+                                            app_machine.send(AppEvent::Bridge { online });
+                                            app_machine.send(AppEvent::Refreshed { balance_sats: sats });
+                                            wallet_status.send(WalletStatusEvent::Bridge { online });
                                             toast.set(Some(ToastNotice {
                                                 title: "Synced".into(),
                                                 body: Some(msg),
@@ -206,7 +240,7 @@ pub fn HandCashApp() -> Element {
                                             }));
                                         }
                                     }
-                                    syncing.set(false);
+                                    wallet_status.send(WalletStatusEvent::RefreshDone);
                                 },
                                 span { class: "status-dot", "data-tone": status_view.tone.as_str() }
                                 primitives::TextOverflowCarousel {
@@ -229,7 +263,7 @@ pub fn HandCashApp() -> Element {
                             }
                         }
 
-                        if machine_view.state == AppSessionState::Ready {
+                        if app_state == AppState::Ready {
                             div { class: "titlebar-actions",
                                 button {
                                     r#type: "button",
@@ -252,7 +286,7 @@ pub fn HandCashApp() -> Element {
                                         nav_child.set(None);
                                         nav_section.set(NavSection::Activity);
                                         auth_mode.set(AuthFormMode::Unlock);
-                                        app_machine.write().send(AppSessionEvent::Lock);
+                                        app_machine.send(AppEvent::Lock);
                                     },
                                     LockIcon { size: 18 }
                                 }
@@ -263,8 +297,8 @@ pub fn HandCashApp() -> Element {
 
                 // ── Main Stage (`src/App.tsx` lines 438-497) ──
                 main { class: "stage",
-                    match machine_view.state {
-                        AppSessionState::Boot => rsx! {
+                    match app_state {
+                        AppState::Boot => rsx! {
                             auth::AuthShell { state: "loading",
                                 section { class: "auth-screen", "data-aeon-state": "loading",
                                     div { class: "auth-copy",
@@ -274,12 +308,12 @@ pub fn HandCashApp() -> Element {
                                 }
                             }
                         },
-                        AppSessionState::Failure => rsx! {
+                        AppState::Failure => rsx! {
                             auth::AuthShell { state: "failure",
                                 section { class: "auth-screen", "data-aeon-state": "failure",
                                     div { class: "auth-copy",
                                         h1 { class: "auth-title", "Something broke" }
-                                        if let Some(ref err) = machine_view.error {
+                                        if let Some(ref err) = app_ctx.error {
                                             p { class: "error auth-error", "{err}" }
                                         }
                                     }
@@ -287,9 +321,11 @@ pub fn HandCashApp() -> Element {
                                         variant: button::ButtonVariant::Solid,
                                         class: "btn btn-primary auth-submit",
                                         onclick: move |_| {
-                                            app_machine.write().send(AppSessionEvent::ClearError);
-                                            app_machine.write().send(AppSessionEvent::Bootstrapped {
+                                            app_machine.send(AppEvent::ClearError);
+                                            app_machine.send(AppEvent::Bootstrapped {
                                                 has_vault: existing_vault.read().is_some(),
+                                                version: env!("CARGO_PKG_VERSION").to_string(),
+                                                orphaned_toolbox: false,
                                             });
                                         },
                                         button::Label { "Retry" }
@@ -297,23 +333,44 @@ pub fn HandCashApp() -> Element {
                                 }
                             }
                         },
-                        AppSessionState::Onboarding | AppSessionState::Locked => rsx! {
-                            auth::AuthShell {
-                                state: machine_view.state.as_attr(),
-                                dark_mode: resolved.mode == aeon_ui::AeonMode::Dark,
-                                auth::AuthFlow {
-                                    is_locked: machine_view.state == AppSessionState::Locked,
-                                    auth_mode,
-                                    app_machine,
-                                    snapshot,
-                                    fiat_code,
-                                    fresh_mnemonic,
-                                    toast,
+                        AppState::Onboarding | AppState::Locked => {
+                            let auth_state: &'static str = if app_state == AppState::Locked {
+                                "locked"
+                            } else {
+                                "onboarding"
+                            };
+                            rsx! {
+                                auth::AuthShell {
+                                    state: auth_state,
+                                    dark_mode: resolved.mode == aeon_ui::AeonMode::Dark,
+                                    auth::AuthFlow {
+                                        is_locked: app_state == AppState::Locked,
+                                        auth_mode,
+                                        app_machine,
+                                        snapshot,
+                                        fiat_code,
+                                        fresh_mnemonic,
+                                        toast,
+                                    }
                                 }
                             }
-                        },
-                        AppSessionState::Ready => {
-                            if let Some(profile) = machine_view.profile.clone() {
+                        }
+                        AppState::Ready => {
+                            let active_profile = services.current_session_summary().or_else(|| {
+                                app_ctx.profile.as_ref().map(|wp| SessionSummary {
+                                    handle: wp.handle.clone(),
+                                    identity_key: wp.identity_key.clone(),
+                                    address: wp.address.clone(),
+                                    chain: wp.chain.as_str().to_string(),
+                                    account_id: "acct-0".to_string(),
+                                    account_index: 0,
+                                    toolbox_db_name: "handcash-toolbox-0".to_string(),
+                                    generation: 1,
+                                    has_mnemonic: true,
+                                    derivation: "brc157".to_string(),
+                                })
+                            });
+                            if let Some(profile) = active_profile {
                                 rsx! {
                                     dashboard::Dashboard {
                                         profile,

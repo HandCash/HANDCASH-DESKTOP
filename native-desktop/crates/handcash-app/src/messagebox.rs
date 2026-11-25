@@ -712,37 +712,50 @@ pub fn ingest_identity_card(
     stats
 }
 
-/// Build a signed v2 `IdentityCard` for the active account so we can answer sibling/friend card requests.
-pub fn build_own_identity_card_v2(
+/// Build a signed v2 `IdentityCard` for any locally held vault account so we can answer sibling/friend card requests.
+pub fn build_account_identity_card_v2(
     services: &AppServices,
     root: &SecretKeyBytes,
-    summary: &SessionSummary,
+    chain: &str,
+    account_index: u32,
 ) -> Option<Value> {
     let ik = root.public_key_hex().ok()?;
-    let chain = &summary.chain;
-    let prof_key = format!("handcash.identityProfiles.v1:{chain}:{ik}");
+    let ik_lower = ik.to_ascii_lowercase();
+    let prof_key = format!("handcash.identityProfiles.v1:{chain}:{ik_lower}");
     let prof_stored = services
         .durable
         .get(&prof_key)
         .and_then(|r| serde_json::from_str::<Value>(&r).ok());
-    let bap_pkg = services
-        .list_public_identities_view(summary)
-        .rows
-        .into_iter()
-        .find(|r| r.identity_key.eq_ignore_ascii_case(&ik) && r.bap_published)
-        .and_then(|r| {
-            let entry_key = format!("handcash.issuerIdentities.v1:{chain}:{}", r.bap_id);
-            services
-                .durable
-                .get(&entry_key)
-                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+    let pub_store = [
+        format!("handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{ik}"),
+        format!("handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{ik_lower}"),
+    ]
+    .iter()
+    .find_map(|k| services.durable.get(k))
+    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    let bap_pkg = pub_store
+        .as_ref()
+        .and_then(|v| v.get("identities").and_then(Value::as_array))
+        .and_then(|rows| {
+            rows.iter().find_map(|row| {
+                let row_ik = row.get("identityKey").and_then(Value::as_str)?;
+                if !row_ik.trim().eq_ignore_ascii_case(&ik_lower) {
+                    return None;
+                }
+                let bap_id = row.get("published").and_then(Value::as_str)?;
+                let entry_key = format!("handcash.issuerIdentities.v1:{chain}:{bap_id}");
+                services
+                    .durable
+                    .get(&entry_key)
+                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            })
         });
     if prof_stored.is_none() && bap_pkg.is_none() {
         return None;
     }
     let mut pkg = serde_json::Map::new();
     pkg.insert("v".into(), Value::from(2));
-    pkg.insert("identityKey".into(), Value::String(ik.clone()));
+    pkg.insert("identityKey".into(), Value::String(ik_lower.clone()));
     let mut issued_at = iso_utc_from_ms(now_ms());
     if let Some(ref ps) = prof_stored {
         if let Some(ts) = ps.get("issuedAt").and_then(Value::as_str) {
@@ -754,7 +767,7 @@ pub fn build_own_identity_card_v2(
             if let Some(cert) = rec.get("certificate") {
                 // Only attach certificates that pass real BRC-52 verification
                 let imgs: Vec<Value> = rec.get("image").cloned().into_iter().collect();
-                if verify_and_decrypt_profile_certificate(&ik, cert, &imgs).is_some() {
+                if verify_and_decrypt_profile_certificate(&ik_lower, cert, &imgs).is_some() {
                     pkg.insert("certificates".into(), Value::Array(vec![cert.clone()]));
                     if !imgs.is_empty() {
                         pkg.insert("images".into(), Value::Array(imgs));
@@ -777,7 +790,13 @@ pub fn build_own_identity_card_v2(
     if !pkg.contains_key("certificates") && !pkg.contains_key("bap") {
         return None;
     }
-    let stmt = card_statement_bytes(2, &ik, "presents", Value::String(ik.clone()), &issued_at);
+    let stmt = card_statement_bytes(
+        2,
+        &ik_lower,
+        "presents",
+        Value::String(ik_lower.clone()),
+        &issued_at,
+    );
     let kd = KeyDeriver::new(root.clone());
     let sig_der = kd
         .create_signature(
@@ -790,8 +809,8 @@ pub fn build_own_identity_card_v2(
         .ok()?;
     let mut card = json!({
         "v": 2,
-        "identityKey": ik,
-        "presents": ik,
+        "identityKey": ik_lower,
+        "presents": ik_lower,
         "issuedAt": issued_at,
         "identitySignature": encode_hex(&sig_der),
         "package": Value::Object(pkg.clone()),
@@ -804,6 +823,15 @@ pub fn build_own_identity_card_v2(
         card["package"] = Value::Object(pkg);
     }
     Some(card)
+}
+
+/// Build a signed v2 `IdentityCard` for the active account so we can answer sibling/friend card requests.
+pub fn build_own_identity_card_v2(
+    services: &AppServices,
+    root: &SecretKeyBytes,
+    summary: &SessionSummary,
+) -> Option<Value> {
+    build_account_identity_card_v2(services, root, &summary.chain, summary.account_index)
 }
 
 async fn list_messages(
@@ -902,18 +930,19 @@ fn listed_sender(msg: &Value) -> Option<String> {
         .and_then(normalize_issuer_identity_key)
 }
 
-/// Poll `inbox` of the active (locally held) account for identity cards, card requests,
+/// Poll `inbox` of one locally held account for identity cards, card requests,
 /// and passive `meta.identities` inside payment messages. Never ACKs non-card messages.
-async fn poll_active_inbox_cards(
+async fn poll_account_inbox_cards(
     services: &Arc<AppServices>,
     client: &reqwest::Client,
     base_url: &str,
-    active_root: &SecretKeyBytes,
-    summary: &SessionSummary,
+    account_root: &SecretKeyBytes,
+    chain: &str,
+    account_index: u32,
     known_peers: &HashSet<String>,
 ) -> IdentityMergeStats {
     let mut stats = IdentityMergeStats::default();
-    let Some(messages) = list_messages(client, base_url, active_root, "inbox").await else {
+    let Some(messages) = list_messages(client, base_url, account_root, "inbox").await else {
         return stats;
     };
     let mut ack_ids: Vec<String> = Vec::new();
@@ -925,18 +954,23 @@ async fn poll_active_inbox_cards(
             continue;
         };
         let sender = listed_sender(&m);
-        let Some((inner, _sealed)) = open_peer_message(active_root, body, sender.as_deref()) else {
+        let Some((inner, _sealed)) = open_peer_message(account_root, body, sender.as_deref()) else {
             continue;
         };
         if inner == IDENTITY_CARD_REQUEST {
             if let Some(ref peer_ik) = sender {
                 if known_peers.contains(peer_ik) {
-                    if let Some(card) = build_own_identity_card_v2(services, active_root, summary) {
+                    if let Some(card) =
+                        build_account_identity_card_v2(services, account_root, chain, account_index)
+                    {
                         let wire = format!("{IDENTITY_CARD_PREFIX}{card}");
-                        if let Ok(sealed) =
-                            seal_peer_message(active_root, peer_ik, &wire, &iso_utc_from_ms(now_ms()))
-                        {
-                            let _ = send_message(client, base_url, active_root, peer_ik, "inbox", &sealed).await;
+                        if let Ok(sealed) = seal_peer_message(
+                            account_root,
+                            peer_ik,
+                            &wire,
+                            &iso_utc_from_ms(now_ms()),
+                        ) {
+                            let _ = send_message(client, base_url, account_root, peer_ik, "inbox", &sealed).await;
                         }
                     }
                 }
@@ -950,7 +984,7 @@ async fn poll_active_inbox_cards(
             if inner.len() <= MAX_CARD_WIRE_CHARS {
                 if let Ok(card_val) = serde_json::from_str::<Value>(card_json) {
                     let merged =
-                        ingest_identity_card(services, &summary.chain, &card_val, sender.as_deref());
+                        ingest_identity_card(services, chain, &card_val, sender.as_deref());
                     stats.profiles_added += merged.profiles_added;
                     stats.bap_packages_added += merged.bap_packages_added;
                     stats.cards_added += merged.cards_added;
@@ -967,7 +1001,7 @@ async fn poll_active_inbox_cards(
                 if let Some(ids) = payload.get("identities").and_then(Value::as_array) {
                     let now = now_ms();
                     for entry in ids {
-                        let merged = ingest_delivered_identity_package(services, &summary.chain, entry, now);
+                        let merged = ingest_delivered_identity_package(services, chain, entry, now);
                         stats.profiles_added += merged.profiles_added;
                         stats.bap_packages_added += merged.bap_packages_added;
                     }
@@ -976,7 +1010,7 @@ async fn poll_active_inbox_cards(
         }
     }
     if !ack_ids.is_empty() {
-        acknowledge_messages(client, base_url, active_root, "inbox", &ack_ids).await;
+        acknowledge_messages(client, base_url, account_root, "inbox", &ack_ids).await;
     }
     stats
 }
@@ -987,50 +1021,68 @@ pub async fn sync_messagebox_identities(
     services: &Arc<AppServices>,
     manual: bool,
 ) -> Result<IdentityMergeStats, String> {
-    let (active_root, vault_root, summary) = {
+    let accounts = services.list_vault_accounts();
+    let (held_accounts, vault_root, summary) = {
         let guard = services.session.lock().map_err(|e| e.to_string())?;
         let Some(ref active) = *guard else {
             return Err("Unlock HandCash first.".into());
         };
         let vault_root = active.vault.master.account_private_key(0).ok();
-        (
-            active.deriver.root_key().clone(),
-            vault_root,
-            active.summary.clone(),
-        )
+        let mut held: Vec<(u32, String, SecretKeyBytes)> = Vec::new();
+        let mut seen = HashSet::new();
+        let active_held_here = accounts
+            .iter()
+            .find(|a| a.index == active.summary.account_index)
+            .map(|a| a.held_here)
+            .unwrap_or(true);
+        if active_held_here {
+            let k = active.deriver.root_key().clone();
+            if let Ok(ik) = k.public_key_hex() {
+                let ik_l = ik.to_ascii_lowercase();
+                if seen.insert(ik_l.clone()) {
+                    held.push((active.summary.account_index, ik_l, k));
+                }
+            }
+        }
+        // Include every other locally held vault account — never open, sign or ACK accounts held elsewhere.
+        for acc in &accounts {
+            if !acc.held_here {
+                continue;
+            }
+            if let Ok(k) = active.vault.master.account_private_key(acc.index) {
+                if let Ok(ik) = k.public_key_hex() {
+                    let ik_l = ik.to_ascii_lowercase();
+                    if seen.insert(ik_l.clone()) {
+                        held.push((acc.index, ik_l, k));
+                    }
+                }
+            }
+        }
+        (held, vault_root, active.summary.clone())
     };
 
-    let accounts = services.list_vault_accounts();
-    let active_held_here = accounts
-        .iter()
-        .find(|a| a.index == summary.account_index)
-        .map(|a| a.held_here)
-        .unwrap_or(true);
-    let active_ik_lower = summary.identity_key.trim().to_ascii_lowercase();
     let mut known_peers: HashSet<String> = HashSet::new();
     let mut request_targets: Vec<String> = Vec::new();
     for acc in &accounts {
         if let Some(ik) = normalize_issuer_identity_key(&acc.identity_key) {
-            if ik != active_ik_lower {
-                known_peers.insert(ik.clone());
-                // Ask sibling accounts (especially those held on other devices) for their identity card.
-                if !acc.held_here
-                    || services
-                        .account_profile_for(&summary.chain, acc.index, &ik)
-                        .is_none()
-                {
-                    request_targets.push(ik);
-                }
+            known_peers.insert(ik.clone());
+            // Ask sibling accounts (especially those held on other devices) for their identity card.
+            if !acc.held_here
+                || services
+                    .account_profile_for(&summary.chain, acc.index, &ik)
+                    .is_none()
+            {
+                request_targets.push(ik);
             }
         }
     }
-    for fr in services.list_friends() {
+    for fr in services.list_all_vault_friends(&summary.chain, &accounts) {
         if let Some(ik) = normalize_issuer_identity_key(&fr.identity_key) {
-            if ik != active_ik_lower {
-                known_peers.insert(ik.clone());
-                if services.identity_profile_for(&summary.chain, &ik).is_none() {
-                    request_targets.push(ik);
-                }
+            known_peers.insert(ik.clone());
+            if services.identity_profile_for(&summary.chain, &ik).is_none()
+                && services.peer_identity_for(&summary.chain, &ik).is_none()
+            {
+                request_targets.push(ik);
             }
         }
     }
@@ -1045,29 +1097,35 @@ pub async fn sync_messagebox_identities(
 
     let mut totals = IdentityMergeStats::default();
 
-    // 1. Active account inbox (ONLY when this device holds the active account).
-    if active_held_here {
-        let first = poll_active_inbox_cards(
+    // 1. Poll `inbox` for every locally held vault account (never accounts held elsewhere).
+    for (acc_idx, _acc_ik, acc_root) in &held_accounts {
+        let first = poll_account_inbox_cards(
             services,
             &client,
             &base_url,
-            &active_root,
-            &summary,
+            acc_root,
+            &summary.chain,
+            *acc_idx,
             &known_peers,
         )
         .await;
         totals.profiles_added += first.profiles_added;
         totals.bap_packages_added += first.bap_packages_added;
         totals.cards_added += first.cards_added;
+    }
 
-        // Send identity-card requests to sibling accounts held elsewhere and friends without profiles.
+    // Send identity-card requests from the active (or first locally held) account to all missing siblings/friends.
+    if let Some((sender_idx, sender_ik, sender_root)) = held_accounts.first() {
         let now = now_ms();
         let mut sent_any = false;
         for peer_ik in &request_targets {
+            if peer_ik == sender_ik {
+                continue;
+            }
             let should_send = {
                 let map = LAST_CARD_REQUESTED.get_or_init(|| Mutex::new(HashMap::new()));
                 let mut g = map.lock().unwrap_or_else(|e| e.into_inner());
-                let key = format!("{active_ik_lower}:{peer_ik}");
+                let key = format!("{sender_ik}:{peer_ik}");
                 let prev = g.get(&key).copied().unwrap_or(0);
                 if manual || now.saturating_sub(prev) >= CARD_REQUEST_COOLDOWN_MS {
                     g.insert(key, now);
@@ -1080,12 +1138,12 @@ pub async fn sync_messagebox_identities(
                 continue;
             }
             if let Ok(sealed) = seal_peer_message(
-                &active_root,
+                sender_root,
                 peer_ik,
                 IDENTITY_CARD_REQUEST,
                 &iso_utc_from_ms(now),
             ) {
-                if send_message(&client, &base_url, &active_root, peer_ik, "inbox", &sealed).await {
+                if send_message(&client, &base_url, sender_root, peer_ik, "inbox", &sealed).await {
                     sent_any = true;
                 }
             }
@@ -1093,12 +1151,13 @@ pub async fn sync_messagebox_identities(
 
         if manual && sent_any {
             tokio::time::sleep(Duration::from_millis(2_500)).await;
-            let second = poll_active_inbox_cards(
+            let second = poll_account_inbox_cards(
                 services,
                 &client,
                 &base_url,
-                &active_root,
-                &summary,
+                sender_root,
+                &summary.chain,
+                *sender_idx,
                 &known_peers,
             )
             .await;
@@ -1177,7 +1236,11 @@ pub async fn sync_messagebox_identities(
                 || bundle
                     .get("cards")
                     .and_then(Value::as_object)
-                    .is_some_and(|o| !o.is_empty());
+                    .is_some_and(|o| !o.is_empty())
+                || bundle
+                    .get("accountPresentations")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| !a.is_empty());
             if has_data {
                 // Hash stable fields (excluding `exportedAt`) so unchanged bundles are not re-posted.
                 let mut stable = bundle.clone();
@@ -1354,5 +1417,63 @@ mod tests {
         assert_eq!(resolved.name, "Primary Creator");
         assert_eq!(resolved.description, "On another device");
         assert_eq!(resolved.image_data_url.as_deref(), Some(img_url.as_str()));
+    }
+
+    #[test]
+    fn build_account_identity_card_v2_serves_non_selected_held_wallet() {
+        let dir_a = temp_dir("non-sel-a");
+        let dir_b = temp_dir("non-sel-b");
+        let svc_a = AppServices::open_in(dir_a, false).unwrap();
+        let svc_b = AppServices::open_in(dir_b, false).unwrap();
+        let phrase = "absurd avoid scissors anxiety gather lottery category door army half long cage bachelor another expect people blade school educate curtain scrub monitor lady beyond";
+        let _sum_a0 = svc_a
+            .restore_vault(
+                "alice",
+                phrase,
+                "",
+                "Pass1234!",
+                "main",
+                handcash_primitives::keys::MnemonicScheme::Brc157,
+            )
+            .unwrap();
+        let _sum_b0 = svc_b
+            .restore_vault(
+                "alice",
+                phrase,
+                "",
+                "Pass1234!",
+                "main",
+                handcash_primitives::keys::MnemonicScheme::Brc157,
+            )
+            .unwrap();
+
+        // Device A creates Account 1, saves a profile on it, then switches back to Account 0.
+        let (_acc_a1, sum_a1) = svc_a.create_vault_account().unwrap();
+        svc_a
+            .save_public_identity_profile(&sum_a1, &sum_a1.identity_key, "Vault Two", "Idle held wallet", None)
+            .unwrap();
+        svc_a.switch_vault_account(0).unwrap();
+
+        let root_a1 = svc_a
+            .session
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .vault
+            .master
+            .account_private_key(1)
+            .unwrap();
+        let card = build_account_identity_card_v2(&svc_a, &root_a1, "main", 1)
+            .expect("signed v2 card built for non-selected locally held account");
+        let stats = ingest_identity_card(&svc_b, "main", &card, Some(&sum_a1.identity_key));
+        assert_eq!(stats.profiles_added, 1);
+        assert_eq!(stats.cards_added, 1);
+
+        let resolved = svc_b
+            .account_profile_for("main", 1, &sum_a1.identity_key)
+            .expect("non-selected account profile resolved on Device B");
+        assert_eq!(resolved.name, "Vault Two");
+        assert_eq!(resolved.description, "Idle held wallet");
     }
 }

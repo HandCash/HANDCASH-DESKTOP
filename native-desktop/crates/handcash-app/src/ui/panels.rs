@@ -10,7 +10,7 @@ use crate::icons::{
     FingerprintIcon, InfoIcon, LaunchIcon, LightModeIcon, LockIcon, LtcGlyphIcon, MonitorIcon,
     PaletteIcon, RefreshIcon, ScanQrIcon, SystemUpdateIcon, VolumeUpIcon, WarningIcon,
 };
-use crate::machines::{AppSessionMachine, FiatCode, NavChild, SettingSubpage, ToastNotice};
+use crate::machines::{FiatCode, NavChild, SettingSubpage, ToastNotice};
 use crate::state::{
     copy_to_clipboard, load_builtin_chart_apps, open_external_url, render_qr_svg, truncate_mid,
     AcceptedCoins, AppServices, IdentityCardItem, LabFeature, RecoverScan,
@@ -19,12 +19,20 @@ use crate::state::{
 use crate::theme::AppearancePreference;
 use crate::ui::auth::{KeySliceList, PasswordField};
 use crate::ui::primitives::ProfileIdenticon;
-use aeon_dioxus::use_aeon_machine;
+use aeon_dioxus::{use_aeon_machine, use_aeon_machine_with, AeonMachineHandle};
 use aeon_ui::{button, list_row};
 use base64::Engine as _;
 use dioxus::prelude::*;
+use handcash_machines::app::{AppEvent, AppMachine};
+use handcash_machines::chart_apps::{
+    ChartAppsEvent, ChartAppsInput, ChartAppsMachine, ChartAppsState,
+};
 use handcash_machines::fiat_currency_menu::{
     FiatCurrencyMenuEvent, FiatCurrencyMenuMachine, FiatCurrencyMenuState,
+};
+use handcash_machines::public_identities::{
+    IssuerIdentityField, IssuerIdentityFields, IssuerIdentityImage, PublicIdentitiesEvent,
+    PublicIdentitiesMachine, PublicIdentitiesState,
 };
 use handcash_machines::settings_preferences::{
     AppearancePreference as MachineAppearance, SettingsPreferencePath, SettingsPreferences,
@@ -834,6 +842,21 @@ pub fn IdentityPanel(profile: SessionSummary, mut toast: Signal<Option<ToastNoti
     }
 }
 
+fn data_url_to_issuer_image(url: &str) -> Option<IssuerIdentityImage> {
+    let rest = url.strip_prefix("data:")?;
+    let (content_type, b64) = rest.split_once(";base64,")?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+    Some(IssuerIdentityImage {
+        content_type: content_type.to_string(),
+        bytes,
+    })
+}
+
+fn issuer_image_to_data_url(img: &IssuerIdentityImage) -> String {
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&img.bytes);
+    format!("data:{};base64,{b64}", img.content_type)
+}
+
 /// 1:1 port of `src/components/PublicIdentitiesPanel.tsx`.
 #[component]
 pub fn PublicIdentitiesPanel(
@@ -844,18 +867,15 @@ pub fn PublicIdentitiesPanel(
     let services = use_context::<Arc<AppServices>>();
     let _ = *rev.read();
 
-    // Modes: "browsing" | "composing" | "importing"
-    let mut mode = use_signal(|| "browsing");
+    let pub_chart = use_aeon_machine::<PublicIdentitiesMachine>();
     let mut more_open = use_signal(|| false);
     let mut row_menu_key = use_signal(|| Option::<String>::None);
-    let mut compose_key = use_signal(String::new);
-    let mut draft_name = use_signal(String::new);
-    let mut draft_bio = use_signal(String::new);
-    let mut draft_image = use_signal(|| Option::<String>::None);
     let mut import_key_input = use_signal(String::new);
     let mut status_err = use_signal(|| Option::<String>::None);
 
-    let cur_mode = *mode.read();
+    let pub_state = pub_chart.state();
+    let pub_ctx = pub_chart.context();
+    let pub_state_attr = pub_chart.state_attr();
     let view = services.list_public_identities_view(&profile);
     let signs = view.signs_issuance;
 
@@ -874,10 +894,10 @@ pub fn PublicIdentitiesPanel(
         section {
             class: "identity-card identity-compose",
             "data-aeon-scope": "public-identities",
-            "data-aeon-state": "{cur_mode}",
+            "data-aeon-state": "{pub_state_attr}",
             aria_label: "Public identities",
             div { "data-aeon-part": "actions", "data-aeon-state": "idle",
-                if cur_mode == "browsing" {
+                if pub_state == PublicIdentitiesState::Browsing {
                     div { class: "public-identities-head", "data-aeon-part": "head",
                         style: "position: relative;",
                         h3 { class: "identity-compose-title", "Public identities" }
@@ -964,7 +984,7 @@ pub fn PublicIdentitiesPanel(
                                         more_open.set(false);
                                         status_err.set(None);
                                         import_key_input.set(String::new());
-                                        mode.set("importing");
+                                        pub_chart.send(PublicIdentitiesEvent::ImportKey);
                                     },
                                     "Import signing key"
                                 }
@@ -1142,11 +1162,16 @@ pub fn PublicIdentitiesPanel(
                                                     status_err.set(None);
                                                     more_open.set(false);
                                                     row_menu_key.set(None);
-                                                    compose_key.set(ik_compose.clone());
-                                                    draft_name.set(name_for_compose.clone());
-                                                    draft_bio.set(bio_for_compose.clone());
-                                                    draft_image.set(img_for_compose.clone());
-                                                    mode.set("composing");
+                                                    pub_chart.send(PublicIdentitiesEvent::Compose {
+                                                        identity_key: ik_compose.clone(),
+                                                        fields: Some(IssuerIdentityFields {
+                                                            name: name_for_compose.clone(),
+                                                            description: bio_for_compose.clone(),
+                                                        }),
+                                                        image: img_for_compose
+                                                            .as_deref()
+                                                            .and_then(data_url_to_issuer_image),
+                                                    });
                                                 },
                                                 button::Label { if own { "Edit" } else { "Add profile" } }
                                             }
@@ -1286,7 +1311,7 @@ pub fn PublicIdentitiesPanel(
                             }
                         }
                     }
-                } else if cur_mode == "importing" {
+                } else if pub_state == PublicIdentitiesState::Importing {
                     h3 { class: "identity-compose-title", "Import signing key" }
                     div { class: "field identity-compose-field",
                         label { r#for: "public-identity-import-key", "Private key" }
@@ -1310,7 +1335,7 @@ pub fn PublicIdentitiesPanel(
                                 match svc_import_key.import_issuer_private_key(&prof_import, &raw) {
                                     Ok(_) => {
                                         import_key_input.set(String::new());
-                                        mode.set("browsing");
+                                        pub_chart.send(PublicIdentitiesEvent::Close);
                                         let n = *rev.read() + 1;
                                         rev.set(n);
                                         toast.set(Some(ToastNotice {
@@ -1330,22 +1355,25 @@ pub fn PublicIdentitiesPanel(
                             onclick: move |_| {
                                 import_key_input.set(String::new());
                                 status_err.set(None);
-                                mode.set("browsing");
+                                pub_chart.send(PublicIdentitiesEvent::Close);
                             },
                             button::Label { "Cancel" }
                         }
                     }
                 } else {
                     {
-                        let target_ik = compose_key.read().clone();
+                        let target_ik = pub_ctx.identity_key.clone().unwrap_or_default();
                         let is_edit = view
                             .rows
                             .iter()
                             .find(|r| r.identity_key == target_ik)
                             .and_then(|r| r.profile_source.as_deref())
                             == Some("identity-key");
-                        let cur_img = draft_image.read().clone();
-                        let name_empty = draft_name.read().trim().is_empty();
+                        let cur_img = pub_ctx.image.as_ref().map(issuer_image_to_data_url);
+                        let draft_name_val = pub_ctx.fields.name.clone();
+                        let draft_bio_val = pub_ctx.fields.description.clone();
+                        let name_empty = draft_name_val.trim().is_empty();
+                        let saving = pub_state == PublicIdentitiesState::Saving;
                         rsx! {
                             h3 { class: "identity-compose-title",
                                 if is_edit { "Edit profile" } else { "Add profile" }
@@ -1382,8 +1410,12 @@ pub fn PublicIdentitiesPanel(
                                                             "webp" => "image/webp",
                                                             _ => "image/png",
                                                         };
-                                                        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                                        draft_image.set(Some(format!("data:{mime};base64,{b64}")));
+                                                        pub_chart.send(PublicIdentitiesEvent::Image {
+                                                            image: IssuerIdentityImage {
+                                                                content_type: mime.to_string(),
+                                                                bytes,
+                                                            },
+                                                        });
                                                         status_err.set(None);
                                                     }
                                                     Err(e) => status_err.set(Some(e.to_string())),
@@ -1409,7 +1441,7 @@ pub fn PublicIdentitiesPanel(
                                         button::Root {
                                             variant: button::ButtonVariant::Ghost,
                                             class: "btn btn-ghost public-identity-image-clear",
-                                            onclick: move |_| draft_image.set(None),
+                                            onclick: move |_| pub_chart.send(PublicIdentitiesEvent::ClearImage),
                                             button::Label { "Remove" }
                                         }
                                     }
@@ -1420,8 +1452,11 @@ pub fn PublicIdentitiesPanel(
                                         input {
                                             id: "public-identity-name",
                                             maxlength: "64",
-                                            value: "{draft_name}",
-                                            oninput: move |e| draft_name.set(e.value()),
+                                            value: "{draft_name_val}",
+                                            oninput: move |e| pub_chart.send(PublicIdentitiesEvent::Field {
+                                                field: IssuerIdentityField::Name,
+                                                value: e.value(),
+                                            }),
                                         }
                                     }
                                     div { class: "field identity-compose-field",
@@ -1430,8 +1465,11 @@ pub fn PublicIdentitiesPanel(
                                             id: "public-identity-bio",
                                             maxlength: "160",
                                             placeholder: "Optional",
-                                            value: "{draft_bio}",
-                                            oninput: move |e| draft_bio.set(e.value()),
+                                            value: "{draft_bio_val}",
+                                            oninput: move |e| pub_chart.send(PublicIdentitiesEvent::Field {
+                                                field: IssuerIdentityField::Description,
+                                                value: e.value(),
+                                            }),
                                         }
                                     }
                                 }
@@ -1440,13 +1478,15 @@ pub fn PublicIdentitiesPanel(
                                 button::Root {
                                     variant: button::ButtonVariant::Solid,
                                     class: "btn btn-primary",
-                                    disabled: name_empty,
+                                    disabled: name_empty || saving,
                                     onclick: move |_| {
                                         status_err.set(None);
-                                        let tik = compose_key.read().clone();
-                                        let n = draft_name.read().clone();
-                                        let b = draft_bio.read().clone();
-                                        let img = draft_image.read().clone();
+                                        let snap_ctx = pub_chart.context();
+                                        let tik = snap_ctx.identity_key.unwrap_or_default();
+                                        let n = snap_ctx.fields.name;
+                                        let b = snap_ctx.fields.description;
+                                        let img = snap_ctx.image.as_ref().map(issuer_image_to_data_url);
+                                        pub_chart.send(PublicIdentitiesEvent::Save);
                                         match svc_save_prof.save_public_identity_profile(
                                             &prof_save,
                                             &tik,
@@ -1455,7 +1495,7 @@ pub fn PublicIdentitiesPanel(
                                             img.as_deref(),
                                         ) {
                                             Ok(()) => {
-                                                mode.set("browsing");
+                                                pub_chart.send(PublicIdentitiesEvent::SaveDone);
                                                 let next = *rev.read() + 1;
                                                 rev.set(next);
                                                 toast.set(Some(ToastNotice {
@@ -1464,17 +1504,18 @@ pub fn PublicIdentitiesPanel(
                                                     tone: "success",
                                                 }));
                                             }
-                                            Err(e) => status_err.set(Some(e)),
+                                            Err(e) => pub_chart.send(PublicIdentitiesEvent::SaveError { error: e }),
                                         }
                                     },
-                                    button::Label { "Save" }
+                                    button::Label { if saving { "Saving…" } else { "Save" } }
                                 }
                                 button::Root {
                                     variant: button::ButtonVariant::Ghost,
                                     class: "btn btn-ghost",
+                                    disabled: saving,
                                     onclick: move |_| {
                                         status_err.set(None);
-                                        mode.set("browsing");
+                                        pub_chart.send(PublicIdentitiesEvent::Close);
                                     },
                                     button::Label { "Cancel" }
                                 }
@@ -1482,7 +1523,7 @@ pub fn PublicIdentitiesPanel(
                         }
                     }
                 }
-                if let Some(ref err) = *status_err.read() {
+                if let Some(err) = pub_ctx.error.clone().or_else(|| status_err.read().clone()) {
                     p { role: "alert", class: "identity-compose-status error", "{err}" }
                 }
             }
@@ -2982,7 +3023,7 @@ pub fn SettingSubpagePanel(
     profile: SessionSummary,
     snap: WalletSnapshot,
     mut snapshot: Signal<WalletSnapshot>,
-    app_machine: Signal<AppSessionMachine>,
+    app_machine: AeonMachineHandle<AppMachine>,
     nav_child: Signal<Option<NavChild>>,
     mut toast: Signal<Option<ToastNotice>>,
 ) -> Element {
@@ -3481,7 +3522,7 @@ fn HistoryBackupPanel(
 fn WipeWalletPanel(
     snap: WalletSnapshot,
     mut snapshot: Signal<WalletSnapshot>,
-    mut app_machine: Signal<AppSessionMachine>,
+    app_machine: AeonMachineHandle<AppMachine>,
     mut nav_child: Signal<Option<NavChild>>,
     toast: Signal<Option<ToastNotice>>,
 ) -> Element {
@@ -3625,7 +3666,15 @@ fn WipeWalletPanel(
                                     wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_sync_wipe.read_snapshot());
                                     nav_child.set(None);
-                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                    app_machine.reset(());
+                                    app_machine.send(AppEvent::Bootstrapped {
+                                        has_vault: false,
+                                        version: APP_VERSION.to_string(),
+                                        orphaned_toolbox: false,
+                                    });
+                                    app_machine.send(AppEvent::Bridge {
+                                        online: snap.bridge_online,
+                                    });
                                 }
                                 Err(e) => {
                                     wipe_chart.send(WipeEvent::Fail { error: e.clone() });
@@ -3655,7 +3704,15 @@ fn WipeWalletPanel(
                                     wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_force_wipe.read_snapshot());
                                     nav_child.set(None);
-                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                    app_machine.reset(());
+                                    app_machine.send(AppEvent::Bootstrapped {
+                                        has_vault: false,
+                                        version: APP_VERSION.to_string(),
+                                        orphaned_toolbox: false,
+                                    });
+                                    app_machine.send(AppEvent::Bridge {
+                                        online: snap.bridge_online,
+                                    });
                                 }
                                 Err(e) => {
                                     wipe_chart.send(WipeEvent::Fail { error: e.clone() });
@@ -3686,7 +3743,15 @@ fn WipeWalletPanel(
                                     wipe_chart.send(WipeEvent::Success);
                                     snapshot.set(svc_wipe.read_snapshot());
                                     nav_child.set(None);
-                                    app_machine.set(AppSessionMachine::new(false, None, 0, snap.bridge_online));
+                                    app_machine.reset(());
+                                    app_machine.send(AppEvent::Bootstrapped {
+                                        has_vault: false,
+                                        version: APP_VERSION.to_string(),
+                                        orphaned_toolbox: false,
+                                    });
+                                    app_machine.send(AppEvent::Bridge {
+                                        online: snap.bridge_online,
+                                    });
                                 }
                                 Err(e) => {
                                     wipe_chart.send(WipeEvent::Fail { error: e.clone() });
@@ -4148,16 +4213,26 @@ pub fn ChartAppsPanel(
     let initial_selected = initial_app_id
         .as_ref()
         .and_then(|id| apps.iter().find(|a| &a.id == id).cloned());
+    let initial_verified = initial_selected.as_ref().is_some_and(|a| a.verified);
     let initial_state_val = initial_selected
         .as_ref()
         .map(|a| a.initial_state.clone())
         .unwrap_or_default();
-    let mut selected_app = use_signal(move || initial_selected);
+    let chart_apps = use_aeon_machine_with::<ChartAppsMachine>(ChartAppsInput {
+        app_id: initial_selected.as_ref().map(|a| a.id.clone()),
+        verified: initial_verified,
+    });
     let mut active_state = use_signal(move || initial_state_val);
-    let mut reviewing = use_signal(|| false);
 
-    if let Some(app) = selected_app.read().clone() {
-        if *reviewing.read() {
+    let chart_state = chart_apps.state();
+    let chart_ctx = chart_apps.context();
+    let selected_app = chart_ctx
+        .app_id
+        .as_deref()
+        .and_then(|id| apps.iter().find(|a| a.id == id).cloned());
+
+    if let Some(app) = selected_app {
+        if chart_state == ChartAppsState::Reviewing {
             let author_id = app.author_identity_key.clone();
             let author_name = app.author_name.clone();
             let verified = app.verified;
@@ -4167,6 +4242,7 @@ pub fn ChartAppsPanel(
                 div {
                     class: "nav-child-panel",
                     "data-aeon-scope": "chart-app-review",
+                    "data-aeon-state": "{chart_apps.state_attr()}",
                     style: "display: flex; flex-direction: column; gap: 12px;",
                     h3 { "{app.name}" }
                     p { class: "settings-row-desc", "{app.summary}" }
@@ -4207,16 +4283,17 @@ pub fn ChartAppsPanel(
                         button::Root {
                             variant: button::ButtonVariant::Solid,
                             class: "btn btn-primary",
+                            disabled: !verified,
                             onclick: move |_| {
                                 active_state.set(initial.clone());
-                                reviewing.set(false);
+                                chart_apps.send(ChartAppsEvent::Run);
                             },
                             button::Label { "Open app" }
                         }
                         button::Root {
                             variant: button::ButtonVariant::Ghost,
                             class: "btn btn-ghost",
-                            onclick: move |_| selected_app.set(None),
+                            onclick: move |_| chart_apps.reset(ChartAppsInput::default()),
                             button::Label { "Back to apps" }
                         }
                     }
@@ -4225,6 +4302,8 @@ pub fn ChartAppsPanel(
         }
 
         let cur_state = active_state.read().clone();
+        let app_id_review = app.id.clone();
+        let app_verified = app.verified;
         let state_obj = app
             .raw_json
             .get("states")
@@ -4259,13 +4338,18 @@ pub fn ChartAppsPanel(
                         button::Root {
                             variant: button::ButtonVariant::Ghost,
                             class: "btn btn-ghost",
-                            onclick: move |_| reviewing.set(true),
+                            onclick: move |_| {
+                                chart_apps.reset(ChartAppsInput {
+                                    app_id: Some(app_id_review.clone()),
+                                    verified: app_verified,
+                                });
+                            },
                             button::Label { "Review" }
                         }
                         button::Root {
                             variant: button::ButtonVariant::Ghost,
                             class: "btn btn-ghost",
-                            onclick: move |_| selected_app.set(None),
+                            onclick: move |_| chart_apps.reset(ChartAppsInput::default()),
                             button::Label { "Close" }
                         }
                     }
@@ -4303,50 +4387,58 @@ pub fn ChartAppsPanel(
     }
 
     rsx! {
-        div {
-            class: "nav-section-body settings-scroll",
-            "data-aeon-scope": "chart-apps",
-            p { class: "settings-hint",
-                "Chart apps are pure signed JSON statecharts. Every wallet action they request is declared up front and approved through your BRC-100 wallet."
-            }
-            section { class: "settings-group", "data-aeon-part": "builtin-apps",
-                h3 { class: "settings-group-title", "Verified apps ({apps.len()})" }
-                ul { class: "settings-list",
-                    for app in apps.iter() {
-                        {
-                            let app_open = app.clone();
-                            let app_review = app.clone();
-                            let initial = app.initial_state.clone();
-                            rsx! {
-                                li { key: "{app.id}",
-                                    list_row::Root { "data-aeon-layout": "control",
-                                        list_row::Leading {
-                                            span { class: "settings-row-icon", "data-tone": "default",
-                                                AppsIcon { size: 20 }
-                                            }
-                                        }
-                                        list_row::Label { "{app.name}" }
-                                        list_row::Description { "{app.summary}" }
-                                        list_row::Trailing {
-                                            div { class: "actions", style: "display: flex; gap: 6px;",
-                                                button::Root {
-                                                    variant: button::ButtonVariant::Ghost,
-                                                    class: "btn btn-ghost settings-action-btn",
-                                                    onclick: move |_| {
-                                                        reviewing.set(true);
-                                                        selected_app.set(Some(app_review.clone()));
-                                                    },
-                                                    button::Label { "Review" }
+            div {
+                class: "nav-section-body settings-scroll",
+                "data-aeon-scope": "chart-apps",
+                "data-aeon-state": "{chart_apps.state_attr()}",
+                p { class: "settings-hint",
+                    "Chart apps are pure signed JSON statecharts. Every wallet action they request is declared up front and approved through your BRC-100 wallet."
+                }
+                section { class: "settings-group", "data-aeon-part": "builtin-apps",
+                    h3 { class: "settings-group-title", "Verified apps ({apps.len()})" }
+                    ul { class: "settings-list",
+                        for app in apps.iter() {
+                            {
+                                let app_id_open = app.id.clone();
+                                let app_id_review = app.id.clone();
+                                let app_verified = app.verified;
+                                let initial = app.initial_state.clone();
+                                rsx! {
+                                    li { key: "{app.id}",
+                                        list_row::Root { "data-aeon-layout": "control",
+                                            list_row::Leading {
+                                                span { class: "settings-row-icon", "data-tone": "default",
+                                                    AppsIcon { size: 20 }
                                                 }
-                                                button::Root {
-                                                    variant: button::ButtonVariant::Solid,
-                                                    class: "btn btn-primary settings-action-btn",
-                                                    onclick: move |_| {
-                                                        active_state.set(initial.clone());
-                                                        reviewing.set(false);
-                                                        selected_app.set(Some(app_open.clone()));
-                                                    },
-                                                    button::Label { "Open" }
+                                            }
+                                            list_row::Label { "{app.name}" }
+                                            list_row::Description { "{app.summary}" }
+                                            list_row::Trailing {
+                                                div { class: "actions", style: "display: flex; gap: 6px;",
+                                                    button::Root {
+                                                        variant: button::ButtonVariant::Ghost,
+                                                        class: "btn btn-ghost settings-action-btn",
+                                                        onclick: move |_| {
+                                                            chart_apps.send(ChartAppsEvent::Open {
+                                                                app_id: app_id_review.clone(),
+                                                                verified: app_verified,
+                                                            });
+                                                        },
+                                                        button::Label { "Review" }
+                                                    }
+                                                    button::Root {
+                                                        variant: button::ButtonVariant::Solid,
+                                                        class: "btn btn-primary settings-action-btn",
+                                                        onclick: move |_| {
+                                                            active_state.set(initial.clone());
+                                                            chart_apps.send(ChartAppsEvent::Open {
+                                                                app_id: app_id_open.clone(),
+                                                                verified: app_verified,
+                                                            });
+                                                            chart_apps.send(ChartAppsEvent::Run);
+                                                        },
+                                                        button::Label { "Open" }
+                                                    }
                                                 }
                                             }
                                         }
@@ -4357,6 +4449,5 @@ pub fn ChartAppsPanel(
                     }
                 }
             }
-        }
     }
 }

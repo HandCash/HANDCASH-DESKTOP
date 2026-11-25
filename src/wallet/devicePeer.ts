@@ -92,6 +92,7 @@ export async function fetchDevicePeerIdentities(
   expectedIdentityKey: string,
   rootKeyHex: string,
   timeoutMs = 10_000,
+  allowedIdentityKeys?: Iterable<string>,
 ): Promise<DevicePeerIdentitiesBundle> {
   const data = await getSealed<DevicePeerIdentitiesBundle>(
     peerBaseUrl,
@@ -99,7 +100,13 @@ export async function fetchDevicePeerIdentities(
     rootKeyHex,
     timeoutMs,
   )
-  if (data.identityKey.toLowerCase() !== expectedIdentityKey.toLowerCase()) {
+  const allowed = new Set<string>([expectedIdentityKey.toLowerCase()])
+  if (allowedIdentityKeys) {
+    for (const k of allowedIdentityKeys) {
+      if (k) allowed.add(k.toLowerCase())
+    }
+  }
+  if (!allowed.has(data.identityKey.toLowerCase())) {
     throw new Error('Peer identity mismatch on identities')
   }
   return data

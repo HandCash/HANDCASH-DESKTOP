@@ -15,8 +15,12 @@
 use crate::icons::{CheckIcon, CloseIcon, CollectablesIcon};
 use crate::ui::apps::{AppAvatar, ScopeIcon};
 use crate::ui::primitives::DeferredImage;
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, prompt, segment_group};
 use dioxus::prelude::*;
+use handcash_machines::permission_decision::{
+    PermissionDecisionEvent, PermissionDecisionMachine, PermissionDecisionState,
+};
 
 pub const DEFAULT_AUTO_PAY_MAX_USD: f64 = 1.0;
 pub const DEFAULT_AUTO_PAY_WINDOW_HOURS: u32 = 24;
@@ -660,24 +664,27 @@ pub fn PermissionRequestPanel(
     #[props(default)] on_allow: Option<EventHandler<Option<AutoPayChoice>>>,
     #[props(default)] on_deny: Option<EventHandler<()>>,
 ) -> Element {
+    let decision = use_aeon_machine::<PermissionDecisionMachine>();
     let mut ap_enabled = use_signal(|| false);
     let mut ap_max_usd = use_signal(|| DEFAULT_AUTO_PAY_MAX_USD.to_string());
     let mut ap_hours = use_signal(|| DEFAULT_AUTO_PAY_WINDOW_HOURS.to_string());
     let mut duration = use_signal(|| pending.grant_duration.clone());
     let mut accept_incoming = use_signal(|| false);
 
+    let committing = decision.state() == PermissionDecisionState::Committing;
     let is_connect = pending.kind == "connect";
     let show_auto_pay =
         is_connect || is_auto_payable_action(Some(&pending.kind), &pending.method, Some(&pending.title));
     let show_accept_incoming = !is_connect && pending.title == "Accept incoming funds";
     let limits_bad = auto_pay_limits_invalid(*ap_enabled.read(), &ap_max_usd.read(), &ap_hours.read());
     let gated = !is_connect && pending.signing_required && signing_gated;
-    let allow_disabled = gated || (show_auto_pay && pending.monthly_cap.is_none() && limits_bad);
+    let allow_disabled =
+        committing || gated || (show_auto_pay && pending.monthly_cap.is_none() && limits_bad);
 
     let actions = WalletRequestActions {
         aria_label: "Permission decision".to_string(),
         secondary_label: "Deny".to_string(),
-        secondary_disabled: false,
+        secondary_disabled: committing,
         primary_label: if gated { "Signing unavailable".to_string() } else { "Approve".to_string() },
         primary_disabled: allow_disabled,
     };
@@ -686,10 +693,15 @@ pub fn PermissionRequestPanel(
     } else {
         "action-permission-inline"
     };
-    let state = if gated { "unavailable" } else { "pending" };
+    let state = if gated {
+        "unavailable".to_string()
+    } else {
+        decision.state_attr()
+    };
 
     let on_primary = EventHandler::new(move |_| {
         if allow_disabled { return; }
+        decision.send(PermissionDecisionEvent::Approve);
         let choice = if show_auto_pay {
             Some(AutoPayChoice {
                 enabled: *ap_enabled.read(),
@@ -701,14 +713,19 @@ pub fn PermissionRequestPanel(
         };
         if let Some(cb) = on_allow { cb.call(choice); }
     });
+    let on_secondary = EventHandler::new(move |_| {
+        if committing { return; }
+        decision.send(PermissionDecisionEvent::Cancel);
+        if let Some(cb) = on_deny { cb.call(()); }
+    });
 
     rsx! {
         WalletRequestTemplate {
             scope: scope.to_string(),
-            state: Some(state.to_string()),
+            state: Some(state),
             actions,
             placement,
-            on_secondary: on_deny,
+            on_secondary: Some(on_secondary),
             on_primary: Some(on_primary),
             div { class: "connect-app-hero",
                 AppAvatar { origin: pending.origin.clone(), name: pending.app_name.clone(), size: "md" }

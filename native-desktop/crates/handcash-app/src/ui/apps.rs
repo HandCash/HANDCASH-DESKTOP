@@ -16,9 +16,12 @@ use crate::state::{
 use crate::ui::chrome::{ActionIcon, ActionTone, DockActionSpec, DockSpec, DockTrigger};
 use crate::ui::collectables::CollectionViewToggle;
 use crate::ui::EmptyState;
-use aeon_dioxus::use_aeon_machine;
+use aeon_dioxus::{use_aeon_machine, use_aeon_machine_with};
 use aeon_ui::button;
 use dioxus::prelude::*;
+use handcash_machines::app_launcher::{AppLauncherEvent, AppLauncherMachine};
+use handcash_machines::dev_keys_panel::DevKeysPanelMachine;
+use handcash_machines::grant_expiry::{GrantExpiryInput, GrantExpiryMachine, GrantExpiryState};
 use handcash_machines::notes::{Note as MachineNote, NotesEvent, NotesMachine, NotesState};
 use std::sync::Arc;
 
@@ -93,27 +96,29 @@ pub fn AppAvatar(
 #[component]
 pub fn GrantExpiryLine(#[props(default)] expires_at: Option<i64>) -> Element {
     let now = now_ms();
-    let (state, text) = match expires_at {
-        None => ("active", "Connected until you disconnect".to_string()),
-        Some(ts) if ts <= now => ("expired", "Expired".to_string()),
-        Some(ts) => {
+    let expiry = use_aeon_machine_with::<GrantExpiryMachine>(GrantExpiryInput { expires_at, now });
+    let expiry_state = expiry.state();
+    let state_attr = expiry.state_attr();
+    let text = match (expiry_state, expires_at) {
+        (_, None) => "Connected until you disconnect".to_string(),
+        (GrantExpiryState::Expired | GrantExpiryState::Revoked, _) => "Expired".to_string(),
+        (_, Some(ts)) => {
             let rem_ms = ts.saturating_sub(now);
             let mins = (rem_ms / 60_000).max(1);
-            let label = if mins < 60 {
+            if mins < 60 {
                 format!("Expires in {mins}m")
             } else if mins < 24 * 60 {
                 format!("Expires in {}h", mins / 60)
             } else {
                 format!("Expires in {}d", mins / (24 * 60))
-            };
-            ("active", label)
+            }
         }
     };
     rsx! {
         p {
             class: "grant-expiry",
             "data-aeon-scope": "grant-expiry",
-            "data-aeon-state": state,
+            "data-aeon-state": "{state_attr}",
             "{text}"
         }
     }
@@ -164,7 +169,7 @@ pub fn ConnectedAppsPanel(
     let _ = snap;
     let services = use_context::<Arc<AppServices>>();
     let mut query = use_signal(String::new);
-    let mut focused_tile = use_signal(|| Option::<String>::None);
+    let launcher = use_aeon_machine::<AppLauncherMachine>();
 
     let apps = services.list_connected_apps();
     let charts = use_hook(load_builtin_chart_apps);
@@ -205,7 +210,8 @@ pub fn ConnectedAppsPanel(
         });
     }
 
-    let cur_focused = focused_tile.read().clone();
+    let cur_focused = launcher.context().focused;
+    let launcher_state_attr = launcher.state_attr();
 
     rsx! {
         div {
@@ -248,7 +254,7 @@ pub fn ConnectedAppsPanel(
                     } else {
                         ul {
                             "data-aeon-scope": "app-launcher",
-                            "data-aeon-state": if cur_focused.is_some() { "focused" } else { "idle" },
+                            "data-aeon-state": "{launcher_state_attr}",
                             for tile in tiles.iter() {
                                 {
                                     let tid = tile.id.clone();
@@ -313,6 +319,7 @@ pub fn ConnectedAppsPanel(
                                                 aria_expanded: is_open,
                                                 title: "{tlabel}",
                                                 onclick: move |_| {
+                                                    launcher.send(AppLauncherEvent::Tap { id: tid.clone() });
                                                     if is_open {
                                                         match &tkind {
                                                             LauncherTileKind::NativeNotes => {
@@ -325,8 +332,6 @@ pub fn ConnectedAppsPanel(
                                                                 nav_child.set(Some(NavChild::AppDetails(app.origin.clone())));
                                                             }
                                                         }
-                                                    } else {
-                                                        focused_tile.set(Some(tid.clone()));
                                                     }
                                                 },
                                                 {icon_el}
@@ -834,6 +839,8 @@ pub fn NotesPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
 #[component]
 pub fn DevKeysPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
     let services = use_context::<Arc<AppServices>>();
+    let dev_keys_chart = use_aeon_machine::<DevKeysPanelMachine>();
+    let dev_keys_state = dev_keys_chart.state_attr();
     let mut keys = use_signal(|| services.list_dev_keys());
     let mut label_input = use_signal(String::new);
     let mut latest_env = use_signal(|| Option::<String>::None);
@@ -846,6 +853,7 @@ pub fn DevKeysPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
         div {
             class: "nav-section-body settings-detail settings-scroll",
             "data-aeon-scope": "dev-keys",
+            "data-aeon-state": "{dev_keys_state}",
             div { style: "display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px;",
                 div {
                     h3 { "Developer keys" }

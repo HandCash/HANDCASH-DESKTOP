@@ -17,8 +17,12 @@ use crate::state::{
 };
 use crate::ui::primitives::LoadingSpinner;
 use crate::ui::EmptyState;
+use aeon_dioxus::use_aeon_machine_with;
 use aeon_ui::button;
 use dioxus::prelude::*;
+use handcash_machines::pairing_code::{
+    PairingCodeEvent, PairingCodeInput, PairingCodeMachine, PairingCodeState,
+};
 use handcash_storage::ActivityRow;
 use std::collections::BTreeSet;
 
@@ -905,27 +909,42 @@ pub fn PairingCodeEntry(
     #[props(default)] error: Option<String>,
     #[props(default)] on_complete: Option<EventHandler<String>>,
 ) -> Element {
-    let mut digits = use_signal(String::new);
-    let busy = state == "verifying" || state == "sending";
+    let pairing = use_aeon_machine_with::<PairingCodeMachine>(PairingCodeInput {
+        length,
+        attempts_left: attempts_left as u32,
+    });
+    let pairing_state = pairing.state();
+    let pairing_ctx = pairing.context();
+    let effective_state = if state == "idle" {
+        match pairing_state {
+            PairingCodeState::Entering => "idle",
+            other => other.as_str(),
+        }
+    } else {
+        state
+    };
+    let busy = effective_state == "verifying" || effective_state == "sending";
     let placeholder = "•".repeat(length);
-    let cur_digits = digits.read().clone();
-    let attempts_label = if attempts_left == 1 {
+    let cur_digits = pairing_ctx.digits;
+    let shown_attempts = pairing_ctx.attempts_left as usize;
+    let attempts_label = if shown_attempts == 1 {
         "1 attempt left".to_string()
     } else {
-        format!("{attempts_left} attempts left")
+        format!("{shown_attempts} attempts left")
     };
+    let shown_error = error.or(pairing_ctx.error);
 
     rsx! {
-        div { "data-aeon-scope": "pairing-code", "data-aeon-state": state,
-            if state == "approved" {
+        div { "data-aeon-scope": "pairing-code", "data-aeon-state": effective_state,
+            if effective_state == "approved" {
                 p { class: "signin-note", role: "status", "{label} is signed in." }
-            } else if state == "ended" {
+            } else if effective_state == "ended" {
                 p { class: "signin-error", role: "alert",
-                    {error.unwrap_or_else(|| format!("{label} was not signed in."))}
+                    {shown_error.unwrap_or_else(|| format!("{label} was not signed in."))}
                 }
             } else {
                 p { class: "signin-note",
-                    if state == "sending" {
+                    if effective_state == "sending" {
                         "Code accepted. Waiting for {label} to install and open its wallet…"
                     } else {
                         "Type the numbers shown on {label} to sign it in."
@@ -946,20 +965,18 @@ pub fn PairingCodeEntry(
                     disabled: busy,
                     "data-aeon-part": "digits",
                     oninput: move |e| {
-                        let prev = digits.read().clone();
-                        let next_val = e.value();
-                        if let Some(accepted) = accept_single_pairing_digit(&prev, &next_val, length) {
-                            let done = accepted.len() == length;
-                            digits.set(accepted.clone());
-                            if done {
-                                if let Some(cb) = on_complete {
-                                    cb.call(accepted);
-                                }
+                        let before = pairing.state();
+                        pairing.send(PairingCodeEvent::Type { value: e.value() });
+                        if before == PairingCodeState::Entering
+                            && pairing.state() == PairingCodeState::Verifying
+                        {
+                            if let Some(cb) = on_complete {
+                                cb.call(pairing.context().digits);
                             }
                         }
                     },
                 }
-                if let Some(ref err) = error {
+                if let Some(ref err) = shown_error {
                     p { class: "signin-error", role: "alert", "{err}" }
                 }
                 p { class: "signin-note", "data-aeon-part": "attempts", "{attempts_label}" }

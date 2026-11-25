@@ -9,8 +9,12 @@
 
 use crate::icons::{FileIcon, KeyIcon};
 use crate::ui::primitives::{DeferredImage, SearchField, SettingsSection};
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, field, status_banner};
 use dioxus::prelude::*;
+use handcash_machines::legacy_import::{
+    LegacyImportEvent, LegacyImportMachine, LegacyImportSourceState, LegacyImportState,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ImportSourceKind {
@@ -440,43 +444,68 @@ pub fn ImportSourceView(
 /// 1:1 port of `src/components/import/ImportPanel.tsx`.
 #[component]
 pub fn ImportPanel() -> Element {
-    let mut picked_kind = use_signal(|| Option::<ImportSourceKind>::None);
-    let mut selected_source = use_signal(|| Option::<ImportedSourceView>::None);
-    let mut browsing_items = use_signal(|| false);
+    let import_chart = use_aeon_machine::<LegacyImportMachine>();
+    use_hook(move || {
+        import_chart.send(LegacyImportEvent::Loaded);
+        import_chart.send(LegacyImportEvent::Add);
+    });
+    let import_state = import_chart.state();
+    let import_ctx = import_chart.context();
+    let state_attr = import_chart.state_attr();
 
-    if let Some(kind) = *picked_kind.read() {
-        return rsx! {
-            div { class: "nav-child-panel", "data-aeon-scope": "legacy-import", "data-aeon-state": "entering",
-                ImportSecretForm {
-                    kind,
-                    on_submit: move |_| {},
-                    on_back: move |_| picked_kind.set(None),
+    let picked_kind = import_ctx.kind.as_deref().and_then(|k| match k {
+        "handcash" => Some(ImportSourceKind::HandCash),
+        "twetch" => Some(ImportSourceKind::Twetch),
+        "yours" => Some(ImportSourceKind::Yours),
+        "phrase" => Some(ImportSourceKind::Phrase),
+        "wif" => Some(ImportSourceKind::Wif),
+        _ => None,
+    });
+
+    if matches!(import_state, LegacyImportState::Entering) {
+        if let Some(kind) = picked_kind {
+            return rsx! {
+                div { class: "nav-child-panel", "data-aeon-scope": "legacy-import", "data-aeon-state": "{state_attr}",
+                    ImportSecretForm {
+                        kind,
+                        on_submit: move |_| import_chart.send(LegacyImportEvent::Submit),
+                        on_back: move |_| import_chart.send(LegacyImportEvent::Back),
+                    }
                 }
-            }
-        };
+            };
+        }
     }
 
-    if let Some(src) = selected_source.read().clone() {
-        if *browsing_items.read() {
+    if let LegacyImportState::Source(sub) = import_state {
+        let source_id = import_ctx.source_id.clone().unwrap_or_default();
+        let src = ImportedSourceView {
+            id: source_id.clone(),
+            kind: picked_kind.unwrap_or(ImportSourceKind::Phrase),
+            label: if source_id.is_empty() { "Imported wallet".to_string() } else { source_id },
+            cash_sats: 0,
+            item_count: 0,
+            scan_complete: false,
+        };
+        if sub == LegacyImportSourceState::Browsing {
             return rsx! {
                 ImportItemBrowser {
                     source_label: src.label,
                     items: Vec::new(),
-                    on_back: move |_| browsing_items.set(false),
+                    on_back: move |_| import_chart.send(LegacyImportEvent::Back),
                 }
             };
         }
         return rsx! {
             ImportSourceView {
                 source: src,
-                on_open_items: move |_| browsing_items.set(true),
-                on_back: move |_| selected_source.set(None),
+                on_open_items: move |_| import_chart.send(LegacyImportEvent::Browse),
+                on_back: move |_| import_chart.send(LegacyImportEvent::Back),
             }
         };
     }
 
     rsx! {
-        div { class: "nav-child-panel", "data-aeon-scope": "legacy-import", "data-aeon-state": "picking",
+        div { class: "nav-child-panel", "data-aeon-scope": "legacy-import", "data-aeon-state": "{state_attr}",
             SettingsSection { title: "From a wallet".to_string(), part: Some("kinds".to_string()),
                 ul { class: "settings-list",
                     for kind in [ImportSourceKind::HandCash, ImportSourceKind::Twetch, ImportSourceKind::Yours] {
@@ -484,7 +513,7 @@ pub fn ImportPanel() -> Element {
                             button {
                                 r#type: "button",
                                 class: "settings-row",
-                                onclick: move |_| picked_kind.set(Some(kind)),
+                                onclick: move |_| import_chart.send(LegacyImportEvent::Pick { kind: kind.as_str().to_string() }),
                                 ImportSourceIcon { kind }
                                 div { class: "settings-row-copy",
                                     strong { "{kind.label()}" }
@@ -502,7 +531,7 @@ pub fn ImportPanel() -> Element {
                             button {
                                 r#type: "button",
                                 class: "settings-row",
-                                onclick: move |_| picked_kind.set(Some(kind)),
+                                onclick: move |_| import_chart.send(LegacyImportEvent::Pick { kind: kind.as_str().to_string() }),
                                 ImportSourceIcon { kind }
                                 div { class: "settings-row-copy",
                                     strong { "{kind.label()}" }

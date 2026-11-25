@@ -194,6 +194,66 @@ pub fn export_local_identity_bundle(services: &AppServices, summary: &SessionSum
     export_local_identity_bundle_with_limit(services, summary, MAX_LAN_BUNDLE_BYTES)
 }
 
+/// Non-secret presentation metadata for one vault account (never includes sealedKey).
+fn read_account_presentation(
+    services: &AppServices,
+    chain: &str,
+    account_index: u32,
+    identity_key: &str,
+) -> Option<Value> {
+    let ik_trim = identity_key.trim();
+    let ik_lower = normalize_issuer_identity_key(ik_trim)?;
+    let v = [
+        format!("handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{ik_trim}"),
+        format!("handcash.publicIdentities.v1:wallet:{chain}:{account_index}:{ik_lower}"),
+    ]
+    .iter()
+    .find_map(|k| services.durable.get(k))
+    .and_then(|r| serde_json::from_str::<Value>(&r).ok())?;
+
+    let mut published = serde_json::Map::new();
+    if let Some(arr) = v.get("identities").and_then(Value::as_array) {
+        for row in arr {
+            if let (Some(ik), Some(bap)) = (
+                row.get("identityKey")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key),
+                row.get("published")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_bap_id),
+            ) {
+                published.insert(ik, Value::String(bap));
+            }
+        }
+    }
+    let mut obj = serde_json::Map::new();
+    obj.insert("owner".into(), Value::String(ik_lower));
+    if let Some(s) = v
+        .get("selected")
+        .and_then(Value::as_str)
+        .and_then(normalize_issuer_identity_key)
+    {
+        obj.insert("selected".into(), Value::String(s));
+    }
+    if let Some(p) = v
+        .get("presented")
+        .and_then(Value::as_str)
+        .and_then(normalize_issuer_identity_key)
+    {
+        obj.insert("presented".into(), Value::String(p));
+    }
+    if let Some(pa) = v.get("presentedAt").and_then(Value::as_str) {
+        obj.insert("presentedAt".into(), Value::String(pa.to_string()));
+    }
+    if v.get("unsigned").and_then(Value::as_bool) == Some(true) {
+        obj.insert("unsigned".into(), Value::Bool(true));
+    }
+    if !published.is_empty() {
+        obj.insert("published".into(), Value::Object(published));
+    }
+    Some(Value::Object(obj))
+}
+
 /// Export local identity bundle capped at `max_bytes` (e.g. 1.2 MB over LAN, 180 KB over messagebox).
 pub fn export_local_identity_bundle_with_limit(
     services: &AppServices,
@@ -212,55 +272,38 @@ pub fn export_local_identity_bundle_with_limit(
         .and_then(|v| v.get("links").cloned())
         .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()));
 
-    // Non-secret own presentation metadata (never includes sealedKey).
-    let ik_trim = summary.identity_key.trim();
-    let ik_lower = ik_trim.to_ascii_lowercase();
-    let own_presentation = [
-        format!("handcash.publicIdentities.v1:wallet:{chain}:{}:{ik_trim}", summary.account_index),
-        format!("handcash.publicIdentities.v1:wallet:{chain}:{}:{ik_lower}", summary.account_index),
-    ]
-    .iter()
-    .find_map(|k| services.durable.get(k))
-    .and_then(|r| serde_json::from_str::<Value>(&r).ok())
-    .map(|v| {
-        let mut published = serde_json::Map::new();
-        if let Some(arr) = v.get("identities").and_then(Value::as_array) {
-            for row in arr {
-                if let (Some(ik), Some(bap)) = (
-                    row.get("identityKey")
-                        .and_then(Value::as_str)
-                        .and_then(normalize_issuer_identity_key),
-                    row.get("published")
-                        .and_then(Value::as_str)
-                        .and_then(normalize_bap_id),
-                ) {
-                    published.insert(ik, Value::String(bap));
-                }
-            }
+    // Non-secret presentation metadata for active account + all locally held vault accounts.
+    let own_presentation =
+        read_account_presentation(services, chain, summary.account_index, &summary.identity_key);
+    let mut account_presentations: Vec<Value> = Vec::new();
+    let mut seen_owners = std::collections::HashSet::new();
+    if let Some(ref own) = own_presentation {
+        if let Some(owner) = own.get("owner").and_then(Value::as_str) {
+            seen_owners.insert(owner.to_string());
         }
-        let mut obj = serde_json::Map::new();
-        obj.insert("owner".into(), Value::String(ik_lower.clone()));
-        if let Some(s) = v.get("selected").and_then(Value::as_str).and_then(normalize_issuer_identity_key) {
-            obj.insert("selected".into(), Value::String(s));
+        account_presentations.push(own.clone());
+    }
+    for acc in services.list_vault_accounts() {
+        if !acc.held_here {
+            continue;
         }
-        if let Some(p) = v.get("presented").and_then(Value::as_str).and_then(normalize_issuer_identity_key) {
-            obj.insert("presented".into(), Value::String(p));
+        let Some(owner) = normalize_issuer_identity_key(&acc.identity_key) else {
+            continue;
+        };
+        if !seen_owners.insert(owner) {
+            continue;
         }
-        if let Some(pa) = v.get("presentedAt").and_then(Value::as_str) {
-            obj.insert("presentedAt".into(), Value::String(pa.to_string()));
+        if let Some(pres) = read_account_presentation(services, chain, acc.index, &acc.identity_key) {
+            account_presentations.push(pres);
         }
-        if v.get("unsigned").and_then(Value::as_bool) == Some(true) {
-            obj.insert("unsigned".into(), Value::Bool(true));
-        }
-        if !published.is_empty() {
-            obj.insert("published".into(), Value::Object(published));
-        }
-        Value::Object(obj)
-    });
+    }
 
     let mut used_bytes = 512usize;
     if let Some(ref c) = cards_map {
         used_bytes += c.to_string().len();
+    }
+    if !account_presentations.is_empty() {
+        used_bytes += Value::Array(account_presentations.clone()).to_string().len();
     }
 
     let prof_idx_key = format!("handcash.identityProfiles.v1:{chain}");
@@ -368,6 +411,12 @@ pub fn export_local_identity_bundle_with_limit(
         }
         if let Some(p) = own_presentation {
             obj.insert("ownPresentation".into(), p);
+        }
+        if !account_presentations.is_empty() {
+            obj.insert(
+                "accountPresentations".into(),
+                Value::Array(account_presentations),
+            );
         }
     }
     out
@@ -578,6 +627,95 @@ pub fn merge_remote_identity_bundle(
         }
     }
 
+    // 4. Link verified presented identities from `ownPresentation` + `accountPresentations`
+    //    into `handcash.identityCards.v1:{chain}` so every connected vault account resolves
+    //    its presented profile/BAP without writing custody stores.
+    let mut presentations: Vec<&Value> = Vec::new();
+    if let Some(p) = bundle.get("ownPresentation") {
+        presentations.push(p);
+    }
+    if let Some(arr) = bundle.get("accountPresentations").and_then(Value::as_array) {
+        for p in arr {
+            presentations.push(p);
+        }
+    }
+    if !presentations.is_empty() {
+        let fallback_issued = crate::messagebox::iso_utc_from_ms(
+            bundle
+                .get("exportedAt")
+                .and_then(Value::as_i64)
+                .filter(|t| *t > 0)
+                .unwrap_or(now),
+        );
+        let cards_key = format!("handcash.identityCards.v1:{chain}");
+        let mut doc = services
+            .durable
+            .get(&cards_key)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .unwrap_or_else(|| json!({ "version": 1, "links": {} }));
+        let mut pres_added = 0usize;
+        if let Some(links) = doc.get_mut("links").and_then(Value::as_object_mut) {
+            for pres in presentations {
+                let Some(owner) = pres
+                    .get("owner")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key)
+                else {
+                    continue;
+                };
+                let presented_key = pres
+                    .get("presented")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key)
+                    .unwrap_or_else(|| owner.clone());
+                let published_bap = pres
+                    .get("published")
+                    .and_then(Value::as_object)
+                    .and_then(|m| {
+                        m.get(&presented_key)
+                            .or_else(|| m.get(&owner))
+                            .and_then(Value::as_str)
+                            .and_then(normalize_bap_id)
+                    });
+                let has_key_profile = services.identity_profile_for(chain, &presented_key).is_some()
+                    || services
+                        .linked_bap_identity_for_key(chain, &presented_key)
+                        .is_some();
+                let verified_bap = published_bap
+                    .as_deref()
+                    .filter(|bid| services.bap_identity_for(chain, bid).is_some());
+                if !has_key_profile && verified_bap.is_none() {
+                    continue;
+                }
+                let issued_at = pres
+                    .get("presentedAt")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&fallback_issued);
+                let prior_issued = links
+                    .get(&owner)
+                    .and_then(|p| p.get("issuedAt").and_then(Value::as_str))
+                    .unwrap_or("");
+                if !prior_issued.is_empty() && prior_issued >= issued_at {
+                    continue;
+                }
+                let link_val = if has_key_profile {
+                    json!({ "key": presented_key, "issuedAt": issued_at, "receivedAt": now })
+                } else {
+                    json!({ "bapId": verified_bap.unwrap(), "issuedAt": issued_at, "receivedAt": now })
+                };
+                links.insert(owner, link_val);
+                pres_added += 1;
+            }
+        }
+        if pres_added > 0 {
+            if let Ok(raw) = serde_json::to_string(&doc) {
+                let _ = services.durable.set(&cards_key, &raw, false);
+            }
+            stats.cards_added += pres_added;
+        }
+    }
+
     stats
 }
 
@@ -626,24 +764,65 @@ pub fn handle_direct_device_peer_request(
         return error_reply(404, "NOT_FOUND", "Unknown device-peer route");
     }
 
-    let (root_key, summary) = {
+    let (auth_candidates, summary) = {
         let Ok(guard) = services.session.lock() else {
             return error_reply(503, "WALLET_LOCKED", "Session unavailable.");
         };
         let Some(ref active) = *guard else {
             return error_reply(503, "WALLET_LOCKED", "Unlock HandCash on this device first.");
         };
-        (active.deriver.root_key().clone(), active.summary.clone())
+        let mut candidates: Vec<SecretKeyBytes> = vec![active.deriver.root_key().clone()];
+        if route == "/handcash-device/v1/identities" {
+            // Non-custodial identity bundle: accept auth from any locally held account
+            // or the vault coordination identity (account 0), matching vault-link.
+            let mut seen_iks = std::collections::HashSet::new();
+            if let Ok(ik) = active.deriver.root_key().public_key_hex() {
+                seen_iks.insert(ik.to_ascii_lowercase());
+            }
+            let store_key = format!(
+                "{}{}",
+                crate::state::VAULT_ACCOUNTS_PREFIX,
+                active.vault.record.identity_key
+            );
+            let mut held_indices: Vec<u32> = vec![0];
+            if let Some(raw) = services.durable.get(&store_key) {
+                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(arr) = v.get("accounts").and_then(Value::as_array) {
+                        for item in arr {
+                            let idx = item.get("index").and_then(Value::as_u64).unwrap_or(0) as u32;
+                            let held_here = item
+                                .get("holding")
+                                .and_then(|h| h.get("kind"))
+                                .and_then(Value::as_str)
+                                .map(|k| k == "here")
+                                .unwrap_or(true);
+                            if held_here && !held_indices.contains(&idx) {
+                                held_indices.push(idx);
+                            }
+                        }
+                    }
+                }
+            }
+            for idx in held_indices {
+                if let Ok(k) = active.vault.master.account_private_key(idx) {
+                    if let Ok(ik) = k.public_key_hex() {
+                        if seen_iks.insert(ik.to_ascii_lowercase()) {
+                            candidates.push(k);
+                        }
+                    }
+                }
+            }
+        }
+        (candidates, active.summary.clone())
     };
 
-    let Some(nonce) = verify_device_auth(
-        &root_key,
-        auth_header_value(headers),
-        &method_upper,
-        route,
-        replay,
-        now_ms(),
-    ) else {
+    let auth_hdr = auth_header_value(headers);
+    let now = now_ms();
+    let matched = auth_candidates.into_iter().find_map(|key| {
+        verify_device_auth(&key, auth_hdr, &method_upper, route, replay, now)
+            .map(|nonce| (key, nonce))
+    });
+    let Some((root_key, nonce)) = matched else {
         return error_reply(
             401,
             "DEVICE_AUTH_REQUIRED",
@@ -749,15 +928,67 @@ async fn sync_identities_inner(
     services: &Arc<AppServices>,
     manual: bool,
 ) -> Result<IdentityMergeStats, String> {
-    let (root_key, summary) = {
+    let accounts = services.list_vault_accounts();
+    let (summary, vault_account_keys, auth_candidates) = {
         let guard = services.session.lock().map_err(|e| e.to_string())?;
         let Some(ref active) = *guard else {
             return Err("Unlock HandCash first.".into());
         };
-        (active.deriver.root_key().clone(), active.summary.clone())
+        let mut vault_keys = std::collections::HashSet::new();
+        if let Some(ik) = normalize_issuer_identity_key(&active.summary.identity_key) {
+            vault_keys.insert(ik);
+        }
+        if let Some(ik) = normalize_issuer_identity_key(&active.vault.record.identity_key) {
+            vault_keys.insert(ik);
+        }
+        for acc in &accounts {
+            if let Some(ik) = normalize_issuer_identity_key(&acc.identity_key) {
+                vault_keys.insert(ik);
+            }
+        }
+        // Auth keys for non-custodial /identities fetches: locally held accounts + vault identity (account 0).
+        let mut candidates: Vec<(String, SecretKeyBytes)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let active_held = accounts
+            .iter()
+            .find(|a| a.index == active.summary.account_index)
+            .map(|a| a.held_here)
+            .unwrap_or(true);
+        if active_held {
+            let k = active.deriver.root_key().clone();
+            if let Ok(ik) = k.public_key_hex() {
+                let ik_l = ik.to_ascii_lowercase();
+                if seen.insert(ik_l.clone()) {
+                    candidates.push((ik_l, k));
+                }
+            }
+        }
+        for acc in &accounts {
+            if !acc.held_here {
+                continue;
+            }
+            if let Ok(k) = active.vault.master.account_private_key(acc.index) {
+                if let Ok(ik) = k.public_key_hex() {
+                    let ik_l = ik.to_ascii_lowercase();
+                    if seen.insert(ik_l.clone()) {
+                        candidates.push((ik_l, k));
+                    }
+                }
+            }
+        }
+        if let Ok(vroot) = active.vault.master.account_private_key(0) {
+            if let Ok(ik) = vroot.public_key_hex() {
+                let ik_l = ik.to_ascii_lowercase();
+                if seen.insert(ik_l.clone()) {
+                    candidates.push((ik_l, vroot));
+                }
+            }
+        }
+        (active.summary.clone(), vault_keys, candidates)
     };
 
-    let peers: Vec<String> = services
+    let mut seen_urls = std::collections::HashSet::new();
+    let peers: Vec<(String, String)> = services
         .durable
         .get(DEVICE_WALLETS_STORAGE_KEY)
         .and_then(|r| serde_json::from_str::<Value>(&r).ok())
@@ -768,66 +999,90 @@ async fn sync_identities_inner(
             if w.get("isLocal").and_then(Value::as_bool) == Some(true) {
                 return None;
             }
-            let ik = w.get("identityKey").and_then(Value::as_str)?;
-            if !ik.trim().eq_ignore_ascii_case(&summary.identity_key) {
+            let ik = w
+                .get("identityKey")
+                .and_then(Value::as_str)
+                .and_then(normalize_issuer_identity_key)?;
+            if !vault_account_keys.contains(&ik) {
                 return None;
             }
             let url = w.get("peerBaseUrl").and_then(Value::as_str)?.trim();
-            if url.starts_with("http://") || url.starts_with("https://") {
-                Some(url.trim_end_matches('/').to_string())
-            } else {
-                None
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return None;
             }
+            let clean = url.trim_end_matches('/').to_string();
+            if !seen_urls.insert(clean.clone()) {
+                return None;
+            }
+            Some((clean, ik))
         })
         .collect();
 
     let mut totals = IdentityMergeStats::default();
 
-    if !peers.is_empty() {
+    if !peers.is_empty() && !auth_candidates.is_empty() {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(6))
             .build()
             .map_err(|e| e.to_string())?;
         let route = "/handcash-device/v1/identities";
 
-        for base_url in peers {
-            let Ok((auth_hdr, nonce)) = create_device_auth(&root_key, "GET", route, now_ms())
-            else {
-                continue;
-            };
+        for (base_url, peer_expected_ik) in peers {
+            // Try the candidate matching the peer's recorded identityKey first, then other vault keys.
+            let mut ordered: Vec<&SecretKeyBytes> = Vec::with_capacity(auth_candidates.len());
+            for (ik, k) in &auth_candidates {
+                if *ik == peer_expected_ik {
+                    ordered.push(k);
+                }
+            }
+            for (ik, k) in &auth_candidates {
+                if *ik != peer_expected_ik {
+                    ordered.push(k);
+                }
+            }
             let url = format!("{base_url}{route}");
-            let Ok(resp) = client
-                .get(&url)
-                .header(DEVICE_PEER_AUTH_HEADER, auth_hdr)
-                .header("accept", "application/json")
-                .send()
-                .await
-            else {
-                continue;
-            };
-            if !resp.status().is_success() {
-                continue;
+            for root_key in ordered {
+                let Ok((auth_hdr, nonce)) = create_device_auth(root_key, "GET", route, now_ms())
+                else {
+                    continue;
+                };
+                let Ok(resp) = client
+                    .get(&url)
+                    .header(DEVICE_PEER_AUTH_HEADER, auth_hdr)
+                    .header("accept", "application/json")
+                    .send()
+                    .await
+                else {
+                    break;
+                };
+                if resp.status().as_u16() == 401 {
+                    continue;
+                }
+                if !resp.status().is_success() {
+                    break;
+                }
+                let Ok(body_val) = resp.json::<Value>().await else {
+                    break;
+                };
+                let Some(sealed) = body_val.get("sealed").and_then(Value::as_str) else {
+                    break;
+                };
+                let Ok(bundle) = open_from_peer(root_key, &nonce, sealed) else {
+                    break;
+                };
+                let peer_ik = bundle
+                    .get("identityKey")
+                    .and_then(Value::as_str)
+                    .and_then(normalize_issuer_identity_key);
+                if !peer_ik.is_some_and(|ik| vault_account_keys.contains(&ik)) {
+                    break;
+                }
+                let merged = merge_remote_identity_bundle(services, &summary.chain, &bundle);
+                totals.profiles_added += merged.profiles_added;
+                totals.bap_packages_added += merged.bap_packages_added;
+                totals.cards_added += merged.cards_added;
+                break;
             }
-            let Ok(body_val) = resp.json::<Value>().await else {
-                continue;
-            };
-            let Some(sealed) = body_val.get("sealed").and_then(Value::as_str) else {
-                continue;
-            };
-            let Ok(bundle) = open_from_peer(&root_key, &nonce, sealed) else {
-                continue;
-            };
-            let peer_ik = bundle
-                .get("identityKey")
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if !peer_ik.eq_ignore_ascii_case(&summary.identity_key) {
-                continue;
-            }
-            let merged = merge_remote_identity_bundle(services, &summary.chain, &bundle);
-            totals.profiles_added += merged.profiles_added;
-            totals.bap_packages_added += merged.bap_packages_added;
-            totals.cards_added += merged.cards_added;
         }
     }
 
@@ -963,5 +1218,90 @@ mod tests {
         let after = svc_b.resolve_issuer_display(&sum_b.chain, &sum_b.identity_key, None, true);
         assert_eq!(after.label, "Atlas Studio");
         assert_eq!(after.state, "verified");
+    }
+
+    #[test]
+    fn direct_identities_syncs_all_held_wallets_across_different_selected_accounts() {
+        let dir_a = temp_dir("multi-a");
+        let dir_b = temp_dir("multi-b");
+        let svc_a = AppServices::open_in(dir_a, false).unwrap();
+        let svc_b = AppServices::open_in(dir_b, false).unwrap();
+
+        let phrase = "absurd avoid scissors anxiety gather lottery category door army half long cage bachelor another expect people blade school educate curtain scrub monitor lady beyond";
+        let sum_a0 = svc_a
+            .restore_vault(
+                "alice",
+                phrase,
+                "",
+                "Pass1234!",
+                "main",
+                handcash_primitives::keys::MnemonicScheme::Brc157,
+            )
+            .unwrap();
+        let _sum_b0 = svc_b
+            .restore_vault(
+                "alice",
+                phrase,
+                "",
+                "Pass1234!",
+                "main",
+                handcash_primitives::keys::MnemonicScheme::Brc157,
+            )
+            .unwrap();
+
+        // Device A creates Account 1, saves a profile on Account 1, then switches back to Account 0.
+        let (acc_a1, sum_a1) = svc_a.create_vault_account().unwrap();
+        svc_a
+            .save_public_identity_profile(
+                &sum_a1,
+                &sum_a1.identity_key,
+                "Secondary Wallet",
+                "Not selected on A",
+                None,
+            )
+            .unwrap();
+        svc_a.switch_vault_account(0).unwrap();
+        svc_a
+            .save_public_identity_profile(&sum_a0, &sum_a0.identity_key, "Primary Wallet", "Selected on A", None)
+            .unwrap();
+
+        // Device B is on Account 1 (different selected account than Device A!).
+        let sum_b1 = svc_b.switch_vault_account(1).unwrap();
+        assert_eq!(sum_b1.identity_key, acc_a1.identity_key);
+        assert!(svc_b.account_profile_for(&sum_b1.chain, 0, &sum_a0.identity_key).is_none());
+        assert!(svc_b.account_profile_for(&sum_b1.chain, 1, &sum_a1.identity_key).is_none());
+
+        // Device B authenticates with its active Account 1 key while Device A has Account 0 selected.
+        let root_b1 = svc_b.session.lock().unwrap().as_ref().unwrap().deriver.root_key().clone();
+        let route = "/handcash-device/v1/identities";
+        let (hdr, nonce) = create_device_auth(&root_b1, "GET", route, now_ms()).unwrap();
+        let mut headers = HashMap::new();
+        headers.insert(DEVICE_PEER_AUTH_HEADER.to_string(), hdr);
+
+        let replay_a = Mutex::new(DeviceAuthReplayCache::default());
+        let reply = handle_direct_device_peer_request(&svc_a, &replay_a, "GET", route, &headers, "");
+        assert_eq!(reply.status, 200);
+
+        let body_val: Value = serde_json::from_str(&reply.body).unwrap();
+        let sealed = body_val.get("sealed").and_then(Value::as_str).unwrap();
+        let bundle = open_from_peer(&root_b1, &nonce, sealed).unwrap();
+        let pres = bundle
+            .get("accountPresentations")
+            .and_then(Value::as_array)
+            .expect("accountPresentations exported for all held accounts");
+        assert!(pres.len() >= 2);
+
+        let stats = merge_remote_identity_bundle(&svc_b, &sum_b1.chain, &bundle);
+        assert_eq!(stats.profiles_added, 2);
+        assert!(stats.cards_added >= 2);
+
+        let p0 = svc_b
+            .account_profile_for(&sum_b1.chain, 0, &sum_a0.identity_key)
+            .expect("Account 0 profile synced");
+        assert_eq!(p0.name, "Primary Wallet");
+        let p1 = svc_b
+            .account_profile_for(&sum_b1.chain, 1, &sum_a1.identity_key)
+            .expect("Account 1 profile synced");
+        assert_eq!(p1.name, "Secondary Wallet");
     }
 }

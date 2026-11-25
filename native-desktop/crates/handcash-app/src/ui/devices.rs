@@ -15,6 +15,7 @@ use dioxus::prelude::*;
 use handcash_machines::device_backup::{
     DeviceBackupEvent, DeviceBackupMachine, DeviceBackupState,
 };
+use handcash_machines::qr_scanner::{QrScannerEvent, QrScannerMachine, QrScannerState};
 use std::sync::Arc;
 
 /// 1:1 port of `src/components/QrScanner.tsx`.
@@ -28,16 +29,26 @@ pub fn QrScanner(
     on_scan: EventHandler<String>,
     on_cancel: EventHandler<()>,
 ) -> Element {
+    let scanner = use_aeon_machine::<QrScannerMachine>();
+    use_hook(move || {
+        scanner.send(QrScannerEvent::Fail {
+            error: "Camera capture is not available in this build".to_string(),
+        });
+    });
     let mut manual = use_signal(String::new);
     let cancel_visible = show_cancel.unwrap_or(layout != "fill");
     let trimmed = manual.read().trim().to_string();
     let can_submit = !trimmed.is_empty();
     let submit_val = trimmed.clone();
+    let scanner_state = match scanner.state() {
+        QrScannerState::Error => "unavailable",
+        other => other.as_str(),
+    };
     rsx! {
         div {
             class: "qr-scanner",
             "data-aeon-scope": "qr-scanner",
-            "data-aeon-state": "unavailable",
+            "data-aeon-state": "{scanner_state}",
             "data-layout": "{layout}",
             status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
                 status_banner::Copy {
@@ -63,6 +74,7 @@ pub fn QrScanner(
                     disabled: !can_submit,
                     onclick: move |_| {
                         if !submit_val.is_empty() {
+                            scanner.send(QrScannerEvent::Scanned);
                             on_scan.call(submit_val.clone());
                             manual.set(String::new());
                         }

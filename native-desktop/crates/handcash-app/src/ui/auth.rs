@@ -8,14 +8,14 @@
 
 use crate::icons::{EyeIcon, EyeOffIcon, ExpandMoreIcon, TickerCoinMark};
 use crate::machines::{
-    AppSessionEvent, AppSessionMachine, AuthFormMode, FiatCode, OnboardStep, RestoreRole,
-    ToastNotice,
+    session_to_wallet_profile, AuthFormMode, FiatCode, OnboardStep, RestoreRole, ToastNotice,
 };
 use crate::state::{AcceptedCoins, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::BrandLogo;
-use aeon_dioxus::use_aeon_machine;
+use aeon_dioxus::{use_aeon_machine, AeonMachineHandle};
 use aeon_ui::{button, field, list_row};
 use dioxus::prelude::*;
+use handcash_machines::app::{AppEvent, AppMachine};
 use handcash_machines::unlock::{
     password_progress, UnlockEvent, UnlockMachine, UnlockSetupFactor, UnlockState as MachineUnlockState,
 };
@@ -148,7 +148,7 @@ pub fn AuthShell(
 pub fn AuthFlow(
     is_locked: bool,
     mut auth_mode: Signal<AuthFormMode>,
-    mut app_machine: Signal<AppSessionMachine>,
+    app_machine: AeonMachineHandle<AppMachine>,
     mut snapshot: Signal<WalletSnapshot>,
     mut fiat_code: Signal<FiatCode>,
     mut fresh_mnemonic: Signal<Option<String>>,
@@ -754,13 +754,13 @@ pub fn AuthFlow(
                                                 let is_create = p_protect.is_create;
                                                 pending_onboard.set(None);
                                                 if is_create {
-                                                    app_machine.write().send(AppSessionEvent::Created {
-                                                        profile: sum,
+                                                    app_machine.send(AppEvent::Created {
+                                                        profile: session_to_wallet_profile(&sum),
                                                         balance_sats: sats,
                                                     });
                                                 } else {
-                                                    app_machine.write().send(AppSessionEvent::Unlocked {
-                                                        profile: sum,
+                                                    app_machine.send(AppEvent::Unlocked {
+                                                        profile: session_to_wallet_profile(&sum),
                                                         balance_sats: sats,
                                                     });
                                                 }
@@ -969,8 +969,8 @@ pub fn AuthFlow(
                                     let snap = svc_submit.read_snapshot();
                                     let sats = snap.balance.displayed_sats;
                                     snapshot.set(snap);
-                                    app_machine.write().send(AppSessionEvent::Unlocked {
-                                        profile: sum,
+                                    app_machine.send(AppEvent::Unlocked {
+                                        profile: session_to_wallet_profile(&sum),
                                         balance_sats: sats,
                                     });
                                     svc_submit.spawn_sync_identities_from_peers();

@@ -1305,6 +1305,46 @@ impl AppServices {
         list
     }
 
+    /// Read deduplicated contacts across all vault accounts on `chain` (non-custodial metadata).
+    pub fn list_all_vault_friends(
+        &self,
+        chain: &str,
+        accounts: &[VaultAccountRow],
+    ) -> Vec<FriendRecord> {
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        let mut keys: Vec<String> = Vec::new();
+        for acc in accounts {
+            let ik = acc.identity_key.trim();
+            if ik.is_empty() {
+                continue;
+            }
+            keys.push(format!("{FRIENDS_STORAGE_KEY}:{chain}:{ik}"));
+            let ik_lower = ik.to_ascii_lowercase();
+            if ik_lower != ik {
+                keys.push(format!("{FRIENDS_STORAGE_KEY}:{chain}:{ik_lower}"));
+            }
+        }
+        keys.push(self.friends_storage_key());
+        keys.push(FRIENDS_STORAGE_KEY.to_string());
+        for key in keys {
+            let Some(raw) = self.durable.get(&key) else {
+                continue;
+            };
+            let Ok(list) = serde_json::from_str::<Vec<FriendRecord>>(&raw) else {
+                continue;
+            };
+            for fr in list {
+                let dedupe = fr.identity_key.trim().to_ascii_lowercase();
+                if !dedupe.is_empty() && seen.insert(dedupe) {
+                    out.push(fr);
+                }
+            }
+        }
+        out.sort_by_key(|a| a.label.to_ascii_lowercase());
+        out
+    }
+
     fn save_friends(&self, friends: &[FriendRecord]) -> Result<(), String> {
         let scoped = self.friends_storage_key();
         let json = serde_json::to_string(friends).map_err(|e| e.to_string())?;

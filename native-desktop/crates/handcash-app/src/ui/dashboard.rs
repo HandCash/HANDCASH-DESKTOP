@@ -9,7 +9,7 @@ use crate::icons::{
     SwapIcon, TickerCoinMark,
 };
 use crate::machines::{
-    AppSessionMachine, DisplayCurrency, FiatCode, MarketCoin, NavChild, NavSection, PaymentFilters,
+    DisplayCurrency, FiatCode, MarketCoin, NavChild, NavSection, PaymentFilters,
     ToastNotice,
 };
 use crate::state::{
@@ -19,8 +19,10 @@ use crate::state::{
 use crate::theme::AppearancePreference;
 use crate::ui::chrome::{DockSpec, DockTrigger, WalletActionBarFooter, WalletActionBarNav};
 use crate::ui::{activity, apps, chrome, collectables, friends, panels, send, side};
+use aeon_dioxus::AeonMachineHandle;
 use aeon_ui::button;
 use dioxus::prelude::*;
+use handcash_machines::app::AppMachine;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -28,7 +30,7 @@ use std::sync::Arc;
 #[component]
 pub fn Dashboard(
     profile: SessionSummary,
-    app_machine: Signal<AppSessionMachine>,
+    app_machine: AeonMachineHandle<AppMachine>,
     mut snapshot: Signal<WalletSnapshot>,
     mut nav_section: Signal<NavSection>,
     mut nav_child: Signal<Option<NavChild>>,

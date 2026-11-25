@@ -238,4 +238,57 @@ describe('identityPeerSync & /handcash-device/v1/identities', { timeout: 30_000 
     await syncIdentitiesFromConnectedPeers({ identityKeys: [issuerPub] })
     expect(sentFrames.some((f) => f.device === 'peer-phone' && f.body.includes('identity-sync-request'))).toBe(true)
   })
+
+  it('exports and merges accountPresentations for all locally held wallets and resolves via accountProfile', async () => {
+    const acc0Pub = identityKey
+    const acc1Key = PrivateKey.fromRandom()
+    const acc1Pub = acc1Key.toPublicKey().toString().toLowerCase()
+    const acc1Presented = PrivateKey.fromRandom()
+    const acc1PresentedPub = acc1Presented.toPublicKey().toString().toLowerCase()
+
+    const prof0 = await signIdentityProfile({
+      master: root,
+      fields: { name: 'Wallet Zero', description: 'Primary' },
+      issuedAt: new Date(Date.now() - 2_000).toISOString(),
+    })
+    const prof1 = await signIdentityProfile({
+      master: acc1Presented,
+      fields: { name: 'Wallet One Brand', description: 'Non-selected held wallet' },
+      issuedAt: new Date(Date.now() - 1_000).toISOString(),
+    })
+    expect(rememberIdentityProfile('main', prof0)).toBe(true)
+    expect(rememberIdentityProfile('main', prof1)).toBe(true)
+    memStore.set(
+      `handcash.publicIdentities.v1:wallet:main:0:${acc0Pub}`,
+      JSON.stringify({ version: 2, owner: acc0Pub, chain: 'main', selected: acc0Pub, presented: acc0Pub, presentedAt: prof0.profile.issuedAt, identities: [] }),
+    )
+    memStore.set(
+      `handcash.publicIdentities.v1:wallet:main:1:${acc1Pub}`,
+      JSON.stringify({ version: 2, owner: acc1Pub, chain: 'main', selected: acc1PresentedPub, presented: acc1PresentedPub, presentedAt: prof1.profile.issuedAt, identities: [] }),
+    )
+
+    const bundle = exportLocalIdentityBundle({
+      chain: 'main',
+      accountIndex: 0,
+      identityKey: acc0Pub,
+      accounts: [
+        { index: 0, identityKey: acc0Pub, heldHere: true },
+        { index: 1, identityKey: acc1Pub, heldHere: true },
+      ],
+    })
+    expect(bundle.accountPresentations).toHaveLength(2)
+
+    // Wipe local store to simulate a second device holding neither local publicIdentities store
+    clearStore()
+    resetIdentityProfilesForTests()
+    resetIdentityCardsForTests()
+
+    const merged = await mergeRemoteIdentityBundle('main', bundle)
+    expect(merged.profilesAdded).toBe(2)
+    expect(merged.cardsAdded).toBe(2)
+
+    const { accountProfile } = await import('./publicIdentities')
+    expect(accountProfile({ chain: 'main', accountIndex: 0, identityKey: acc0Pub })?.name).toBe('Wallet Zero')
+    expect(accountProfile({ chain: 'main', accountIndex: 1, identityKey: acc1Pub })?.name).toBe('Wallet One Brand')
+  })
 })

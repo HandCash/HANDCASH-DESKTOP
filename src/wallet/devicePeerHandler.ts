@@ -15,6 +15,8 @@ import {
 } from './deviceWallets'
 import { listCollectables } from './collectables'
 import { exportLocalIdentityBundle } from './identityPeerSync'
+import { isHeldHere, readVaultAccounts, rootKeyHexForAccount } from './vaultAccounts'
+import { vaultIdentityKey } from './vaultMaster'
 import { handleScanLoginRequestAsync, isScanLoginPath } from './scanLogin/receiver'
 import {
   DEVICE_PEER_AUTH_HEADER,
@@ -80,8 +82,47 @@ export async function handleDevicePeerRequest(
   if (!active) {
     return errorResponse(503, 'WALLET_LOCKED', 'Unlock HandCash on this device first.')
   }
-  const nonce = await verifyDeviceAuth(active.rootKeyHex, authHeader(event.headers), method, route, replay)
-  if (!nonce) {
+  const authKeys: string[] = [active.rootKeyHex]
+  if (route === '/handcash-device/v1/identities' && active.vaultMaster) {
+    // Non-custodial identity bundle: accept auth from any locally held vault account
+    // or the vault coordination identity (account 0), matching vaultLink.
+    const seen = new Set<string>([active.rootKeyHex.toLowerCase()])
+    const addKey = (hex: string) => {
+      const low = hex.toLowerCase()
+      if (!seen.has(low)) {
+        seen.add(low)
+        authKeys.push(hex)
+      }
+    }
+    const store = readVaultAccounts(vaultIdentityKey(active.vaultMaster))
+    for (const acc of store.accounts) {
+      if (isHeldHere(acc)) {
+        try {
+          addKey(rootKeyHexForAccount(active.vaultMaster, acc.index))
+        } catch {
+          /* ignore derivation error */
+        }
+      }
+    }
+    try {
+      addKey(rootKeyHexForAccount(active.vaultMaster, 0))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  let matchedKey: string | null = null
+  let nonce: string | null = null
+  const hdr = authHeader(event.headers)
+  for (const key of authKeys) {
+    const verified = await verifyDeviceAuth(key, hdr, method, route, replay)
+    if (verified) {
+      matchedKey = key
+      nonce = verified
+      break
+    }
+  }
+  if (!nonce || !matchedKey) {
     return errorResponse(401, 'DEVICE_AUTH_REQUIRED', 'Only devices signed in to this wallet may ask.')
   }
 
@@ -89,7 +130,7 @@ export async function handleDevicePeerRequest(
   if ('error' in answer) return answer.error
   return {
     status: 200,
-    body: JSON.stringify({ sealed: await sealForPeer(active.rootKeyHex, nonce, answer.value) }),
+    body: JSON.stringify({ sealed: await sealForPeer(matchedKey, nonce, answer.value) }),
   }
 }
 

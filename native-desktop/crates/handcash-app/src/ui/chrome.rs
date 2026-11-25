@@ -10,12 +10,13 @@ use crate::icons::{
     FireIcon, PersonAddIcon, SendIcon, TickerCoinMark,
 };
 use crate::machines::{
-    AppSessionEvent, AppSessionMachine, FiatCode, MarketCoin, NavChild, NavSection, ToastNotice,
+    session_to_wallet_profile, FiatCode, MarketCoin, NavChild, NavSection, ToastNotice,
 };
 use crate::state::{copy_to_clipboard, format_bsv, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::primitives::ProfileAvatar;
-use aeon_dioxus::use_aeon_machine;
+use aeon_dioxus::{use_aeon_machine, AeonMachineHandle};
 use dioxus::prelude::*;
+use handcash_machines::app::{AppEvent, AppMachine};
 use handcash_machines::wallet_account_menu::{
     WalletAccountMenuEvent, WalletAccountMenuMachine, WalletAccountMenuState,
 };
@@ -434,7 +435,7 @@ pub fn FiatCurrencyPanel(
 #[component]
 pub fn WalletAccountMenu(
     profile: SessionSummary,
-    mut app_machine: Signal<AppSessionMachine>,
+    app_machine: AeonMachineHandle<AppMachine>,
     mut snapshot: Signal<WalletSnapshot>,
     mut nav_section: Signal<NavSection>,
     mut nav_child: Signal<Option<NavChild>>,
@@ -645,8 +646,8 @@ pub fn WalletAccountMenu(
                                                                 let next_snap = svc_switch.read_snapshot();
                                                                 let sats = next_snap.balance.displayed_sats;
                                                                 snapshot.set(next_snap);
-                                                                app_machine.write().send(AppSessionEvent::Switched {
-                                                                    profile: next_profile,
+                                                                app_machine.send(AppEvent::AccountSwitched {
+                                                                    profile: session_to_wallet_profile(&next_profile),
                                                                     balance_sats: sats,
                                                                 });
                                                                 svc_switch.spawn_sync_identities_from_peers();
@@ -692,8 +693,8 @@ pub fn WalletAccountMenu(
                                                                     let next_snap = svc_edit.read_snapshot();
                                                                     let sats = next_snap.balance.displayed_sats;
                                                                     snapshot.set(next_snap);
-                                                                    app_machine.write().send(AppSessionEvent::Switched {
-                                                                        profile: next_profile,
+                                                                    app_machine.send(AppEvent::AccountSwitched {
+                                                                        profile: session_to_wallet_profile(&next_profile),
                                                                         balance_sats: sats,
                                                                     });
                                                                 }
@@ -726,8 +727,8 @@ pub fn WalletAccountMenu(
                                         let next_snap = svc_create.read_snapshot();
                                         let sats = next_snap.balance.displayed_sats;
                                         snapshot.set(next_snap);
-                                        app_machine.write().send(AppSessionEvent::Switched {
-                                            profile: next_profile,
+                                        app_machine.send(AppEvent::AccountSwitched {
+                                            profile: session_to_wallet_profile(&next_profile),
                                             balance_sats: sats,
                                         });
                                         nav_child.set(None);

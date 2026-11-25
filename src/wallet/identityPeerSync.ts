@@ -13,6 +13,8 @@ import {
   storedIdentityProfiles,
 } from './identityProfiles'
 import {
+  identityKeyProfile,
+  issuerIdentityFor,
   issuerIdentityPackage,
   rememberConfirmedIssuerIdentityPackage,
   rememberIssuerIdentityPackage,
@@ -20,6 +22,8 @@ import {
 } from './issuerIdentities'
 import { parseIssuerIdentityPackage, type IssuerIdentityPackage } from './issuerIdentity'
 import { normalizeBapId, normalizeIssuerIdentityKey } from './issuerMetadata'
+import { isHeldHere, readVaultAccounts } from './vaultAccounts'
+import { vaultIdentityKey } from './vaultMaster'
 import { onVaultLinkMessage, sendOverVaultLink, vaultLinkOpen } from './vaultLink'
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
@@ -57,6 +61,7 @@ export type DevicePeerIdentitiesBundle = {
   bapPackages: IssuerIdentityPackage[]
   cards?: Record<string, DevicePeerCardLink>
   ownPresentation?: DevicePeerOwnPresentation
+  accountPresentations?: DevicePeerOwnPresentation[]
 }
 
 export type IdentityBundleMergeResult = {
@@ -195,6 +200,7 @@ export function exportLocalIdentityBundle(args: {
   chain: Chain
   accountIndex: number
   identityKey: string
+  accounts?: Array<{ index: number; identityKey: string; heldHere?: boolean }>
   filterKeys?: Iterable<string>
   filterBapIds?: Iterable<string>
   maxBytes?: number
@@ -211,6 +217,31 @@ export function exportLocalIdentityBundle(args: {
   const profiles: DevicePeerProfileEntry[] = []
   const bapPackages: IssuerIdentityPackage[] = []
   const ownPresentation = readOwnPresentation(chain, accountIndex, identityKey)
+  const accountPresentations: DevicePeerOwnPresentation[] = []
+  const seenOwners = new Set<string>()
+  if (ownPresentation) {
+    seenOwners.add(ownPresentation.owner)
+    accountPresentations.push(ownPresentation)
+  }
+  const candidateAccounts =
+    args.accounts ??
+    (() => {
+      const active = getActiveWallet()
+      if (!active?.vaultMaster) return []
+      return readVaultAccounts(vaultIdentityKey(active.vaultMaster)).accounts.map((a) => ({
+        index: a.index,
+        identityKey: a.identityKey,
+        heldHere: isHeldHere(a),
+      }))
+    })()
+  for (const acc of candidateAccounts) {
+    if (acc.heldHere === false) continue
+    const owner = normalizeIssuerIdentityKey(acc.identityKey)
+    if (!owner || seenOwners.has(owner)) continue
+    seenOwners.add(owner)
+    const pres = readOwnPresentation(chain, acc.index, acc.identityKey)
+    if (pres) accountPresentations.push(pres)
+  }
   const cards = wantKeys || wantBaps ? undefined : readIdentityCardLinks(chain)
 
   let usedBytes = JSON.stringify({
@@ -222,6 +253,7 @@ export function exportLocalIdentityBundle(args: {
     bapPackages: [],
     ...(cards && Object.keys(cards).length ? { cards } : {}),
     ...(ownPresentation ? { ownPresentation } : {}),
+    ...(accountPresentations.length ? { accountPresentations } : {}),
   }).length
 
   for (const prof of storedIdentityProfiles(chain)) {
@@ -264,6 +296,7 @@ export function exportLocalIdentityBundle(args: {
     bapPackages,
     ...(cards && Object.keys(cards).length ? { cards } : {}),
     ...(ownPresentation ? { ownPresentation } : {}),
+    ...(accountPresentations.length ? { accountPresentations } : {}),
   }
 }
 
@@ -312,6 +345,42 @@ export async function mergeRemoteIdentityBundle(
     result.cardsAdded = mergeIdentityCardLinks(chain, bundle.cards)
   }
 
+  const presentations: DevicePeerOwnPresentation[] = [
+    ...(bundle.ownPresentation && typeof bundle.ownPresentation === 'object' ? [bundle.ownPresentation] : []),
+    ...(Array.isArray(bundle.accountPresentations) ? bundle.accountPresentations : []),
+  ]
+  if (presentations.length > 0) {
+    const now = Date.now()
+    const fallbackIssued = new Date(
+      typeof bundle.exportedAt === 'number' && Number.isFinite(bundle.exportedAt) && bundle.exportedAt > 0
+        ? bundle.exportedAt
+        : now,
+    ).toISOString()
+    const derivedLinks: Record<string, DevicePeerCardLink> = {}
+    for (const pres of presentations) {
+      if (!pres || typeof pres !== 'object') continue
+      const owner = normalizeIssuerIdentityKey(pres.owner)
+      if (!owner) continue
+      const presentedKey = normalizeIssuerIdentityKey(pres.presented) ?? owner
+      const publishedBap =
+        pres.published && typeof pres.published === 'object'
+          ? normalizeBapId(pres.published[presentedKey] ?? pres.published[owner])
+          : null
+      const hasKeyProfile = Boolean(identityKeyProfile(chain, presentedKey))
+      const bapRecord = publishedBap ? issuerIdentityFor(chain, publishedBap) : null
+      const verifiedBap = bapRecord && !bapRecord.revoked ? bapRecord.bapId : null
+      if (!hasKeyProfile && !verifiedBap) continue
+      const issuedAt =
+        typeof pres.presentedAt === 'string' && pres.presentedAt.trim() ? pres.presentedAt : fallbackIssued
+      derivedLinks[owner] = hasKeyProfile
+        ? { key: presentedKey, issuedAt, receivedAt: now }
+        : { bapId: verifiedBap!, issuedAt, receivedAt: now }
+    }
+    if (Object.keys(derivedLinks).length > 0) {
+      result.cardsAdded += mergeIdentityCardLinks(chain, derivedLinks)
+    }
+  }
+
   return result
 }
 
@@ -344,7 +413,12 @@ export function startVaultLinkIdentitySync(): () => void {
         filterBapIds: Array.isArray(msg.bapIds) ? (msg.bapIds as string[]) : undefined,
         maxBytes: MAX_LINK_BUNDLE_BYTES,
       })
-      if (bundle.profiles.length === 0 && bundle.bapPackages.length === 0 && !bundle.cards) return
+      if (
+        bundle.profiles.length === 0 &&
+        bundle.bapPackages.length === 0 &&
+        !bundle.cards &&
+        !(bundle.accountPresentations && bundle.accountPresentations.length > 0)
+      ) return
       const reply: VaultLinkIdentityResponse = {
         type: 'identity-sync-response',
         chain: active.chain,
@@ -478,7 +552,8 @@ export async function syncVaultIdentitiesBox(): Promise<IdentityBundleMergeResul
     const hasData =
       bundle.profiles.length > 0 ||
       bundle.bapPackages.length > 0 ||
-      (bundle.cards != null && Object.keys(bundle.cards).length > 0)
+      (bundle.cards != null && Object.keys(bundle.cards).length > 0) ||
+      (bundle.accountPresentations != null && bundle.accountPresentations.length > 0)
     if (hasData) {
       const { exportedAt: _omit, ...stable } = bundle
       const bundleHash = Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(stable), 'utf8')))

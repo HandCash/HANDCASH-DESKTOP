@@ -5,6 +5,7 @@ import { saveBackupFile, type BackupSaveOutcome } from './backupFileSave'
 import { bapIdFor, bapKey } from './bapRecords'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { retainedMinedHeight } from './issuerAttribution'
+import { peerIdentityFor } from './identityCard'
 import {
   identityKeyPackage,
   parseProfileCertificate,
@@ -343,7 +344,18 @@ export type AccountProfile = { id: string; name: string; image?: IssuerIdentityI
  */
 export function accountProfile(account: StoreScope): AccountProfile | null {
   const profile = presentedProfileOfAccount(account)
-  return profile ? { id: profile.id, name: profile.name, ...(profile.image ? { image: profile.image } : {}) } : null
+  if (profile) {
+    return { id: profile.id, name: profile.name, ...(profile.image ? { image: profile.image } : {}) }
+  }
+  const peer = peerIdentityFor(account.chain, account.identityKey)
+  if (peer?.kind === 'presented') {
+    return {
+      id: peer.profile.id,
+      name: peer.profile.name,
+      ...(peer.profile.image ? { image: peer.profile.image } : {}),
+    }
+  }
+  return null
 }
 
 /** The profile a vault account presents, read from its own store without unlocking it. */
