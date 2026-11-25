@@ -5813,6 +5813,11 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
   transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
+.wallet-nav-chrome-btn:focus-visible {
+  outline: 2px solid var(--hc-accent);
+  outline-offset: 2px;
+}
+
 .wallet-nav-chrome-btn:hover {
   color: var(--hc-text);
   background: color-mix(in srgb, var(--hc-text) 6%, transparent);
@@ -20859,9 +20864,8 @@ html[data-aeon-mode='light']
   box-shadow: none;
 }
 
-/* Open panel: label on top, two wide labelled buttons below. It floats over the
-   neighbouring cells (three wide) so the grid never reflows; near the right edge
-   it anchors to the cell's right side and grows left. */
+/* The expanded cell reflows its neighbours: icon in the first square,
+   label above actions in the remaining two squares, all inside the panel. */
 [data-aeon-scope='app-launcher'] [data-aeon-part='panel'] {
   width: 100%;
   height: 100%;
