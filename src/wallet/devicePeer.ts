@@ -1,4 +1,5 @@
 import type { Friend } from './friends'
+import type { DevicePeerIdentitiesBundle } from './identityPeerSync'
 import {
   DEVICE_PEER_PORT,
   assertPairBackupUrlCompatible,
@@ -82,6 +83,24 @@ export async function fetchDevicePeerSnapshot(
   const data = await getSealed<DevicePeerSnapshot>(peerBaseUrl, '/handcash-device/v1/snapshot', rootKeyHex, timeoutMs)
   if (data.identityKey !== expectedIdentityKey) {
     throw new Error('Peer identity mismatch on snapshot')
+  }
+  return data
+}
+
+export async function fetchDevicePeerIdentities(
+  peerBaseUrl: string,
+  expectedIdentityKey: string,
+  rootKeyHex: string,
+  timeoutMs = 10_000,
+): Promise<DevicePeerIdentitiesBundle> {
+  const data = await getSealed<DevicePeerIdentitiesBundle>(
+    peerBaseUrl,
+    '/handcash-device/v1/identities',
+    rootKeyHex,
+    timeoutMs,
+  )
+  if (data.identityKey.toLowerCase() !== expectedIdentityKey.toLowerCase()) {
+    throw new Error('Peer identity mismatch on identities')
   }
   return data
 }

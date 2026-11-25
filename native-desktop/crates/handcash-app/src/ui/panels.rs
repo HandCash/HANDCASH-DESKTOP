@@ -973,6 +973,41 @@ pub fn PublicIdentitiesPanel(
                                     },
                                     if signs { "Issue new mints unsigned" } else { "Sign new mints" }
                                 }
+                                {
+                                    let svc_sync = Arc::clone(&services);
+                                    let mut toast_sync = toast;
+                                    rsx! {
+                                        button {
+                                            r#type: "button",
+                                            class: "wallet-account-option",
+                                            role: "menuitem",
+                                            onclick: move |_| {
+                                                more_open.set(false);
+                                                let svc = Arc::clone(&svc_sync);
+                                                spawn(async move {
+                                                    match crate::device_peer::sync_identities_from_connected_peers(&svc).await {
+                                                        Ok(stats) => {
+                                                            let total = stats.profiles_added + stats.bap_packages_added + stats.cards_added;
+                                                            let n = *rev.read() + 1;
+                                                            rev.set(n);
+                                                            toast_sync.set(Some(ToastNotice {
+                                                                title: if total > 0 {
+                                                                    format!("Synced {total} identity record(s) from device")
+                                                                } else {
+                                                                    "Identities up to date with connected devices".into()
+                                                                },
+                                                                body: None,
+                                                                tone: if total > 0 { "success" } else { "info" },
+                                                            }));
+                                                        }
+                                                        Err(e) => status_err.set(Some(e)),
+                                                    }
+                                                });
+                                            },
+                                            "Sync from connected device"
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

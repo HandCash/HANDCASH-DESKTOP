@@ -3,6 +3,7 @@
 
 pub mod brc100_native;
 pub mod css_scope;
+pub mod device_peer;
 pub mod health;
 pub mod icons;
 pub mod machines;

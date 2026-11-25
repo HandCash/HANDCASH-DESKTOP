@@ -422,6 +422,15 @@ export function createSessionTable(tag = 'direct-session') {
       return !!openSession(identity, device)
     },
 
+    openDevices(identity: string): string[] {
+      const peer = norm(identity)
+      const out: string[] = []
+      for (const s of live.values()) {
+        if (s.peer === peer && s.device && s.channel.isOpen) out.push(s.device)
+      }
+      return out
+    },
+
     /**
      * Dial `identity` (one install of it, when `device` is set). True when a
      * knock went out. `presenceMs` is how long the knock waits for a ring; a

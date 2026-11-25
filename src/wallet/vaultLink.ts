@@ -129,6 +129,10 @@ export function vaultLinkOpen(device: string): boolean {
   return !!link && link.table.hasSession(link.identityKey, device)
 }
 
+export function openVaultLinkDevices(): string[] {
+  return link ? link.table.openDevices(link.identityKey) : []
+}
+
 /** Open a link to `device`, waiting up to `waitMs` for its answer. */
 export async function dialVaultLink(device: string, waitMs = LINK_DIAL_MS, pollMs = DIAL_POLL_MS): Promise<boolean> {
   const current = link

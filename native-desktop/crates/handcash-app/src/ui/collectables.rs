@@ -165,7 +165,8 @@ impl IssuerView {
     }
 }
 
-/// TS `useIssuerView` for one asset: issuer key (or Sigma signer) resolved against known profiles.
+/// TS `useIssuerView` for one asset: issuer key (or Sigma signer) resolved against known profiles,
+/// BAP packages, identity cards, and HandCash's signed verified-issuer list.
 fn issuer_view_for(
     item: &ItemCardRow,
     snap: &WalletSnapshot,
@@ -176,25 +177,16 @@ fn issuer_view_for(
     let key = non_empty(item.issuer_key.as_deref())
         .or_else(|| non_empty(meta.and_then(|m| m.signer.as_deref())))?;
     let attested = meta.is_some_and(|m| m.issuer_attested);
-    let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref())).map(ToString::to_string);
-    match services.peer_identity_for(chain, key) {
-        Some(profile) => Some(IssuerView {
-            identity_key: key.to_string(),
-            label: profile.name,
-            state: "verified",
-            profile_id: Some(bap_id.unwrap_or_else(|| key.to_string())),
-            image_url: profile.image_data_url,
-            issuer_attested: attested,
-        }),
-        None => Some(IssuerView {
-            identity_key: key.to_string(),
-            label: truncate_mid(key, 10),
-            state: if attested { "key" } else { "claim" },
-            profile_id: None,
-            image_url: None,
-            issuer_attested: attested,
-        }),
-    }
+    let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref()));
+    let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
+    Some(IssuerView {
+        identity_key: resolved.identity_key,
+        label: resolved.label,
+        state: resolved.state,
+        profile_id: resolved.profile_id,
+        image_url: resolved.image_url,
+        issuer_attested: resolved.issuer_attested,
+    })
 }
 
 /// 1:1 port of `IssuerTrustBadge`: the checkmark or caution after an issuer name.
@@ -236,7 +228,7 @@ pub fn IssuerIdentityMark(view: IssuerView, #[props(default)] class: Option<Stri
     let short = view
         .profile_id
         .as_deref()
-        .filter(|_| view.state == "verified")
+        .filter(|_| matches!(view.state, "listed" | "imitation" | "shared-name" | "verified"))
         .map(|id| profile_fingerprint(id).short);
     rsx! {
         span {
@@ -403,26 +395,30 @@ fn group_by_identity<'a>(
         let collection_id = non_empty(meta.and_then(|m| m.collection_id.as_deref()));
         let attested = meta.is_some_and(|m| m.issuer_attested);
 
+        let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref()));
+
         let shelf = if let Some(key) = issuer_key {
-            let prof = services.peer_identity_for(chain, key);
-            let (rank, label, avatar_url, trust_state) = match prof {
-                Some(p) => (0u8, p.name, p.image_data_url, "verified"),
-                None => (
-                    3u8,
-                    format!("Issuer {}", truncate_mid(key, 10)),
-                    None,
-                    if attested { "key" } else { "claim" },
-                ),
+            let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
+            let rank = match resolved.state {
+                "listed" => 0u8,
+                "verified" | "imitation" | "shared-name" => 1u8,
+                "key" => 2u8,
+                _ => 3u8,
+            };
+            let label = if matches!(resolved.state, "key" | "claim") {
+                format!("Issuer {}", resolved.label)
+            } else {
+                resolved.label.clone()
             };
             Some(IdentityShelf {
-                key: format!("issuer:pubkey:{}", key.to_ascii_lowercase()),
+                key: format!("issuer:pubkey:{}", resolved.identity_key.to_ascii_lowercase()),
                 rank,
-                fingerprint_id: Some(key.to_string()),
-                avatar_url,
-                avatar_key: Some(key.to_string()),
-                title: format!("{label} · issuer attribution: {key}"),
+                fingerprint_id: resolved.profile_id.clone().or_else(|| Some(resolved.identity_key.clone())),
+                avatar_url: resolved.image_url,
+                avatar_key: Some(resolved.identity_key.clone()),
+                title: format!("{label} · issuer attribution: {}", resolved.identity_key),
                 label,
-                trust_state,
+                trust_state: resolved.state,
                 items: Vec::new(),
             })
         } else if let Some(sig) = signer {
@@ -741,9 +737,11 @@ pub fn InventoryPanel(
     let mut open_shelf = use_signal(|| Option::<String>::None);
     let mut last_seq = use_signal(|| dock_trigger.map(|t| t.read().seq).unwrap_or_default());
 
-    // Trigger bounded background prefetch for any items missing cached local data: art.
+    // Trigger bounded background prefetch for any items missing cached local data: art
+    // and rate-limited connected-device sync when an asset has an unknown issuer profile.
     if !snap.items.is_empty() {
         services.prefetch_missing_item_art(&chain, &snap);
+        services.maybe_sync_missing_identities_from_peers(&chain, &snap);
     }
 
     // Drop selections whose items left the wallet.
@@ -1250,6 +1248,12 @@ pub fn CollectableDetailsPanel(
     let collection_id = non_empty(meta.collection_id.as_deref()).map(ToString::to_string);
     let app_line = non_empty(meta.app.as_deref()).map(ToString::to_string);
 
+    let missing_issuer_profile = issuer
+        .as_ref()
+        .is_some_and(|v| matches!(v.state, "key" | "claim" | "unconfirmed"));
+    let svc_sync = Arc::clone(&services);
+    let mut toast_sync = toast;
+
     rsx! {
         div {
             class: "nav-child-panel collectable-details",
@@ -1270,6 +1274,38 @@ pub fn CollectableDetailsPanel(
                     h3 { class: "collectable-details-name", "{item.name}" }
                     if let Some(view) = issuer {
                         IssuerIdentityMark { view, class: Some("detail-issuer-mark".to_string()) }
+                    }
+                    if missing_issuer_profile {
+                        button {
+                            r#type: "button",
+                            class: "btn btn-ghost",
+                            style: "margin-top: 4px; align-self: flex-start;",
+                            onclick: move |_| {
+                                let svc = Arc::clone(&svc_sync);
+                                spawn(async move {
+                                    match crate::device_peer::sync_identities_from_connected_peers(&svc).await {
+                                        Ok(stats) => {
+                                            let total = stats.profiles_added + stats.bap_packages_added + stats.cards_added;
+                                            toast_sync.set(Some(ToastNotice {
+                                                title: if total > 0 {
+                                                    format!("Synced {total} identity record(s) from device")
+                                                } else {
+                                                    "No new profiles found on connected devices".into()
+                                                },
+                                                body: None,
+                                                tone: if total > 0 { "success" } else { "info" },
+                                            }));
+                                        }
+                                        Err(e) => toast_sync.set(Some(ToastNotice {
+                                            title: "Device sync unavailable".into(),
+                                            body: Some(e),
+                                            tone: "error",
+                                        })),
+                                    }
+                                });
+                            },
+                            "Sync profile from device"
+                        }
                     }
                     if let Some(ref app) = app_line {
                         p { class: "collectable-details-app", "{app}" }

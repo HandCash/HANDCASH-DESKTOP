@@ -439,6 +439,13 @@ export function identityCardFromWire(body: string): unknown {
   }
 }
 
+export function reloadIdentityCardsFromStorage(chain: Chain): void {
+  cache.delete(chain)
+  readLinks(chain)
+  generation++
+  for (const listener of listeners) listener()
+}
+
 export function resetIdentityCardsForTests(): void {
   cache.clear()
   generation = 0

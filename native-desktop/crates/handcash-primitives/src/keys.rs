@@ -830,6 +830,148 @@ pub fn decrypt_brc2(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, KeyError>
         .map_err(|_| KeyError::CryptoFailed("decryption failed".into()))
 }
 
+fn write_bitcoin_varint(out: &mut Vec<u8>, n: usize) {
+    if n < 0xfd {
+        out.push(n as u8);
+    } else if n <= 0xffff {
+        out.push(0xfd);
+        out.extend_from_slice(&(n as u16).to_le_bytes());
+    } else if n <= 0xffff_ffff {
+        out.push(0xfe);
+        out.extend_from_slice(&(n as u32).to_le_bytes());
+    } else {
+        out.push(0xff);
+        out.extend_from_slice(&(n as u64).to_le_bytes());
+    }
+}
+
+/// Double-SHA256 Bitcoin Signed Message magic hash (matches `@bsv/sdk` `BSM.magicHash`).
+pub fn bsm_magic_hash(message: &[u8]) -> [u8; 32] {
+    const PREFIX: &[u8] = b"Bitcoin Signed Message:\n";
+    let mut buf = Vec::with_capacity(PREFIX.len() + message.len() + 10);
+    write_bitcoin_varint(&mut buf, PREFIX.len());
+    buf.extend_from_slice(PREFIX);
+    write_bitcoin_varint(&mut buf, message.len());
+    buf.extend_from_slice(message);
+    sha256(&sha256(&buf))
+}
+
+/// Verify a 65-byte compact BSM signature against a mainnet P2PKH `expected_address`.
+pub fn verify_bsm(message: &[u8], compact_sig: &[u8], expected_address: &str) -> bool {
+    if compact_sig.len() != 65 {
+        return false;
+    }
+    let header = compact_sig[0];
+    if !(27..=34).contains(&header) {
+        return false;
+    }
+    let recovery_byte = (header - 27) & 3;
+    let Ok(sig) = Signature::from_slice(&compact_sig[1..65]) else {
+        return false;
+    };
+    let Some(recid) = k256::ecdsa::RecoveryId::from_byte(recovery_byte) else {
+        return false;
+    };
+    let digest = bsm_magic_hash(message);
+    let Ok(vk) = VerifyingKey::recover_from_prehash(&digest, &sig, recid) else {
+        return false;
+    };
+    let compressed = vk.to_encoded_point(true);
+    if p2pkh_address_from_pubkey(compressed.as_bytes(), false) == expected_address {
+        return true;
+    }
+    if header < 31 {
+        let uncompressed = vk.to_encoded_point(false);
+        if p2pkh_address_from_pubkey(uncompressed.as_bytes(), false) == expected_address {
+            return true;
+        }
+    }
+    false
+}
+
+/// Produce a 65-byte compact BSM signature (compressed key flag 31 + recid).
+pub fn sign_bsm(privkey: &SecretKeyBytes, message: &[u8]) -> Result<[u8; 65], KeyError> {
+    let signing_key = SigningKey::from_slice(privkey.as_bytes())
+        .map_err(|e| KeyError::InvalidPrivateKey(e.to_string()))?;
+    let digest = bsm_magic_hash(message);
+    let (sig, recid) = signing_key
+        .sign_prehash_recoverable(&digest)
+        .map_err(|e| KeyError::CryptoFailed(e.to_string()))?;
+    let mut out = [0u8; 65];
+    out[0] = 31 + recid.to_byte();
+    out[1..65].copy_from_slice(&sig.to_bytes());
+    Ok(out)
+}
+
+/// Verify a BRC-77 `SignedMessage` (`verifier == 0x00` anyone) over `message`.
+/// Returns the lowercase compressed 33-byte signer public key hex on success.
+pub fn verify_brc77_anyone(message: &[u8], sig: &[u8]) -> Option<String> {
+    // Version (4) + signer compressed pubkey (33) + verifier kind 0x00 (1) + key_id (32) + DER sig
+    if sig.len() < 78 || sig[0..4] != [0x42, 0x42, 0x33, 0x01] || sig[37] != 0x00 {
+        return None;
+    }
+    let signer_bytes = &sig[4..37];
+    parse_public_key_point(signer_bytes).ok()?;
+    let signer_hex = encode_hex(signer_bytes);
+    let key_id_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &sig[38..70]);
+    let der_sig = &sig[70..];
+    let mut anyone_bytes = [0u8; 32];
+    anyone_bytes[31] = 1;
+    let anyone = SecretKeyBytes::from_bytes(anyone_bytes).ok()?;
+    let kd = KeyDeriver::new(anyone);
+    let valid = kd
+        .verify_signature(
+            (2, "message signing"),
+            &key_id_b64,
+            Counterparty::PublicKeyHex(signer_hex.clone()),
+            false,
+            Some(message),
+            None,
+            der_sig,
+        )
+        .ok()?;
+    if valid {
+        Some(signer_hex)
+    } else {
+        None
+    }
+}
+
+/// Sign a message with BRC-77 (`verifier == 0x00` anyone), matching `@bsv/sdk` `SignedMessage.sign`.
+pub fn sign_brc77_anyone(privkey: &SecretKeyBytes, message: &[u8]) -> Result<Vec<u8>, KeyError> {
+    let signer_pub = privkey.public_key_compressed()?;
+    let mut key_id = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut key_id);
+    let key_id_b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, key_id);
+    let kd = KeyDeriver::new(privkey.clone());
+    let der_sig = kd.create_signature(
+        (2, "message signing"),
+        &key_id_b64,
+        Counterparty::Anyone,
+        Some(message),
+        None,
+    )?;
+    let mut out = Vec::with_capacity(70 + der_sig.len());
+    out.extend_from_slice(&[0x42, 0x42, 0x33, 0x01]);
+    out.extend_from_slice(&signer_pub);
+    out.push(0x00);
+    out.extend_from_slice(&key_id);
+    out.extend_from_slice(&der_sig);
+    Ok(out)
+}
+
+/// Canonical BAP ID for a root address: `base58(RIPEMD160(SHA256(address_utf8)))`.
+pub fn bap_id_for_address(address: &str) -> String {
+    bs58::encode(hash160(address.as_bytes())).into_string()
+}
+
+/// Derive this master key's BAP ID (`identity-0` under `[1, "sigma"]`, mainnet address).
+pub fn bap_id_for_deriver(deriver: &KeyDeriver) -> Result<String, KeyError> {
+    let root = deriver.derive_private_key((1, "sigma"), "identity-0", Counterparty::SelfParty)?;
+    let addr = root.p2pkh_address(false)?;
+    Ok(bap_id_for_address(&addr))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

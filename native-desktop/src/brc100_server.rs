@@ -65,6 +65,7 @@ pub struct Brc100Bridge {
     log: Arc<HostLog>,
     push: Mutex<Option<PushFn>>,
     direct_handler: Mutex<Option<DirectHandlerFn>>,
+    direct_device_peer_handler: Mutex<Option<DirectHandlerFn>>,
     status: Mutex<BridgeStatusState>,
     servers: Mutex<Option<RunningServers>>,
     renderer_ready: Mutex<bool>,
@@ -84,6 +85,7 @@ impl Brc100Bridge {
             log,
             push: Mutex::new(None),
             direct_handler: Mutex::new(None),
+            direct_device_peer_handler: Mutex::new(None),
             status: Mutex::new(BridgeStatusState {
                 device_peer_port: DEVICE_PEER_PORT,
                 ..Default::default()
@@ -114,6 +116,15 @@ impl Brc100Bridge {
         F: Fn(&str, &str, &HashMap<String, String>, &str) -> BridgeReply + Send + Sync + 'static,
     {
         *self.direct_handler.lock().unwrap() = Some(Arc::new(f));
+    }
+
+    /// Install an in-process Rust LAN device-peer request handler (`/handcash-device/v1/*`)
+    /// so `handcash-native` answers paired devices directly without waiting on a WebView.
+    pub fn set_direct_device_peer_handler<F>(&self, f: F)
+    where
+        F: Fn(&str, &str, &HashMap<String, String>, &str) -> BridgeReply + Send + Sync + 'static,
+    {
+        *self.direct_device_peer_handler.lock().unwrap() = Some(Arc::new(f));
     }
 
     fn emit(&self, channel: &str, payload: Value) {
@@ -812,6 +823,20 @@ impl Brc100Bridge {
                 "application/json",
                 &cors_refs,
                 br#"{"status":"error","description":"Not a device-peer route"}"#,
+            );
+            return;
+        }
+
+        let direct_peer = self.direct_device_peer_handler.lock().unwrap().clone();
+        if let Some(handler) = direct_peer {
+            let body_str = String::from_utf8_lossy(&req.body).into_owned();
+            let reply = handler(&req.method, &req.path, &req.headers, &body_str);
+            let _ = write_http_response(
+                stream,
+                reply.status,
+                "application/json",
+                &cors_refs,
+                reply.body.as_bytes(),
             );
             return;
         }

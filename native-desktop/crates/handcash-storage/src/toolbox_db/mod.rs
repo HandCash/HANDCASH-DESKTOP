@@ -289,6 +289,11 @@ impl ToolboxDb {
                         if let Some(o) = v
                             .get("origin")
                             .and_then(Value::as_str)
+                            .or_else(|| {
+                                v.get("provenance")
+                                    .and_then(|p| p.get("origin"))
+                                    .and_then(Value::as_str)
+                            })
                             .map(str::trim)
                             .filter(|s| !s.is_empty())
                         {
@@ -460,6 +465,112 @@ impl ToolboxDb {
                 Ok(bytes)
             })
             .ok()
+    }
+
+    /// Read raw transaction bytes for `txid` from `proven_txs`, `proven_tx_reqs`, or `transactions`.
+    pub fn read_raw_tx_by_txid(&self, txid: &str) -> Option<Vec<u8>> {
+        let clean = txid.trim().to_ascii_lowercase();
+        if clean.len() != 64 {
+            return None;
+        }
+        self.readers
+            .with_conn(|conn| {
+                for sql in [
+                    "SELECT raw_tx_hash FROM proven_txs WHERE txid = ?1 LIMIT 1",
+                    "SELECT raw_tx_hash FROM proven_tx_reqs WHERE txid = ?1 AND raw_tx_hash IS NOT NULL LIMIT 1",
+                    "SELECT raw_tx_hash FROM transactions WHERE txid = ?1 AND raw_tx_hash IS NOT NULL LIMIT 1",
+                ] {
+                    if let Ok(hash) = conn.query_row(sql, [&clean], |r| r.get::<_, String>(0)) {
+                        if !hash.is_empty() {
+                            if let Ok(bytes) = conn.query_row(
+                                "SELECT data FROM cold_blobs WHERE hash = ?1",
+                                [&hash],
+                                |r| r.get::<_, Vec<u8>>(0),
+                            ) {
+                                if !bytes.is_empty() {
+                                    return Ok(Some(bytes));
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None)
+            })
+            .ok()
+            .flatten()
+    }
+
+    /// Read `input_beef` bytes for `txid` from `proven_tx_reqs` or `transactions`.
+    pub fn read_input_beef_by_txid(&self, txid: &str) -> Option<Vec<u8>> {
+        let clean = txid.trim().to_ascii_lowercase();
+        if clean.len() != 64 {
+            return None;
+        }
+        self.readers
+            .with_conn(|conn| {
+                for sql in [
+                    "SELECT input_beef_hash FROM transactions WHERE txid = ?1 AND input_beef_hash IS NOT NULL LIMIT 1",
+                    "SELECT input_beef_hash FROM proven_tx_reqs WHERE txid = ?1 AND input_beef_hash IS NOT NULL LIMIT 1",
+                ] {
+                    if let Ok(hash) = conn.query_row(sql, [&clean], |r| r.get::<_, String>(0)) {
+                        if !hash.is_empty() {
+                            if let Ok(bytes) = conn.query_row(
+                                "SELECT data FROM cold_blobs WHERE hash = ?1",
+                                [&hash],
+                                |r| r.get::<_, Vec<u8>>(0),
+                            ) {
+                                if !bytes.is_empty() {
+                                    return Ok(Some(bytes));
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None)
+            })
+            .ok()
+            .flatten()
+    }
+
+    /// Read `custom_instructions` JSON strings for spendable non-default outputs keyed by `txid.vout`.
+    pub fn read_item_custom_instructions(&self, items_limit: i64) -> HashMap<String, String> {
+        self.readers
+            .with_conn(|conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT o.output_id, COALESCE(o.txid, ''), o.vout, COALESCE(o.custom_instructions, '')
+                         FROM outputs o
+                         JOIN output_baskets b ON b.basket_id = o.basket_id
+                         WHERE o.spendable = 1
+                           AND o.spent_by IS NULL
+                           AND b.name != 'default'
+                           AND o.custom_instructions IS NOT NULL
+                           AND o.custom_instructions != ''
+                         ORDER BY o.output_id DESC
+                         LIMIT ?1",
+                    )
+                    .map_err(|e| e.to_string())?;
+                let mut map = HashMap::new();
+                if let Ok(rows) = stmt.query_map([items_limit.max(1)], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                }) {
+                    for (output_id, txid, vout, ci) in rows.filter_map(Result::ok) {
+                        let outpoint = if txid.is_empty() {
+                            format!("out-{output_id}.{vout}")
+                        } else {
+                            format!("{txid}.{vout}")
+                        };
+                        map.insert(outpoint, ci);
+                    }
+                }
+                Ok(map)
+            })
+            .unwrap_or_default()
     }
 
     pub fn begin_tx(&self) -> Result<u64, String> {

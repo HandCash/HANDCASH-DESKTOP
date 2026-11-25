@@ -41,6 +41,7 @@ import {
   upgradeIssuerIdentityProofs,
 } from '../wallet/identityPublish'
 import { exportIdentityCard } from '../wallet/identityCardShare'
+import { syncIdentitiesFromConnectedPeers } from '../wallet/deviceMesh'
 import { toastSuccess } from '../wallet/toast'
 import type { WalletProfile } from '../machines/appMachine'
 import { AsyncActionPrompt } from './AsyncActionPrompt'
@@ -158,6 +159,7 @@ export function PublicIdentitiesPanel({ profile }: { profile: WalletProfile }) {
   )
   useEffect(() => {
     if (!runtime) return
+    void syncIdentitiesFromConnectedPeers().catch(() => {})
     void syncHeldIssuerIdentities(runtime)
       .then(() => upgradeIssuerIdentityProofs(runtime))
       .catch((error) => console.warn('[identity-publish] maintenance skipped', error))

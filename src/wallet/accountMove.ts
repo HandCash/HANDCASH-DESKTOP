@@ -452,6 +452,7 @@ async function serveContext() {
   const master = active.vaultMaster
   const deviceId = getOrCreateDeviceId()
   startVaultLink({ master, deviceId })
+  void import('./identityPeerSync').then(({ startVaultLinkIdentitySync }) => startVaultLinkIdentitySync())
   const targetFor = (index: number): ServeTarget => {
     const rootKeyHex = rootKeyHexForAccount(master, index)
     const open = index === active.accountIndex

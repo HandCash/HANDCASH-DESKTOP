@@ -14,6 +14,7 @@ import {
   getOrCreateDeviceId,
 } from './deviceWallets'
 import { listCollectables } from './collectables'
+import { exportLocalIdentityBundle } from './identityPeerSync'
 import { handleScanLoginRequestAsync, isScanLoginPath } from './scanLogin/receiver'
 import {
   DEVICE_PEER_AUTH_HEADER,
@@ -37,6 +38,7 @@ const WALLET_ROUTES = new Set([
   'GET /handcash-device/v1/snapshot',
   'GET /handcash-device/v1/pair-info',
   'GET /handcash-device/v1/history',
+  'GET /handcash-device/v1/identities',
 ])
 
 const replay = new DeviceAuthReplayCache()
@@ -112,6 +114,16 @@ async function answerFor(
         label: local.label,
         platform: local.platform,
       },
+    }
+  }
+
+  if (route === '/handcash-device/v1/identities') {
+    return {
+      value: exportLocalIdentityBundle({
+        chain: active.chain,
+        accountIndex: active.accountIndex,
+        identityKey: active.identityKey,
+      }),
     }
   }
 

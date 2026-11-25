@@ -21,6 +21,7 @@ import {
   subscribeVerifiedIssuers,
   verifiedIssuersGeneration,
 } from '../wallet/verifiedIssuers'
+import { requestMissingIdentitiesFromConnectedPeers } from '../wallet/deviceMesh'
 import { getWalletRuntime } from '../wallet/walletRuntime'
 
 export type IssuerAsset = {
@@ -56,17 +57,31 @@ export function useIssuerIdentitiesGeneration(): string {
 /** Distinct issuers across the assets one action moves, in first-seen order. */
 export function useIssuerViews(assets: readonly IssuerAsset[]): IssuerView[] {
   const generation = useIssuerIdentitiesGeneration()
-  return useMemo(() => {
+  const views = useMemo(() => {
     const resolve = currentIssuerResolver()
     const trust = currentIssuerTrust()
-    const views = new Map<string, IssuerView>()
+    const out = new Map<string, IssuerView>()
     for (const { issuer, issuerAttested, bapId, origin } of assets) {
       if (!issuer) continue
       const view = issuerViewFor({ issuer, issuerAttested, bapId, origin }, resolve, trust)
-      if (view && !views.has(view.key)) views.set(view.key, view)
+      if (view && !out.has(view.key)) out.set(view.key, view)
     }
-    return [...views.values()]
+    return [...out.values()]
   }, [assets, generation])
+  useEffect(() => {
+    const missingKeys: string[] = []
+    const missingBaps: string[] = []
+    for (const v of views) {
+      if (!v.profile || v.profile.state === 'unconfirmed') {
+        missingKeys.push(v.identityKey)
+        if (v.profile?.id && v.profile.id !== v.identityKey) missingBaps.push(v.profile.id)
+      }
+    }
+    if (missingKeys.length > 0 || missingBaps.length > 0) {
+      requestMissingIdentitiesFromConnectedPeers({ identityKeys: missingKeys, bapIds: missingBaps })
+    }
+  }, [views])
+  return views
 }
 
 /** One asset's issuer, re-read when identities, stored packages or the verified list change. */
@@ -76,7 +91,7 @@ export function useIssuerView(asset: IssuerAsset | null): IssuerView | null {
   const issuerAttested = asset?.issuerAttested
   const bapId = asset?.bapId
   const origin = asset?.origin
-  return useMemo(
+  const view = useMemo(
     () =>
       issuer
         ? issuerViewFor(
@@ -87,4 +102,13 @@ export function useIssuerView(asset: IssuerAsset | null): IssuerView | null {
         : null,
     [issuer, issuerAttested, bapId, origin, generation],
   )
+  useEffect(() => {
+    if (!view) return
+    if (!view.profile || view.profile.state === 'unconfirmed') {
+      const bapIds =
+        view.profile?.id && view.profile.id !== view.identityKey ? [view.profile.id] : bapId ? [bapId] : []
+      requestMissingIdentitiesFromConnectedPeers({ identityKeys: [view.identityKey], bapIds })
+    }
+  }, [view, bapId])
+  return view
 }

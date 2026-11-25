@@ -5,6 +5,12 @@ use crate::machines::{CollectionView, FiatCode, MarketCoin};
 use crate::theme::{read_resolved_theme, AppearancePreference, ResolvedTheme};
 use base64::Engine as _;
 use handcash_bitcoin::beef::Beef;
+use handcash_bitcoin::issuer::{
+    compute_issuer_trust_state, extract_issuer_from_beef, extract_issuer_from_custom_instructions,
+    extract_issuer_from_tx, issuer_metadata_from_script, normalize_bap_id,
+    normalize_issuer_identity_key, parse_outpoint, verify_issuer_identity_package,
+    verify_verified_issuer_list, VerifiedBapIdentity, VerifiedIssuerEntry,
+};
 use handcash_bitcoin::ord::parse_ord_envelope;
 use handcash_bitcoin::recover::{find_recoverable_outputs, parse_recover_txid, RecoverableOutput};
 use handcash_bitcoin::signer::{address_to_locking_script, estimate_p2pkh_fee};
@@ -16,7 +22,7 @@ use handcash_primitives::brc140::{
     BRC140_DEFAULT_TOTAL, BRC140_ISSUED_SET_KEY_PREFIX,
 };
 use handcash_primitives::encoding::{encode_hex, sha256};
-use handcash_primitives::keys::{KeyDeriver, MnemonicScheme};
+use handcash_primitives::keys::{bap_id_for_deriver, KeyDeriver, MnemonicScheme};
 use handcash_primitives::vault::{
     change_vault_password, create_new_vault, generate_wrap_secret, restore_vault_from_mnemonic,
     restore_vault_from_root_key, unlock_vault_with_password, UnlockedVault, VaultRecord,
@@ -59,6 +65,7 @@ pub const APP_ACTIVITY_STORAGE_KEY: &str = "handcash.brc100.appActivity";
 pub const COLLECTABLE_PROVEN_V2_KEY: &str = "handcash.collectables.proven.v2";
 pub const COLLECTABLE_PROVEN_V1_KEY: &str = "handcash.collectables.proven.v1";
 pub const INSCRIPTION_RESOLUTION_KEY: &str = "handcash.inscriptionResolution.v1";
+pub const VERIFIED_ISSUERS_KEY: &str = "handcash.verifiedIssuers.v1";
 pub const ITEM_ART_CACHE_KEY: &str = "handcash.itemArt.v1";
 pub const COLLECTABLES_VIEW_KEY: &str = "handcash.collectables.view";
 pub const FRIENDS_STORAGE_KEY: &str = "handcash.brc100.friends";
@@ -351,6 +358,18 @@ pub struct ItemDisplayMeta {
     pub extras: Vec<(String, String)>,
 }
 
+/// Resolved issuer badge view computed from local profiles, BAP packages, identity cards,
+/// and HandCash's signed verified-issuer list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResolvedIssuerDisplay {
+    pub identity_key: String,
+    pub label: String,
+    pub state: &'static str,
+    pub profile_id: Option<String>,
+    pub image_url: Option<String>,
+    pub issuer_attested: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WalletSnapshot {
     pub balance: BalanceSummary,
@@ -579,6 +598,16 @@ pub fn apply_inscription_resolutions(
                 .filter(|s| !s.is_empty())
                 .map(ToString::to_string);
         }
+        if item.issuer_key.is_none() {
+            if let Some(iss) = rec
+                .get("issuer")
+                .or_else(|| rec.get("issuerKey"))
+                .and_then(Value::as_str)
+                .and_then(normalize_issuer_identity_key)
+            {
+                item.issuer_key = Some(iss);
+            }
+        }
         if entry.signer.is_none() {
             entry.signer = rec
                 .get("signer")
@@ -791,6 +820,8 @@ pub struct AppServices {
     item_art_mem: Mutex<HashMap<String, Option<String>>>,
     /// Origins currently being fetched in the background so we never storm indexers.
     item_art_inflight: Mutex<HashSet<String>>,
+    /// Epoch ms of the last automatic peer identity sync attempt (30 s cooldown).
+    last_peer_identity_sync_ms: std::sync::atomic::AtomicI64,
     patch_tx: watch::Sender<u64>,
     theme_tx: watch::Sender<ResolvedTheme>,
     fx_tx: watch::Sender<FxRates>,
@@ -858,12 +889,14 @@ impl AppServices {
             session: Mutex::new(None),
             item_art_mem: Mutex::new(HashMap::new()),
             item_art_inflight: Mutex::new(HashSet::new()),
+            last_peer_identity_sync_ms: std::sync::atomic::AtomicI64::new(0),
             patch_tx,
             theme_tx,
             fx_tx,
             health_tx,
         });
         crate::brc100_native::install_direct_handler(&services);
+        crate::device_peer::install_direct_device_peer_handler(&services);
         Ok(services)
     }
 
@@ -1570,6 +1603,73 @@ impl AppServices {
         self.patch_tx.subscribe()
     }
 
+    pub fn bump_patch(&self) {
+        let next = self.patch_tx.borrow().wrapping_add(1);
+        let _ = self.patch_tx.send(next);
+    }
+
+    /// Trigger a non-blocking background sync of missing identity profiles and BAP packages
+    /// from connected same-identity peer devices.
+    pub fn spawn_sync_identities_from_peers(self: &Arc<Self>) {
+        let svc = Arc::clone(self);
+        self.engine.runtime_handle().spawn(async move {
+            let _ = crate::device_peer::sync_identities_from_connected_peers(&svc).await;
+        });
+    }
+
+    /// If any held collectable has an issuing identity key whose profile is not on this device,
+    /// trigger a rate-limited (30 s) background pull from connected peer devices.
+    pub fn maybe_sync_missing_identities_from_peers(
+        self: &Arc<Self>,
+        chain: &str,
+        snap: &WalletSnapshot,
+    ) {
+        let has_unknown_issuer = snap.items.iter().any(|item| {
+            let meta = snap.item_meta.get(&item.outpoint);
+            let key = item
+                .issuer_key
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    meta.and_then(|m| m.signer.as_deref())
+                        .filter(|s| !s.trim().is_empty())
+                });
+            let Some(key) = key else {
+                return false;
+            };
+            let bap_id = meta
+                .and_then(|m| m.bap_id.as_deref())
+                .filter(|s| !s.trim().is_empty());
+            let attested = meta.is_some_and(|m| m.issuer_attested);
+            matches!(
+                self.resolve_issuer_display(chain, key, bap_id, attested).state,
+                "key" | "claim" | "unconfirmed"
+            )
+        });
+        if !has_unknown_issuer {
+            return;
+        }
+        let now = now_ms();
+        let prev = self
+            .last_peer_identity_sync_ms
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if now.saturating_sub(prev) < 30_000 {
+            return;
+        }
+        if self
+            .last_peer_identity_sync_ms
+            .compare_exchange(
+                prev,
+                now,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
+        {
+            self.spawn_sync_identities_from_peers();
+        }
+    }
+
     pub fn subscribe_theme(&self) -> watch::Receiver<ResolvedTheme> {
         self.theme_tx.subscribe()
     }
@@ -2138,12 +2238,26 @@ impl AppServices {
             if let Ok((bal, mut items, items_total, activity, activity_total)) =
                 tb.read_wallet_snapshot(100, 100)
             {
-                // Decode 1Sat inscription artwork & MAP metadata from `cold_blobs` (bounded).
+                // Decode 1Sat inscription artwork, MAP metadata, and BRC-247/Sigma issuer attribution.
                 let mut item_art = HashMap::new();
                 let mut item_meta: HashMap<String, ItemDisplayMeta> = HashMap::new();
+                let ci_map = tb.read_item_custom_instructions(100);
                 for item in &mut items {
+                    if let Some(ref existing_iss) = item.issuer_key {
+                        item.issuer_key = normalize_issuer_identity_key(existing_iss);
+                    }
                     if let Some(ref hash) = item.art_blob_hash {
                         if let Some(script_bytes) = tb.read_cold_blob(hash) {
+                            let tape = issuer_metadata_from_script(&script_bytes);
+                            if item.issuer_key.is_none() {
+                                item.issuer_key = tape.issuer;
+                            }
+                            if let Some(bap) = tape.bap_id {
+                                let entry = item_meta.entry(item.outpoint.clone()).or_default();
+                                if entry.bap_id.is_none() {
+                                    entry.bap_id = Some(bap);
+                                }
+                            }
                             if let Some(ord) = parse_ord_envelope(&script_bytes) {
                                 if !ord.content_type.is_empty()
                                     && item.mime == "application/octet-stream"
@@ -2193,6 +2307,76 @@ impl AppServices {
                                         item.outpoint.clone(),
                                         format!("data:{};base64,{b64}", ord.content_type),
                                     );
+                                }
+                            }
+                        }
+                    }
+
+                    // Extract issuer key / Sigma verification from custom_instructions (incl. BRC-150 provenance BEEF).
+                    if let Some(ci_json) = ci_map.get(&item.outpoint) {
+                        let ex = extract_issuer_from_custom_instructions(ci_json, &item.origin_outpoint);
+                        if let Some(po) = ex.provenance_origin {
+                            if item.origin_outpoint == item.outpoint {
+                                item.origin_outpoint = po;
+                            }
+                        }
+                        if let Some(iss) = ex.issuer_key {
+                            item.issuer_key = Some(iss);
+                        }
+                        if ex.bap_id.is_some() || ex.signer.is_some() || ex.issuer_attested {
+                            let entry = item_meta.entry(item.outpoint.clone()).or_default();
+                            if ex.bap_id.is_some() {
+                                entry.bap_id = ex.bap_id;
+                            }
+                            if ex.signer.is_some() {
+                                entry.signer = ex.signer;
+                            }
+                            if ex.issuer_attested {
+                                entry.issuer_attested = true;
+                            }
+                        }
+                    }
+
+                    // Verify Sigma / extract origin MAP issuer from local raw_tx or input_beef when not yet attested.
+                    let already_attested = item_meta
+                        .get(&item.outpoint)
+                        .is_some_and(|m| m.issuer_attested);
+                    if !already_attested {
+                        let mut from_chain = None;
+                        if let Some((orig_txid, orig_vout)) = parse_outpoint(&item.origin_outpoint) {
+                            if let Some(raw_tx) = tb.read_raw_tx_by_txid(&orig_txid) {
+                                if let Ok(tx) = Transaction::from_bytes(&raw_tx) {
+                                    from_chain = Some(extract_issuer_from_tx(&tx, orig_vout));
+                                }
+                            }
+                            if from_chain
+                                .as_ref()
+                                .is_none_or(|e| e.issuer_key.is_none() && e.signer.is_none())
+                            {
+                                if let Some((tip_txid, _)) = parse_outpoint(&item.outpoint) {
+                                    if let Some(beef_bytes) = tb.read_input_beef_by_txid(&tip_txid) {
+                                        from_chain = extract_issuer_from_beef(
+                                            &beef_bytes,
+                                            &item.origin_outpoint,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(ex) = from_chain {
+                            if ex.issuer_key.is_some() {
+                                item.issuer_key = ex.issuer_key;
+                            }
+                            if ex.bap_id.is_some() || ex.signer.is_some() || ex.issuer_attested {
+                                let entry = item_meta.entry(item.outpoint.clone()).or_default();
+                                if ex.bap_id.is_some() {
+                                    entry.bap_id = ex.bap_id;
+                                }
+                                if ex.signer.is_some() {
+                                    entry.signer = ex.signer;
+                                }
+                                if ex.issuer_attested {
+                                    entry.issuer_attested = true;
                                 }
                             }
                         }
@@ -3740,20 +3924,223 @@ impl AppServices {
             .find_map(|k| self.identity_profile_for(chain, k))
     }
 
-    /// Read a contact's shared profile (`handcash.identityCards.v1:{chain}:{identity_key}` or `identityProfiles`).
+        /// Read and cryptographically verify `handcash.verifiedIssuers.v1` against the pinned HandCash certifier.
+    pub fn verified_issuers(&self) -> Vec<VerifiedIssuerEntry> {
+        let Some(raw) = self.durable.get(VERIFIED_ISSUERS_KEY) else {
+            return Vec::new();
+        };
+        let Ok(v) = serde_json::from_str::<Value>(&raw) else {
+            return Vec::new();
+        };
+        verify_verified_issuer_list(&v).unwrap_or_default()
+    }
+
+    /// Read and verify a stored BAP issuer package (`handcash.issuerIdentities.v1:{chain}:{bap_id}`).
+    pub fn bap_identity_for(&self, chain: &str, bap_id: &str) -> Option<VerifiedBapIdentity> {
+        let id = normalize_bap_id(bap_id)?;
+        let key = format!("handcash.issuerIdentities.v1:{chain}:{id}");
+        let raw = self.durable.get(&key)?;
+        let v: Value = serde_json::from_str(&raw).ok()?;
+        let verified = verify_issuer_identity_package(&v)?;
+        (verified.bap_id == id && !verified.revoked).then_some(verified)
+    }
+
+    /// Find a stored non-revoked BAP identity linked to `identity_key` on `chain`.
+    pub fn linked_bap_identity_for_key(&self, chain: &str, identity_key: &str) -> Option<VerifiedBapIdentity> {
+        let ik = normalize_issuer_identity_key(identity_key)?;
+        let idx_key = format!("handcash.issuerIdentities.v1:{chain}");
+        let idx = self
+            .durable
+            .get(&idx_key)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())?;
+        let entries = idx.get("entries")?.as_array()?;
+        for entry in entries {
+            let Some(bap_id) = entry.get("bapId").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(bap) = self.bap_identity_for(chain, bap_id) {
+                if bap.linked_identity_keys.iter().any(|k| k.eq_ignore_ascii_case(&ik)) {
+                    return Some(bap);
+                }
+            }
+        }
+        None
+    }
+
+    /// Collect `(id, name)` for all known verified profiles and BAP identities on `chain` (for shared-name checks).
+    fn known_identity_names(&self, chain: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let mut keyed = HashSet::new();
+        let prof_idx = format!("handcash.identityProfiles.v1:{chain}");
+        if let Some(entries) = self
+            .durable
+            .get(&prof_idx)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .and_then(|v| v.get("entries").and_then(Value::as_array).cloned())
+        {
+            for e in entries {
+                if let Some(ik) = e.get("identityKey").and_then(Value::as_str) {
+                    if let Some(p) = self.identity_profile_for(chain, ik) {
+                        keyed.insert(p.identity_key.clone());
+                        out.push((p.identity_key, p.name));
+                    }
+                }
+            }
+        }
+        let bap_idx = format!("handcash.issuerIdentities.v1:{chain}");
+        if let Some(entries) = self
+            .durable
+            .get(&bap_idx)
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .and_then(|v| v.get("entries").and_then(Value::as_array).cloned())
+        {
+            for e in entries {
+                if let Some(bap_id) = e.get("bapId").and_then(Value::as_str) {
+                    if let Some(bap) = self.bap_identity_for(chain, bap_id) {
+                        if !bap.linked_identity_keys.iter().any(|k| keyed.contains(k)) {
+                            out.push((bap.bap_id, bap.name));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Resolve an asset's issuing identity key / BAP ID into its display profile and trust badge.
+    pub fn resolve_issuer_display(
+        &self,
+        chain: &str,
+        issuer_key: &str,
+        bap_id: Option<&str>,
+        issuer_attested: bool,
+    ) -> ResolvedIssuerDisplay {
+        let key_clean = issuer_key.trim();
+        let norm_key = normalize_issuer_identity_key(key_clean).unwrap_or_else(|| key_clean.to_string());
+        let norm_bap = bap_id.and_then(normalize_bap_id);
+
+        let own_profile = self.peer_identity_for(chain, &norm_key);
+        let bap_identity = norm_bap
+            .as_deref()
+            .and_then(|id| self.bap_identity_for(chain, id))
+            .or_else(|| self.linked_bap_identity_for_key(chain, &norm_key));
+
+        let verified_list = self.verified_issuers();
+        let known_names = self.known_identity_names(chain);
+
+        if let Some(prof) = own_profile {
+            let resolved_bap = bap_identity
+                .as_ref()
+                .map(|b| b.bap_id.as_str())
+                .or(norm_bap.as_deref());
+            let trust = compute_issuer_trust_state(
+                &norm_key,
+                &prof.name,
+                resolved_bap,
+                &verified_list,
+                &known_names,
+            );
+            return ResolvedIssuerDisplay {
+                identity_key: norm_key.clone(),
+                label: prof.name,
+                state: trust,
+                profile_id: Some(resolved_bap.map(ToString::to_string).unwrap_or(norm_key)),
+                image_url: prof.image_data_url,
+                issuer_attested,
+            };
+        }
+
+        if let Some(bap) = bap_identity {
+            let trust = compute_issuer_trust_state(
+                &bap.bap_id,
+                &bap.name,
+                Some(&bap.bap_id),
+                &verified_list,
+                &known_names,
+            );
+            return ResolvedIssuerDisplay {
+                identity_key: norm_key,
+                label: bap.name,
+                state: trust,
+                profile_id: Some(bap.bap_id),
+                image_url: bap.image_data_url,
+                issuer_attested,
+            };
+        }
+
+        if let Some(bid) = norm_bap {
+            return ResolvedIssuerDisplay {
+                identity_key: norm_key,
+                label: truncate_mid(&bid, 10),
+                state: "unconfirmed",
+                profile_id: Some(bid),
+                image_url: None,
+                issuer_attested,
+            };
+        }
+
+        ResolvedIssuerDisplay {
+            identity_key: norm_key.clone(),
+            label: truncate_mid(&norm_key, 10),
+            state: if issuer_attested { "key" } else { "claim" },
+            profile_id: None,
+            image_url: None,
+            issuer_attested,
+        }
+    }
+
+    /// Read a contact's shared profile (`handcash.identityProfiles`, canonical TS `handcash.identityCards.v1:{chain}` links, or linked BAP).
     pub fn peer_identity_for(
         &self,
         chain: &str,
         identity_key: &str,
     ) -> Option<AccountProfileView> {
         let ik = identity_key.trim().to_ascii_lowercase();
+        if ik.is_empty() {
+            return None;
+        }
         if let Some(prof) = self.identity_profile_for(chain, &ik) {
             return Some(prof);
         }
+        // Check canonical TS `handcash.identityCards.v1:{chain}` (`{ version: 1, links: { [walletKey]: { key | bapId } } }`).
+        let links_key = format!("handcash.identityCards.v1:{chain}");
+        if let Some(raw) = self.durable.get(&links_key) {
+            if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                if let Some(link) = v
+                    .get("links")
+                    .and_then(Value::as_object)
+                    .and_then(|m| m.get(&ik).or_else(|| m.get(identity_key.trim())))
+                {
+                    if let Some(presented_key) = link.get("key").and_then(Value::as_str) {
+                        if let Some(prof) = self.identity_profile_for(chain, presented_key) {
+                            return Some(prof);
+                        }
+                        if let Some(bap) = self.linked_bap_identity_for_key(chain, presented_key) {
+                            return Some(AccountProfileView {
+                                identity_key: presented_key.to_ascii_lowercase(),
+                                name: bap.name,
+                                description: bap.description,
+                                image_data_url: bap.image_data_url,
+                            });
+                        }
+                    }
+                    if let Some(bap_id) = link.get("bapId").and_then(Value::as_str) {
+                        if let Some(bap) = self.bap_identity_for(chain, bap_id) {
+                            return Some(AccountProfileView {
+                                identity_key: ik.clone(),
+                                name: bap.name,
+                                description: bap.description,
+                                image_data_url: bap.image_data_url,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        // Check legacy per-contact identityCard entries.
         for key in [
             format!("handcash.identityCards.v1:{chain}:{ik}"),
             format!("handcash.identityCards.v1:{chain}:{identity_key}"),
-            format!("handcash.identityCards.v1:{chain}"),
         ] {
             if let Some(raw) = self.durable.get(&key) {
                 if let Ok(v) = serde_json::from_str::<Value>(&raw) {
@@ -3786,17 +4173,36 @@ impl AppServices {
                 }
             }
         }
+        if let Some(bap) = self.linked_bap_identity_for_key(chain, &ik) {
+            return Some(AccountProfileView {
+                identity_key: ik,
+                name: bap.name,
+                description: bap.description,
+                image_data_url: bap.image_data_url,
+            });
+        }
         None
     }
 
     pub fn list_public_identities_view(&self, profile: &SessionSummary) -> PublicIdentitiesView {
-        let owner_ik = profile.identity_key.trim().to_ascii_lowercase();
-        let store_key =
-            Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik);
-        let store_val = self
-            .durable
-            .get(&store_key)
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+        let owner_trim = profile.identity_key.trim();
+        let owner_ik = owner_trim.to_ascii_lowercase();
+        let store_val = [
+            format!("handcash.publicIdentities.v1:wallet:{}:{}:{owner_trim}", profile.chain, profile.account_index),
+            Self::public_identities_store_key(&profile.chain, profile.account_index, &owner_ik),
+        ]
+        .iter()
+        .find_map(|k| {
+            self.durable
+                .get(k)
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        });
+
+        let owner_bap_id = self
+            .session
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().and_then(|s| bap_id_for_deriver(&s.deriver).ok()));
 
         let selected_issuer = store_val
             .as_ref()
@@ -3847,35 +4253,58 @@ impl AppServices {
         let mut rows = Vec::with_capacity(raw_entries.len());
         for (ik, signer, published) in raw_entries {
             let own_prof = self.identity_profile_for(&profile.chain, &ik);
-            let bap_id = published.clone().unwrap_or_else(|| {
-                let h = sha256(format!("bap:{ik}").as_bytes());
-                bs58::encode(&h[..20]).into_string()
-            });
+            let bap_prof = published
+                .as_deref()
+                .and_then(|bid| self.bap_identity_for(&profile.chain, bid))
+                .or_else(|| self.linked_bap_identity_for_key(&profile.chain, &ik));
+            let bap_id = published
+                .clone()
+                .or_else(|| bap_prof.as_ref().map(|b| b.bap_id.clone()))
+                .or_else(|| (ik == owner_ik).then(|| owner_bap_id.clone()).flatten())
+                .unwrap_or_else(|| {
+                    let h = sha256(format!("bap:{ik}").as_bytes());
+                    bs58::encode(&h[..20]).into_string()
+                });
             let is_selected = ik == selected_issuer;
             let is_presented = presented_key
                 .as_ref()
                 .map(|p| p == &ik)
-                .unwrap_or(own_prof.is_some() && ik == owner_ik);
+                .unwrap_or((own_prof.is_some() || bap_prof.is_some()) && ik == owner_ik);
+            let name = own_prof
+                .as_ref()
+                .map(|p| p.name.clone())
+                .or_else(|| bap_prof.as_ref().map(|b| b.name.clone()));
+            let description = own_prof
+                .as_ref()
+                .map(|p| p.description.clone())
+                .filter(|d| !d.is_empty())
+                .or_else(|| {
+                    bap_prof
+                        .as_ref()
+                        .map(|b| b.description.clone())
+                        .filter(|d| !d.is_empty())
+                });
+            let image_data_url = own_prof
+                .as_ref()
+                .and_then(|p| p.image_data_url.clone())
+                .or_else(|| bap_prof.as_ref().and_then(|b| b.image_data_url.clone()));
             rows.push(PublicIdentityRow {
                 identity_key: ik.clone(),
                 signer,
                 bap_id,
-                name: own_prof.as_ref().map(|p| p.name.clone()),
-                description: own_prof
-                    .as_ref()
-                    .map(|p| p.description.clone())
-                    .filter(|d| !d.is_empty()),
-                image_data_url: own_prof.as_ref().and_then(|p| p.image_data_url.clone()),
+                name,
+                description,
+                image_data_url,
                 profile_source: if own_prof.is_some() {
                     Some("identity-key".into())
-                } else if published.is_some() {
+                } else if bap_prof.is_some() || published.is_some() {
                     Some("bap".into())
                 } else {
                     None
                 },
                 is_selected_issuer: is_selected,
                 is_presented,
-                bap_published: published.is_some(),
+                bap_published: published.is_some() || bap_prof.is_some(),
             });
         }
 

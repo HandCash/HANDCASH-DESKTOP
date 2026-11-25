@@ -6,6 +6,7 @@ pub mod beef;
 pub mod brc150;
 pub mod bump;
 pub mod header;
+pub mod issuer;
 pub mod ord;
 pub mod recover;
 pub mod signer;
