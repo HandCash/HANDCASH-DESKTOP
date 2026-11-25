@@ -1170,3 +1170,86 @@ html.platform-mobile .panel-filter .search-field input {
 html:is(.platform-mobile, .layout-compact) .panel-filter-suggestions li {
   min-height: 40px;
 }
+
+/* ── Carbon fiber effect (dark mode) & crystal effect (mobile/light) ──
+ * Applied to the main nav bar, nav tabs, section labels, breadcrumb pills
+ * and tool/action pills in compact / mobile mode. Subtle and professional:
+ * no loud patterns, no neon — only a quiet material texture. ── */
+
+/* Carbon fiber texture source — very subtle diagonal lines on dark gray. */
+:root {
+  --hc-carbon-fiber: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.025),
+    rgba(255, 255, 255, 0.025) 1px,
+    transparent 1px,
+    transparent 4px
+  ),
+  repeating-linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.018),
+    rgba(255, 255, 255, 0.018) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+/* Dark mode — carbon fiber overlay on the gray nav surfaces. */
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar,
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not([data-selected]):not([aria-selected='true']):not(.is-active),
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > h2:not(.wallet-hero-title):not(.nav-breadcrumb),
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact)
+  .nav-breadcrumb-head,
+html[data-aeon-mode='dark']:is(.platform-mobile, .layout-compact)
+  .wallet-actions
+  .btn {
+  background-image: var(--hc-carbon-fiber);
+  background-color: var(--wallet-nav-select, #0a0a0a);
+}
+
+/* Mobile / light mode — crystal glassmorphism on the same surfaces. */
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not([data-selected]):not([aria-selected='true']):not(.is-active),
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .connected-panel-head
+  > h2:not(.wallet-hero-title):not(.nav-breadcrumb),
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .nav-breadcrumb-head,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-actions
+  .btn {
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  background: rgba(255, 255, 255, 0.72);
+  border-color: rgba(255, 255, 255, 0.55);
+  box-shadow: none;
+}
+
+/* Selected/active tabs stay clean — no texture competing with the active state. */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[data-selected],
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[aria-selected='true'],
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab.is-active {
+  background-image: none;
+}
+
+/* Crystal active tab — slight lift on light/mobile. */
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[aria-selected='true'],
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab.is-active {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border-color: rgba(255, 255, 255, 0.7);
+}
