@@ -685,6 +685,13 @@ async function signBntAction(
       const input = tx.inputs[vin]!
       const planned = targets.get(`${sourceTxidOf(tx, vin)}.${input.sourceOutputIndex}`)
       if (!planned) continue
+      // BRC-253 §§6, 8: a countersigned source needs the acceptor's issuer signatures,
+      // which this wallet cannot supply. An open unlock here would never validate.
+      const source = input.sourceTransaction?.outputs[input.sourceOutputIndex]
+      const sourceRead = source ? readBnt(source.lockingScript) : null
+      if (sourceRead && 'clause' in sourceRead && sourceRead.clause.mode === 'countersign') {
+        refuse('invalid-build', 'A countersigned BNT source needs the acceptor\'s issuer signatures, which this wallet does not sign. Nothing was signed.')
+      }
       input.unlockingScript = bntOpenUnlock(await signInputWithWallet(active.wallet, tx, vin, planned.signer, planned.scope))
       spends[vin] = { unlockingScript: input.unlockingScript.toHex() }
     }
