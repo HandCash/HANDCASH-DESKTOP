@@ -4585,13 +4585,46 @@ impl AppServices {
         let key_clean = issuer_key.trim();
         let norm_key = normalize_issuer_identity_key(key_clean).unwrap_or_else(|| key_clean.to_string());
         let norm_bap = bap_id.and_then(normalize_bap_id);
+        let short_key = if norm_key.is_ascii() && norm_key.len() == 66 {
+            format!("{}…{}", &norm_key[..8], &norm_key[60..])
+        } else {
+            truncate_mid(&norm_key, 10)
+        };
+
+        // An attribution key is not a signature. Match TS issuerViewFor: never
+        // lend a verified profile's name, image or listing to an unsigned claim.
+        if !issuer_attested {
+            return ResolvedIssuerDisplay {
+                identity_key: norm_key.clone(),
+                label: format!("Issuer claim {short_key}"),
+                state: "claim",
+                profile_id: None,
+                image_url: None,
+                issuer_attested: false,
+            };
+        }
 
         let own_profile = self.peer_identity_for(chain, &norm_key);
+        // A copied BAP stamp does not bind its signer to that profile.
         let bap_identity = norm_bap
             .as_deref()
             .and_then(|id| self.bap_identity_for(chain, id))
+            .filter(|bap| bap.linked_identity_keys.iter().any(|key| key.eq_ignore_ascii_case(&norm_key)))
             .or_else(|| self.linked_bap_identity_for_key(chain, &norm_key))
             .or_else(|| self.published_bap_for_own_key(chain, &norm_key));
+
+        if let Some(stamped) = norm_bap.as_deref() {
+            if bap_identity.as_ref().is_none_or(|bap| bap.bap_id != stamped) {
+                return ResolvedIssuerDisplay {
+                    identity_key: norm_key,
+                    label: format!("Unconfirmed profile {}", handcash_engine::collectables::short_profile_id(stamped)),
+                    state: "unconfirmed",
+                    profile_id: Some(stamped.to_string()),
+                    image_url: None,
+                    issuer_attested,
+                };
+            }
+        }
 
         let verified_list = self.verified_issuers();
         let known_names = self.known_identity_names(chain);
@@ -4639,7 +4672,7 @@ impl AppServices {
         if let Some(bid) = norm_bap {
             return ResolvedIssuerDisplay {
                 identity_key: norm_key,
-                label: truncate_mid(&bid, 10),
+                label: format!("Unconfirmed profile {}", handcash_engine::collectables::short_profile_id(&bid)),
                 state: "unconfirmed",
                 profile_id: Some(bid),
                 image_url: None,
@@ -4649,7 +4682,7 @@ impl AppServices {
 
         ResolvedIssuerDisplay {
             identity_key: norm_key.clone(),
-            label: truncate_mid(&norm_key, 10),
+            label: short_key,
             state: if issuer_attested { "key" } else { "claim" },
             profile_id: None,
             image_url: None,

@@ -751,6 +751,8 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
   width: min(22rem, calc(100% - 2rem));
   margin: 0 auto;
   padding: 1.25rem 0;
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 /* Phrase / key-slice backup needs width + a scroll body, not a tall card stack. */
@@ -842,6 +844,8 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
 
 .wallet-setup-config {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 1rem;
 }
 
@@ -1071,6 +1075,8 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
 
 .auth-form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 0.15rem;
 }
 
@@ -4038,12 +4044,15 @@ button.wallet-detail-value.is-copied {
 }
 
 .split-backup-item-actions {
+  flex-wrap: wrap;
   margin: 0;
 }
 
 /* BRC-140 dynamic slice list (Aeon Accordion + ListRow + Progress) */
 .key-slice-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 14px;
 }
 
@@ -4243,14 +4252,19 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .key-slice-accordion {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 8px;
 }
 
 .key-slice-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   border: var(--hc-border-w) solid hsl(var(--border));
   border-radius: var(--hc-radius);
   background: var(--hc-sunken-soft);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .key-slice-item[data-aeon-state='saved'] {
@@ -4362,6 +4376,8 @@ li[data-aeon-state='failed'] .history-progress-range {
 .key-slice-body {
   padding: 0 12px 12px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 10px;
   border-top: 1px solid color-mix(in srgb, hsl(var(--border)) 70%, transparent);
 }
@@ -4413,6 +4429,8 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .split-backup-shares {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 12px;
   margin-top: 4px;
 }
@@ -9681,6 +9699,8 @@ html:is(.platform-mobile, .layout-compact)
 
 .keys-backup-head {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
   gap: 0.65rem;
   flex-shrink: 0;
 }
@@ -9691,7 +9711,8 @@ html:is(.platform-mobile, .layout-compact)
 
 .keys-backup-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 6px;
 }
 
@@ -12047,7 +12068,8 @@ html[data-aeon-mode='light'] .skeleton {
   justify-self: center;
 }
 
-.deferred-image img[hidden] {
+.deferred-image img[hidden],
+.collectable-media > .deferred-image > img[hidden] {
   display: none;
 }
 

@@ -1,0 +1,6174 @@
+{
+  "collectable": [
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "sendPath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SUCCESS",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "sendPath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "sendPath": {
+              "path": "p2pkhSend"
+            }
+          },
+          "state": "p2pkhSend",
+          "context": {
+            "outpoint": "tip.0",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "p2pkhSend",
+          "context": {
+            "outpoint": "tip.0",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SUCCESS",
+            "txid": "signed"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": "signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": "signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "sendPath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "sendPath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.1",
+            "sendPath": {
+              "path": "refuse",
+              "reason": "covenant"
+            }
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.1",
+            "sendPath": {
+              "path": "refuse",
+              "reason": "covenant"
+            },
+            "txid": null,
+            "error": "covenant"
+          }
+        },
+        {
+          "event": {
+            "type": "SUCCESS",
+            "txid": "late"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.1",
+            "sendPath": {
+              "path": "refuse",
+              "reason": "covenant"
+            },
+            "txid": null,
+            "error": "covenant"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "sendPath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "sendPath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.2",
+            "sendPath": {
+              "path": "p2pkhSend"
+            }
+          },
+          "state": "p2pkhSend",
+          "context": {
+            "outpoint": "tip.2",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "other",
+            "sendPath": {
+              "path": "p2pkhSend"
+            }
+          },
+          "state": "p2pkhSend",
+          "context": {
+            "outpoint": "tip.2",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "locked"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.2",
+            "sendPath": {
+              "path": "p2pkhSend"
+            },
+            "txid": null,
+            "error": "locked"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "sendPath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "planned": 0,
+          "queued": 0,
+          "sentLegs": 0,
+          "sentItems": 0,
+          "failedItems": 0,
+          "stopped": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "legs": 2
+          },
+          "state": "sending",
+          "context": {
+            "planned": 2,
+            "queued": 2,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 3
+          },
+          "state": "sending",
+          "context": {
+            "planned": 2,
+            "queued": 1,
+            "sentLegs": 1,
+            "sentItems": 3,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 2
+          },
+          "state": "done",
+          "context": {
+            "planned": 2,
+            "queued": 0,
+            "sentLegs": 2,
+            "sentItems": 5,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_REJECTED",
+            "items": 2,
+            "reason": "late"
+          },
+          "state": "done",
+          "context": {
+            "planned": 2,
+            "queued": 0,
+            "sentLegs": 2,
+            "sentItems": 5,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "planned": 0,
+          "queued": 0,
+          "sentLegs": 0,
+          "sentItems": 0,
+          "failedItems": 0,
+          "stopped": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "legs": 1
+          },
+          "state": "sending",
+          "context": {
+            "planned": 1,
+            "queued": 1,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_REJECTED",
+            "items": 5,
+            "reason": "spent"
+          },
+          "state": "sending",
+          "context": {
+            "planned": 1,
+            "queued": 2,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": "spent"
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 3
+          },
+          "state": "sending",
+          "context": {
+            "planned": 1,
+            "queued": 1,
+            "sentLegs": 1,
+            "sentItems": 3,
+            "failedItems": 0,
+            "stopped": null,
+            "error": "spent"
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_REJECTED",
+            "items": 2,
+            "reason": "spent"
+          },
+          "state": "sending",
+          "context": {
+            "planned": 1,
+            "queued": 2,
+            "sentLegs": 1,
+            "sentItems": 3,
+            "failedItems": 0,
+            "stopped": null,
+            "error": "spent"
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_REJECTED",
+            "items": 1,
+            "reason": "spent"
+          },
+          "state": "sending",
+          "context": {
+            "planned": 1,
+            "queued": 1,
+            "sentLegs": 1,
+            "sentItems": 3,
+            "failedItems": 1,
+            "stopped": null,
+            "error": "spent"
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 1
+          },
+          "state": "done",
+          "context": {
+            "planned": 1,
+            "queued": 0,
+            "sentLegs": 2,
+            "sentItems": 4,
+            "failedItems": 1,
+            "stopped": null,
+            "error": "spent"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "planned": 0,
+          "queued": 0,
+          "sentLegs": 0,
+          "sentItems": 0,
+          "failedItems": 0,
+          "stopped": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 99
+          },
+          "state": "idle",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "legs": 3
+          },
+          "state": "sending",
+          "context": {
+            "planned": 3,
+            "queued": 3,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "sending",
+          "context": {
+            "planned": 3,
+            "queued": 3,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 1
+          },
+          "state": "sending",
+          "context": {
+            "planned": 3,
+            "queued": 2,
+            "sentLegs": 1,
+            "sentItems": 1,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RUN_FAULT",
+            "remainingItems": 6,
+            "reason": "offline"
+          },
+          "state": "halted",
+          "context": {
+            "planned": 3,
+            "queued": 0,
+            "sentLegs": 1,
+            "sentItems": 1,
+            "failedItems": 6,
+            "stopped": "fault",
+            "error": "offline"
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 99
+          },
+          "state": "halted",
+          "context": {
+            "planned": 3,
+            "queued": 0,
+            "sentLegs": 1,
+            "sentItems": 1,
+            "failedItems": 6,
+            "stopped": "fault",
+            "error": "offline"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "planned": 0,
+          "queued": 0,
+          "sentLegs": 0,
+          "sentItems": 0,
+          "failedItems": 0,
+          "stopped": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "legs": 0
+          },
+          "state": "sending",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "LEG_SENT",
+            "items": 0
+          },
+          "state": "done",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 1,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "planned": 0,
+            "queued": 0,
+            "sentLegs": 0,
+            "sentItems": 0,
+            "failedItems": 0,
+            "stopped": null,
+            "error": null
+          }
+        }
+      ]
+    }
+  ],
+  "items": [
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": ""
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": "created-tx"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "building"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "createAction"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "signing"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed"
+          },
+          "state": "peerDeliver",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "settling"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "peerDeliver",
+              "recipientIdentityKey": "021111111111111111111111111111111111111111111111111111111111111111"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": ""
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": "created-tx"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "building"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "createAction"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "signing"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed"
+          },
+          "state": "selfReceive",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "settling"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "selfReceive"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": ""
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "stale"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED",
+            "txid": "created-tx"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed-tx"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "created-tx",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "building"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "building"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "createAction"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "createAction"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "signing"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": "signing"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "START",
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            }
+          },
+          "state": "building",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BUILT"
+          },
+          "state": "createAction",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "CREATED"
+          },
+          "state": "signing",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": null,
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "signed"
+          },
+          "state": "externalBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "settling"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": {
+              "settle": "externalBroadcast",
+              "reason": "no-peer-identity"
+            },
+            "txid": "signed",
+            "error": "settling"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "RETRY_BROADCAST",
+            "outpoint": "tip.0",
+            "txid": "already-signed"
+          },
+          "state": "confirmBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "BROADCASTED",
+            "error": "offline"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "RETRY_BROADCAST",
+            "outpoint": "tip.0",
+            "txid": "already-signed"
+          },
+          "state": "confirmBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SKIPPED",
+            "error": "offline"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "late"
+          },
+          "state": "done",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "initial": {
+        "state": "idle",
+        "context": {
+          "outpoint": "",
+          "settlePath": null,
+          "txid": null,
+          "error": null
+        }
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "RETRY_BROADCAST",
+            "outpoint": "tip.0",
+            "txid": "already-signed"
+          },
+          "state": "confirmBroadcast",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": null
+          }
+        },
+        {
+          "event": {
+            "type": "FAIL",
+            "error": "offline"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": "offline"
+          }
+        },
+        {
+          "event": {
+            "type": "SIGNED",
+            "txid": "late"
+          },
+          "state": "failed",
+          "context": {
+            "outpoint": "tip.0",
+            "settlePath": null,
+            "txid": "already-signed",
+            "error": "offline"
+          }
+        },
+        {
+          "event": {
+            "type": "RESET"
+          },
+          "state": "idle",
+          "context": {
+            "outpoint": "",
+            "settlePath": null,
+            "txid": null,
+            "error": null
+          }
+        }
+      ]
+    }
+  ],
+  "policies": [
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "peerDeliver",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": true
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "selfReceive",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "building",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "createAction",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "signing",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "externalBroadcast",
+        "mayBroadcast": true,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "confirmBroadcast",
+        "mayBroadcast": true,
+        "silent": true,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "confirmBroadcast",
+        "mayBroadcast": true,
+        "silent": true,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "done",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ],
+    [
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "confirmBroadcast",
+        "mayBroadcast": true,
+        "silent": true,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "failed",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      },
+      {
+        "state": "idle",
+        "mayBroadcast": false,
+        "silent": false,
+        "mustDeliver": false
+      }
+    ]
+  ],
+  "paths": [
+    {
+      "input": {
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": " ",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": " ",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": " ",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": " ",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "76a914111111111111111111111111111111111111111188ac",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "76a914111111111111111111111111111111111111111188ac",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "76a914111111111111111111111111111111111111111188ac",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "76a914111111111111111111111111111111111111111188ac",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "0X76A914111111111111111111111111111111111111111188AC",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "0X76A914111111111111111111111111111111111111111188AC",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "0X76A914111111111111111111111111111111111111111188AC",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "0X76A914111111111111111111111111111111111111111188AC",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "006376a914111111111111111111111111111111111111111188ac68",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "006376a914111111111111111111111111111111111111111188ac68",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "006376a914111111111111111111111111111111111111111188ac68",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "006376a914111111111111111111111111111111111111111188ac68",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "f76a914111111111111111111111111111111111111111188ac",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Collectable locking script is unrecognized"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "f76a914111111111111111111111111111111111111111188ac",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "f76a914111111111111111111111111111111111111111188ac",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "f76a914111111111111111111111111111111111111111188ac",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "abababababababababababababababababababababababababababababababababababababababab",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "abababababababababababababababababababababababababababababababababababababababab",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "abababababababababababababababababababababababababababababababababababababababab",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "abababababababababababababababababababababababababababababababababababababababab",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "zz",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Collectable locking script is unrecognized"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "zz",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "zz",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "zz",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "51",
+        "proven": false,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Collectable locking script is unrecognized"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "51",
+        "proven": false,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "51",
+        "proven": true,
+        "covenantLocked": false
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "lockingScript": "51",
+        "proven": true,
+        "covenantLocked": true
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    }
+  ],
+  "choices": [
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "brc150"
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is still verifying authenticity."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Send is available after authenticity is verified."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "unproven"
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Collectable locking script is unrecognized"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Collectable locking script is unrecognized"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is still verifying authenticity."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "unknown"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Send is available after authenticity is verified."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "brc150"
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is still verifying authenticity."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Send is available after authenticity is verified."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "unproven"
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "p2pkhSend"
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is still verifying authenticity."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "p2pkh",
+          "lockingScript": "76a914111111111111111111111111111111111111111188ac"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "Send is available after authenticity is verified."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "brc150"
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "brc150",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "unproven"
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": true
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "verifying"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    },
+    {
+      "input": {
+        "tipKind": {
+          "kind": "covenantLocked",
+          "lockingScript": "abababababababababababababababababababababababababababababababababababababababab"
+        },
+        "provenTier": "unproven",
+        "sendReady": {
+          "ready": false,
+          "reason": "unproven"
+        }
+      },
+      "expected": {
+        "path": "refuse",
+        "reason": "This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory."
+      }
+    }
+  ],
+  "plans": [
+    {
+      "input": [],
+      "expected": {
+        "kind": "refuse",
+        "reason": "empty"
+      },
+      "split": [
+        [],
+        []
+      ],
+      "activity": "record"
+    },
+    {
+      "input": [
+        ""
+      ],
+      "expected": {
+        "kind": "refuse",
+        "reason": "empty"
+      },
+      "split": [
+        [
+          ""
+        ],
+        []
+      ],
+      "activity": "record"
+    },
+    {
+      "input": [
+        " AA_0 ",
+        "aa.0",
+        "BB.2",
+        "bb_2"
+      ],
+      "expected": {
+        "kind": "legs",
+        "legs": [
+          {
+            "index": 1,
+            "outpoints": [
+              "aa.0",
+              "bb.2"
+            ]
+          }
+        ],
+        "itemCount": 2
+      },
+      "split": [
+        [
+          " AA_0 ",
+          "aa.0"
+        ],
+        [
+          "BB.2",
+          "bb_2"
+        ]
+      ],
+      "activity": "discard"
+    },
+    {
+      "input": [
+        "weird_x",
+        "weird_x"
+      ],
+      "expected": {
+        "kind": "legs",
+        "legs": [
+          {
+            "index": 1,
+            "outpoints": [
+              "weird_x"
+            ]
+          }
+        ],
+        "itemCount": 1
+      },
+      "split": [
+        [
+          "weird_x"
+        ],
+        [
+          "weird_x"
+        ]
+      ],
+      "activity": "discard"
+    },
+    {
+      "input": [
+        "tip_0",
+        "tip_1",
+        "tip_2",
+        "tip_3",
+        "tip_4",
+        "tip_5",
+        "tip_6",
+        "tip_7",
+        "tip_8",
+        "tip_9",
+        "tip_10",
+        "tip_11",
+        "tip_12",
+        "tip_13",
+        "tip_14",
+        "tip_15",
+        "tip_16",
+        "tip_17",
+        "tip_18",
+        "tip_19",
+        "tip_20",
+        "tip_21",
+        "tip_22",
+        "tip_23",
+        "tip_24",
+        "tip_25",
+        "tip_26",
+        "tip_27",
+        "tip_28",
+        "tip_29",
+        "tip_30",
+        "tip_31",
+        "tip_32",
+        "tip_33",
+        "tip_34",
+        "tip_35",
+        "tip_36",
+        "tip_37",
+        "tip_38",
+        "tip_39",
+        "tip_40",
+        "tip_41",
+        "tip_42",
+        "tip_43",
+        "tip_44",
+        "tip_45",
+        "tip_46",
+        "tip_47",
+        "tip_48",
+        "tip_49",
+        "tip_50",
+        "tip_51",
+        "tip_52",
+        "tip_53",
+        "tip_54",
+        "tip_55",
+        "tip_56",
+        "tip_57",
+        "tip_58",
+        "tip_59",
+        "tip_60",
+        "tip_61",
+        "tip_62",
+        "tip_63",
+        "tip_64",
+        "tip_65",
+        "tip_66",
+        "tip_67",
+        "tip_68",
+        "tip_69",
+        "tip_70",
+        "tip_71",
+        "tip_72",
+        "tip_73",
+        "tip_74",
+        "tip_75",
+        "tip_76",
+        "tip_77",
+        "tip_78",
+        "tip_79",
+        "tip_80",
+        "tip_81",
+        "tip_82",
+        "tip_83",
+        "tip_84",
+        "tip_85",
+        "tip_86",
+        "tip_87",
+        "tip_88",
+        "tip_89",
+        "tip_90",
+        "tip_91",
+        "tip_92",
+        "tip_93",
+        "tip_94",
+        "tip_95",
+        "tip_96",
+        "tip_97",
+        "tip_98",
+        "tip_99"
+      ],
+      "expected": {
+        "kind": "legs",
+        "legs": [
+          {
+            "index": 1,
+            "outpoints": [
+              "tip.0",
+              "tip.1",
+              "tip.2",
+              "tip.3",
+              "tip.4",
+              "tip.5",
+              "tip.6",
+              "tip.7",
+              "tip.8",
+              "tip.9",
+              "tip.10",
+              "tip.11",
+              "tip.12",
+              "tip.13",
+              "tip.14",
+              "tip.15",
+              "tip.16",
+              "tip.17",
+              "tip.18",
+              "tip.19",
+              "tip.20",
+              "tip.21",
+              "tip.22",
+              "tip.23",
+              "tip.24",
+              "tip.25",
+              "tip.26",
+              "tip.27",
+              "tip.28",
+              "tip.29",
+              "tip.30",
+              "tip.31",
+              "tip.32",
+              "tip.33",
+              "tip.34",
+              "tip.35",
+              "tip.36",
+              "tip.37",
+              "tip.38",
+              "tip.39",
+              "tip.40",
+              "tip.41",
+              "tip.42",
+              "tip.43",
+              "tip.44",
+              "tip.45",
+              "tip.46",
+              "tip.47",
+              "tip.48",
+              "tip.49",
+              "tip.50",
+              "tip.51",
+              "tip.52",
+              "tip.53",
+              "tip.54",
+              "tip.55",
+              "tip.56",
+              "tip.57",
+              "tip.58",
+              "tip.59",
+              "tip.60",
+              "tip.61",
+              "tip.62",
+              "tip.63",
+              "tip.64",
+              "tip.65",
+              "tip.66",
+              "tip.67",
+              "tip.68",
+              "tip.69",
+              "tip.70",
+              "tip.71",
+              "tip.72",
+              "tip.73",
+              "tip.74",
+              "tip.75",
+              "tip.76",
+              "tip.77",
+              "tip.78",
+              "tip.79",
+              "tip.80",
+              "tip.81",
+              "tip.82",
+              "tip.83",
+              "tip.84",
+              "tip.85",
+              "tip.86",
+              "tip.87",
+              "tip.88",
+              "tip.89",
+              "tip.90",
+              "tip.91",
+              "tip.92",
+              "tip.93",
+              "tip.94",
+              "tip.95",
+              "tip.96",
+              "tip.97",
+              "tip.98",
+              "tip.99"
+            ]
+          }
+        ],
+        "itemCount": 100
+      },
+      "split": [
+        [
+          "tip_0",
+          "tip_1",
+          "tip_2",
+          "tip_3",
+          "tip_4",
+          "tip_5",
+          "tip_6",
+          "tip_7",
+          "tip_8",
+          "tip_9",
+          "tip_10",
+          "tip_11",
+          "tip_12",
+          "tip_13",
+          "tip_14",
+          "tip_15",
+          "tip_16",
+          "tip_17",
+          "tip_18",
+          "tip_19",
+          "tip_20",
+          "tip_21",
+          "tip_22",
+          "tip_23",
+          "tip_24",
+          "tip_25",
+          "tip_26",
+          "tip_27",
+          "tip_28",
+          "tip_29",
+          "tip_30",
+          "tip_31",
+          "tip_32",
+          "tip_33",
+          "tip_34",
+          "tip_35",
+          "tip_36",
+          "tip_37",
+          "tip_38",
+          "tip_39",
+          "tip_40",
+          "tip_41",
+          "tip_42",
+          "tip_43",
+          "tip_44",
+          "tip_45",
+          "tip_46",
+          "tip_47",
+          "tip_48",
+          "tip_49"
+        ],
+        [
+          "tip_50",
+          "tip_51",
+          "tip_52",
+          "tip_53",
+          "tip_54",
+          "tip_55",
+          "tip_56",
+          "tip_57",
+          "tip_58",
+          "tip_59",
+          "tip_60",
+          "tip_61",
+          "tip_62",
+          "tip_63",
+          "tip_64",
+          "tip_65",
+          "tip_66",
+          "tip_67",
+          "tip_68",
+          "tip_69",
+          "tip_70",
+          "tip_71",
+          "tip_72",
+          "tip_73",
+          "tip_74",
+          "tip_75",
+          "tip_76",
+          "tip_77",
+          "tip_78",
+          "tip_79",
+          "tip_80",
+          "tip_81",
+          "tip_82",
+          "tip_83",
+          "tip_84",
+          "tip_85",
+          "tip_86",
+          "tip_87",
+          "tip_88",
+          "tip_89",
+          "tip_90",
+          "tip_91",
+          "tip_92",
+          "tip_93",
+          "tip_94",
+          "tip_95",
+          "tip_96",
+          "tip_97",
+          "tip_98",
+          "tip_99"
+        ]
+      ],
+      "activity": "discard"
+    }
+  ],
+  "failures": [
+    {
+      "input": "wallet locked",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "wallet is locked",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "no wallet",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "not enough BSV",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "insufficient",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "invalid recipient",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "select at least one",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "cancelled",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "canceled",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "offline",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "no network",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "network",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "fetch failed",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "timed out",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "timeout",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "status 429",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "status 500",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "status 502",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "status 503",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "status 504",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "ancestry incomplete",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    },
+    {
+      "input": "ancestry_incomplete",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    },
+    {
+      "input": "beef_ancestry_incomplete",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    },
+    {
+      "input": "without create transaction",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    },
+    {
+      "input": "missing source transaction",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    },
+    {
+      "input": "collectable is no longer in this wallet",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "collectable is no longer unspent",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "collectable utxo is not a 1-sat ordinal",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "is no longer spendable",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "input already spent",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "already-spent input",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "already spent input",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "double spend",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "doublespend",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "txn-mempool-conflict",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "bad-txns-inputs-missingorspent",
+      "expected": {
+        "action": "split",
+        "reason": "itemConflict"
+      }
+    },
+    {
+      "input": "novel failure",
+      "expected": {
+        "action": "stop",
+        "reason": "unknown"
+      }
+    },
+    {
+      "input": "",
+      "expected": {
+        "action": "stop",
+        "reason": "unknown"
+      }
+    },
+    {
+      "input": "NETWORK input already spent",
+      "expected": {
+        "action": "stop",
+        "reason": "network"
+      }
+    },
+    {
+      "input": "wallet locked network",
+      "expected": {
+        "action": "stop",
+        "reason": "wallet"
+      }
+    },
+    {
+      "input": "missing source transaction double spend",
+      "expected": {
+        "action": "stop",
+        "reason": "ancestry"
+      }
+    }
+  ]
+}

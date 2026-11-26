@@ -22,6 +22,59 @@ pub fn bsv_logo_png_data_uri() -> &'static str {
     })
 }
 
+/// Decode a bundled PNG once into straight-alpha RGBA8 for aeon-native, which paints only
+/// predecoded pixels (it ignores `img src`). `None` if decoding fails.
+#[cfg(feature = "aeon")]
+fn decode_bundled_png(bytes: &[u8]) -> Option<aeon_native::ImagePixels> {
+    let mut decoder = png::Decoder::new(bytes);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    buf.truncate(info.buffer_size());
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::GrayscaleAlpha => {
+            buf.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect()
+        }
+        png::ColorType::Grayscale => buf.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        png::ColorType::Indexed => return None,
+    };
+    aeon_native::ImagePixels::rgba8(info.width, info.height, rgba).ok()
+}
+
+#[cfg(feature = "aeon")]
+fn bundled_image_attr(
+    cell: &'static OnceLock<Option<aeon_native::ImagePixels>>,
+    bytes: &'static [u8],
+) -> Option<dioxus::dioxus_core::AttributeValue> {
+    let pixels = cell.get_or_init(|| decode_bundled_png(bytes)).clone()?;
+    Some(aeon_native::ImageAttr::new(pixels).into_attr_value())
+}
+
+/// `aeon-image` attribute for the HandCash mark (Alpha renderer only; `None` on Blitz).
+fn handcash_mark_image_attr() -> Option<dioxus::dioxus_core::AttributeValue> {
+    #[cfg(feature = "aeon")]
+    {
+        static PIXELS: OnceLock<Option<aeon_native::ImagePixels>> = OnceLock::new();
+        bundled_image_attr(&PIXELS, HANDCASH_MARK_GREEN_PNG)
+    }
+    #[cfg(not(feature = "aeon"))]
+    None
+}
+
+/// `aeon-image` attribute for the BSV logo (Alpha renderer only; `None` on Blitz).
+fn bsv_logo_image_attr() -> Option<dioxus::dioxus_core::AttributeValue> {
+    #[cfg(feature = "aeon")]
+    {
+        static PIXELS: OnceLock<Option<aeon_native::ImagePixels>> = OnceLock::new();
+        bundled_image_attr(&PIXELS, BSV_LOGO_PNG)
+    }
+    #[cfg(not(feature = "aeon"))]
+    None
+}
+
 fn handcash_mark_png_data_uri() -> &'static str {
     static URI: OnceLock<String> = OnceLock::new();
     URI.get_or_init(|| {
@@ -33,6 +86,7 @@ fn handcash_mark_png_data_uri() -> &'static str {
 #[component]
 pub fn HandCashBrandMark(#[props(default = 28)] size: u32) -> Element {
     let src = handcash_mark_png_data_uri();
+    let pixels = handcash_mark_image_attr();
     rsx! {
         span {
             class: "deferred-image",
@@ -40,6 +94,7 @@ pub fn HandCashBrandMark(#[props(default = 28)] size: u32) -> Element {
             img {
                 class: "brand-logo-mark",
                 src: "{src}",
+                "aeon-image": pixels,
                 width: "{size}",
                 height: "{size}",
                 alt: "HandCash",
@@ -84,10 +139,12 @@ pub fn HandCashWordmarkSvg() -> Element {
 #[component]
 pub fn BsvLogoMark(#[props(default = 32)] size: u32) -> Element {
     let src = bsv_logo_png_data_uri();
+    let pixels = bsv_logo_image_attr();
     rsx! {
         img {
             class: "bsv-logo is-shown",
             src: "{src}",
+            "aeon-image": pixels,
             width: "{size}",
             height: "{size}",
             style: "width:{size}px;height:{size}px;object-fit:contain;display:block;flex-shrink:0;border-radius:0;",

@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// only complete BRC-150 proofs display as verified; indexer/marker claims stay `unproven`.
 pub fn authenticity_display(status: &str) -> (&'static str, &'static str) {
     match status.trim().to_ascii_lowercase().as_str() {
-        "brc150" | "proven" | "verified" => ("Verified · BRC-150", "brc150"),
+        "brc150" | "brc156" => ("Verified · BRC-150", "brc150"),
         "verifying" | "pending" => ("Verifying…", "verifying"),
         "invalid" => ("Cannot be verified", "unproven"),
         _ => ("Unverified identity", "unproven"),
@@ -182,8 +182,8 @@ fn issuer_view_for(
     let meta = snap.item_meta.get(&item.outpoint);
     let attested = meta.is_some_and(|m| m.issuer_attested);
     let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref()));
-    if let Some(key) = non_empty(item.issuer_key.as_deref()) {
-        let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
+    if let Some(key) = item.issuer_key.as_deref().and_then(handcash_engine::collectables::normalize_issuer) {
+        let resolved = services.resolve_issuer_display(chain, &key, bap_id, attested);
         return Some(IssuerView {
             identity_key: resolved.identity_key,
             label: resolved.label,
@@ -376,7 +376,9 @@ fn set_outpoint_selected(mut selected: Signal<BTreeSet<String>>, outpoint: &str,
 /// One shelf per issuer identity (verified issuer profile -> signer -> app -> collection -> unverified key).
 struct IdentityShelf<'a> {
     key: String,
-    rank: u8,
+    collections: Vec<NestedCollection<'a>>,
+    loose: Vec<&'a ItemCardRow>,
+    faces: Vec<(String, Option<String>)>,
     fingerprint_id: Option<String>,
     avatar_url: Option<String>,
     label: String,
@@ -387,179 +389,183 @@ struct IdentityShelf<'a> {
     items: Vec<&'a ItemCardRow>,
 }
 
-fn collection_series_stem(name: &str) -> Option<String> {
-    let (prefix, rest) = name.rsplit_once('#')?;
-    let digits = rest.trim();
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let clean = prefix.trim();
-    if clean.len() >= 3 {
-        Some(clean.to_string())
-    } else {
-        None
+/// Adapt cached display metadata only; this does not read custody rows or proofs.
+fn read_item(item: &ItemCardRow, snap: &WalletSnapshot) -> handcash_engine::collectables::Item {
+    use handcash_engine::collectables::{Item, Trait};
+    let meta = snap.item_meta.get(&item.outpoint);
+    Item {
+        outpoint: item.outpoint.clone(),
+        origin: item.origin_outpoint.clone(),
+        name: item.name.clone(),
+        image_url: snap
+            .item_art
+            .get(&item.outpoint)
+            .cloned()
+            .unwrap_or_default(),
+        issuer: item.issuer_key.clone().unwrap_or_default(),
+        issuer_attested: meta.is_some_and(|m| m.issuer_attested),
+        bap_id: meta.and_then(|m| m.bap_id.clone()).unwrap_or_default(),
+        collection_id: meta
+            .and_then(|m| m.collection_id.clone())
+            .unwrap_or_default(),
+        app: meta.and_then(|m| m.app.clone()).unwrap_or_default(),
+        signer: meta.and_then(|m| m.signer.clone()).unwrap_or_default(),
+        content: meta.and_then(|m| m.content.clone()).unwrap_or_default(),
+        item_type: meta.and_then(|m| m.item_type.clone()).unwrap_or_default(),
+        sub_type: meta.and_then(|m| m.sub_type.clone()).unwrap_or_default(),
+        mime_type: item.mime.clone(),
+        traits: meta
+            .map(|m| {
+                m.traits
+                    .iter()
+                    .map(|(name, value)| Trait {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        extras: meta
+            .map(|m| {
+                m.extras
+                    .iter()
+                    .map(|(name, value)| Trait {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        proven: authenticity_display(&item.authenticity_status).1 == "brc150",
+        ..Item::default()
     }
 }
 
-/// Shelves items by issuer identity (mirroring TS `groupCollectables` + `issuerPublisherRank`).
-/// Verified issuer profiles come first, then Sigma signers / apps / collections, then raw issuer keys.
+/// Identity resolution supplies display outcomes; the read model owns shelf
+/// identity and prevents claims from sharing an attested publisher's shelf.
 fn group_by_identity<'a>(
     items: &[&'a ItemCardRow],
     snap: &WalletSnapshot,
     services: &AppServices,
     chain: &str,
 ) -> (Vec<IdentityShelf<'a>>, Vec<&'a ItemCardRow>) {
-    let mut buckets: BTreeMap<String, IdentityShelf<'a>> = BTreeMap::new();
-    let mut loose = Vec::new();
-    for &item in items {
-        let meta = snap.item_meta.get(&item.outpoint);
-        let issuer_key = non_empty(item.issuer_key.as_deref());
-        let signer = non_empty(meta.and_then(|m| m.signer.as_deref()));
-        let app = non_empty(meta.and_then(|m| m.app.as_deref()));
-        let collection_id = non_empty(meta.and_then(|m| m.collection_id.as_deref()));
-        let attested = meta.is_some_and(|m| m.issuer_attested);
-
-        let bap_id = non_empty(meta.and_then(|m| m.bap_id.as_deref()));
-
-        let shelf = if let Some(key) = issuer_key {
-            let resolved = services.resolve_issuer_display(chain, key, bap_id, attested);
-            let rank = match resolved.state {
-                "listed" => 0u8,
-                "verified" | "imitation" | "shared-name" => 1u8,
-                "key" => 2u8,
-                _ => 3u8,
-            };
-            let label = if matches!(resolved.state, "key" | "claim") {
-                format!("Issuer {}", resolved.label)
-            } else {
-                resolved.label.clone()
-            };
-            Some(IdentityShelf {
-                key: format!("issuer:pubkey:{}", resolved.identity_key.to_ascii_lowercase()),
-                rank,
-                fingerprint_id: resolved.profile_id.clone().or_else(|| Some(resolved.identity_key.clone())),
-                avatar_url: resolved.image_url,
-                title: format!("{label} · issuer attribution: {}", resolved.identity_key),
-                label,
-                trust_state: resolved.state,
-                items: Vec::new(),
-            })
-        } else if let Some(sig) = signer {
-            let label = app
-                .map(ToString::to_string)
-                .unwrap_or_else(|| format!("Signed · {}", truncate_mid(sig, 10)));
-            Some(IdentityShelf {
-                key: format!("issuer:signer:{sig}"),
-                rank: 2,
-                fingerprint_id: Some(sig.to_string()),
-                avatar_url: None,
-                title: format!("{label} · signed by {sig}, as the index reports it"),
-                label,
-                trust_state: if attested { "key" } else { "claim" },
-                items: Vec::new(),
-            })
-        } else if let Some(a) = app {
-            Some(IdentityShelf {
-                key: format!("issuer:app:{}", a.to_ascii_lowercase()),
-                rank: 2,
-                fingerprint_id: None,
-                avatar_url: None,
-                title: a.to_string(),
-                label: a.to_string(),
-                trust_state: "claim",
-                items: Vec::new(),
-            })
-        } else if let Some(cid) = collection_id {
-            let label = collection_series_stem(&item.name)
-                .unwrap_or_else(|| format!("Collection {}", truncate_mid(cid, 10)));
-            Some(IdentityShelf {
-                key: format!("issuer:collection:{}", cid.to_ascii_lowercase()),
-                rank: 2,
-                fingerprint_id: None,
-                avatar_url: None,
-                title: label.clone(),
-                label,
-                trust_state: "claim",
-                items: Vec::new(),
-            })
-        } else {
-            None
-        };
-
-        match shelf {
-            Some(shelf) => {
-                let entry = buckets.entry(shelf.key.clone()).or_insert(shelf);
-                // If an earlier item in the same Sigma signer shelf lacked an app label, adopt it from a later item.
-                if entry.label.starts_with("Signed · ") {
-                    if let Some(a) = app {
-                        entry.label = a.to_string();
-                        if let Some(sig) = signer {
-                            entry.title = format!("{a} · signed by {sig}, as the index reports it");
-                        }
+    use handcash_engine::collectables::{self, Attribution};
+    let mut resolved = BTreeMap::new();
+    let projected: Vec<_> = items
+        .iter()
+        .map(|item| {
+            let mut view = read_item(item, snap);
+            if let Some(key) = collectables::normalize_issuer(&view.issuer) {
+                let r = services.resolve_issuer_display(
+                    chain,
+                    &key,
+                    non_empty(Some(&view.bap_id)),
+                    view.issuer_attested,
+                );
+                view.attribution = match r.state {
+                    "listed" | "verified" | "imitation" | "shared-name" => {
+                        Some(Attribution::Verified {
+                            identity_key: r.identity_key.clone(),
+                            profile_id: r
+                                .profile_id
+                                .clone()
+                                .unwrap_or_else(|| r.identity_key.clone()),
+                            bap_id: non_empty(Some(&view.bap_id)).map(ToString::to_string),
+                            label: r.label.clone(),
+                            image_url: r.image_url.clone(),
+                            listed: r.state == "listed",
+                        })
                     }
+                    "unconfirmed" => r
+                        .profile_id
+                        .clone()
+                        .map(|bap_id| Attribution::Unconfirmed { bap_id }),
+                    _ => None,
+                };
+                if let Some(issuer) = collectables::issuer_view(&view) {
+                    resolved.entry(issuer.key).or_insert(r);
                 }
-                entry.items.push(item);
             }
-            None => loose.push(item),
-        }
-    }
-    let mut shelves: Vec<IdentityShelf<'a>> = buckets.into_values().collect();
-    shelves.sort_by(|a, b| {
-        a.rank
-            .cmp(&b.rank)
-            .then_with(|| a.label.to_ascii_lowercase().cmp(&b.label.to_ascii_lowercase()))
-    });
+            view
+        })
+        .collect();
+    let model = collectables::group(&projected, &[]);
+    let by_outpoint: BTreeMap<_, _> = items.iter().map(|i| (i.outpoint.as_str(), *i)).collect();
+    let shelves = model
+        .issuers
+        .into_iter()
+        .map(|s| {
+            let issuer = s.issuer;
+            let r = resolved.get(&issuer.key);
+            IdentityShelf {
+                collections: s
+                    .collections
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.key.clone(),
+                            c.label.clone(),
+                            c.items
+                                .iter()
+                                .filter_map(|op| by_outpoint.get(op.as_str()).copied())
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                loose: s
+                    .loose
+                    .iter()
+                    .filter_map(|op| by_outpoint.get(op.as_str()).copied())
+                    .collect(),
+                faces: s
+                    .faces
+                    .iter()
+                    .map(|f| (f.outpoint.clone(), Some(f.image_url.clone())))
+                    .collect(),
+                fingerprint_id: issuer
+                    .profile_id
+                    .clone()
+                    .or(issuer.identity_key.clone())
+                    .or_else(|| {
+                        issuer
+                            .key
+                            .strip_prefix("issuer:signer:")
+                            .map(ToString::to_string)
+                    }),
+                avatar_url: issuer.image_url,
+                label: issuer.label.clone(),
+                trust_state: r.map(|r| r.state).unwrap_or("claim"),
+                title: issuer.label,
+                items: s
+                    .items
+                    .iter()
+                    .filter_map(|op| by_outpoint.get(op.as_str()).copied())
+                    .collect(),
+                key: issuer.key,
+            }
+        })
+        .collect();
+    let loose = model
+        .ungrouped
+        .iter()
+        .filter_map(|op| by_outpoint.get(op.as_str()).copied())
+        .collect();
     (shelves, loose)
 }
 
 /// A nested collection: id, display name, and its items.
 type NestedCollection<'a> = (String, String, Vec<&'a ItemCardRow>);
 
-/// Splits a shelf into its nested collections (by `collection_id`) and the uncollected rest.
-fn nested_collections<'a>(
-    items: &[&'a ItemCardRow],
-    snap: &WalletSnapshot,
-) -> (Vec<NestedCollection<'a>>, Vec<&'a ItemCardRow>) {
-    let mut by_id: BTreeMap<String, Vec<&'a ItemCardRow>> = BTreeMap::new();
-    let mut loose = Vec::new();
-    for &item in items {
-        let cid = non_empty(
-            snap.item_meta
-                .get(&item.outpoint)
-                .and_then(|m| m.collection_id.as_deref()),
-        );
-        match cid {
-            Some(cid) => by_id.entry(cid.to_string()).or_default().push(item),
-            None => loose.push(item),
-        }
-    }
-    let mut collections: Vec<(String, String, Vec<&'a ItemCardRow>)> = by_id
-        .into_iter()
-        .map(|(cid, members)| {
-            let label = members
-                .first()
-                .and_then(|first| collection_series_stem(&first.name))
-                .unwrap_or_else(|| format!("Collection {}", truncate_mid(&cid, 10)));
-            (cid, label, members)
-        })
-        .collect();
-    collections.sort_by_key(|(_, label, _)| label.to_ascii_lowercase());
-    (collections, loose)
-}
-
-/// Mirrors `groupQuantityLabel`: "N items" plus "N verified" when BRC-150 proven.
 fn shelf_quantity_label(items: &[&ItemCardRow]) -> String {
-    let verified = items
-        .iter()
-        .filter(|item| authenticity_display(&item.authenticity_status).1 == "brc150")
-        .count();
-    let count = items.len();
-    let noun = if count == 1 { "item" } else { "items" };
-    if verified > 0 {
-        format!("{count} {noun} · {verified} verified")
-    } else {
-        format!("{count} {noun}")
-    }
+    handcash_engine::collectables::quantity_label(
+        items.len(),
+        items
+            .iter()
+            .filter(|i| authenticity_display(&i.authenticity_status).1 == "brc150")
+            .count(),
+        0,
+        0,
+    )
 }
 
 fn collect_grid_card(
@@ -729,23 +735,8 @@ fn collect_items_list(
     }
 }
 
-fn item_matches(item: &ItemCardRow, snap: &WalletSnapshot, q: &str) -> bool {
-    if q.is_empty() {
-        return true;
-    }
-    let has = |s: &str| s.to_ascii_lowercase().contains(q);
-    let meta = snap.item_meta.get(&item.outpoint);
-    has(&item.name)
-        || has(&item.origin_outpoint)
-        || has(&item.outpoint)
-        || item.issuer_key.as_deref().is_some_and(has)
-        || meta.is_some_and(|m| {
-            m.app.as_deref().is_some_and(has)
-                || m.collection_id.as_deref().is_some_and(has)
-                || m.signer.as_deref().is_some_and(has)
-                || m.bap_id.as_deref().is_some_and(has)
-                || m.traits.iter().any(|(k, v)| has(k) || has(v))
-        })
+fn item_matches(item: &ItemCardRow, snap: &WalletSnapshot, query: &str) -> bool {
+    handcash_engine::collectables::matches(&read_item(item, snap), query)
 }
 
 /// 1:1 port of `src/components/InventoryPanel.tsx`: issuer shelves (accordion, one open),
@@ -775,22 +766,11 @@ pub fn InventoryPanel(
         services.maybe_sync_missing_identities_from_peers(&chain, &snap);
     }
 
-    // Drop selections whose items left the wallet.
-    {
-        let held: BTreeSet<&str> = snap.items.iter().map(|i| i.outpoint.as_str()).collect();
-        let stale = selected_outpoints
-            .peek()
-            .iter()
-            .any(|op| !held.contains(op.as_str()));
-        if stale {
-            let kept = selected_outpoints
-                .peek()
-                .iter()
-                .filter(|op| held.contains(op.as_str()))
-                .cloned()
-                .collect();
-            selected_outpoints.set(kept);
-        }
+    // Reconcile against the held display snapshot, never against search results.
+    let held: Vec<_> = snap.items.iter().map(|i| read_item(i, &snap)).collect();
+    let kept = handcash_engine::collectables::reconcile(&selected_outpoints.peek(), &held);
+    if *selected_outpoints.peek() != kept {
+        selected_outpoints.set(kept);
     }
 
     let selected_set = selected_outpoints.read().clone();
@@ -849,7 +829,11 @@ pub fn InventoryPanel(
         }
     });
 
-    let q = query.read().trim().to_ascii_lowercase();
+    let q = query.read().clone();
+    let mut terms: Vec<String> = q.split(',').map(str::trim).map(ToString::to_string).collect();
+    let draft = terms.pop().unwrap_or_default();
+    terms.retain(|term| !term.is_empty());
+    let suggestions = handcash_engine::collectables::suggestions(&draft, &terms, &held, 6);
     let cur_view = *view.read();
     let grid = cur_view == CollectionView::Grid;
     let open_key = open_shelf.read().clone();
@@ -881,6 +865,25 @@ pub fn InventoryPanel(
                                 value: "{query}",
                                 oninput: move |e| query.set(e.value()),
                             }
+                            if !suggestions.is_empty() {
+                                div { class: "collectables-search-suggestions", role: "group", aria_label: "Search suggestions",
+                                    for suggestion in suggestions {
+                                        {
+                                            let mut next = terms.clone();
+                                            next.push(suggestion.term.clone());
+                                            let next_query = format!("{}, ", next.join(", "));
+                                            rsx! {
+                                                button {
+                                                    r#type: "button",
+                                                    key: "{suggestion.term}",
+                                                    onclick: move |_| query.set(next_query.clone()),
+                                                    "{suggestion.label} · {suggestion.kind} ({suggestion.count})"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         CollectionViewToggle { view }
                     }
@@ -911,18 +914,15 @@ pub fn InventoryPanel(
                                             .iter()
                                             .filter(|item| selected_set.contains(&item.outpoint))
                                             .count();
-                                        let all_selected = shelf_selected == shelf.items.len();
-                                        let some_selected = shelf_selected > 0 && !all_selected;
-                                        let shelf_outpoints: Vec<String> =
-                                            shelf.items.iter().map(|item| item.outpoint.clone()).collect();
+                                        let shelf_items: Vec<_> = shelf.items.iter().map(|i| read_item(i, &snap)).collect();
+                                        let selectable = handcash_engine::collectables::selectable(&shelf_items, &BTreeSet::new());
+                                        let selection = handcash_engine::collectables::selection_state(&selected_set, &selectable);
+                                        let all_selected = selection == "all";
+                                        let some_selected = selection == "some";
                                         let toggle_key = shelf.key.clone();
-                                        let faces: Vec<(String, Option<String>)> = shelf
-                                            .items
-                                            .iter()
-                                            .take(FACE_LIMIT)
-                                            .map(|item| (item.outpoint.clone(), snap.item_art.get(&item.outpoint).cloned()))
-                                            .collect();
-                                        let (collections, uncollected) = nested_collections(&shelf.items, &snap);
+                                        let faces = shelf.faces.clone();
+                                        let collections = &shelf.collections;
+                                        let uncollected = &shelf.loose;
                                         rsx! {
                                             div {
                                                 class: "collect-collection",
@@ -995,16 +995,10 @@ pub fn InventoryPanel(
                                                         disabled: shelf.items.is_empty(),
                                                         label: if all_selected { format!("Deselect {}", shelf.label) } else { format!("Select {}", shelf.label) },
                                                         on_change: move |_on: bool| {
-                                                            let mut next = selected_outpoints.peek().clone();
-                                                            let select = !shelf_outpoints.iter().all(|op| next.contains(op));
-                                                            for outpoint in &shelf_outpoints {
-                                                                if select {
-                                                                    next.insert(outpoint.clone());
-                                                                } else {
-                                                                    next.remove(outpoint);
-                                                                }
-                                                            }
-                                                            selected_outpoints.set(next);
+                                                            let current = selected_outpoints.peek().clone();
+                                                            let items: Vec<_> = shelf_items.iter().collect();
+                                                            let select = handcash_engine::collectables::selection_state(&current, &items) != "all";
+                                                            selected_outpoints.set(handcash_engine::collectables::toggle(&current, &items, select));
                                                         },
                                                     }
                                                 }
@@ -1910,6 +1904,16 @@ pub fn BurnAssetPanel(
 #[cfg(test)]
 mod burn_economics_ts_port_tests {
     use super::*;
+
+    #[test]
+    fn authenticity_display_requires_a_protocol_verdict() {
+        for status in ["brc150", "brc156"] {
+            assert_eq!(authenticity_display(status).1, "brc150");
+        }
+        for status in ["verified", "proven", "indexer", "unproven", "marker", "unknown"] {
+            assert_eq!(authenticity_display(status).1, "unproven");
+        }
+    }
 
     // Ported 1:1 from `src/wallet/burnEconomics.test.ts`
     #[test]

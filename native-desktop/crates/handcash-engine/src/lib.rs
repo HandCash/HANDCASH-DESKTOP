@@ -9,6 +9,8 @@
 
 pub mod background;
 pub mod contract;
+pub mod collectables;
+pub mod collectable_send_run;
 pub mod engine;
 pub mod layers;
 pub mod projector;

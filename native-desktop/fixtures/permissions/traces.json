@@ -1,0 +1,6528 @@
+{
+  "decisions": [
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "APPROVE",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "CANCEL",
+        "state": "committing"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ],
+    [
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      },
+      {
+        "event": "RESET",
+        "state": "pending"
+      }
+    ]
+  ],
+  "grants": [
+    {
+      "input": {
+        "expiresAt": null,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": null,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": null,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": null,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 345600000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": null,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": null,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": null,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": null,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 0,
+        "now": 0
+      },
+      "initial": {
+        "state": "expired",
+        "context": {
+          "expiresAt": 0,
+          "now": 0
+        },
+        "done": true
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 0,
+        "now": 0
+      },
+      "initial": {
+        "state": "expired",
+        "context": {
+          "expiresAt": 0,
+          "now": 0
+        },
+        "done": true
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 0,
+        "now": 0
+      },
+      "initial": {
+        "state": "expired",
+        "context": {
+          "expiresAt": 0,
+          "now": 0
+        },
+        "done": true
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 0,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 100,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 100,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 100,
+            "now": 86400000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 100,
+            "now": 86400000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 100,
+            "now": 86400000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 100,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 100,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 345600000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 100,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 100,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 100,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 100,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400000,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 86400000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 86400000,
+            "now": 86400000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 86400000,
+            "now": 86400000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 86400000,
+            "now": 86400000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400000,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 86400000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 345600000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400000,
+        "now": 0
+      },
+      "initial": {
+        "state": "expiring",
+        "context": {
+          "expiresAt": 86400000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 86400000,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 86400000,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400001,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 86400001,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 86400001,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400001,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 86400001,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 345600000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 86400001,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 86400001,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 86400001,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 86400001,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 259200000,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 259200000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "TICK",
+            "now": 86400000
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 259200000,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": null,
+            "now": 86400000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 259200000,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 259200000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "state": "active",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 0
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 345600000
+          },
+          "state": "expiring",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 345600000
+          },
+          "done": false
+        },
+        {
+          "event": {
+            "type": "TICK",
+            "now": 432000000
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "expired",
+          "context": {
+            "expiresAt": 432000000,
+            "now": 432000000
+          },
+          "done": true
+        }
+      ]
+    },
+    {
+      "input": {
+        "expiresAt": 259200000,
+        "now": 0
+      },
+      "initial": {
+        "state": "active",
+        "context": {
+          "expiresAt": 259200000,
+          "now": 0
+        },
+        "done": false
+      },
+      "steps": [
+        {
+          "event": {
+            "type": "REVOKE"
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 259200000,
+            "now": 0
+          },
+          "done": true
+        },
+        {
+          "event": {
+            "type": "SET_EXPIRY",
+            "expiresAt": null,
+            "now": 0
+          },
+          "state": "revoked",
+          "context": {
+            "expiresAt": 259200000,
+            "now": 0
+          },
+          "done": true
+        }
+      ]
+    }
+  ],
+  "writes": [
+    {
+      "scenario": "allow",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": true,
+          "state": "committing",
+          "refusal": null,
+          "receipt": null,
+          "persistCalls": 1,
+          "done": false
+        },
+        {
+          "event": "persistDone",
+          "state": "accepted",
+          "refusal": null,
+          "receipt": "saved",
+          "persistCalls": 1,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "deny",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "deny",
+          "authorizedNow": true,
+          "state": "refused",
+          "refusal": "denied",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "timeout",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "timeout",
+          "authorizedNow": true,
+          "state": "refused",
+          "refusal": "timeout",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "reviewError",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewError",
+          "decision": "allow",
+          "authorizedNow": true,
+          "state": "refused",
+          "refusal": "denied",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "revoked",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "revoke",
+          "state": "refused",
+          "refusal": "revoked",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        },
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": true,
+          "state": "refused",
+          "refusal": "revoked",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "unauthorized",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": false,
+          "state": "refused",
+          "refusal": "unauthorized",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "authThrows",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": false,
+          "state": "refused",
+          "refusal": "unauthorized",
+          "receipt": null,
+          "persistCalls": 0,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "persistError",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": true,
+          "state": "committing",
+          "refusal": null,
+          "receipt": null,
+          "persistCalls": 1,
+          "done": false
+        },
+        {
+          "event": "persistError",
+          "state": "refused",
+          "refusal": "failed",
+          "receipt": null,
+          "persistCalls": 1,
+          "done": true
+        }
+      ]
+    },
+    {
+      "scenario": "revokeCommitting",
+      "initial": {
+        "state": "pendingReview",
+        "refusal": null,
+        "receipt": null,
+        "persistCalls": 0,
+        "done": false
+      },
+      "steps": [
+        {
+          "event": "reviewDone",
+          "decision": "allow",
+          "authorizedNow": true,
+          "state": "committing",
+          "refusal": null,
+          "receipt": null,
+          "persistCalls": 1,
+          "done": false
+        },
+        {
+          "event": "revoke",
+          "state": "committing",
+          "refusal": null,
+          "receipt": null,
+          "persistCalls": 1,
+          "done": false
+        },
+        {
+          "event": "persistDone",
+          "state": "accepted",
+          "refusal": null,
+          "receipt": "saved",
+          "persistCalls": 1,
+          "done": true
+        }
+      ]
+    }
+  ]
+}

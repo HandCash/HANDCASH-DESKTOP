@@ -1,0 +1,168 @@
+[
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": false,
+      "bapId": "",
+      "attribution": {
+        "kind": "verified",
+        "identity_key": "021111111111111111111111111111111111111111111111111111111111111111",
+        "profile_id": "bap-test",
+        "bap_id": "bap-test",
+        "label": "École",
+        "image_url": null,
+        "listed": true
+      }
+    },
+    "expected": {
+      "key": "issuer:claim:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "Issuer claim 02111111…111111",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": null,
+      "imageUrl": null,
+      "rank": 5
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "",
+      "attribution": {
+        "kind": "verified",
+        "identity_key": "021111111111111111111111111111111111111111111111111111111111111111",
+        "profile_id": "021111111111111111111111111111111111111111111111111111111111111111",
+        "bap_id": null,
+        "label": "École",
+        "image_url": null,
+        "listed": false
+      }
+    },
+    "expected": {
+      "key": "issuer:pubkey:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "École",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": "021111111111111111111111111111111111111111111111111111111111111111",
+      "imageUrl": null,
+      "rank": 1
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "bap-test",
+      "attribution": {
+        "kind": "verified",
+        "identity_key": "032222222222222222222222222222222222222222222222222222222222222222",
+        "profile_id": "bap-test",
+        "bap_id": "bap-test",
+        "label": "École",
+        "image_url": null,
+        "listed": true
+      }
+    },
+    "expected": {
+      "key": "issuer:pubkey:032222222222222222222222222222222222222222222222222222222222222222",
+      "label": "École",
+      "identityKey": "032222222222222222222222222222222222222222222222222222222222222222",
+      "profileId": "bap-test",
+      "imageUrl": null,
+      "rank": 0
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "copied",
+      "attribution": {
+        "kind": "verified",
+        "identity_key": "021111111111111111111111111111111111111111111111111111111111111111",
+        "profile_id": "bap-test",
+        "bap_id": "bap-test",
+        "label": "École",
+        "image_url": null,
+        "listed": true
+      }
+    },
+    "expected": {
+      "key": "issuer:pubkey:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "02111111…111111",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": null,
+      "imageUrl": null,
+      "rank": 3
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "bap-test",
+      "attribution": {
+        "kind": "unconfirmed",
+        "bap_id": "bap-test"
+      }
+    },
+    "expected": {
+      "key": "issuer:bap-unconfirmed:bap-test",
+      "label": "Unconfirmed profile bap-test",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": "bap-test",
+      "imageUrl": null,
+      "rank": 4
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "copied",
+      "attribution": {
+        "kind": "unconfirmed",
+        "bap_id": "bap-test"
+      }
+    },
+    "expected": {
+      "key": "issuer:pubkey:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "02111111…111111",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": null,
+      "imageUrl": null,
+      "rank": 3
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "bap-test",
+      "attribution": null
+    },
+    "expected": {
+      "key": "issuer:pubkey:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "02111111…111111",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": null,
+      "imageUrl": null,
+      "rank": 3
+    }
+  },
+  {
+    "item": {
+      "issuer": "021111111111111111111111111111111111111111111111111111111111111111",
+      "issuerAttested": true,
+      "bapId": "",
+      "attribution": null
+    },
+    "expected": {
+      "key": "issuer:pubkey:021111111111111111111111111111111111111111111111111111111111111111",
+      "label": "02111111…111111",
+      "identityKey": "021111111111111111111111111111111111111111111111111111111111111111",
+      "profileId": null,
+      "imageUrl": null,
+      "rank": 3
+    }
+  }
+]

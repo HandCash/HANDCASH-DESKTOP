@@ -228,7 +228,14 @@ pub fn AuthFlow(
                                     class: "btn btn-primary primary",
                                     onclick: move |_| {
                                         if let Some(ref meta) = has_local_snap {
-                                            if let Ok(msg) = svc_hist.restore_local_brc39_snapshot(&meta.id, None) {
+                                            let msg = match svc_hist.restore_local_brc39_snapshot(&meta.id, None) {
+                                                Ok(msg) => msg,
+                                                Err(e) => {
+                                                    toast.set(Some(ToastNotice { title: "Restore failed".into(), body: Some(e), tone: "error" }));
+                                                    return;
+                                                }
+                                            };
+                                            {
                                                 snapshot.set(svc_hist.read_snapshot());
                                                 toast.set(Some(ToastNotice {
                                                     title: "History restored".into(),
@@ -240,7 +247,14 @@ pub fn AuthFlow(
                                             .add_filter("HandCash History Backup", &["brc39", "json"])
                                             .pick_file()
                                         {
-                                            if let Ok(bytes) = std::fs::read(&path) {
+                                            let bytes = match std::fs::read(&path) {
+                                                Ok(bytes) => bytes,
+                                                Err(e) => {
+                                                    toast.set(Some(ToastNotice { title: "Couldn’t read backup".into(), body: Some(e.to_string()), tone: "error" }));
+                                                    return;
+                                                }
+                                            };
+                                            {
                                                 match svc_hist.restore_brc39_backup_bytes(&bytes, None) {
                                                     Ok(msg) => {
                                                         snapshot.set(svc_hist.read_snapshot());
@@ -260,6 +274,8 @@ pub fn AuthFlow(
                                                     }
                                                 }
                                             }
+                                        } else {
+                                            return;
                                         }
                                         let mut next = p_next.clone();
                                         next.balance_sats = snapshot.read().balance.displayed_sats;
@@ -410,7 +426,10 @@ pub fn AuthFlow(
                                         variant: button::ButtonVariant::Ghost,
                                         class: "btn btn-ghost",
                                         onclick: move |_| {
-                                            let _ = crate::state::copy_to_clipboard(&phrase_for_copy);
+                                            if let Err(e) = crate::state::copy_to_clipboard(&phrase_for_copy) {
+                                                toast.set(Some(ToastNotice { title: "Copy failed".into(), body: Some(e), tone: "error" }));
+                                                return;
+                                            }
                                             toast.set(Some(ToastNotice {
                                                 title: "Copied".into(),
                                                 body: Some("Phrase copied to clipboard.".into()),
@@ -426,7 +445,10 @@ pub fn AuthFlow(
                                     class: "btn btn-primary",
                                     disabled: !can_confirm,
                                     onclick: move |_| {
-                                        svc_confirm.mark_keys_backup_confirmed(cur_kind);
+                                        if !svc_confirm.mark_keys_backup_confirmed(cur_kind) {
+                                            toast.set(Some(ToastNotice { title: "Couldn’t save backup confirmation".into(), body: None, tone: "error" }));
+                                            return;
+                                        }
                                         toast.set(Some(ToastNotice {
                                             title: "Recovery backup saved".into(),
                                             body: None,
@@ -850,8 +872,7 @@ pub fn AuthFlow(
                     "data-aeon-state": "scan",
                     h1 { class: "auth-title", "Sign in" }
                     div { class: "scan-login", "data-aeon-part": "scan",
-                        p { class: "auth-lede", "Scan with a signed-in device." }
-                        div { class: "scan-login-qr", aria_busy: "true" }
+                        p { class: "auth-lede", role: "status", "Scan-to-sign-in is not available in this Alpha build. Use your recovery phrase, key slices or emergency key instead." }
                     }
                     div { class: "actions", "data-aeon-part": "exits",
                         button::Root {

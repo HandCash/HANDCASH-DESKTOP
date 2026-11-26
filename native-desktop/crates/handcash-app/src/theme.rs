@@ -417,6 +417,14 @@ html, body {{
   box-shadow: var(--hc-select-3d-shadow);
   overflow: hidden;
 }}
+/* border-box below would fold the 12px+10px padding into the 8ch box and clip "Activity" to "Ac…";
+   keep 8ch as a floor and let the label fit its text. */
+.wallet-nav-titlebar-label {{
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 8ch;
+  max-width: none;
+}}
 .wallet-nav-titlebar-label,
 .wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {{
   align-self: stretch;

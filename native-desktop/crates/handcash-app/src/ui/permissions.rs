@@ -655,28 +655,66 @@ pub struct PendingPromptView {
     pub signing_required: bool,
 }
 
+/// Auto-pay fields as typed on one prompt; reset together when the prompt changes.
+#[derive(Clone, Debug, PartialEq)]
+struct AutoPayDraft {
+    enabled: bool,
+    max_usd: String,
+    window_hours: String,
+}
+
+impl Default for AutoPayDraft {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_usd: DEFAULT_AUTO_PAY_MAX_USD.to_string(),
+            window_hours: DEFAULT_AUTO_PAY_WINDOW_HOURS.to_string(),
+        }
+    }
+}
+
+impl AutoPayDraft {
+    fn choice(&self) -> AutoPayChoice {
+        AutoPayChoice {
+            enabled: self.enabled,
+            max_usd: self.max_usd.parse().unwrap_or(DEFAULT_AUTO_PAY_MAX_USD),
+            window_hours: self.window_hours.parse().unwrap_or(DEFAULT_AUTO_PAY_WINDOW_HOURS),
+        }
+    }
+}
+
 /// 1:1 port of `src/components/PermissionRequestPanel.tsx`.
 #[component]
 pub fn PermissionRequestPanel(
     pending: PendingPromptView,
     #[props(default = "nav".to_string())] placement: String,
     #[props(default = true)] signing_gated: bool,
-    #[props(default)] on_allow: Option<EventHandler<Option<AutoPayChoice>>>,
-    #[props(default)] on_deny: Option<EventHandler<()>>,
+    #[props(default)] on_allow: Option<Callback<Option<AutoPayChoice>, bool>>,
+    #[props(default)] on_deny: Option<Callback<(), bool>>,
 ) -> Element {
     let decision = use_aeon_machine::<PermissionDecisionMachine>();
-    let mut ap_enabled = use_signal(|| false);
-    let mut ap_max_usd = use_signal(|| DEFAULT_AUTO_PAY_MAX_USD.to_string());
-    let mut ap_hours = use_signal(|| DEFAULT_AUTO_PAY_WINDOW_HOURS.to_string());
+    let mut auto_pay = use_signal(AutoPayDraft::default);
     let mut duration = use_signal(|| pending.grant_duration.clone());
     let mut accept_incoming = use_signal(|| false);
+    let mut prompt_owner = use_signal(|| (pending.id, pending.origin.clone()));
+    let owner = (pending.id, pending.origin.clone());
+    if *prompt_owner.peek() != owner {
+        prompt_owner.set(owner.clone());
+        decision.send(PermissionDecisionEvent::Reset);
+        auto_pay.set(AutoPayDraft::default());
+        duration.set(pending.grant_duration.clone());
+        accept_incoming.set(false);
+    }
+    let allow_owner = owner.clone();
+    let deny_owner = owner;
 
     let committing = decision.state() == PermissionDecisionState::Committing;
     let is_connect = pending.kind == "connect";
     let show_auto_pay =
         is_connect || is_auto_payable_action(Some(&pending.kind), &pending.method, Some(&pending.title));
     let show_accept_incoming = !is_connect && pending.title == "Accept incoming funds";
-    let limits_bad = auto_pay_limits_invalid(*ap_enabled.read(), &ap_max_usd.read(), &ap_hours.read());
+    let draft = auto_pay.read().clone();
+    let limits_bad = auto_pay_limits_invalid(draft.enabled, &draft.max_usd, &draft.window_hours);
     let gated = !is_connect && pending.signing_required && signing_gated;
     let allow_disabled =
         committing || gated || (show_auto_pay && pending.monthly_cap.is_none() && limits_bad);
@@ -700,23 +738,29 @@ pub fn PermissionRequestPanel(
     };
 
     let on_primary = EventHandler::new(move |_| {
-        if allow_disabled { return; }
+        // Re-read the chart synchronously: a rendered boolean is stale for a
+        // second tap in the same frame. Claim the edge before calling out.
+        if allow_disabled || *prompt_owner.peek() != allow_owner
+            || decision.state() != PermissionDecisionState::Pending { return; }
         decision.send(PermissionDecisionEvent::Approve);
         let choice = if show_auto_pay {
-            Some(AutoPayChoice {
-                enabled: *ap_enabled.read(),
-                max_usd: ap_max_usd.read().parse().unwrap_or(DEFAULT_AUTO_PAY_MAX_USD),
-                window_hours: ap_hours.read().parse().unwrap_or(DEFAULT_AUTO_PAY_WINDOW_HOURS),
-            })
+            Some(auto_pay.peek().choice())
         } else {
             None
         };
-        if let Some(cb) = on_allow { cb.call(choice); }
+        let accepted = on_allow.is_some_and(|cb| cb.call(choice));
+        if !accepted && *prompt_owner.peek() == allow_owner {
+            decision.send(PermissionDecisionEvent::Reset);
+        }
     });
     let on_secondary = EventHandler::new(move |_| {
-        if committing { return; }
+        if *prompt_owner.peek() != deny_owner
+            || decision.state() != PermissionDecisionState::Pending { return; }
         decision.send(PermissionDecisionEvent::Cancel);
-        if let Some(cb) = on_deny { cb.call(()); }
+        let accepted = on_deny.is_some_and(|cb| cb.call(()));
+        if !accepted && *prompt_owner.peek() == deny_owner {
+            decision.send(PermissionDecisionEvent::Reset);
+        }
     });
 
     rsx! {
@@ -745,16 +789,16 @@ pub fn PermissionRequestPanel(
                 }
                 AutoPayControls {
                     app_name: pending.app_name.clone(),
-                    enabled: *ap_enabled.read(),
-                    max_usd: ap_max_usd.read().clone(),
-                    window_hours: ap_hours.read().clone(),
+                    enabled: draft.enabled,
+                    max_usd: draft.max_usd.clone(),
+                    window_hours: draft.window_hours.clone(),
                     monthly_cap: pending.monthly_cap.clone(),
-                    on_enabled_change: move |v| ap_enabled.set(v),
-                    on_max_usd_change: move |v| ap_max_usd.set(v),
-                    on_window_hours_change: move |v| ap_hours.set(v),
+                    on_enabled_change: move |v| auto_pay.write().enabled = v,
+                    on_max_usd_change: move |v| auto_pay.write().max_usd = v,
+                    on_window_hours_change: move |v| auto_pay.write().window_hours = v,
                 }
                 p { class: "permission-note",
-                    "{connect_permission_note(pending.monthly_cap.as_ref(), *ap_enabled.read())}"
+                    "{connect_permission_note(pending.monthly_cap.as_ref(), draft.enabled)}"
                 }
             } else {
                 if pending.item_outpoint.is_some() || pending.token_id.is_some() || pending.item_name.is_some() {
@@ -799,12 +843,12 @@ pub fn PermissionRequestPanel(
                 if show_auto_pay {
                     AutoPayControls {
                         app_name: pending.app_name.clone(),
-                        enabled: *ap_enabled.read(),
-                        max_usd: ap_max_usd.read().clone(),
-                        window_hours: ap_hours.read().clone(),
-                        on_enabled_change: move |v| ap_enabled.set(v),
-                        on_max_usd_change: move |v| ap_max_usd.set(v),
-                        on_window_hours_change: move |v| ap_hours.set(v),
+                        enabled: draft.enabled,
+                        max_usd: draft.max_usd.clone(),
+                        window_hours: draft.window_hours.clone(),
+                        on_enabled_change: move |v| auto_pay.write().enabled = v,
+                        on_max_usd_change: move |v| auto_pay.write().max_usd = v,
+                        on_window_hours_change: move |v| auto_pay.write().window_hours = v,
                     }
                 }
             }
@@ -816,8 +860,8 @@ pub fn PermissionRequestPanel(
 #[component]
 pub fn ConnectPermissionDialog(
     #[props(default)] pending: Option<PendingPromptView>,
-    #[props(default)] on_allow: Option<EventHandler<Option<AutoPayChoice>>>,
-    #[props(default)] on_deny: Option<EventHandler<()>>,
+    #[props(default)] on_allow: Option<Callback<Option<AutoPayChoice>, bool>>,
+    #[props(default)] on_deny: Option<Callback<(), bool>>,
 ) -> Element {
     let open = pending.is_some();
     rsx! {
@@ -848,8 +892,8 @@ pub fn ConnectPermissionDialog(
 pub fn ActionPermissionDialog(
     #[props(default)] pending: Option<PendingPromptView>,
     #[props(default = true)] signing_gated: bool,
-    #[props(default)] on_allow: Option<EventHandler<Option<AutoPayChoice>>>,
-    #[props(default)] on_deny: Option<EventHandler<()>>,
+    #[props(default)] on_allow: Option<Callback<Option<AutoPayChoice>, bool>>,
+    #[props(default)] on_deny: Option<Callback<(), bool>>,
 ) -> Element {
     let open = pending.is_some();
     let gated = pending.as_ref().is_some_and(|p| p.signing_required && signing_gated);

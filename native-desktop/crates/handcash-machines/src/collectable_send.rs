@@ -81,6 +81,54 @@ pub fn is_covenant_locked_script(script_hex: Option<&str>) -> bool {
     matches!(classify_tip_kind(script_hex), TipKind::CovenantLocked { .. })
 }
 
+/// Advisory authenticity readiness is separate from custody and holding authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SendReadyRefusal {
+    Verifying,
+    Unproven,
+}
+
+pub fn choose_send_path(
+    tip_kind: &TipKind,
+    proven_tier: Option<ProvenTier>,
+    readiness_refusal: Option<SendReadyRefusal>,
+) -> SendPath {
+    let reason = if matches!(tip_kind, TipKind::CovenantLocked { .. }) {
+        Some("This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory.")
+    } else if let Some(refusal) = readiness_refusal {
+        Some(match refusal {
+            SendReadyRefusal::Verifying => "This collectable is still verifying authenticity.",
+            SendReadyRefusal::Unproven => "Send is available after authenticity is verified.",
+        })
+    } else if matches!(tip_kind, TipKind::Unknown) && proven_tier != Some(ProvenTier::Brc150) {
+        Some("Collectable locking script is unrecognized")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => SendPath::Refuse { reason: reason.into() },
+        None => SendPath::P2pkhSend,
+    }
+}
+
+/// Compose hint only: missing listOutputs script is recovered from exact tip
+/// BEEF by the spend owner. This verdict never authorizes a signature.
+pub fn held_collectable_send_path(
+    locking_script: Option<&str>,
+    covenant_locked: bool,
+    proven: bool,
+) -> SendPath {
+    let script = locking_script.unwrap_or_default();
+    let kind = if covenant_locked {
+        TipKind::CovenantLocked { locking_script: script.into() }
+    } else if script.trim().is_empty() {
+        return SendPath::P2pkhSend;
+    } else {
+        classify_tip_kind(Some(script))
+    };
+    choose_send_path(&kind, Some(if proven { ProvenTier::Brc150 } else { ProvenTier::Unproven }), None)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CollectableSendState {
     Idle,

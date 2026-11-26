@@ -91,7 +91,9 @@ const LIVE_IMAGE_WARN = 16
 /** How long one image may occupy a decode slot before the queue moves on. */
 const SLOT_STUCK_MS = 10_000
 /** Hang ≠ error: GorillaPool can spin forever; fail to fallback after this. */
-const LOAD_TIMEOUT_MS = 5_000
+const LOAD_TIMEOUT_MS = 12_000
+/** A slow or briefly failing host gets retried before the fallback sticks. */
+const MAX_LOAD_ATTEMPTS = 3
 let liveImages = 0
 let warnedLive = false
 
@@ -163,6 +165,20 @@ export function DeferredImage({
     cached ? 'ready' : 'loading',
   )
   const readySent = useRef(false)
+  const [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    setAttempt(0)
+  }, [src])
+  const failLoad = useCallback(() => {
+    if (typeof src === 'string') decodedOnce.delete(src)
+    retained.current = false
+    if (attempt + 1 < MAX_LOAD_ATTEMPTS) {
+      setAttempt((n) => n + 1)
+      setStatus('loading')
+      return
+    }
+    setStatus('error')
+  }, [src, attempt])
   const imgRef = useRef<HTMLImageElement | null>(null)
   const frameRef = useRef<HTMLSpanElement | null>(null)
   /**
@@ -352,13 +368,9 @@ export function DeferredImage({
     if (!src) return
     const attached = retained.current || (near && loadSlot)
     if (!attached) return
-    const timer = window.setTimeout(() => {
-      if (typeof src === 'string') decodedOnce.delete(src)
-      retained.current = false
-      setStatus('error')
-    }, LOAD_TIMEOUT_MS)
+    const timer = window.setTimeout(failLoad, LOAD_TIMEOUT_MS)
     return () => window.clearTimeout(timer)
-  }, [status, src, near, loadSlot])
+  }, [status, src, near, loadSlot, failLoad, attempt])
 
   useEffect(() => {
     if (near && loadSlot) return
@@ -448,6 +460,7 @@ export function DeferredImage({
       ) : null}
       {status === 'error' && fallback ? fallback : null}
       <img
+        key={attempt}
         {...rest}
         ref={imgRef}
         className={className}
@@ -465,9 +478,7 @@ export function DeferredImage({
           setStatus('ready')
         }}
         onError={() => {
-          if (typeof src === 'string') decodedOnce.delete(src)
-          retained.current = false
-          setStatus('error')
+          window.setTimeout(failLoad, 1_000 * (attempt + 1))
         }}
       />
     </span>
