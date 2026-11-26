@@ -8,7 +8,7 @@ const provenTxReqStatusesSafeForInputRestore = new Set<sdk.ProvenTxReqStatus>(['
  */
 async function failTransactionsForInvalidReqs(storage: StorageIdb, r: { log: string }): Promise<void> {
   const invalidTxids: string[] = []
-  await storage.filterProvenTxReqs({ partial: { status: 'invalid' } }, txReq => {
+  await storage.filterProvenTxReqs({ partial: { status: 'invalid' }, noRawTx: true }, txReq => {
     invalidTxids.push(txReq.txid)
   })
   for (const txid of invalidTxids) {
@@ -41,7 +41,7 @@ async function collectFailedTransactionIds(
     if (settled.has(key)) continue
     let hasBlockingReq = false
     if (tx.txid != null && tx.txid !== '') {
-      const reqs = await storage.findProvenTxReqs({ partial: { txid: tx.txid } })
+      const reqs = await storage.findProvenTxReqs({ partial: { txid: tx.txid }, noRawTx: true })
       hasBlockingReq = reqs.some(req => !provenTxReqStatusesSafeForInputRestore.has(req.status))
     }
     if (!hasBlockingReq) safeFailedTransactionIds.add(tx.transactionId)

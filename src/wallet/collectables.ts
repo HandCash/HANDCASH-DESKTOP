@@ -1,4 +1,5 @@
 import { errorText } from './errorText'
+import { sleep } from './timing'
 import { issuerMetadataFromScript } from './issuerMetadata'
 import {
   retainedIssuerMetadata,
@@ -2262,7 +2263,7 @@ async function proveHeldGenesis(
   let walksInPass = 0
   try {
     if (interactiveUi && !preferred) {
-      await new Promise<void>((r) => setTimeout(r, BACKGROUND_GENESIS_INITIAL_DELAY_MS))
+      await sleep(BACKGROUND_GENESIS_INITIAL_DELAY_MS)
       if (epoch !== collectablesAccountEpoch) return
     }
     for (const outpoint of candidates) {
@@ -2288,7 +2289,7 @@ async function proveHeldGenesis(
       }
       if (outpoint !== preferred) {
         if (interactiveUi && walksInPass > 0) {
-          await new Promise<void>((r) => setTimeout(r, BACKGROUND_GENESIS_GAP_MS))
+          await sleep(BACKGROUND_GENESIS_GAP_MS)
           if (epoch !== collectablesAccountEpoch) return
         }
         await whenInputQuiet()

@@ -94,4 +94,73 @@ describe('1sat listOutputs script hydrate', () => {
       await storage.destroy()
     }
   }, 60_000)
+
+  it('batches tags and labels in one transaction each, skips per-row fallback on missing rawTx, and uses tag index first', async () => {
+    const storage = new StorageIdb({
+      chain: 'main', feeModel: { model: 'sat/kb', value: 1 }, commissionSatoshis: 0,
+    } as ConstructorParameters<typeof StorageIdb>[0])
+    storage.dbName = `script-hydrate-batch-${crypto.randomUUID()}`
+    const identity = PrivateKey.fromRandom().toPublicKey().toString()
+    await storage.migrate(storage.dbName, identity)
+    await storage.makeAvailable()
+    try {
+      const { user } = await storage.findOrInsertUser(identity)
+      const basket = await storage.findOrInsertOutputBasket(user.userId, '1sat')
+      const stamp = { created_at: new Date(), updated_at: new Date() }
+      const sharedTag = await storage.insertOutputTag({ ...stamp, outputTagId: 0, userId: user.userId, tag: '1sat', isDeleted: false })
+      const targetTag = await storage.insertOutputTag({ ...stamp, outputTagId: 0, userId: user.userId, tag: 'origin:target_0', isDeleted: false })
+      const deletedTag = await storage.insertOutputTag({ ...stamp, outputTagId: 0, userId: user.userId, tag: 'deleted', isDeleted: true })
+      const txLabel = await storage.insertTxLabel({ ...stamp, txLabelId: 0, userId: user.userId, label: 'mint-batch', isDeleted: false })
+      const missingTxid = 'ab'.repeat(32)
+      const transactionId = await storage.insertTransaction({
+        ...stamp, transactionId: 0, userId: user.userId, status: 'completed',
+        reference: 'mint-missing-raw', isOutgoing: false, satoshis: 10,
+        description: 'mint', version: 1, lockTime: 0, txid: missingTxid,
+      })
+      await storage.insertTxLabelMap({ ...stamp, transactionId, txLabelId: txLabel, isDeleted: false })
+      const outputIds: number[] = []
+      for (let vout = 0; vout < 10; vout++) {
+        const outputId = await storage.insertOutput({
+          ...stamp, outputId: 0, userId: user.userId, transactionId,
+          basketId: basket.basketId, vout, txid: missingTxid, satoshis: 1, spendable: true, change: false,
+          type: 'custom', providedBy: 'you', purpose: '', scriptOffset: 100, scriptLength: 25,
+        })
+        outputIds.push(outputId)
+        await storage.insertOutputTagMap({ ...stamp, outputId, outputTagId: sharedTag, isDeleted: false })
+        await storage.insertOutputTagMap({ ...stamp, outputId, outputTagId: deletedTag, isDeleted: false })
+        if (vout === 7) {
+          await storage.insertOutputTagMap({ ...stamp, outputId, outputTagId: targetTag, isDeleted: false })
+        }
+      }
+      const auth = { userId: user.userId, identityKey: identity }
+      const validateSpy = vi.spyOn(storage, 'validateOutputScript')
+      const trxSpy = vi.spyOn(storage, 'toDbTrx')
+      const page = await storage.listOutputs(auth, {
+        ...pageArgs, includeLabels: true, includeTags: true, includeLockingScripts: true, limit: 10,
+      } as Parameters<StorageIdb['listOutputs']>[1])
+      expect(page.outputs).toHaveLength(10)
+      expect(page.outputs[7].tags).toEqual(['1sat', 'origin:target_0'])
+      expect(page.outputs[0].tags).toEqual(['1sat'])
+      expect(page.outputs[0].labels).toEqual(['mint-batch'])
+      // Missing rawTx never triggers per-row validateOutputScript fallback.
+      expect(validateSpy).not.toHaveBeenCalled()
+      const tagTrxs = trxSpy.mock.calls.filter(([stores]) => stores.includes('output_tags') && stores.includes('output_tags_map'))
+      const labelTrxs = trxSpy.mock.calls.filter(([stores]) => stores.includes('tx_labels') && stores.includes('tx_labels_map'))
+      expect(tagTrxs).toHaveLength(1)
+      expect(labelTrxs).toHaveLength(1)
+      validateSpy.mockRestore()
+      trxSpy.mockRestore()
+
+      // Tag-filtered listOutputs resolves matching outputIds via output_tags_map first.
+      const openCursorSpy = vi.spyOn(IDBObjectStore.prototype, 'openCursor')
+      const filtered = await storage.listOutputs(auth, {
+        ...pageArgs, tags: ['origin:target_0'], tagQueryMode: 'all', includeLockingScripts: false,
+      } as Parameters<StorageIdb['listOutputs']>[1])
+      expect(filtered.outputs.map(o => o.outpoint)).toEqual([`${missingTxid}.7`])
+      expect(openCursorSpy.mock.calls.map(([key]) => key)).toEqual([outputIds[7]])
+      openCursorSpy.mockRestore()
+    } finally {
+      await storage.destroy()
+    }
+  })
 })

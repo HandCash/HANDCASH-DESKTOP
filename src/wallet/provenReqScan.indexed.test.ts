@@ -21,13 +21,36 @@ it('selects monitor requests through indexes with stable ordering and paging', a
     const cursors = vi.spyOn(IDBObjectStore.prototype, 'openCursor')
     const selected = await storage.findProvenTxReqs({ partial: {}, status: ['unmined', 'unmined'] })
     expect(cursors.mock.calls.map(([key]) => key)).toEqual([ids[1], ids[3], ids[5]])
-    cursors.mockRestore()
-    expect(selected.map(r => r.provenTxReqId)).toEqual([ids[1], ids[3], ids[5]])
+    cursors.mockClear()
     const descending = await storage.findProvenTxReqs({ partial: {}, status: ['unmined'], orderDescending: true, paged: { offset: 1, limit: 1 } })
+    // Offset slicing happens on primary keys: skipped rows are never opened/cloned.
+    expect(cursors.mock.calls.map(([key]) => key)).toEqual([ids[3]])
     expect(descending.map(r => r.provenTxReqId)).toEqual([ids[3]])
+    cursors.mockClear()
     const intersection = await storage.findProvenTxReqs({ partial: {}, txids: [txids[0], txids[3], txids[3]], status: ['unmined'] })
+    // txids and status primary keys intersect before touching the object store.
+    expect(cursors.mock.calls.map(([key]) => key)).toEqual([ids[3]])
     expect(intersection.map(r => r.provenTxReqId)).toEqual([ids[3]])
+    cursors.mockClear()
+    expect(await storage.countProvenTxReqs({ partial: {}, status: ['unmined'] })).toBe(3)
+    expect(await storage.countProvenTxReqs({ partial: {}, txids: [txids[0], txids[3]], status: ['unmined'] })).toBe(1)
+    expect(cursors).not.toHaveBeenCalled()
+    cursors.mockRestore()
     expect(await storage.findProvenTxReqs({ partial: {}, status: ['sending'] })).toEqual([])
+
+    // Completed + notified=true rows are cached as settled across TaskReviewStatus polls
+    // and invalidated immediately if updated back to notified=false.
+    await storage.updateProvenTxReq([ids[0], ids[2], ids[4]], { notified: true })
+    const firstReconcile = await storage.findProvenTxReqs({ partial: { status: 'completed', notified: false } })
+    expect(firstReconcile).toEqual([])
+    const settledCursors = vi.spyOn(IDBObjectStore.prototype, 'openCursor')
+    expect(await storage.findProvenTxReqs({ partial: { status: 'completed', notified: false } })).toEqual([])
+    expect(settledCursors).not.toHaveBeenCalled()
+    await storage.updateProvenTxReq(ids[2], { notified: false })
+    const afterReset = await storage.findProvenTxReqs({ partial: { status: 'completed', notified: false } })
+    expect(afterReset.map(r => r.provenTxReqId)).toEqual([ids[2]])
+    expect(settledCursors.mock.calls.map(([key]) => key)).toEqual([ids[2]])
+    settledCursors.mockRestore()
 
     const { user } = await storage.findOrInsertUser(PrivateKey.fromRandom().toPublicKey().toString())
     const stamp = { created_at: new Date(), updated_at: new Date() }

@@ -23,13 +23,15 @@
  * checks the wallet's records and the tombstones first, so a notice already
  * delivered — here or by another device — is dropped unsent.
  */
-import { Hash, Utils } from '@bsv/sdk'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import { storageRegistry } from '../storage/registry'
 import { accountLocalKeyFor, type BoundAccountKeyScope } from './accountLocalKeys'
 import { base64ToBytes, bytesToBase64 } from './base64Binary'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { journalReplica, type JournalAccount, type JournalSyncResult } from './journalReplica'
 import type { ActiveWallet } from './session'
+import { sleep } from './timing'
 
 export type NoticeJournalEntry =
   | {
@@ -62,9 +64,13 @@ const OP_RE = /^([0-9a-f]{64})\.(\d+)$/
 const PUBKEY_RE = /^0[23][0-9a-f]{64}$/
 
 type JournalState = {
+  /** Keyed by canonical JSON so load/dedupe hashes nothing until root is asked for. */
   entries: Map<string, NoticeJournalEntry>
+  /** Lazily computed sha256(key) per live canonical JSON key. */
+  ids: Map<string, string>
   done: Set<string>
   root: string | null
+  version: number
 }
 
 const states = new Map<string, JournalState>()
@@ -103,8 +109,8 @@ export function cleanNoticeEntry(raw: unknown): NoticeJournalEntry | null {
   }
 }
 
-const entryId = (entry: NoticeJournalEntry): string =>
-  Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(entry), 'utf8')))
+const utf8 = new TextEncoder()
+const sha256Hex = (text: string): string => bytesToHex(sha256(utf8.encode(text)))
 
 function keyFor(owner: BoundAccountKeyScope): string {
   return accountLocalKeyFor(KEY_BASE, owner)
@@ -113,16 +119,20 @@ function keyFor(owner: BoundAccountKeyScope): string {
 /** Admit one entry; false when it adds nothing. A `done` drops the `owed` body it answers. */
 function admit(state: JournalState, entry: NoticeJournalEntry): boolean {
   if (state.done.has(entry.op)) return false
-  const id = entryId(entry)
-  if (state.entries.has(id)) return false
+  const key = JSON.stringify(entry)
+  if (state.entries.has(key)) return false
   if (entry.k === 'done') {
     for (const [held, prior] of state.entries) {
-      if (prior.op === entry.op) state.entries.delete(held)
+      if (prior.op === entry.op) {
+        state.entries.delete(held)
+        state.ids.delete(held)
+      }
     }
     state.done.add(entry.op)
   }
-  state.entries.set(id, entry)
+  state.entries.set(key, entry)
   state.root = null
+  state.version += 1
   return true
 }
 
@@ -130,7 +140,7 @@ function load(owner: BoundAccountKeyScope): JournalState {
   const key = keyFor(owner)
   const held = states.get(key)
   if (held) return held
-  const state: JournalState = { entries: new Map(), done: new Set(), root: null }
+  const state: JournalState = { entries: new Map(), ids: new Map(), done: new Set(), root: null, version: 0 }
   try {
     const raw = durableGetItem(key)
     const file = raw ? (JSON.parse(raw) as { e?: unknown }) : null
@@ -173,8 +183,41 @@ export function noticeJournalEntries(owner: BoundAccountKeyScope): readonly Noti
 export function noticeJournalRoot(owner: BoundAccountKeyScope): string {
   const state = load(owner)
   if (state.root) return state.root
-  const ids = [...state.entries.keys()].sort().join('')
-  state.root = Utils.toHex(Hash.sha256(Utils.toArray(ids, 'utf8')))
+  for (const key of state.entries.keys()) {
+    if (!state.ids.has(key)) state.ids.set(key, sha256Hex(key))
+  }
+  const ids = [...state.ids.values()].sort()
+  const hash = sha256.create()
+  for (let i = 0; i < ids.length; i += 2048) {
+    hash.update(utf8.encode(ids.slice(i, i + 2048).join('')))
+  }
+  state.root = bytesToHex(hash.digest())
+  return state.root
+}
+
+/** Yielding backup root so large BEEF-bearing owed notices never stall the UI thread. */
+export async function noticeJournalRootAsync(owner: BoundAccountKeyScope): Promise<string> {
+  const state = load(owner)
+  while (!state.root) {
+    const version = state.version
+    let hashed = 0
+    for (const key of [...state.entries.keys()]) {
+      if (state.version !== version) break
+      if (!state.ids.has(key)) {
+        state.ids.set(key, sha256Hex(key))
+        hashed += 1
+        if (hashed % 128 === 0) await sleep(0)
+      }
+    }
+    if (state.version !== version) continue
+    const ids = [...state.ids.values()].sort()
+    const hash = sha256.create()
+    for (let i = 0; i < ids.length; i += 2048) {
+      hash.update(utf8.encode(ids.slice(i, i + 2048).join('')))
+      await sleep(0)
+    }
+    if (state.version === version) state.root = bytesToHex(hash.digest())
+  }
   return state.root
 }
 
@@ -270,7 +313,7 @@ const replica = journalReplica({
   info: 'handcash notice journal v1',
   tag: 'notice-journal',
   debounceMs: 2_000,
-  root: noticeJournalRoot,
+  root: noticeJournalRootAsync,
   entries: noticeJournalEntries,
   append: appendNoticeEntries,
 })

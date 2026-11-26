@@ -182,6 +182,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       }
       // Invalidate display pages before reopening the same durable database.
       this.cashSummaryRevision++
+      this.settledCompletedReqIds.clear()
       const reopened = await this.initDB()
       if (this.db !== previous) {
         reopened.close()
@@ -201,6 +202,8 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   private cashSummaryWrites = 0
   private readonly cashSummaryTransactions = new WeakSet<object>()
   private outputCounts: { revision: number; byQuery: Map<string, number> } = { revision: -1, byQuery: new Map() }
+  /** Completed proof requests already confirmed `notified: true` this session; invalidated on any req write/reopen. */
+  private readonly settledCompletedReqIds = new Set<number>()
 
   /** Display-only cache fence, never a spend authorization or a durable DB revision. */
   getCashSummaryRevision(): number {
@@ -594,6 +597,57 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     return results
   }
 
+  /**
+   * Restore stripped locking scripts for a page in one readonly transaction,
+   * streaming one raw transaction at a time so peak RAM stays O(1 rawTx)
+   * instead of retaining every raw transaction for the page simultaneously.
+   */
+  async fillStrippedOutputScripts(outputs: TableOutput[], trx?: TrxToken): Promise<void> {
+    const byTxid = new Map<string, TableOutput[]>()
+    for (const o of outputs) {
+      if (
+        o.txid == null ||
+        o.txid === '' ||
+        o.scriptLength == null ||
+        o.scriptLength <= 0 ||
+        o.scriptOffset == null ||
+        o.scriptOffset <= 0 ||
+        o.lockingScript?.length === o.scriptLength
+      ) {
+        continue
+      }
+      const group = byTxid.get(o.txid)
+      if (group != null) group.push(o)
+      else byTxid.set(o.txid, [o])
+    }
+    if (byTxid.size === 0) return
+    if (!this.isAvailable()) await this.makeAvailable()
+    const dbTrx = this.toDbTrx(['proven_txs', 'proven_tx_reqs'], 'readonly', trx)
+    const provenIndex = dbTrx.objectStore('proven_txs').index('txid')
+    const requestIndex = dbTrx.objectStore('proven_tx_reqs').index('txid')
+    const validStatuses = new Set(['unsent', 'nosend', 'sending', 'unmined', 'completed', 'unfail'])
+    for (const [txid, group] of byTxid) {
+      let rawTx: ArrayLike<number> | undefined
+      const proven = (await provenIndex.get(txid)) as TableProvenTx | undefined
+      if (proven != null) {
+        rawTx = proven.rawTx
+      } else {
+        const request = (await requestIndex.get(txid)) as TableProvenTxReq | undefined
+        if (request?.rawTx != null && validStatuses.has(request.status)) rawTx = request.rawTx
+      }
+      if (rawTx == null) continue
+      for (const output of group) {
+        const start = output.scriptOffset as number
+        output.lockingScript = Array.prototype.slice.call(
+          rawTx,
+          start,
+          start + (output.scriptLength as number)
+        ) as number[]
+      }
+    }
+    if (trx == null) await dbTrx.done
+  }
+
   private async getRawTxForSlice(txid: string, trx?: TrxToken): Promise<number[] | undefined> {
     const proven = verifyOneOrNone(await this.findProvenTxs({ partial: { txid }, trx }))
     if (proven != null) return proven.rawTx
@@ -609,16 +663,55 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   }
 
   async getLabelsForTransactionId(transactionId?: number, trx?: TrxToken): Promise<TableTxLabel[]> {
-    const maps = await this.findTxLabelMaps({ partial: { transactionId, isDeleted: false }, trx })
-    const labelIds = maps.map(m => m.txLabelId)
-    const labels: TableTxLabel[] = []
-    for (const txLabelId of labelIds) {
-      // verifyOneOrNone: a map row may reference a label that was later soft-deleted.
-      // Knex/Bun drop it via JOIN; match that behavior without leaking row identifiers.
-      const label = verifyOneOrNone(await this.findTxLabels({ partial: { txLabelId, isDeleted: false }, trx }))
-      if (label != null) labels.push(label)
+    if (transactionId == null) {
+      const maps = await this.findTxLabelMaps({ partial: { transactionId, isDeleted: false }, trx })
+      const labelIds = maps.map(m => m.txLabelId)
+      const labels: TableTxLabel[] = []
+      for (const txLabelId of labelIds) {
+        const label = verifyOneOrNone(await this.findTxLabels({ partial: { txLabelId, isDeleted: false }, trx }))
+        if (label != null) labels.push(label)
+      }
+      return labels
     }
-    return labels
+    const byTx = await this.getLabelsForTransactionIds([transactionId], trx)
+    return byTx.get(transactionId) ?? []
+  }
+
+  async getLabelsForTransactionIds(transactionIds: number[], trx?: TrxToken): Promise<Map<number, TableTxLabel[]>> {
+    const results = new Map<number, TableTxLabel[]>()
+    const uniqueTxIds = [...new Set(transactionIds)]
+    if (uniqueTxIds.length === 0) return results
+    const dbTrx = this.toDbTrx(['tx_labels_map', 'tx_labels'], 'readonly', trx)
+    const mapIndex = dbTrx.objectStore('tx_labels_map').index('transactionId')
+    const labelStore = dbTrx.objectStore('tx_labels')
+    const mapLists = await Promise.all(uniqueTxIds.map(id => mapIndex.getAll(id) as Promise<TableTxLabelMap[]>))
+    const uniqueLabelIds = new Set<number>()
+    const activeLabelIdsByTx = mapLists.map(maps => {
+      const ids: number[] = []
+      for (const m of maps) {
+        if (m.isDeleted) continue
+        ids.push(m.txLabelId)
+        uniqueLabelIds.add(m.txLabelId)
+      }
+      return ids
+    })
+    const labelIdList = [...uniqueLabelIds]
+    const labelRows = await Promise.all(labelIdList.map(id => labelStore.get(id)))
+    const labelById = new Map<number, TableTxLabel>()
+    for (let i = 0; i < labelIdList.length; i++) {
+      const label = labelRows[i]
+      if (label != null && !label.isDeleted) labelById.set(labelIdList[i], label)
+    }
+    if (trx == null) await dbTrx.done
+    for (let i = 0; i < uniqueTxIds.length; i++) {
+      const labels: TableTxLabel[] = []
+      for (const labelId of activeLabelIdsByTx[i]) {
+        const label = labelById.get(labelId)
+        if (label != null) labels.push(label)
+      }
+      results.set(uniqueTxIds[i], labels)
+    }
+    return results
   }
 
   async getTagsForOutputId(outputId: number, trx?: TrxToken): Promise<TableOutputTag[]> {
@@ -630,6 +723,43 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const tags = await Promise.all(maps.filter(m => !m.isDeleted).map(m => store.get(m.outputTagId)))
     if (trx == null) await dbTrx.done
     return tags.filter((tag): tag is TableOutputTag => tag != null && !tag.isDeleted)
+  }
+
+  async getTagsForOutputIds(outputIds: number[], trx?: TrxToken): Promise<Map<number, TableOutputTag[]>> {
+    const results = new Map<number, TableOutputTag[]>()
+    const uniqueIds = [...new Set(outputIds)]
+    if (uniqueIds.length === 0) return results
+    const dbTrx = this.toDbTrx(['output_tags_map', 'output_tags'], 'readonly', trx)
+    const mapIndex = dbTrx.objectStore('output_tags_map').index('outputId')
+    const tagStore = dbTrx.objectStore('output_tags')
+    const mapLists = await Promise.all(uniqueIds.map(id => mapIndex.getAll(id) as Promise<TableOutputTagMap[]>))
+    const uniqueTagIds = new Set<number>()
+    const activeTagIdsByOutput = mapLists.map(maps => {
+      const ids: number[] = []
+      for (const m of maps) {
+        if (m.isDeleted) continue
+        ids.push(m.outputTagId)
+        uniqueTagIds.add(m.outputTagId)
+      }
+      return ids
+    })
+    const tagIdList = [...uniqueTagIds]
+    const tagRows = await Promise.all(tagIdList.map(id => tagStore.get(id)))
+    const tagById = new Map<number, TableOutputTag>()
+    for (let i = 0; i < tagIdList.length; i++) {
+      const tag = tagRows[i]
+      if (tag != null && !tag.isDeleted) tagById.set(tagIdList[i], tag)
+    }
+    if (trx == null) await dbTrx.done
+    for (let i = 0; i < uniqueIds.length; i++) {
+      const tags: TableOutputTag[] = []
+      for (const tagId of activeTagIdsByOutput[i]) {
+        const tag = tagById.get(tagId)
+        if (tag != null) tags.push(tag)
+      }
+      results.set(uniqueIds[i], tags)
+    }
+    return results
   }
 
   async listActions(auth: AuthId, vargs: ValidListActionsArgs): Promise<ListActionsResult> {
@@ -844,45 +974,93 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     return results
   }
 
+  private hasExtraProvenTxReqPartial(partial: Partial<TableProvenTxReq> | undefined, ignoreStatus: boolean): boolean {
+    if (partial == null) return false
+    for (const [k, v] of Object.entries(partial)) {
+      if (v === undefined) continue
+      if (ignoreStatus && k === 'status') continue
+      return true
+    }
+    return false
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async resolveProvenTxReqIndexKeys(store: any, args: FindProvenTxReqsArgs): Promise<number[] | undefined> {
+    const partial = args.partial
+    const hasTxids = args.txids != null && args.txids.length > 0
+    const hasStatusArray = args.status != null && args.status.length > 0
+    const hasPartialStatus = partial?.status !== undefined
+    if (!hasTxids && !hasStatusArray && !hasPartialStatus) return undefined
+
+    let statusList: string[] | undefined
+    if (hasPartialStatus && hasStatusArray) {
+      statusList = args.status!.includes(partial.status!) ? [partial.status!] : []
+    } else if (hasPartialStatus) {
+      statusList = [partial.status!]
+    } else if (hasStatusArray) {
+      statusList = [...new Set(args.status!)]
+    }
+
+    if (statusList != null && statusList.length === 0) return []
+
+    let txidKeys: number[] | undefined
+    if (hasTxids) {
+      const index = store.index('txid')
+      const lists = await Promise.all([...new Set(args.txids!)].map(async txid => await index.getAllKeys(txid)))
+      txidKeys = [...new Set(lists.flat() as number[])]
+    }
+    let statusKeys: number[] | undefined
+    if (statusList != null) {
+      const index = store.index('status')
+      const lists = await Promise.all(statusList.map(async s => await index.getAllKeys(s)))
+      statusKeys = [...new Set(lists.flat() as number[])]
+    }
+
+    if (txidKeys != null && statusKeys != null) {
+      const allowed = new Set(statusKeys)
+      return txidKeys.filter(id => allowed.has(id))
+    }
+    return txidKeys ?? statusKeys
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async openProvenTxReqsCursor(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     store: any,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    partial: Partial<any>,
+    args: FindProvenTxReqsArgs,
     direction: IDBCursorDirection,
-    status?: string[],
-    txids?: string[]
+    userId: number | undefined,
+    excludeIds?: Set<number>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): Promise<{ cursor: any; next?: () => Promise<unknown> }> {
+  ): Promise<{ cursor: any; next?: () => Promise<unknown>; exactKeySlice?: boolean }> {
+    const partial = args.partial
     if (partial?.provenTxReqId != null && partial.provenTxReqId !== 0)
       return { cursor: await store.openCursor(partial.provenTxReqId, direction) }
     if (partial?.provenTxId !== undefined)
       return { cursor: await store.index('provenTxId').openCursor(partial.provenTxId, direction) }
     if (partial?.txid !== undefined) return { cursor: await store.index('txid').openCursor(partial.txid, direction) }
-    if (partial?.status !== undefined)
-      return { cursor: await store.index('status').openCursor(partial.status, direction) }
     if (partial?.batch !== undefined) return { cursor: await store.index('batch').openCursor(partial.batch, direction) }
-    // Monitor tasks ask by a status (or txid) list with an empty partial. Resolve
-    // primary keys through the index so only matching rows are read, instead of
-    // deserialising every rawTx/inputBEEF in the table. Keeps primary-key order.
-    let keyLists: Array<Promise<IDBValidKey[]>> | undefined
-    if (txids != null && txids.length > 0) {
-      const index = store.index('txid')
-      keyLists = [...new Set(txids)].map(async txid => await index.getAllKeys(txid))
-    } else if (status != null && status.length > 0) {
-      const index = store.index('status')
-      keyLists = [...new Set(status)].map(async s => await index.getAllKeys(s))
-    }
-    if (keyLists != null) {
-      const ordered = [...new Set((await Promise.all(keyLists)).flat() as number[])].sort((a, b) => a - b)
+    // Resolve primary keys through txid/status indexes (intersecting when both
+    // are given) and slice offset/limit on integer keys before opening value
+    // cursors so skipped or non-matching rawTx/inputBEEF rows are never cloned.
+    const resolved = await this.resolveProvenTxReqIndexKeys(store, args)
+    if (resolved != null) {
+      let ordered = excludeIds != null && excludeIds.size > 0 ? resolved.filter(id => !excludeIds.has(id)) : resolved
+      ordered.sort((a, b) => a - b)
       if (direction === 'prev') ordered.reverse()
+      const canExactSlice =
+        args.since == null && userId === undefined && !this.hasExtraProvenTxReqPartial(partial, true)
+      if (canExactSlice && args.paged != null) {
+        const start = args.paged.offset ?? 0
+        const limit = args.paged.limit
+        ordered = limit != null && limit > 0 ? ordered.slice(start, start + limit) : start > 0 ? ordered.slice(start) : ordered
+      }
       const iterator = ordered.values()
       const next = async (): Promise<unknown> => {
         const key = iterator.next()
         return key.done === true ? null : await store.openCursor(key.value, direction)
       }
-      return { cursor: await next(), next }
+      return { cursor: await next(), next, exactKeySlice: canExactSlice && args.paged != null }
     }
     return { cursor: await store.openCursor(null, direction) }
   }
@@ -902,22 +1080,28 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
         'undefined. ProvenTxReqs may not be found by inputBEEF value.'
       )
     }
-    const dbTrx = this.toDbTrx(['proven_tx_reqs', 'transactions'], 'readonly', args.trx)
+    const stores = userId !== undefined ? ['proven_tx_reqs', 'transactions'] : ['proven_tx_reqs']
+    const dbTrx = this.toDbTrx(stores, 'readonly', args.trx)
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('proven_tx_reqs')
-    const { cursor, next } = await this.openProvenTxReqsCursor(
+    const trackSettledCompleted =
+      args.partial?.status === 'completed' && args.partial?.notified === false && dbTrx.mode === 'readonly'
+    const { cursor, next, exactKeySlice } = await this.openProvenTxReqsCursor(
       store,
-      args.partial,
+      args,
       direction,
-      args.status,
-      args.txids
+      userId,
+      trackSettledCompleted ? this.settledCompletedReqIds : undefined
     )
     await scanCursor<TableProvenTxReq>(
       cursor,
       args.since,
-      args.paged?.offset ?? 0,
+      exactKeySlice ? 0 : (args.paged?.offset ?? 0),
       args.paged?.limit,
       async r => {
+        if (trackSettledCompleted && r.status === 'completed' && r.notified === true) {
+          this.settledCompletedReqIds.add(r.provenTxReqId)
+        }
         if (!matchesProvenTxReqPartial(r, args.partial)) return false
         if (args.status != null && args.status.length > 0 && !args.status.includes(r.status)) return false
         if (args.txids != null && args.txids.length > 0 && !args.txids.includes(r.txid)) return false
@@ -1066,6 +1250,24 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   }
 
   async countProvenTxReqs(args: FindProvenTxReqsArgs): Promise<number> {
+    this.assertNoUndefinedInPartial(args.partial)
+    if (args.partial.rawTx != null) {
+      throw new WERR_INVALID_PARAMETER('args.partial.rawTx', 'undefined. ProvenTxReqs may not be found by rawTx value.')
+    }
+    if (args.partial.inputBEEF != null) {
+      throw new WERR_INVALID_PARAMETER(
+        'args.partial.inputBEEF',
+        'undefined. ProvenTxReqs may not be found by inputBEEF value.'
+      )
+    }
+    if (args.since == null && args.paged == null && !this.hasExtraProvenTxReqPartial(args.partial, true)) {
+      const dbTrx = this.toDbTrx(['proven_tx_reqs'], 'readonly', args.trx)
+      const store = dbTrx.objectStore('proven_tx_reqs')
+      const keys = await this.resolveProvenTxReqIndexKeys(store, args)
+      const total = keys != null ? keys.length : await store.count()
+      if (args.trx == null) await dbTrx.done
+      return total
+    }
     let count = 0
     await this.filterProvenTxReqs(args, () => {
       count++
@@ -1230,6 +1432,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     try {
       const id = Number(await (store.add as (v: unknown) => Promise<IDBValidKey>)(e))
       tx.provenTxReqId = id
+      this.settledCompletedReqIds.delete(id)
     } finally {
       if (trx == null) await dbTrx.done
     }
@@ -1431,6 +1634,11 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
   }
 
   async updateProvenTxReq(id: number | number[], update: Partial<TableProvenTxReq>, trx?: TrxToken): Promise<number> {
+    if (Array.isArray(id)) {
+      for (const reqId of id) this.settledCompletedReqIds.delete(reqId)
+    } else {
+      this.settledCompletedReqIds.delete(id)
+    }
     return await this.updateIdb(id, update, 'provenTxReqId', 'proven_tx_reqs', trx)
   }
 
@@ -1507,6 +1715,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     this.db = undefined
     this._settings = undefined
     this.managedChangeDefaultsMigrated = false
+    this.settledCompletedReqIds.clear()
   }
 
   allStores: string[] = [
@@ -1984,8 +2193,55 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
     const direction: IDBCursorDirection = args.orderDescending === true ? 'prev' : 'next'
     const store = dbTrx.objectStore('outputs')
     const transactionEligibility = new Map<number, boolean>()
-    let cursor = await this.openOutputsCursor(store, args.partial, direction)
-    if (args.afterOutputId != null) cursor = await resumeCursorAfter(cursor, args.afterOutputId, direction)
+    const hasUniqueOutputKey =
+      (args.partial?.outputId != null && args.partial.outputId !== 0) ||
+      (args.partial?.userId !== undefined &&
+        ((args.partial?.transactionId !== undefined && args.partial?.vout !== undefined) ||
+          (args.partial?.txid != null && args.partial.txid !== '' && args.partial?.vout !== undefined)))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let cursor: any
+    let next: (() => Promise<unknown>) | undefined
+    let tagsPreMatched = false
+    if (tagIds != null && tagIds.length > 0 && !hasUniqueOutputKey) {
+      // Resolve matching outputIds from output_tags_map first so a tag lookup
+      // in a multi-thousand-item 1sat basket clones only matching rows instead
+      // of walking and cloning the entire basket.
+      const uniqueTagIds = [...new Set(tagIds)]
+      const mapIndex = dbTrx.objectStore('output_tags_map').index('outputTagId')
+      const mapLists = await Promise.all(uniqueTagIds.map(id => mapIndex.getAll(id) as Promise<TableOutputTagMap[]>))
+      let candidateIds: Set<number> | null = null
+      for (const maps of mapLists) {
+        const ids = new Set<number>()
+        for (const m of maps) {
+          if (!m.isDeleted) ids.add(m.outputId)
+        }
+        if (candidateIds == null) {
+          candidateIds = ids
+        } else if (isQueryModeAll === true) {
+          for (const id of candidateIds) {
+            if (!ids.has(id)) candidateIds.delete(id)
+          }
+        } else {
+          for (const id of ids) candidateIds.add(id)
+        }
+      }
+      let ordered = [...(candidateIds ?? [])].sort((a, b) => a - b)
+      if (args.afterOutputId != null) {
+        const after = args.afterOutputId
+        ordered = direction === 'prev' ? ordered.filter(id => id < after) : ordered.filter(id => id > after)
+      }
+      if (direction === 'prev') ordered.reverse()
+      const iterator = ordered.values()
+      next = async (): Promise<unknown> => {
+        const key = iterator.next()
+        return key.done === true ? null : await store.openCursor(key.value, direction)
+      }
+      cursor = await next()
+      tagsPreMatched = true
+    } else {
+      cursor = await this.openOutputsCursor(store, args.partial, direction)
+      if (args.afterOutputId != null) cursor = await resumeCursorAfter(cursor, args.afterOutputId, direction)
+    }
     await scanCursor<TableOutput>(
       cursor,
       args.since,
@@ -2003,6 +2259,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
           if (!eligible) return false
         }
         if (
+          !tagsPreMatched &&
           tagIds != null &&
           tagIds.length > 0 &&
           !(await this.outputMatchesTags(r.outputId, tagIds, isQueryModeAll, dbTrx))
@@ -2015,7 +2272,7 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
         if (args.noScript === true) (r as any).script = undefined
         filtered(r)
       },
-      undefined,
+      next,
       args.scanStats
     )
     if (args.trx == null) await dbTrx.done
@@ -2053,12 +2310,10 @@ export class StorageIdb extends StorageProvider implements WalletStorageProvider
       tagIds,
       isQueryModeAll
     )
-    for (const o of results) {
-      if (args.noScript === true) {
-        o.lockingScript = undefined
-      } else {
-        await this.validateOutputScript(o, args.trx)
-      }
+    if (args.noScript === true) {
+      for (const o of results) o.lockingScript = undefined
+    } else {
+      await this.fillStrippedOutputScripts(results, args.trx)
     }
     return results
   }

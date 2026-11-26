@@ -261,6 +261,7 @@ export async function settleArcadeRejectedProvenTxReqs(
         findProvenTxReqs?: (args: {
           partial: { status: string };
           paged: { limit: number; offset: number };
+          noRawTx?: boolean;
         }) => Promise<ProvenTxReqRow[]>;
       };
       if (typeof sp.findProvenTxReqs !== "function") return [];
@@ -269,6 +270,7 @@ export async function settleArcadeRejectedProvenTxReqs(
         const rows = await sp.findProvenTxReqs({
           partial: { status },
           paged: { limit: 100, offset: 0 },
+          noRawTx: true,
         });
         for (const row of rows ?? []) byId.set(row.provenTxReqId, row);
       }
@@ -345,39 +347,54 @@ export async function releaseGhostDoubleSpendReqs(
 
   let cleared = 0;
   try {
-    await storage.runAsStorageProvider(async (activeSp) => {
+    const reqs = await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as {
         findProvenTxReqs?: (args: {
           partial: { status: string };
           paged: { limit: number; offset: number };
+          noRawTx?: boolean;
         }) => Promise<ProvenTxReqRow[]>;
-        updateProvenTxReq?: (
-          ids: number[],
-          update: { status: string }
-        ) => Promise<unknown>;
       };
-      if (typeof sp.findProvenTxReqs !== "function") return;
-      const reqs = await sp.findProvenTxReqs({
-        partial: { status: "doubleSpend" },
-        paged: { limit: 50, offset: 0 },
-      });
-      const toInvalid: number[] = [];
-      for (const req of reqs ?? []) {
-        const txid = req.txid?.trim().toLowerCase();
-        if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue;
-        const onChain = await txExistsOnChain(txid, chain).catch(() => null);
-        if (
-          onChain === false &&
-          (await signedTxSpendConflictIsProven({ txid, chain }))
-        ) {
-          toInvalid.push(req.provenTxReqId);
-        }
-      }
-      if (toInvalid.length > 0 && typeof sp.updateProvenTxReq === "function") {
-        await sp.updateProvenTxReq(toInvalid, { status: "invalid" });
-        cleared = toInvalid.length;
-      }
+      if (typeof sp.findProvenTxReqs !== "function") return [];
+      return (
+        (await sp.findProvenTxReqs({
+          partial: { status: "doubleSpend" },
+          paged: { limit: 50, offset: 0 },
+          noRawTx: true,
+        })) ?? []
+      );
     });
+    const candidates = reqs
+      .map((req) => ({
+        provenTxReqId: req.provenTxReqId,
+        txid: req.txid?.trim().toLowerCase() ?? "",
+      }))
+      .filter((row) => /^[0-9a-f]{64}$/.test(row.txid));
+    if (candidates.length === 0) return 0;
+
+    const { mapPool } = await import("./asyncPool");
+    const checked = await mapPool(candidates, 3, async (row) => {
+      const onChain = await txExistsOnChain(row.txid, chain).catch(() => null);
+      if (onChain !== false) return null;
+      return (await signedTxSpendConflictIsProven({ txid: row.txid, chain }))
+        ? row.provenTxReqId
+        : null;
+    });
+    const toInvalid = checked.filter((id): id is number => id != null);
+    if (toInvalid.length > 0) {
+      await storage.runAsStorageProvider(async (activeSp) => {
+        const sp = activeSp as {
+          updateProvenTxReq?: (
+            ids: number[],
+            update: { status: string }
+          ) => Promise<unknown>;
+        };
+        if (typeof sp.updateProvenTxReq === "function") {
+          await sp.updateProvenTxReq(toInvalid, { status: "invalid" });
+          cleared = toInvalid.length;
+        }
+      });
+    }
   } catch (err) {
     console.warn("[action-review] ghost doubleSpend clear skipped", err);
     return 0;

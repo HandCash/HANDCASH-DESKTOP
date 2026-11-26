@@ -9,6 +9,7 @@
  * - Subscribes to coalesced `engine:patch` pushes (<=20Hz, 0Hz when idle).
  */
 import { appendAppLog } from './appLog'
+import { errorText } from './errorText'
 
 export type RustEngineBalance = {
   spendableSats: number
@@ -98,7 +99,7 @@ export async function activateRustEngineAccount(accountId: string): Promise<Acti
   } catch (err) {
     appendAppLog(
       'warn',
-      `[rust-engine] activate skipped — ${err instanceof Error ? err.message : String(err)}`,
+      `[rust-engine] activate skipped — ${errorText(err)}`,
     )
     return null
   }
@@ -135,7 +136,7 @@ export async function mirrorBrc38ToRustEngine(json: string): Promise<void> {
   } catch (err) {
     appendAppLog(
       'warn',
-      `[rust-engine] sqlite mirror skipped — ${err instanceof Error ? err.message : String(err)}`,
+      `[rust-engine] sqlite mirror skipped — ${errorText(err)}`,
     )
   }
 }
@@ -178,7 +179,7 @@ export async function hydrateTxidsViaRustEngine(
   } catch (err) {
     appendAppLog(
       'warn',
-      `[rust-engine] hydrate inputs fallback — ${err instanceof Error ? err.message : String(err)}`,
+      `[rust-engine] hydrate inputs fallback — ${errorText(err)}`,
     )
   }
   return out
@@ -224,7 +225,7 @@ export async function verifyBeefViaRustEngine(
   } catch (err) {
     appendAppLog(
       'warn',
-      `[rust-engine] verifyBeef fallback — ${err instanceof Error ? err.message : String(err)}`,
+      `[rust-engine] verifyBeef fallback — ${errorText(err)}`,
     )
     return null
   }
@@ -250,7 +251,7 @@ export async function verifyBrc150ViaRustEngine(
   } catch (err) {
     appendAppLog(
       'warn',
-      `[rust-engine] verifyBrc150 fallback — ${err instanceof Error ? err.message : String(err)}`,
+      `[rust-engine] verifyBrc150 fallback — ${errorText(err)}`,
     )
     return null
   }

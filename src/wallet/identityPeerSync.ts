@@ -28,6 +28,8 @@ import { onVaultLinkMessage, sendOverVaultLink, vaultLinkOpen } from './vaultLin
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
 
+const currentWallet = () => getActiveWallet()
+
 export type DevicePeerProfileEntry = {
   identityKey: string
   record: IdentityProfileRecord
@@ -226,7 +228,7 @@ export function exportLocalIdentityBundle(args: {
   const candidateAccounts =
     args.accounts ??
     (() => {
-      const active = getActiveWallet()
+      const active = currentWallet()
       if (!active?.vaultMaster) return []
       return readVaultAccounts(vaultIdentityKey(active.vaultMaster)).accounts.map((a) => ({
         index: a.index,
@@ -403,7 +405,7 @@ export function startVaultLinkIdentitySync(): () => void {
     if (!parsed || typeof parsed !== 'object') return
     const msg = parsed as Record<string, unknown>
     if (msg.type === 'identity-sync-request' && typeof msg.requestId === 'string') {
-      const active = getActiveWallet()
+      const active = currentWallet()
       if (!active || (typeof msg.chain === 'string' && msg.chain !== active.chain)) return
       const bundle = exportLocalIdentityBundle({
         chain: active.chain,
@@ -429,7 +431,7 @@ export function startVaultLinkIdentitySync(): () => void {
       return
     }
     if (msg.type === 'identity-sync-response' && msg.bundle) {
-      const active = getActiveWallet()
+      const active = currentWallet()
       if (!active || msg.chain !== active.chain) return
       void mergeRemoteIdentityBundle(active.chain, msg.bundle, {
         allowUncheckedBapHeaders: true,
@@ -489,7 +491,7 @@ export function resetIdentityPeerSyncForTests(): void {
  */
 export async function syncVaultIdentitiesBox(): Promise<IdentityBundleMergeResult> {
   const totals: IdentityBundleMergeResult = { profilesAdded: 0, bapPackagesAdded: 0, cardsAdded: 0 }
-  const active = getActiveWallet()
+  const active = currentWallet()
   if (!active?.vaultMaster) return totals
   try {
     const [

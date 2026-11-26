@@ -61,8 +61,9 @@ const REBUILDABLE_CACHE_KEYS = Object.values(storageRegistry)
 
 const ASYNC_CACHE_PREFIXES = [
   ...REBUILDABLE_CACHE_KEYS,
-  'handcash.collectables.list.',
-  'handcash.applog.',
+  storageRegistry.collectablesList.key,
+  storageRegistry.appLogCurrent.key,
+  storageRegistry.appLogPrevious.key,
 ]
 const ASYNC_FLUSH_DEBOUNCE_MS = 250
 const pendingAsyncWrites = new Map<string, string>()

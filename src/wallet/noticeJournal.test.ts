@@ -1,4 +1,4 @@
-import { PrivateKey } from '@bsv/sdk'
+import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const store = new Map<string, string>()
@@ -158,5 +158,17 @@ describe('notice journal', () => {
     await a2.syncNoticeJournal(active as never, 'unlock')
     expect(a2.owedJournalNotices(active).map((n) => n.txid)).toEqual([txid(2)])
     expect(a2.noticeJournalRoot(active)).toBe(b.noticeJournalRoot(active))
+  })
+
+  it('matches legacy bsv sha256 root byte-for-byte in sync and async paths', async () => {
+    const j = await device()
+    j.journalOwedNotice(active, notice(1, { atomicBeef: [1, 2, 3, 4] }))
+    j.journalOwedNotice(active, notice(2))
+    j.journalNoticeDone(active, txid(2), 0)
+    const entries = j.noticeJournalEntries(active)
+    const legacyIds = entries.map((e) => Utils.toHex(Hash.sha256(Utils.toArray(JSON.stringify(e), 'utf8')))).sort().join('')
+    const legacyRoot = Utils.toHex(Hash.sha256(Utils.toArray(legacyIds, 'utf8')))
+    expect(j.noticeJournalRoot(active)).toBe(legacyRoot)
+    expect(await j.noticeJournalRootAsync(active)).toBe(legacyRoot)
   })
 })

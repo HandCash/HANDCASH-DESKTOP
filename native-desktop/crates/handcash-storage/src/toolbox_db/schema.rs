@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS proven_tx_reqs (
     rebroadcast_attempts INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_preq_status ON proven_tx_reqs(status, proven_tx_req_id);
+CREATE INDEX IF NOT EXISTS idx_preq_status_notified ON proven_tx_reqs(status, notified, proven_tx_req_id);
 CREATE INDEX IF NOT EXISTS idx_preq_proven ON proven_tx_reqs(proven_tx_id);
 CREATE INDEX IF NOT EXISTS idx_preq_batch ON proven_tx_reqs(batch);
 

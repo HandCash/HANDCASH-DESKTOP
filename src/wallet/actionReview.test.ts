@@ -90,7 +90,10 @@ vi.mock("./changeScriptFate", () => ({
 vi.mock("./legacyScan", () => ({
   txExistsOnChain: (...args: unknown[]) => txExistsOnChain(...args),
 }));
-vi.mock("./sentItemGuard", () => ({ healGhostSentItems: async () => [] }));
+vi.mock("./sentItemGuard", () => ({
+  healGhostSentItems: async () => [],
+  releaseTipsOfFailedSends: async () => [],
+}));
 vi.mock("./oneSatImportGuard", () => ({ forgetOneSatImported: () => {} }));
 
 describe("actionReview", () => {
@@ -334,5 +337,45 @@ describe("actionReview", () => {
     );
     expect(abortAction).toHaveBeenCalledWith({ reference: "stale" });
     expect(abortAction).not.toHaveBeenCalledWith({ reference: "keep-me" });
+  });
+
+  it("releaseGhostDoubleSpendReqs releases the storage lock before network checks", async () => {
+    const { releaseGhostDoubleSpendReqs } = await import("./actionReview");
+    let inLock = false;
+    let lockHeldDuringNetwork: boolean | null = null;
+    const localFind = vi.fn(async () => [
+      { provenTxReqId: 9, txid: "cc".repeat(32), status: "doubleSpend" },
+    ]);
+    const localUpdate = vi.fn(async () => {});
+    txExistsOnChain.mockImplementationOnce(async () => {
+      lockHeldDuringNetwork = inLock;
+      return true;
+    });
+    const customActive = {
+      chain: "main" as const,
+      wallet: {
+        storage: {
+          runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) => {
+            inLock = true;
+            try {
+              return await fn({
+                findProvenTxReqs: localFind,
+                updateProvenTxReq: localUpdate,
+              });
+            } finally {
+              inLock = false;
+            }
+          },
+        },
+      },
+    };
+    await releaseGhostDoubleSpendReqs(customActive as never);
+    expect(lockHeldDuringNetwork).toBe(false);
+    expect(localFind).toHaveBeenCalledWith({
+      partial: { status: "doubleSpend" },
+      paged: { limit: 50, offset: 0 },
+      noRawTx: true,
+    });
+    expect(localUpdate).not.toHaveBeenCalled();
   });
 });

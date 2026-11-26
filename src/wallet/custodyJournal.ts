@@ -79,8 +79,12 @@ type JournalState = {
    * of a multi-megabyte journal hashes nothing until a root is asked for.
    */
   keys: Set<string>
+  /** Canonical JSON strings parallel to `entries`, reused for lazy hashing without re-stringifying. */
+  rawKeys: string[]
   /** Ids of `entries[0..ids.length)`, filled on demand by the root. */
   ids: string[]
+  /** Sorted snapshot of `ids[0..sortedIds.length)`, updated incrementally on small appends. */
+  sortedIds: string[] | null
   /** Latest recipe per outpoint; a wallet-payment recipe outranks a basket one. */
   recipes: Map<string, { sats: number; r: SpendRecipe }>
   spent: Set<string>
@@ -220,6 +224,7 @@ function admit(state: JournalState, entry: CustodyEntry): boolean {
   const key = JSON.stringify(entry)
   if (state.keys.has(key)) return false
   state.keys.add(key)
+  state.rawKeys.push(key)
   state.entries.push(entry)
   state.root = null
   admitRecipe(state, entry)
@@ -263,7 +268,9 @@ function load(owner: BoundAccountKeyScope): JournalState {
   const state: JournalState = {
     entries: [],
     keys: new Set(),
+    rawKeys: [],
     ids: [],
+    sortedIds: null,
     recipes: new Map(),
     spent: new Set(),
     released: new Set(),
@@ -400,15 +407,53 @@ export function unspentCoinCustody(
   return out
 }
 
+const ASYNC_ID_BATCH = 256
+const ASYNC_HASH_BATCH = 2048
+const INCREMENTAL_INSERT_MAX = 64
+
+function insertSorted(sorted: string[], value: string): void {
+  let lo = 0
+  let hi = sorted.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (sorted[mid] < value) lo = mid + 1
+    else hi = mid
+  }
+  sorted.splice(lo, 0, value)
+}
+
+function syncSortedIds(state: JournalState): string[] {
+  if (state.sortedIds == null) {
+    state.sortedIds = [...state.ids].sort()
+    return state.sortedIds
+  }
+  const added = state.ids.length - state.sortedIds.length
+  if (added === 0) return state.sortedIds
+  if (added <= INCREMENTAL_INSERT_MAX) {
+    for (let i = state.sortedIds.length; i < state.ids.length; i++) {
+      insertSorted(state.sortedIds, state.ids[i])
+    }
+    return state.sortedIds
+  }
+  state.sortedIds = [...state.ids].sort()
+  return state.sortedIds
+}
+
 /** sha256 over the sorted entry ids; equal roots are equal journals. */
 export function custodyJournalRoot(owner: BoundAccountKeyScope): string {
   const state = load(owner)
   if (state.root) return state.root
-  // Entries only grow, so only ids admitted since the last root are hashed.
+  // Entries only grow, so only ids admitted since the last root are hashed,
+  // reusing the canonical JSON strings already kept by `admit`.
   for (let i = state.ids.length; i < state.entries.length; i++) {
-    state.ids.push(custodyEntryId(state.entries[i]))
+    state.ids.push(sha256Hex(state.rawKeys[i]))
   }
-  state.root = sha256Hex([...state.ids].sort().join(''))
+  const ids = syncSortedIds(state)
+  const hash = sha256.create()
+  for (let i = 0; i < ids.length; i += ASYNC_HASH_BATCH) {
+    hash.update(utf8.encode(ids.slice(i, i + ASYNC_HASH_BATCH).join('')))
+  }
+  state.root = bytesToHex(hash.digest())
   return state.root
 }
 
@@ -421,17 +466,17 @@ export async function custodyJournalRootAsync(owner: BoundAccountKeyScope): Prom
   const state = load(owner)
   while (!state.root) {
     while (state.ids.length < state.entries.length) {
-      const end = Math.min(state.ids.length + 128, state.entries.length)
+      const end = Math.min(state.ids.length + ASYNC_ID_BATCH, state.entries.length)
       while (state.ids.length < end) {
-        state.ids.push(custodyEntryId(state.entries[state.ids.length]))
+        state.ids.push(sha256Hex(state.rawKeys[state.ids.length]))
       }
       await sleep(0)
     }
     const count = state.entries.length
-    const ids = [...state.ids].sort()
+    const ids = syncSortedIds(state).slice()
     const hash = sha256.create()
-    for (let i = 0; i < ids.length; i += 128) {
-      hash.update(utf8.encode(ids.slice(i, i + 128).join('')))
+    for (let i = 0; i < ids.length; i += ASYNC_HASH_BATCH) {
+      hash.update(utf8.encode(ids.slice(i, i + ASYNC_HASH_BATCH).join('')))
       await sleep(0)
     }
     if (state.entries.length === count) state.root = bytesToHex(hash.digest())

@@ -1083,6 +1083,7 @@ export class StorageRustSqlite extends StorageProvider implements WalletStorageP
         since: toIsoDate(args.since),
         paged: args.paged,
         orderDescending: args.orderDescending,
+        ...(args.noRawTx === true ? { noRawTx: true } : {}),
         ...(userId !== undefined ? { userId } : {})
       },
       args.trx

@@ -526,6 +526,7 @@ export interface FindProvenTxReqsArgs extends FindSincePagedArgs {
   partial: Partial<TableProvenTxReq>
   status?: ProvenTxReqStatus[]
   txids?: string[]
+  noRawTx?: boolean
 }
 export interface FindProvenTxsArgs extends FindSincePagedArgs {
   partial: Partial<TableProvenTx>

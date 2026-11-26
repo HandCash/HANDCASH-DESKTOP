@@ -1,4 +1,5 @@
 import { assign, fromPromise, setup } from 'xstate'
+import { errorText } from '../wallet/errorText'
 import type { IptRecipient } from '../wallet/bnt/iptRecipients'
 import type { IptReservationResult } from '../wallet/bnt/iptReservations'
 
@@ -17,7 +18,7 @@ type Failure = { message: string; held: boolean }
 
 function failure(error: unknown): Failure {
   const held = (error as { held?: unknown } | null)?.held === true
-  return { message: error instanceof Error ? error.message : String(error), held }
+  return { message: errorText(error), held }
 }
 
 /**

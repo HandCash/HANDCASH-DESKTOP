@@ -31,6 +31,7 @@
     "test:watch": "vitest",
     "test:live-tx": "HANDCASH_LIVE_TX=1 vitest run --config vitest.live.config.ts",
     "test:live-tx:print": "HANDCASH_LIVE_TX=print vitest run --config vitest.live.config.ts",
+    "test:script-conformance": "node scripts/bsv-script-conformance.mjs",
     "test:brc100": "vitest run src/contracts/brc100Conformance.test.ts",
     "test:bnt:live": "HANDCASH_LIVE_BNT=1 vitest run --config vitest.live.config.ts src/wallet/bnt/bntPort.live.test.ts",
     "test:bnt:live:read": "HANDCASH_LIVE_BNT=read vitest run --config vitest.live.config.ts src/wallet/bnt/bntPort.live.test.ts",

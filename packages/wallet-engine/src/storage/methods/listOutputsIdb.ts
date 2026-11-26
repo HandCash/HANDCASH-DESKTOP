@@ -171,7 +171,10 @@ async function hydrateIdbWalletOutput(
   output: TableOutput,
   vargs: ValidListOutputsArgs,
   labelsByTxid: Record<string, string[]>,
-  beef: Beef
+  beef: Beef,
+  tagsByOutputId?: Map<number, string[]>,
+  labelsByTxId?: Map<number, string[]>,
+  scriptsHydrated = false
 ): Promise<WalletOutput> {
   const walletOutput: WalletOutput = {
     satoshis: Number(output.satoshis),
@@ -182,16 +185,23 @@ async function hydrateIdbWalletOutput(
     walletOutput.customInstructions = output.customInstructions
   }
   if (vargs.includeLabels && output.txid) {
-    labelsByTxid[output.txid] ??= (await storage.getLabelsForTransactionId(output.transactionId)).map(
-      label => label.label
-    )
-    walletOutput.labels = labelsByTxid[output.txid]
+    if (labelsByTxId != null) {
+      walletOutput.labels = labelsByTxId.get(output.transactionId) ?? []
+    } else {
+      labelsByTxid[output.txid] ??= (await storage.getLabelsForTransactionId(output.transactionId)).map(
+        label => label.label
+      )
+      walletOutput.labels = labelsByTxid[output.txid]
+    }
   }
   if (vargs.includeTags) {
-    walletOutput.tags = (await storage.getTagsForOutputId(output.outputId)).map(tag => tag.tag)
+    walletOutput.tags =
+      tagsByOutputId != null
+        ? (tagsByOutputId.get(output.outputId) ?? [])
+        : (await storage.getTagsForOutputId(output.outputId)).map(tag => tag.tag)
   }
   if (vargs.includeLockingScripts) {
-    await storage.validateOutputScript(output)
+    if (!scriptsHydrated) await storage.validateOutputScript(output)
     if (output.lockingScript != null) {
       walletOutput.lockingScript = asString(output.lockingScript)
     }
@@ -205,10 +215,13 @@ async function hydrateIdbWalletOutput(
 /**
  * Restore stripped locking scripts for a whole page at once: one readonly
  * transaction, each raw transaction read once however many of its outputs
- * the page holds. Rows this leaves untouched fall back to
- * `validateOutputScript`, which makes no change when the script is whole.
+ * the page holds, streaming one raw transaction at a time to bound peak RAM.
  */
-async function fillStrippedScripts(storage: StorageIdb, outputs: TableOutput[]): Promise<void> {
+async function fillStrippedScripts(storage: StorageIdb, outputs: TableOutput[]): Promise<boolean> {
+  if (typeof storage.fillStrippedOutputScripts === 'function') {
+    await storage.fillStrippedOutputScripts(outputs)
+    return true
+  }
   const stripped = outputs.filter(
     o =>
       o.txid != null &&
@@ -219,7 +232,8 @@ async function fillStrippedScripts(storage: StorageIdb, outputs: TableOutput[]):
       o.scriptOffset > 0 &&
       o.lockingScript?.length !== o.scriptLength
   )
-  if (stripped.length === 0) return
+  if (stripped.length === 0) return true
+  if (typeof storage.getRawTxsForScriptSlices !== 'function') return false
   const rawTxs = await storage.getRawTxsForScriptSlices(stripped.map(o => o.txid as string))
   for (const output of stripped) {
     const rawTx = rawTxs.get(output.txid as string)
@@ -227,6 +241,7 @@ async function fillStrippedScripts(storage: StorageIdb, outputs: TableOutput[]):
     const start = output.scriptOffset as number
     output.lockingScript = Array.prototype.slice.call(rawTx, start, start + (output.scriptLength as number)) as number[]
   }
+  return true
 }
 
 async function hydrateIdbOutputResult(
@@ -237,9 +252,32 @@ async function hydrateIdbOutputResult(
 ): Promise<void> {
   const labelsByTxid: Record<string, string[]> = {}
   const beef = new Beef()
-  if (vargs.includeLockingScripts) await fillStrippedScripts(storage, outputs)
+  const scriptsHydrated = vargs.includeLockingScripts ? await fillStrippedScripts(storage, outputs) : false
+  let tagsByOutputId: Map<number, string[]> | undefined
+  if (vargs.includeTags && outputs.length > 0 && typeof storage.getTagsForOutputIds === 'function') {
+    const rawTags = await storage.getTagsForOutputIds(outputs.map(o => o.outputId))
+    tagsByOutputId = new Map()
+    for (const [id, tags] of rawTags) tagsByOutputId.set(id, tags.map(t => t.tag))
+  }
+  let labelsByTxId: Map<number, string[]> | undefined
+  if (vargs.includeLabels && outputs.length > 0 && typeof storage.getLabelsForTransactionIds === 'function') {
+    const rawLabels = await storage.getLabelsForTransactionIds(outputs.map(o => o.transactionId))
+    labelsByTxId = new Map()
+    for (const [id, labels] of rawLabels) labelsByTxId.set(id, labels.map(l => l.label))
+  }
   for (const output of outputs) {
-    result.outputs.push(await hydrateIdbWalletOutput(storage, output, vargs, labelsByTxid, beef))
+    result.outputs.push(
+      await hydrateIdbWalletOutput(
+        storage,
+        output,
+        vargs,
+        labelsByTxid,
+        beef,
+        tagsByOutputId,
+        labelsByTxId,
+        scriptsHydrated
+      )
+    )
   }
   if (vargs.includeTransactions) result.BEEF = beef.toBinary()
 }

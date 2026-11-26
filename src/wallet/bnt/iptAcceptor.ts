@@ -1,4 +1,5 @@
 import type { WalletInterface } from '@bsv/sdk'
+import { errorText } from '../errorText'
 import { signIptProposal, validateIptAcceptance, validateIptProposal } from './iptProposal'
 import { verifyIptRecipients, type IptRecipient } from './iptRecipients'
 import { createIptReservations, type IptReservationJournal } from './iptReservations'
@@ -13,7 +14,7 @@ type Signing = Parameters<typeof signIptProposal>[0]
 export class IptAcceptError extends Error {
   readonly held: boolean
   constructor(cause: unknown, held: boolean) {
-    super(cause instanceof Error ? cause.message : String(cause), { cause })
+    super(errorText(cause), { cause })
     this.name = 'IptAcceptError'
     this.held = held
   }
