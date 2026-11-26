@@ -3395,28 +3395,24 @@ impl AppServices {
         ))
     }
 
-    pub fn sync_now(&self) -> Result<String, String> {
+    pub async fn sync_now_async(&self) -> Result<String, String> {
         let summary = self
             .current_session_summary()
             .ok_or_else(|| "Unlock your wallet first.".to_string())?;
-        let rt = self.engine.runtime_handle();
-        let tip = rt
-            .block_on(
-                self.engine
-                    .sync_headers(&summary.account_id, summary.generation),
-            )
+        let tip = self
+            .engine
+            .sync_headers(&summary.account_id, summary.generation)
+            .await
             .map_err(|e| e.to_string())?;
-        let lane2 = rt
-            .block_on(
-                self.engine
-                    .run_proof_poll(&summary.account_id, summary.generation),
-            )
+        let lane2 = self
+            .engine
+            .run_proof_poll(&summary.account_id, summary.generation)
+            .await
             .map_err(|e| e.to_string())?;
-        let proven = rt
-            .block_on(
-                self.engine
-                    .run_brc150_pass(&summary.account_id, summary.generation, 10),
-            )
+        let proven = self
+            .engine
+            .run_brc150_pass(&summary.account_id, summary.generation, 10)
+            .await
             .map_err(|e| e.to_string())?;
         Ok(format!(
             "Sync complete: tip={}, proofs_settled={}, brc150_proven={proven}",
@@ -3424,6 +3420,10 @@ impl AppServices {
                 .unwrap_or_else(|| "offline".into()),
             lane2.proofs_settled
         ))
+    }
+
+    pub fn sync_now(&self) -> Result<String, String> {
+        self.engine.runtime_handle().block_on(self.sync_now_async())
     }
 
     pub fn verify_brc150_batch(&self) -> Result<u64, String> {

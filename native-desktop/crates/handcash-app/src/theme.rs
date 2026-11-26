@@ -508,6 +508,19 @@ html, body {{
 .wallet-nav-bar-track .wallet-nav-tab[aria-selected="true"] > svg {{
   color: inherit;
 }}
+/* Real sizer for the Synced column so renderers without ::before (aeon-native)
+   keep the exact width of "Synced" without clipping the status label to 0px. */
+.status-pill::before {{
+  content: none;
+  display: none;
+}}
+.status-pill > .status-pill-sizer {{
+  visibility: hidden;
+  grid-column: 2;
+  grid-row: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}}
 /* Status pill carousel (TS TextOverflow mode="carousel") */
 .status-pill [data-aeon-scope="text-overflow"] {{
   display: inline-flex;
@@ -1798,6 +1811,8 @@ mod tests {
         // Ticker coin-trigger stays in normal flow (overrides handcash.css position:absolute)
         assert!(css.contains("[data-aeon-scope=\"what-is-bsv\"] button.bsv-asset-trigger[data-aeon-part=\"coin-trigger\"]"));
         assert!(css.contains("position: relative;\n  inset: auto;"));
+        // Status pill uses a real hidden sizer span (so aeon-native without ::before never collapses to 0px)
+        assert!(css.contains(".status-pill > .status-pill-sizer {\n  visibility: hidden;\n  grid-column: 2;\n  grid-row: 1;"));
         // Status pill carousel keeps grid-cell width (0/100%) and disables CSS keyframes collision
         assert!(css.contains(".status-pill [data-aeon-scope=\"text-overflow\"] {\n  display: inline-flex;\n  align-items: center;\n  grid-column: 2;\n  grid-row: 1;\n  width: 0;\n  min-width: 100%;"));
         assert!(css.contains("animation: none;"));

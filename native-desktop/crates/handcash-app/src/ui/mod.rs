@@ -217,32 +217,46 @@ pub fn HandCashApp() -> Element {
                                 disabled: is_refreshing,
                                 onclick: move |_| {
                                     wallet_status.send(WalletStatusEvent::Refresh);
-                                    match svc_sync.sync_now() {
-                                        Ok(msg) => {
-                                            let next = svc_sync.read_snapshot();
-                                            let sats = next.balance.displayed_sats;
-                                            let online = next.bridge_online;
-                                            snapshot.set(next);
-                                            app_machine.send(AppEvent::Bridge { online });
-                                            app_machine.send(AppEvent::Refreshed { balance_sats: sats });
-                                            wallet_status.send(WalletStatusEvent::Bridge { online });
-                                            toast.set(Some(ToastNotice {
-                                                title: "Synced".into(),
-                                                body: Some(msg),
-                                                tone: "success",
-                                            }));
-                                        }
-                                        Err(e) => {
-                                            toast.set(Some(ToastNotice {
-                                                title: "Refresh failed".into(),
-                                                body: Some(e),
-                                                tone: "error",
-                                            }));
-                                        }
+                                    if !wallet_status.peek_snapshot().context.refreshing {
+                                        return;
                                     }
-                                    wallet_status.send(WalletStatusEvent::RefreshDone);
+                                    let svc_sync = Arc::clone(&svc_sync);
+                                    spawn(async move {
+                                        let svc_bg = Arc::clone(&svc_sync);
+                                        let res = svc_sync
+                                            .engine
+                                            .runtime_handle()
+                                            .spawn(async move { svc_bg.sync_now_async().await })
+                                            .await
+                                            .unwrap_or_else(|e| Err(format!("Sync task failed: {e}")));
+                                        match res {
+                                            Ok(msg) => {
+                                                let next = svc_sync.read_snapshot();
+                                                let sats = next.balance.displayed_sats;
+                                                let online = next.bridge_online;
+                                                snapshot.set(next);
+                                                app_machine.send(AppEvent::Bridge { online });
+                                                app_machine.send(AppEvent::Refreshed { balance_sats: sats });
+                                                wallet_status.send(WalletStatusEvent::Bridge { online });
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Synced".into(),
+                                                    body: Some(msg),
+                                                    tone: "success",
+                                                }));
+                                            }
+                                            Err(e) => {
+                                                toast.set(Some(ToastNotice {
+                                                    title: "Refresh failed".into(),
+                                                    body: Some(e),
+                                                    tone: "error",
+                                                }));
+                                            }
+                                        }
+                                        wallet_status.send(WalletStatusEvent::RefreshDone);
+                                    });
                                 },
                                 span { class: "status-dot", "data-tone": status_view.tone.as_str() }
+                                span { class: "status-pill-sizer", aria_hidden: true, "Synced" }
                                 primitives::TextOverflowCarousel {
                                     label: status_view.label.to_string(),
                                     class: "status-pill-label".to_string(),
@@ -256,6 +270,7 @@ pub fn HandCashApp() -> Element {
                                 "data-tone": status_view.tone.as_str(),
                                 title: "{status_view.detail}",
                                 span { class: "status-dot", "data-tone": status_view.tone.as_str() }
+                                span { class: "status-pill-sizer", aria_hidden: true, "Synced" }
                                 primitives::TextOverflowCarousel {
                                     label: status_view.label.to_string(),
                                     class: "status-pill-label".to_string(),
