@@ -417,26 +417,46 @@ html, body {{
   box-shadow: var(--hc-select-3d-shadow);
   overflow: hidden;
 }}
-/* border-box below would fold the 12px+10px padding into the 8ch box and clip "Activity" to "Ac…";
-   keep 8ch as a floor and let the label fit its text. */
+/* Size the section label zone consistently to the widest label in the main section subset. */
 .wallet-nav-titlebar-label {{
+  display: inline-grid;
+  grid-template-columns: max-content;
+  align-items: center;
   flex: 0 0 auto;
   width: auto;
-  min-width: 8ch;
+  min-width: 0;
   max-width: none;
+}}
+.wallet-nav-titlebar-label-text {{
+  grid-column: 1;
+  grid-row: 1;
+}}
+.wallet-nav-titlebar-label-sizer {{
+  grid-column: 1;
+  grid-row: 1;
+  visibility: hidden;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}}
+.wallet-nav-titlebar-pill[data-has-crumbs] .wallet-nav-titlebar-label-sizer {{
+  display: none;
 }}
 .wallet-nav-titlebar-label,
 .wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {{
   align-self: stretch;
   height: 100%;
   box-sizing: border-box;
-  display: inline-flex;
   align-items: center;
   background: transparent;
   background-image: none;
   border: 0;
   box-shadow: none;
   color: #fafafa;
+}}
+.wallet-nav-titlebar-pill .wallet-nav-titlebar-crumbs {{
+  display: inline-flex;
 }}
 .wallet-nav-titlebar-tabs {{
   display: inline-flex;
@@ -679,8 +699,15 @@ html, body {{
   .dashboard-side {{
     display: none !important;
   }}
+  .wallet-hero {{
+    order: 1;
+  }}
+  .wallet-nav-shell {{
+    order: 2;
+  }}
   .compact-only-ticker {{
     display: block !important;
+    order: 3;
     flex: 0 0 auto;
     width: 100%;
   }}
@@ -703,8 +730,14 @@ html, body {{
   .wallet-actions .btn.wallet-action--swap {{
     flex-grow: 30 !important;
   }}
+  .wallet-nav-titlebar:not([data-has-crumbs]) {{
+    display: none !important;
+  }}
   .wallet-nav-titlebar-tabs {{
     display: none !important;
+  }}
+  .nav-child-body .connected-panel-head:not(.nav-breadcrumb-head) > h2 {{
+    display: none;
   }}
   .wallet-nav-bar {{
     display: flex !important;
@@ -853,6 +886,7 @@ html, body {{
   z-index: 2;
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 10px;
   width: auto;
   height: auto;
@@ -988,18 +1022,40 @@ html, body {{
   color: #fafafa;
 }}
 [data-aeon-scope="ticker-coins"] {{
+  width: 100%;
+  display: grid;
+  justify-items: stretch;
+  text-align: left;
   background-color: #000000;
   padding: 6px;
+  box-sizing: border-box;
 }}
 [data-aeon-mode="light"] [data-aeon-scope="ticker-coins"] {{
   background-color: #ffffff;
 }}
+[data-aeon-scope="ticker-coins"] [data-aeon-part="list"] {{
+  width: 100%;
+  justify-items: stretch;
+}}
+[data-aeon-scope="ticker-coins"] [data-aeon-part="list"] > li {{
+  width: 100%;
+}}
 [data-aeon-scope="ticker-coins"] [data-aeon-part="coin"] {{
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
   min-height: 44px;
   padding: 8px 12px;
   box-sizing: border-box;
   border: 1px solid transparent;
   border-radius: var(--hc-ticker-select-radius, 10px);
+}}
+[data-aeon-scope="ticker-coins"] [data-aeon-part="copy"] {{
+  display: grid;
+  justify-items: start;
+  text-align: left;
 }}
 .wallet-nav-shell,
 .wallet-nav,
@@ -1834,5 +1890,12 @@ mod tests {
         assert!(css.contains(".collect-issuer-icon {\n  display: block;\n  width: 40px;\n  height: 40px;"));
         assert!(css.contains(".collect-facepile-face > img {\n  display: block;\n  width: 36px;\n  height: 36px;"));
         assert!(css.contains("[data-aeon-scope=\"collectables\"] .collection-grid.collectables-grid,"));
+        // UI/layout fixes: left-aligned ticker dropdown, consistent section label zone, compact ticker below nav, no duplicate mobile heading
+        assert!(css.contains("[data-aeon-scope=\"ticker-coins\"] [data-aeon-part=\"coin\"] {\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: flex-start;\n  text-align: left;"));
+        assert!(css.contains("[data-aeon-scope=\"ticker-coins\"] [data-aeon-part=\"copy\"] {\n  display: grid;\n  justify-items: start;\n  text-align: left;"));
+        assert!(css.contains(".wallet-nav-titlebar-label-sizer {"));
+        assert!(css.contains(".wallet-nav-shell {\n    order: 2;\n  }\n  .compact-only-ticker {\n    display: block !important;\n    order: 3;"));
+        assert!(css.contains(".wallet-nav-titlebar:not([data-has-crumbs]) {\n    display: none !important;\n  }"));
+        assert!(css.contains(".nav-child-body .connected-panel-head:not(.nav-breadcrumb-head) > h2 {\n    display: none;\n  }"));
     }
 }

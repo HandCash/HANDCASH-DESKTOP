@@ -3,6 +3,7 @@
 //! tracker, and Arcade/Bitails broadcaster for HandCash Wallet Engine.
 
 pub mod broadcast;
+pub mod chain_probe;
 pub mod fetcher;
 pub mod headers;
 pub mod rate_limit;

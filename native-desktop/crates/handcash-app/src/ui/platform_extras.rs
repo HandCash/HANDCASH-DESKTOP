@@ -5,8 +5,10 @@
 //! - `src/components/ScreenshotToast.tsx`
 //! - `src/components/calls/CallDock.tsx`
 
+use aeon_dioxus::use_aeon_machine;
 use aeon_ui::{button, prompt};
 use dioxus::prelude::*;
+use handcash_machines::update::{UpdateEvent, UpdateMachine, UpdateMode, UpdatePhase, UpdateStatus};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdateToastCopy {
@@ -107,7 +109,39 @@ pub fn UpdatePrompt(
     #[props(default)] on_install: Option<EventHandler<()>>,
     #[props(default)] on_dismiss: Option<EventHandler<()>>,
 ) -> Element {
-    let mut dismissed = use_signal(|| false);
+    let update_chart = use_aeon_machine::<UpdateMachine>();
+    let dismiss_key = available_version
+        .clone()
+        .unwrap_or_else(|| phase.clone());
+    let sync_phase = phase.clone();
+    let sync_key = dismiss_key.clone();
+    use_hook(move || {
+        let mapped_phase = match sync_phase.as_str() {
+            "checking" => UpdatePhase::Checking,
+            "available" => UpdatePhase::Available,
+            "not-available" => UpdatePhase::NotAvailable,
+            "downloading" => UpdatePhase::Downloading,
+            "ready" => UpdatePhase::Ready,
+            "error" => UpdatePhase::Error,
+            _ => UpdatePhase::Idle,
+        };
+        update_chart.send(UpdateEvent::Sync {
+            status: UpdateStatus {
+                phase: mapped_phase,
+                mode: UpdateMode::Default,
+                current_version: String::new(),
+                available_version: Some(sync_key),
+                percent: None,
+                error: None,
+                can_install: false,
+            },
+        });
+    });
+    let is_dismissed = update_chart
+        .context()
+        .prompt_dismissed_version
+        .as_deref()
+        == Some(dismiss_key.as_str());
     let copy = update_toast_copy(
         &phase,
         available_version.as_deref(),
@@ -119,7 +153,7 @@ pub fn UpdatePrompt(
     );
     rsx! {
         div { "data-aeon-scope": "app-update", "data-aeon-state": "{phase}",
-            if !*dismissed.read() {
+            if !is_dismissed {
                 if let Some(c) = copy {
                     div {
                         class: "aeonToast__viewport update-toast-viewport",
@@ -167,7 +201,7 @@ pub fn UpdatePrompt(
                                     "data-aeon-part": "closeTrigger",
                                     aria_label: "Dismiss",
                                     onclick: move |_| {
-                                        dismissed.set(true);
+                                        update_chart.send(UpdateEvent::DismissPrompt);
                                         if let Some(cb) = on_dismiss { cb.call(()); }
                                     },
                                     "×"

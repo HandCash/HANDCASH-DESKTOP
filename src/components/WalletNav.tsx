@@ -616,7 +616,18 @@ export const WalletNav = memo(function WalletNav({
             <div className="wallet-nav-titlebar-pill">
               {/* Path first — Activity / Send — then the nav plates (tabs or Cancel/Review). */}
               <span className="wallet-nav-titlebar-label">
-                {sectionLabelText}
+                <span className="wallet-nav-titlebar-label-text">
+                  {sectionLabelText}
+                </span>
+                {SECTIONS.map((s) => (
+                  <span
+                    key={s.value}
+                    className="wallet-nav-titlebar-label-sizer"
+                    aria-hidden="true"
+                  >
+                    {s.label}
+                  </span>
+                ))}
               </span>
               {stageChild && breadcrumbCrumbs.length > 0 ? (
                 <NavBreadcrumbTrail

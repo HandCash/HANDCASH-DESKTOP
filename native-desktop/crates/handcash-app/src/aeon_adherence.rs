@@ -26,11 +26,11 @@ const UI_USE_SIGNAL_CEILINGS: &[(&str, usize)] = &[
     ("send.rs", 4), // ratcheted down 7 -> 4 via SendMachine
     ("activity.rs", 3), // ratcheted down 4 -> 3 via PairingCodeMachine
     ("collectables_extra.rs", 3),
-    ("side.rs", 3),
+    ("side.rs", 2), // ratcheted down 3 -> 2 via TickerMachine
     ("devices.rs", 2), // ratcheted down 5 -> 2 via DeviceBackupMachine + QrScannerMachine
     ("chrome.rs", 1), // ratcheted down 3 -> 1 via WalletAccountMenuMachine
     ("messages.rs", 1),
-    ("platform_extras.rs", 1),
+    ("platform_extras.rs", 0), // ratcheted down 1 -> 0 via UpdateMachine
     ("swaps.rs", 1),
     ("app_browser.rs", 0),
 ];
@@ -85,8 +85,8 @@ fn ui_use_signal_counts_never_exceed_ratchet_ceilings() {
         }
     }
     assert!(
-        total <= 164,
-        "Total UI use_signal( count ({total}) regressed above current ratchet ceiling (164, down from 198 baseline)"
+        total <= 162,
+        "Total UI use_signal( count ({total}) regressed above current ratchet ceiling (162, down from 198 baseline)"
     );
 }
 
@@ -222,6 +222,19 @@ fn migrated_panels_bind_to_handcash_machines_and_aeon_dioxus() {
     assert!(
         collectables_src.contains("use_aeon_machine::<AssetBurnUiMachine>()"),
         "ui/collectables.rs must drive BurnAssetPanel from AssetBurnUiMachine"
+    );
+
+    let side_src = std::fs::read_to_string(dir.join("side.rs")).expect("read side.rs");
+    assert!(
+        side_src.contains("use_aeon_machine_with::<TickerMachine>"),
+        "ui/side.rs must drive WhatIsBsvPanel coin chooser from TickerMachine"
+    );
+
+    let platform_src =
+        std::fs::read_to_string(dir.join("platform_extras.rs")).expect("read platform_extras.rs");
+    assert!(
+        platform_src.contains("use_aeon_machine::<UpdateMachine>()"),
+        "ui/platform_extras.rs must drive UpdatePrompt from UpdateMachine"
     );
 }
 

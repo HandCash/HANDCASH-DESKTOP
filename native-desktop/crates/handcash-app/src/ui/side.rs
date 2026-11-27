@@ -8,7 +8,9 @@ use crate::state::{
     format_bsv, format_coin_short, format_fiat_value, FxRates, HeldCoins, WalletSnapshot,
 };
 use crate::ui::activity::ActivityFeed;
+use aeon_dioxus::use_aeon_machine_with;
 use dioxus::prelude::*;
+use handcash_machines::ticker::{TickerEvent, TickerInput, TickerMachine, TickerState};
 
 fn coin_about_copy(coin: MarketCoin) -> (&'static str, &'static str) {
     match coin {
@@ -151,11 +153,13 @@ pub fn WhatIsBsvPanel(
     #[props(default = false)] compact: bool,
 ) -> Element {
     let mut about_open = use_signal(|| false);
-    let mut choosing = use_signal(|| false);
+    let ticker = use_aeon_machine_with::<TickerMachine>(TickerInput {
+        compact_shell: compact,
+    });
     let mut chart_range = use_signal(|| "24h");
 
     let is_about = *about_open.read();
-    let is_choosing = *choosing.read();
+    let is_choosing = matches!(ticker.state(), TickerState::Choosing);
     let cur_range = *chart_range.read();
     let current_coin = *active_coin.read();
     let active_toast = toast.read().clone();
@@ -236,7 +240,9 @@ pub fn WhatIsBsvPanel(
                                             "data-aeon-state": if selected { "selected" } else { "idle" },
                                             onclick: move |_| {
                                                 active_coin.set(coin);
-                                                choosing.set(false);
+                                                ticker.send(TickerEvent::Pick {
+                                                    coin: coin.as_str().to_string(),
+                                                });
                                             },
                                             span { class: "ticker-coin-option-mark", aria_hidden: true,
                                                 if coin == MarketCoin::Bsv {
@@ -266,7 +272,7 @@ pub fn WhatIsBsvPanel(
                         div {
                             class: "bsv-market-body bsv-slide bsv-slide--compact",
                             "data-coin": current_coin.as_str(),
-                            onclick: move |_| choosing.set(true),
+                            onclick: move |_| ticker.send(TickerEvent::Choose),
 
                             div { class: "bsv-asset-row",
                                 button {
@@ -277,7 +283,7 @@ pub fn WhatIsBsvPanel(
                                     title: "Choose the coin shown here",
                                     onclick: move |evt| {
                                         evt.stop_propagation();
-                                        choosing.set(true);
+                                        ticker.send(TickerEvent::Choose);
                                     },
                                     span { class: "bsv-logo-btn", aria_hidden: true,
                                         if current_coin == MarketCoin::Bsv {
@@ -361,7 +367,7 @@ pub fn WhatIsBsvPanel(
                                     aria_haspopup: "listbox",
                                     aria_label: "{current_coin.name()}. Choose the coin shown here",
                                     title: "Choose the coin shown here",
-                                    onclick: move |_| choosing.set(true),
+                                    onclick: move |_| ticker.send(TickerEvent::Choose),
                                     span { class: "bsv-logo-btn", aria_hidden: true,
                                         if current_coin == MarketCoin::Bsv {
                                             span { class: "bsv-logo-stack",

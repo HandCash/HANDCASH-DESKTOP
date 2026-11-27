@@ -2634,23 +2634,33 @@ html[data-aeon-mode='light'] .bsv-toast-cover::after {
 }
 
 [data-aeon-scope='ticker-coins'] {
+  width: 100%;
   display: grid;
   gap: 8px;
   align-content: start;
+  justify-items: stretch;
+  text-align: left;
 }
 
 [data-aeon-scope='ticker-coins'] [data-aeon-part='list'] {
+  width: 100%;
   display: grid;
   gap: 4px;
   margin: 0;
   padding: 0;
   list-style: none;
+  justify-items: stretch;
+}
+
+[data-aeon-scope='ticker-coins'] [data-aeon-part='list'] > li {
+  width: 100%;
 }
 
 [data-aeon-scope='ticker-coins'] [data-aeon-part='coin'] {
   width: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 10px;
   padding: 8px 10px;
   border: 0;
@@ -2688,6 +2698,8 @@ html:not([data-aeon-mode='light']) [data-aeon-scope='ticker-coins'] {
 
 [data-aeon-scope='ticker-coins'] [data-aeon-part='copy'] {
   display: grid;
+  justify-items: start;
+  text-align: left;
   gap: 1px;
   min-width: 0;
 }
@@ -5530,14 +5542,15 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   color: #fff;
 }
 
-/* Section label lives inside the inverted selector pill — same type as before. */
+/* Section label lives inside the inverted selector pill — consistent width sized to the widest label in the subset. */
 .wallet-nav-titlebar-label {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: max-content;
   align-items: center;
-  flex: 0 0 8ch;
+  flex: 0 0 auto;
   box-sizing: content-box;
-  width: 8ch;
-  max-width: 8ch;
+  width: auto;
+  max-width: none;
   min-height: 0;
   margin: 0;
   padding: 0 10px 0 12px;
@@ -5557,6 +5570,21 @@ html[data-aeon-mode='light'] .wallet-nav-titlebar-tabs[data-permission]
   pointer-events: none;
   position: relative;
   z-index: 0;
+}
+
+.wallet-nav-titlebar-label-text {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.wallet-nav-titlebar-label-sizer {
+  grid-column: 1;
+  grid-row: 1;
+  visibility: hidden;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Activity alone and Activity / Currency share one pill height — never grow for crumbs. */
@@ -5783,8 +5811,12 @@ html[data-aeon-mode='light'] .wallet-nav-actions-pill {
   /* Shrink-wrap the root word; the trail owns the flexible middle. */
   flex: 0 0 auto;
   width: auto;
-  max-width: 8ch;
+  max-width: none;
   padding-right: 0;
+}
+
+.wallet-nav-titlebar-pill:has(.wallet-nav-titlebar-crumbs) .wallet-nav-titlebar-label-sizer {
+  display: none;
 }
 
 /* Breathing room between Collect/Activity and the path `/`. */
@@ -19713,7 +19745,7 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
   --ticker-dot: 4px;
   --ticker-dot-active: 10px;
   --ticker-spark-h: 24px;
-  order: 2;
+  order: 3;
   flex: 0 0 auto;
   min-height: 0 !important;
   height: auto !important;
@@ -19723,6 +19755,11 @@ html[data-aeon-mode='light'] .balance-split-share[data-chain] {
   padding: var(--ticker-pad-y);
   position: relative;
   overflow: hidden;
+}
+
+[data-aeon-scope='what-is-bsv'][data-aeon-shell='compact'] [data-aeon-scope='ticker-coins'] {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
 /* Compact: coin | sparkline | price, range change under the price. */

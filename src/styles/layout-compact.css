@@ -114,7 +114,7 @@ html:is(.platform-mobile, .layout-compact) .nav-child-body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* ── Dashboard: hero → compact BSV row → content ── */
+/* ── Dashboard: hero → content → compact BSV row ── */
 html:is(.platform-mobile, .layout-compact) .dashboard {
   display: flex;
   flex-direction: column;
@@ -313,7 +313,7 @@ html:is(.platform-mobile, .layout-compact)
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-shell {
-  order: 3;
+  order: 2;
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -404,6 +404,14 @@ html:is(.platform-mobile, .layout-compact) .settings-with-scroll .settings-panel
 
 html:is(.platform-mobile, .layout-compact) .nav-child-body {
   -webkit-overflow-scrolling: touch;
+}
+
+/* Child pages already display their title in .nav-breadcrumb-head; hide duplicate h2 inside .nav-child-body. */
+html:is(.platform-mobile, .layout-compact)
+  .nav-child-body
+  .connected-panel-head:not(.nav-breadcrumb-head)
+  > h2 {
+  display: none;
 }
 
 html:is(.platform-mobile, .layout-compact) .connected-panel-head,

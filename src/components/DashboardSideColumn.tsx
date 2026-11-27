@@ -121,7 +121,7 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile, 
   }, [pendingPrompt])
 
   if (compact) {
-    // Compact layout (see layout-compact.css) expects this between hero and nav;
+    // Compact layout (see layout-compact.css) places this below hero and nav;
     // it is also the only toast viewport on phone shells.
     return <WhatIsBsvPanel heldBsvSats={heldBsvSats} />
   }

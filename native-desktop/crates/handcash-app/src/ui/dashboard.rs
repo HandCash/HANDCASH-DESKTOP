@@ -299,19 +299,6 @@ pub fn Dashboard(
                     }
                 }
 
-                // ── Compact / Mobile Ticker Bar (`src/components/WhatIsBsvPanel.tsx`, between hero and nav) ──
-                div { class: "compact-only-ticker",
-                    side::WhatIsBsvPanel {
-                        active_coin,
-                        bsv_sats: snap.balance.displayed_sats,
-                        held: snap.held_coins,
-                        fiat_code: cur_fiat,
-                        fx_rates: fx.clone(),
-                        toast,
-                        compact: true,
-                    }
-                }
-
                 // ── WalletNav Shell (`src/components/WalletNav.tsx`) ──
                 section {
                     class: "wallet-nav-shell panel",
@@ -328,7 +315,18 @@ pub fn Dashboard(
                                 class: "wallet-nav-titlebar-pill",
                                 "data-has-crumbs": has_crumbs_attr,
                                 span { class: "wallet-nav-titlebar-label",
-                                    "{active_section.label()}"
+                                    span { class: "wallet-nav-titlebar-label-text",
+                                        "{active_section.label()}"
+                                    }
+                                    if active_child.is_none() {
+                                        for sec in NavSection::ALL {
+                                            span {
+                                                class: "wallet-nav-titlebar-label-sizer",
+                                                aria_hidden: true,
+                                                "{sec.label()}"
+                                            }
+                                        }
+                                    }
                                 }
                                 if let Some(ref child) = active_child {
                                     nav { class: "nav-breadcrumb wallet-nav-titlebar-crumbs",
@@ -778,6 +776,19 @@ pub fn Dashboard(
                                 }
                             }
                         }
+                    }
+                }
+
+                // ── Compact / Mobile Ticker Bar (`src/components/WhatIsBsvPanel.tsx`, underneath wallet section) ──
+                div { class: "compact-only-ticker",
+                    side::WhatIsBsvPanel {
+                        active_coin,
+                        bsv_sats: snap.balance.displayed_sats,
+                        held: snap.held_coins,
+                        fiat_code: cur_fiat,
+                        fx_rates: fx.clone(),
+                        toast,
+                        compact: true,
                     }
                 }
             }
