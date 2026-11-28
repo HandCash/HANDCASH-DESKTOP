@@ -754,6 +754,9 @@ pub fn handle_direct_device_peer_request(
         .find("/handcash-device/v1/")
         .map(|at| &clean_path[at..])
         .unwrap_or(clean_path);
+    if crate::scan_login::is_scan_login_path(route) {
+        return crate::scan_login::handle_scan_login_request(services, &method_upper, route, _body);
+    }
     if !matches!(
         (method_upper.as_str(), route),
         ("GET", "/handcash-device/v1/health")

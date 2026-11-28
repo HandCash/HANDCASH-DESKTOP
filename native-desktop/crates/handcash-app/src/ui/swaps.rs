@@ -368,11 +368,11 @@ pub struct SwapOfferView {
 }
 
 /// 1:1 port of `src/components/SwapOffersPanel.tsx`.
-/// Swap engine is not ported to Rust yet — offers render honestly with `data-aeon-state="unavailable"`.
+/// Offers and HTLC plans are live; on-chain funding broadcast enforces `native_services::CRYPTO_REVIEW_APPROVED`.
 #[component]
 pub fn SwapOffersPanel(
     #[props(default)] offers: Vec<SwapOfferView>,
-    #[props(default = true)] swap_gated: bool,
+    #[props(default)] swap_gated: bool,
     #[props(default)] on_done: Option<EventHandler<()>>,
 ) -> Element {
     let mut selected_id = use_signal(|| Option::<String>::None);
@@ -386,7 +386,7 @@ pub fn SwapOffersPanel(
             section {
                 class: "nav-child-panel",
                 "data-aeon-scope": "swap-offers",
-                "data-aeon-state": if swap_gated { "unavailable" } else { "confirming" },
+                "data-aeon-state": if swap_gated { "review-pending" } else { "confirming" },
                 SwapSummary {
                     pay: SwapSummaryLeg { asset: offer.from_asset.clone(), amount: offer.pay_amount.clone(), caption: "You pay".into() },
                     receive: SwapSummaryLeg { asset: offer.to_asset.clone(), amount: offer.receive_amount.clone(), caption: "You get".into() },
@@ -425,7 +425,7 @@ pub fn SwapOffersPanel(
         section {
             class: "nav-child-panel",
             "data-aeon-scope": "swap-offers",
-            "data-aeon-state": if swap_gated { "unavailable" } else { "listing" },
+            "data-aeon-state": "listing",
             if offers.is_empty() {
                 EmptyState {
                     icon: rsx! { SwapIcon { size: 28 } },

@@ -703,11 +703,11 @@ html, body {{
     order: 1;
   }}
   .wallet-nav-shell {{
-    order: 2;
+    order: 3;
   }}
   .compact-only-ticker {{
     display: block !important;
-    order: 3;
+    order: 2;
     flex: 0 0 auto;
     width: 100%;
   }}
@@ -1890,11 +1890,12 @@ mod tests {
         assert!(css.contains(".collect-issuer-icon {\n  display: block;\n  width: 40px;\n  height: 40px;"));
         assert!(css.contains(".collect-facepile-face > img {\n  display: block;\n  width: 36px;\n  height: 36px;"));
         assert!(css.contains("[data-aeon-scope=\"collectables\"] .collection-grid.collectables-grid,"));
-        // UI/layout fixes: left-aligned ticker dropdown, consistent section label zone, compact ticker below nav, no duplicate mobile heading
+        // UI/layout fixes: left-aligned ticker dropdown, consistent section label zone, compact ticker between hero and nav, no duplicate mobile heading
         assert!(css.contains("[data-aeon-scope=\"ticker-coins\"] [data-aeon-part=\"coin\"] {\n  width: 100%;\n  display: flex;\n  align-items: center;\n  justify-content: flex-start;\n  text-align: left;"));
         assert!(css.contains("[data-aeon-scope=\"ticker-coins\"] [data-aeon-part=\"copy\"] {\n  display: grid;\n  justify-items: start;\n  text-align: left;"));
         assert!(css.contains(".wallet-nav-titlebar-label-sizer {"));
-        assert!(css.contains(".wallet-nav-shell {\n    order: 2;\n  }\n  .compact-only-ticker {\n    display: block !important;\n    order: 3;"));
+        assert!(css.contains(".wallet-hero {\n    order: 1;"));
+        assert!(css.contains(".wallet-nav-shell {\n    order: 3;\n  }\n  .compact-only-ticker {\n    display: block !important;\n    order: 2;"));
         assert!(css.contains(".wallet-nav-titlebar:not([data-has-crumbs]) {\n    display: none !important;\n  }"));
         assert!(css.contains(".nav-child-body .connected-panel-head:not(.nav-breadcrumb-head) > h2 {\n    display: none;\n  }"));
     }

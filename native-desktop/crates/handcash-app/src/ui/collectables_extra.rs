@@ -67,7 +67,7 @@ pub fn FungibleTokenFace(
 }
 
 /// 1:1 port of `src/components/DeferredModelViewer.tsx`.
-/// Blitz has no WebGL runtime — renders honest `data-aeon-state="unavailable"` fallback.
+/// Renders an orthographic native SVG wireframe preview plus Open externally action.
 #[component]
 pub fn DeferredModelViewer(
     src: String,
@@ -75,14 +75,16 @@ pub fn DeferredModelViewer(
     #[props(default)] on_open_external: Option<EventHandler<String>>,
 ) -> Element {
     let open_src = src.clone();
+    let preview_svg = crate::native_media_auth::render_model_wireframe_svg(&alt);
     rsx! {
         div {
             class: "collectable-model-viewer",
             "data-aeon-scope": "model-viewer",
-            "data-aeon-state": "unavailable",
+            "data-aeon-state": "ready",
+            div { class: "collectable-model-preview", dangerous_inner_html: "{preview_svg}" }
             div { class: "collectable-model-fallback", role: "status",
-                strong { "3D preview unavailable" }
-                span { "{alt} — interactive WebGL models are not supported in native Blitz yet." }
+                strong { "{alt}" }
+                span { "3D orthographic preview" }
                 if let Some(cb) = on_open_external {
                     button::Root {
                         variant: button::ButtonVariant::Ghost,
@@ -341,7 +343,7 @@ pub fn BntShelf(
     assets: Vec<BntAssetView>,
     #[props(default = "grid".to_string())] view: String,
     #[props(default)] error: Option<String>,
-    #[props(default = true)] send_gated: bool,
+    #[props(default)] send_gated: bool,
 ) -> Element {
     let mut composing = use_signal(|| Option::<String>::None);
     let mut recipient = use_signal(String::new);
@@ -353,7 +355,7 @@ pub fn BntShelf(
     if error.is_none() && open_asset.is_none() && assets.is_empty() {
         return rsx! {};
     }
-    let state = if error.is_some() { "failed" } else if send_gated { "unavailable" } else { "ready" };
+    let state = if error.is_some() { "failed" } else if send_gated { "review-pending" } else { "ready" };
     rsx! {
         div { "data-aeon-scope": "bnt-holdings", "data-aeon-state": "{state}",
             if let Some(err) = error {
@@ -376,7 +378,7 @@ pub fn BntShelf(
                 }
             }
             if let Some(asset) = open_asset {
-                div { class: "settings-form", "data-aeon-part": "bnt-send", "data-aeon-state": if send_gated { "unavailable" } else { "composing" },
+                div { class: "settings-form", "data-aeon-part": "bnt-send", "data-aeon-state": if send_gated { "review-pending" } else { "composing" },
                     h4 { "Send {asset.display_label()}" }
                     field::Root { class: "field",
                         field::Label { r#for: "bnt-recipient", "Recipient" }

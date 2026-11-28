@@ -299,7 +299,7 @@ fn numbered(n: usize) -> String {
     s.chars()
         .enumerate()
         .fold(String::new(), |mut out, (i, c)| {
-            if i > 0 && (s.len() - i) % 3 == 0 {
+            if i > 0 && (s.len() - i).is_multiple_of(3) {
                 out.push(',');
             }
             out.push(c);

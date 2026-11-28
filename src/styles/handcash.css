@@ -347,9 +347,9 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: var(--hc-tracking-label);
   padding: 0 3px;
   border-radius: var(--hc-radius-sm);
-  /* Always HandCash yellow — never follows Omarchy / sheet accent. */
+  /* Always HandCash yellow on black — never follows Omarchy / sheet accent. */
   border: 1px solid color-mix(in srgb, #f5c518 55%, transparent);
-  background: color-mix(in srgb, #f5c518 16%, transparent);
+  background: #0a0a0a;
   color: #f5c518;
   line-height: 1.2;
   text-transform: uppercase;
@@ -1201,6 +1201,8 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
 
 .auth-alt {
   margin: 14px 0 0;
+  display: flex;
+  justify-content: center;
   text-align: center;
   color: var(--hc-muted);
   font-size: var(--hc-text-sm);
@@ -1209,6 +1211,10 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
 
 .auth-alt-link {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   border: 0;
   padding: 0;
   background: transparent;
@@ -1262,8 +1268,11 @@ html:not([data-aeon-mode='light']) .auth-shell-scrim {
 
 .auth-entry-primary,
 .auth-entry-secondary {
-  width: 100%;
+  display: flex;
+  align-items: center;
   justify-content: center;
+  text-align: center;
+  width: 100%;
 }
 
 .auth-entry-tagline {

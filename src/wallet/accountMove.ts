@@ -51,12 +51,13 @@ import {
 } from './vaultLink'
 import { getWalletRuntime, runtimeIsCurrent } from './walletRuntime'
 
-/** How often the holder reads its holding channel; well inside the answer window. */
 /**
- * How often the holding device polls the relay for release requests while idle.
- * Direct LAN / vault-link requests still answer immediately via `onDirectBody`.
+ * How often the holder reads the holding channel of every account held here.
+ * Must stay under the mover's answer window (`ANSWER_WINDOW_MS`, 10 s) and the
+ * freshness gap (`HOLDING_GAP_MS`): a slower poll lets a mover force-take from
+ * a live holder, which then keeps spending until its next check.
  */
-export const HOLDING_SERVE_MS = 15_000
+export const HOLDING_SERVE_MS = 5_000
 /** How often a mover polls for the accept and the record. */
 const MOVE_POLL_MS = 1_000
 
@@ -425,7 +426,6 @@ export async function answerDirectRequest(
 
 let serveTimer: ReturnType<typeof setInterval> | null = null
 let serving = false
-let idleServeCursor = 0
 let gapListener: (() => void) | null = null
 let directListener: (() => void) | null = null
 /** Ticks and link requests run one at a time, so two requests never release one account twice. */
@@ -519,10 +519,7 @@ async function serveTick(): Promise<void> {
       const ctx = await serveContext()
       if (!ctx) return
       await serveVaultLink(ctx.peers)
-      const idle = ctx.held.filter((i) => i !== ctx.activeIndex)
-      const rotatedIdle =
-        idle.length > 0 ? [idle[idleServeCursor++ % idle.length]!] : []
-      const order = [ctx.activeIndex, ...rotatedIdle]
+      const order = [ctx.activeIndex, ...ctx.held.filter((i) => i !== ctx.activeIndex)]
       for (const index of order) {
         if (!runtimeIsCurrent(ctx.runtime)) break
         if (!ctx.held.includes(index)) continue

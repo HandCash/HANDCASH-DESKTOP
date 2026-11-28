@@ -1,7 +1,17 @@
 import { sleep } from '../wallet/timing'
 import { errorText } from '../wallet/errorText'
 import { Button } from '@aeon-ui/react'
-import { getActiveWallet } from '../wallet/session'
+import { getActiveWallet, refreshSelectedWalletBalance } from '../wallet/session'
+import {
+  accountViewBalance,
+  clearAccountView,
+  defaultTakeSteps,
+  getAccountView,
+  subscribeAccountView,
+  takeViewedAccountForSpend,
+} from '../wallet/accountView'
+import { readTrustedBalance } from '../wallet/balanceSnapshot'
+import { toastError } from '../wallet/toast'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { useTickerCoin } from '../features/tickerCoin'
@@ -224,6 +234,54 @@ export function Dashboard({
     claimedHandleForIdentity(profile.identityKey),
   )
   const activeFlow = useSyncExternalStore(subscribeNav, () => getNavState().child?.type ?? null)
+  /** An account held on another device, shown read-only; never moved by viewing. */
+  const viewed = useSyncExternalStore(subscribeAccountView, getAccountView)
+  const [takingViewed, setTakingViewed] = useState(false)
+  // The view belongs to this open account; leave it when the account changes or the dashboard closes.
+  useEffect(() => () => clearAccountView(), [profile.identityKey])
+
+  /**
+   * Spending from a viewed account moves it here quietly first. The flow opens
+   * only once this device holds it and its history merged; any failure leaves
+   * the open account as it was and nothing is spent.
+   */
+  const spendFrom = async (openFlow: () => void) => {
+    const view = getAccountView()
+    if (!view) {
+      openFlow()
+      return
+    }
+    const runtime = getWalletRuntime()
+    const from = runtime?.instance
+    if (!from) {
+      toastError('Send', 'Unlock the vault before sending.')
+      return
+    }
+    setTakingViewed(true)
+    try {
+      const steps = await defaultTakeSteps(
+        { vaultMaster: from.vaultMaster, handle: from.handle, chain: from.chain, mnemonic: from.mnemonic },
+        (next) => {
+          const nextProfile: WalletProfile = {
+            handle: next.handle,
+            identityKey: next.identityKey,
+            address: next.address,
+            chain: next.chain,
+          }
+          onAccountSwitchStarted(nextProfile)
+          onAccountSwitched(nextProfile, readTrustedBalance(next.identityKey, next.chain) ?? 0)
+        },
+      )
+      await takeViewedAccountForSpend({ view, master: from.vaultMaster }, steps)
+      const current = getWalletRuntime()
+      if (current) void refreshSelectedWalletBalance(current).catch(() => { /* Keep the cached paint. */ })
+      openFlow()
+    } catch (error) {
+      toastError('Send', errorText(error))
+    } finally {
+      setTakingViewed(false)
+    }
+  }
   const compact = useCompactShell()
   const fiatCode = useFiatCurrency()
   const fiatOption = getFiatOption(fiatCode)
@@ -772,6 +830,31 @@ export function Dashboard({
             })()}
           </div>
           <div className="wallet-hero-main">
+            {viewed ? (() => {
+              const shown = accountViewBalance(viewed)
+              return (
+                <div className="wallet-balance-block" data-aeon-part="view-only" data-aeon-state={shown.kind}>
+                  <div className="wallet-balance-slot">
+                    <span className="wallet-balance" data-aeon-part="balance" data-aeon-state="view-only">
+                      <span className="balance balance-primary balance-coin">
+                        {shown.kind === 'cached' ? formatBsvSignificant(shown.sats) : '—'}
+                      </span>
+                    </span>
+                  </div>
+                  <p className="wallet-view-note" role="status">
+                    {takingViewed
+                      ? `Moving ${viewed.name} here…`
+                      : `${viewed.name} is held on another device · ${
+                          shown.kind === 'cached' && shown.readAt > 0
+                            ? `balance as of ${new Date(shown.readAt).toLocaleString()}`
+                            : shown.kind === 'cached'
+                              ? 'last known balance'
+                              : 'balance unavailable'
+                        }. Sending from it moves it here.`}
+                  </p>
+                </div>
+              )
+            })() : (
             <div className="wallet-balance-block">
               <div className="wallet-balance-slot" ref={balanceSlotRef}>
                 <button
@@ -827,14 +910,16 @@ export function Dashboard({
                 </button>
               </div>
             </div>
+            )}
 
             <div className="actions wallet-actions">
               <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 aria-pressed={activeFlow === 'send'}
+                disabled={takingViewed}
                 onClick={() => {
                   playWalletSound('soft')
-                  openSendFlow()
+                  void spendFrom(openSendFlow)
                 }}
               >
                 <SendIcon size={22} />
@@ -844,9 +929,10 @@ export function Dashboard({
                 <Button.Root variant="ghost"
                   className="btn btn-ghost btn-icon wallet-action--swap"
                   aria-pressed={activeFlow === 'swap'}
+                  disabled={takingViewed}
                   onClick={() => {
                     playWalletSound('soft')
-                    openSwapFlow()
+                    void spendFrom(openSwapFlow)
                   }}
                 >
                   <SwapIcon size={22} />
@@ -856,6 +942,9 @@ export function Dashboard({
               <Button.Root variant="ghost"
                 className="btn btn-ghost btn-icon"
                 aria-pressed={activeFlow === 'receive'}
+                // Receive shows the open account's address; a viewed account has none open here.
+                disabled={viewed != null}
+                title={viewed ? 'Receive is available on the device that holds this wallet' : undefined}
                 onClick={() => {
                   playWalletSound('soft')
                   openReceiveFlow()

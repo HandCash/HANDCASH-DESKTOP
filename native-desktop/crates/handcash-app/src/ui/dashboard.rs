@@ -4,9 +4,9 @@
 //! via `WalletActionBarNav`.
 
 use crate::icons::{
-    ActivityIcon, AppsIcon, BackIcon, CloseIcon, CoinGlyphIcon, CollectablesIcon, FilterIcon,
+    ActivityIcon, AppsIcon, BackIcon, ChainMark, CloseIcon, CoinGlyphIcon, CollectablesIcon, FilterIcon,
     FriendsIcon, IdentityIcon, PersonAddIcon, ReceiveIcon, RefreshIcon, SendIcon, SettingsIcon,
-    SwapIcon, TickerCoinMark,
+    SwapIcon,
 };
 use crate::machines::{
     DisplayCurrency, FiatCode, MarketCoin, NavChild, NavSection, PaymentFilters,
@@ -205,7 +205,7 @@ pub fn Dashboard(
                                             if selected_coin == MarketCoin::Bsv {
                                                 CoinGlyphIcon { size: 22 }
                                             } else {
-                                                TickerCoinMark { coin: selected_coin.as_str(), size: 22 }
+                                                ChainMark { coin: selected_coin.as_str(), size: 22, symbol_only: true }
                                             }
                                         }
                                         if cur == DisplayCurrency::Bsv {

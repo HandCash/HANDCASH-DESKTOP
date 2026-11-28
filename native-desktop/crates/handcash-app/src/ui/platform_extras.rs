@@ -272,7 +272,7 @@ pub fn format_call_clock(elapsed_ms: u64) -> String {
 }
 
 /// 1:1 port of `src/components/calls/CallDock.tsx`.
-/// Renders null in `idle`; gated cleanly with `data-aeon-state="unavailable"` when calls service is absent.
+/// Renders null in `idle`; projects live call state from `p2p_chat_calls` when active.
 #[component]
 pub fn CallDock(
     #[props(default = "idle".to_string())] state: String,

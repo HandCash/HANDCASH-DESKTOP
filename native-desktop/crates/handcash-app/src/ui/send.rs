@@ -405,8 +405,12 @@ pub fn SendPanel(
                                     p { class: "mono send-confirm-address", "{target_raw}" }
                                     p {
                                         class: "send-confirm-note",
-                                        "data-aeon-state": "unavailable",
-                                        "Sending is not available in this build yet."
+                                        "data-aeon-state": if crate::native_services::is_native_signing_enabled() { "ready" } else { "review-pending" },
+                                        if crate::native_services::is_native_signing_enabled() {
+                                            "Ready to sign and broadcast via Arcade."
+                                        } else {
+                                            "Awaiting independent crypto review sign-off before live broadcast."
+                                        }
                                     }
                                 }
                             }

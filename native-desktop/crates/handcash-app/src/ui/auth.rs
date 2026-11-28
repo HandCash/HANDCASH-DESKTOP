@@ -13,7 +13,7 @@ use crate::machines::{
 use crate::state::{AcceptedCoins, AppServices, SessionSummary, WalletSnapshot};
 use crate::ui::BrandLogo;
 use aeon_dioxus::{use_aeon_machine, AeonMachineHandle};
-use aeon_ui::{button, field, list_row};
+use aeon_ui::{button, field, list_row, status_banner};
 use dioxus::prelude::*;
 use handcash_machines::app::{AppEvent, AppMachine};
 use handcash_machines::unlock::{
@@ -51,6 +51,198 @@ struct PendingOnboard {
     is_create: bool,
 }
 
+const MESH_VIEW_W: f32 = 1200.0;
+const MESH_VIEW_H: f32 = 800.0;
+const MESH_PAN_PAD: f32 = 180.0;
+const MESH_NODE_COUNT: usize = 96;
+const MESH_MAX_DIST: f32 = 140.0;
+const MESH_NODE_DAMPING: f32 = 0.9982;
+const MESH_NODE_DRIFT: f32 = 0.055;
+const MESH_NODE_MAX_SPEED: f32 = 1.35;
+const MESH_PULSE_SPEED_MIN: f32 = 0.01;
+const MESH_PULSE_SPEED_MAX: f32 = 0.035;
+const MESH_MAX_PULSES: usize = 18;
+const MESH_PULSE_SPAWN_INTERVAL: u32 = 10;
+const MESH_SPLIT_CHANCE: f32 = 0.28;
+const MESH_SPLIT_COUNT_MIN: usize = 3;
+const MESH_SPLIT_COUNT_MAX: usize = 6;
+
+#[derive(Clone, Copy)]
+struct MeshNode {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    radius: f32,
+}
+
+#[derive(Clone, Copy)]
+struct MeshPulse {
+    from_idx: usize,
+    to_idx: usize,
+    progress: f32,
+    speed: f32,
+    ease_kind: u8,
+}
+
+struct AuthMeshState {
+    nodes: Vec<MeshNode>,
+    pulses: Vec<MeshPulse>,
+    frame_count: u32,
+    rng: u64,
+}
+
+impl AuthMeshState {
+    fn new() -> Self {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x5EED_CAFE_1234_5678)
+            | 1;
+        let mut state = Self {
+            nodes: Vec::with_capacity(MESH_NODE_COUNT),
+            pulses: Vec::with_capacity(MESH_MAX_PULSES),
+            frame_count: 0,
+            rng: seed,
+        };
+        let span_x = MESH_VIEW_W + MESH_PAN_PAD * 2.0;
+        let span_y = MESH_VIEW_H + MESH_PAN_PAD * 2.0;
+        for _ in 0..MESH_NODE_COUNT {
+            let x = state.next_f32() * span_x - MESH_PAN_PAD;
+            let y = state.next_f32() * span_y - MESH_PAN_PAD;
+            let vx = (state.next_f32() - 0.5) * 1.4;
+            let vy = (state.next_f32() - 0.5) * 1.4;
+            let radius = state.next_f32() * 1.2 + 0.6;
+            state.nodes.push(MeshNode { x, y, vx, vy, radius });
+        }
+        state
+    }
+
+    fn next_f32(&mut self) -> f32 {
+        let mut x = self.rng;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng = x;
+        ((x >> 40) as f32) / ((1u32 << 24) as f32)
+    }
+
+    fn next_usize(&mut self, upper: usize) -> usize {
+        if upper <= 1 {
+            return 0;
+        }
+        ((self.next_f32() * (upper as f32)) as usize).min(upper - 1)
+    }
+
+    fn ease(kind: u8, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match kind {
+            0 => 1.0 - (1.0 - t).powi(4),
+            1 => t.powi(4),
+            2 => {
+                if t < 0.5 {
+                    4.0 * t.powi(3)
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                }
+            }
+            _ => {
+                let c1 = 1.2_f32;
+                let c3 = c1 + 1.0;
+                (1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)).clamp(0.0, 1.0)
+            }
+        }
+    }
+
+    fn step(&mut self) {
+        let min_x = -MESH_PAN_PAD;
+        let max_x = MESH_VIEW_W + MESH_PAN_PAD;
+        let min_y = -MESH_PAN_PAD;
+        let max_y = MESH_VIEW_H + MESH_PAN_PAD;
+        for i in 0..self.nodes.len() {
+            let dx_r = (self.next_f32() - 0.5) * MESH_NODE_DRIFT;
+            let dy_r = (self.next_f32() - 0.5) * MESH_NODE_DRIFT;
+            let n = &mut self.nodes[i];
+            n.vx = n.vx * MESH_NODE_DAMPING + dx_r;
+            n.vy = n.vy * MESH_NODE_DAMPING + dy_r;
+            let speed = (n.vx * n.vx + n.vy * n.vy).sqrt();
+            if speed > MESH_NODE_MAX_SPEED {
+                n.vx = (n.vx / speed) * MESH_NODE_MAX_SPEED;
+                n.vy = (n.vy / speed) * MESH_NODE_MAX_SPEED;
+            }
+            n.x += n.vx;
+            n.y += n.vy;
+            if n.x < min_x {
+                n.x = min_x;
+                n.vx = n.vx.abs();
+            } else if n.x > max_x {
+                n.x = max_x;
+                n.vx = -n.vx.abs();
+            }
+            if n.y < min_y {
+                n.y = min_y;
+                n.vy = n.vy.abs();
+            } else if n.y > max_y {
+                n.y = max_y;
+                n.vy = -n.vy.abs();
+            }
+        }
+
+        self.frame_count = self.frame_count.wrapping_add(1);
+        if self.frame_count % MESH_PULSE_SPAWN_INTERVAL == 0 && self.pulses.len() < MESH_MAX_PULSES {
+            let from_idx = self.next_usize(self.nodes.len());
+            let from = self.nodes[from_idx];
+            let is_split = self.next_f32() < MESH_SPLIT_CHANCE;
+            let num_targets = if is_split {
+                MESH_SPLIT_COUNT_MIN
+                    + self.next_usize(MESH_SPLIT_COUNT_MAX - MESH_SPLIT_COUNT_MIN + 1)
+            } else {
+                1
+            };
+            let mut used = vec![from_idx];
+            for _ in 0..num_targets {
+                if self.pulses.len() >= MESH_MAX_PULSES {
+                    break;
+                }
+                let mut to_idx = self.next_usize(self.nodes.len());
+                for _ in 0..20 {
+                    if !used.contains(&to_idx) {
+                        break;
+                    }
+                    to_idx = self.next_usize(self.nodes.len());
+                }
+                if used.contains(&to_idx) {
+                    continue;
+                }
+                used.push(to_idx);
+                let to = self.nodes[to_idx];
+                let dist = (from.x - to.x).hypot(from.y - to.y);
+                if dist < MESH_MAX_DIST * 1.6 {
+                    let speed = MESH_PULSE_SPEED_MIN
+                        + self.next_f32() * (MESH_PULSE_SPEED_MAX - MESH_PULSE_SPEED_MIN);
+                    let ease_kind = self.next_usize(4) as u8;
+                    self.pulses.push(MeshPulse {
+                        from_idx,
+                        to_idx,
+                        progress: 0.0,
+                        speed,
+                        ease_kind,
+                    });
+                }
+            }
+        }
+
+        let mut i = self.pulses.len();
+        while i > 0 {
+            i -= 1;
+            self.pulses[i].progress += self.pulses[i].speed;
+            if self.pulses[i].progress >= 1.0 {
+                self.pulses.swap_remove(i);
+            }
+        }
+    }
+}
+
 /// 1:1 port of `src/components/AuthShell.tsx` + `AuthMeshBackground.tsx`.
 #[component]
 pub fn AuthShell(
@@ -58,15 +250,74 @@ pub fn AuthShell(
     #[props(default = true)] dark_mode: bool,
     children: Element,
 ) -> Element {
-    let edge_stroke = if dark_mode {
-        "rgba(100, 255, 160, 0.14)"
-    } else {
-        "rgba(0, 0, 0, 0.08)"
-    };
-    let node_fill = if dark_mode {
-        "rgba(100, 255, 160, 0.42)"
-    } else {
-        "rgba(56, 203, 123, 0.55)"
+    let mut mesh = use_hook(|| Signal::new(AuthMeshState::new()));
+    use_future(move || async move {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return;
+        }
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(33)).await;
+            mesh.write().step();
+        }
+    });
+
+    let (edge_rgb, edge_alpha_mul, node_rgb, node_alpha, pulse_core, glow_outer, glow_inner) =
+        if dark_mode {
+            (
+                "rgb(100, 255, 160)",
+                0.32_f32,
+                "rgb(100, 255, 160)",
+                0.50_f32,
+                "rgba(255, 255, 255, 0.9)",
+                0.24_f32,
+                0.58_f32,
+            )
+        } else {
+            (
+                "rgb(0, 0, 0)",
+                0.28_f32,
+                "rgb(56, 203, 123)",
+                0.55_f32,
+                "rgba(10, 18, 14, 0.85)",
+                0.18_f32,
+                0.44_f32,
+            )
+        };
+
+    let (edges, pulse_pts, node_pts) = {
+        let st = mesh.read();
+        let mut edges = Vec::with_capacity(256);
+        let max_d2 = MESH_MAX_DIST * MESH_MAX_DIST;
+        for i in 0..st.nodes.len() {
+            let a = st.nodes[i];
+            for j in (i + 1)..st.nodes.len() {
+                let b = st.nodes[j];
+                let dx = a.x - b.x;
+                let dy = a.y - b.y;
+                let d2 = dx * dx + dy * dy;
+                if d2 < max_d2 {
+                    let alpha = (1.0 - d2.sqrt() / MESH_MAX_DIST) * edge_alpha_mul;
+                    if alpha > 0.01 {
+                        edges.push((a.x, a.y, b.x, b.y, alpha));
+                    }
+                }
+            }
+        }
+        let pulse_pts: Vec<(f32, f32)> = st
+            .pulses
+            .iter()
+            .map(|p| {
+                let from = st.nodes[p.from_idx];
+                let to = st.nodes[p.to_idx];
+                let eased = AuthMeshState::ease(p.ease_kind, p.progress);
+                (
+                    from.x + (to.x - from.x) * eased,
+                    from.y + (to.y - from.y) * eased,
+                )
+            })
+            .collect();
+        let node_pts: Vec<(f32, f32, f32)> = st.nodes.iter().map(|n| (n.x, n.y, n.radius)).collect();
+        (edges, pulse_pts, node_pts)
     };
 
     rsx! {
@@ -75,7 +326,7 @@ pub fn AuthShell(
             "data-aeon-scope": "auth-shell",
             "data-aeon-state": state,
 
-            // Geometric payment-mesh SVG backdrop mirroring `AuthMeshBackground.tsx`
+            // Live animated payment-mesh backdrop mirroring `AuthMeshBackground.tsx`
             div { class: "auth-shell-mesh", "aria-hidden": "true", "data-aeon-part": "backdrop",
                 svg {
                     class: "auth-mesh-canvas",
@@ -86,51 +337,49 @@ pub fn AuthShell(
                     height: "100%",
                     preserve_aspect_ratio: "xMidYMid slice",
                     fill: "none",
-                    g { stroke: "{edge_stroke}", stroke_width: "1",
-                        line { x1: "90", y1: "120", x2: "260", y2: "190" }
-                        line { x1: "260", y1: "190", x2: "430", y2: "110" }
-                        line { x1: "430", y1: "110", x2: "640", y2: "180" }
-                        line { x1: "640", y1: "180", x2: "860", y2: "120" }
-                        line { x1: "860", y1: "120", x2: "1080", y2: "200" }
-                        line { x1: "90", y1: "120", x2: "160", y2: "360" }
-                        line { x1: "260", y1: "190", x2: "340", y2: "390" }
-                        line { x1: "430", y1: "110", x2: "340", y2: "390" }
-                        line { x1: "640", y1: "180", x2: "580", y2: "380" }
-                        line { x1: "640", y1: "180", x2: "820", y2: "340" }
-                        line { x1: "860", y1: "120", x2: "820", y2: "340" }
-                        line { x1: "1080", y1: "200", x2: "1020", y2: "430" }
-                        line { x1: "160", y1: "360", x2: "340", y2: "390" }
-                        line { x1: "340", y1: "390", x2: "580", y2: "380" }
-                        line { x1: "580", y1: "380", x2: "820", y2: "340" }
-                        line { x1: "820", y1: "340", x2: "1020", y2: "430" }
-                        line { x1: "160", y1: "360", x2: "110", y2: "620" }
-                        line { x1: "340", y1: "390", x2: "290", y2: "640" }
-                        line { x1: "580", y1: "380", x2: "510", y2: "610" }
-                        line { x1: "580", y1: "380", x2: "740", y2: "650" }
-                        line { x1: "820", y1: "340", x2: "740", y2: "650" }
-                        line { x1: "1020", y1: "430", x2: "980", y2: "670" }
-                        line { x1: "110", y1: "620", x2: "290", y2: "640" }
-                        line { x1: "290", y1: "640", x2: "510", y2: "610" }
-                        line { x1: "510", y1: "610", x2: "740", y2: "650" }
-                        line { x1: "740", y1: "650", x2: "980", y2: "670" }
+                    g { stroke: "{edge_rgb}", stroke_width: "1",
+                        for (x1, y1, x2, y2, alpha) in edges {
+                            line {
+                                x1: "{x1:.1}",
+                                y1: "{y1:.1}",
+                                x2: "{x2:.1}",
+                                y2: "{y2:.1}",
+                                stroke_opacity: "{alpha:.3}",
+                            }
+                        }
                     }
-                    g { fill: "{node_fill}",
-                        circle { cx: "90", cy: "120", r: "2.5" }
-                        circle { cx: "260", cy: "190", r: "3" }
-                        circle { cx: "430", cy: "110", r: "2" }
-                        circle { cx: "640", cy: "180", r: "3.2" }
-                        circle { cx: "860", cy: "120", r: "2.5" }
-                        circle { cx: "1080", cy: "200", r: "2.5" }
-                        circle { cx: "160", cy: "360", r: "2.8" }
-                        circle { cx: "340", cy: "390", r: "3" }
-                        circle { cx: "580", cy: "380", r: "2.4" }
-                        circle { cx: "820", cy: "340", r: "3.2" }
-                        circle { cx: "1020", cy: "430", r: "2.6" }
-                        circle { cx: "110", cy: "620", r: "2.5" }
-                        circle { cx: "290", cy: "640", r: "3" }
-                        circle { cx: "510", cy: "610", r: "2.5" }
-                        circle { cx: "740", cy: "650", r: "3" }
-                        circle { cx: "980", cy: "670", r: "2.5" }
+                    g {
+                        for (px, py) in pulse_pts {
+                            circle {
+                                cx: "{px:.1}",
+                                cy: "{py:.1}",
+                                r: "14",
+                                fill: "{node_rgb}",
+                                fill_opacity: "{glow_outer:.2}",
+                            }
+                            circle {
+                                cx: "{px:.1}",
+                                cy: "{py:.1}",
+                                r: "7",
+                                fill: "{node_rgb}",
+                                fill_opacity: "{glow_inner:.2}",
+                            }
+                            circle {
+                                cx: "{px:.1}",
+                                cy: "{py:.1}",
+                                r: "3",
+                                fill: "{pulse_core}",
+                            }
+                        }
+                    }
+                    g { fill: "{node_rgb}", fill_opacity: "{node_alpha:.2}",
+                        for (nx, ny, nr) in node_pts {
+                            circle {
+                                cx: "{nx:.1}",
+                                cy: "{ny:.1}",
+                                r: "{nr:.2}",
+                            }
+                        }
                     }
                 }
             }
@@ -861,39 +1110,39 @@ pub fn AuthFlow(
 
     // ── DeviceSignInPanel (`src/components/DeviceSignInPanel.tsx`) ──
     if !is_locked && mode == AuthFormMode::Signin {
+        let svc_signed_in = Arc::clone(&services);
         return rsx! {
             section {
                 class: "auth-screen",
                 "data-aeon-scope": "auth",
                 "data-aeon-state": "signin",
-                div {
-                    class: "auth-copy device-signin",
-                    "data-aeon-scope": "device-signin",
-                    "data-aeon-state": "scan",
-                    h1 { class: "auth-title", "Sign in" }
-                    div { class: "scan-login", "data-aeon-part": "scan",
-                        p { class: "auth-lede", role: "status", "Scan-to-sign-in is not available in this Alpha build. Use your recovery phrase, key slices or emergency key instead." }
-                    }
-                    div { class: "actions", "data-aeon-part": "exits",
-                        button::Root {
-                            variant: button::ButtonVariant::Ghost,
-                            class: "btn btn-ghost",
-                            onclick: move |_| {
-                                error_msg.set(None);
-                                auth_mode.set(AuthFormMode::Entry);
-                            },
-                            button::Label { "Back" }
-                        }
-                        button::Root {
-                            variant: button::ButtonVariant::Ghost,
-                            class: "btn btn-ghost",
-                            onclick: move |_| {
-                                error_msg.set(None);
-                                auth_mode.set(AuthFormMode::Phrase);
-                            },
-                            button::Label { "Other ways" }
-                        }
-                    }
+                DeviceSignInPanel {
+                    on_signed_in: move |(sum, wrap_pw): (SessionSummary, String)| {
+                        unlock_chart.send(UnlockEvent::Success);
+                        let snap = svc_signed_in.read_snapshot();
+                        let sats = snap.balance.displayed_sats;
+                        snapshot.set(snap);
+                        pending_onboard.set(Some(PendingOnboard {
+                            profile: sum,
+                            balance_sats: sats,
+                            wrap_password: wrap_pw,
+                            mnemonic: None,
+                            step: OnboardStep::Protect,
+                            is_create: false,
+                        }));
+                    },
+                    on_other_ways: move |_| {
+                        error_msg.set(None);
+                        auth_mode.set(AuthFormMode::Phrase);
+                    },
+                    on_recovery: move |_| {
+                        error_msg.set(None);
+                        auth_mode.set(AuthFormMode::Phrase);
+                    },
+                    on_cancel: move |_| {
+                        error_msg.set(None);
+                        auth_mode.set(AuthFormMode::Entry);
+                    },
                 }
             }
         };
@@ -1718,6 +1967,231 @@ pub fn OnboardProtectPanel(
                         }
                     },
                     button::Label { "Continue" }
+                }
+            }
+        }
+    }
+}
+
+fn local_device_label() -> String {
+    if cfg!(target_os = "macos") {
+        "HandCash (macOS)".to_string()
+    } else if cfg!(target_os = "windows") {
+        "HandCash (Windows)".to_string()
+    } else {
+        "HandCash (Linux)".to_string()
+    }
+}
+
+fn start_scan_login_for(services: &Arc<AppServices>) {
+    let status = services.brc100.status_snapshot();
+    let urls: Vec<String> = status
+        .get("devicePeerLanUrls")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let (session_id, _payload, _qr_text) =
+        services.scan_login.start_session(urls, local_device_label());
+    crate::scan_login::spawn_scan_login_relay(Arc::clone(services), session_id);
+}
+
+/// 1:1 port of `src/components/DeviceSignInPanel.tsx`.
+#[component]
+fn DeviceSignInPanel(
+    on_signed_in: EventHandler<(SessionSummary, String)>,
+    on_other_ways: EventHandler<()>,
+    on_recovery: EventHandler<()>,
+    on_cancel: EventHandler<()>,
+) -> Element {
+    let services = use_context::<Arc<AppServices>>();
+    let mut tick = use_hook(|| Signal::new(0u64));
+    use_hook(|| {
+        start_scan_login_for(&services);
+    });
+    let svc_drop = Arc::clone(&services);
+    use_drop(move || {
+        svc_drop.scan_login.end_session();
+    });
+    let svc_watch = Arc::clone(&services);
+    use_future(move || {
+        let svc = Arc::clone(&svc_watch);
+        async move {
+            let mut rx = svc.scan_login.subscribe();
+            let initial = rx.borrow_and_update().clone();
+            if let crate::scan_login::ScanLoginPhase::Installed {
+                summary,
+                wrap_password,
+            } = initial
+            {
+                on_signed_in.call((summary, wrap_password));
+                return;
+            }
+            while rx.changed().await.is_ok() {
+                let phase = rx.borrow_and_update().clone();
+                if let crate::scan_login::ScanLoginPhase::Installed {
+                    summary,
+                    wrap_password,
+                } = phase
+                {
+                    on_signed_in.call((summary, wrap_password));
+                    break;
+                }
+                let next = tick.peek().wrapping_add(1);
+                tick.set(next);
+            }
+        }
+    });
+
+    let _ = tick();
+    let phase = services.scan_login.current_phase();
+    let state_attr = phase.state_attr();
+    let svc_restart = Arc::clone(&services);
+
+    rsx! {
+        div {
+            class: "auth-copy device-signin",
+            "data-aeon-scope": "device-signin",
+            "data-aeon-state": "{state_attr}",
+            h1 { class: "auth-title", "Sign in" }
+            match phase {
+                crate::scan_login::ScanLoginPhase::Scan { qr_text, .. } => {
+                    let qr_src = crate::scan_login::render_qr_svg_data_uri(&qr_text);
+                    let qr_pixels = crate::scan_login::render_qr_image_attr(&qr_text, 200);
+                    rsx! {
+                        div { class: "scan-login", "data-aeon-part": "scan",
+                            p { class: "auth-lede", "Scan with a signed-in device." }
+                            img {
+                                class: "scan-login-qr",
+                                src: "{qr_src}",
+                                "aeon-image": qr_pixels,
+                                width: "200",
+                                height: "200",
+                                alt: "Sign-in code for this device",
+                                draggable: "false",
+                            }
+                        }
+                        div { class: "actions", "data-aeon-part": "exits",
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| on_cancel.call(()),
+                                button::Label { "Back" }
+                            }
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| on_other_ways.call(()),
+                                button::Label { "Other ways" }
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::ScanComparing { code, approver_label } => {
+                    let formatted = crate::scan_login::format_comparison_code(&code);
+                    rsx! {
+                        div { class: "signin-code-block",
+                            span { class: "signin-code", "data-aeon-part": "comparison-code", "{formatted}" }
+                            p { class: "auth-lede",
+                                "Type these numbers on {approver_label} to let it sign this device in. Only {approver_label} can send the wallet, and only after the right numbers. Device names are not verified; check the actual device in front of you. Don’t share these numbers with anyone else."
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::ScanConfirmed { approver_label } => {
+                    rsx! {
+                        status_banner::Root {
+                            tone: status_banner::StatusTone::Info,
+                            status: Some("confirmed".to_string()),
+                            status_banner::Copy {
+                                status_banner::Title { "Code accepted by {approver_label}. Receiving your wallet…" }
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::Restoring
+                | crate::scan_login::ScanLoginPhase::Installed { .. } => {
+                    rsx! {
+                        status_banner::Root {
+                            tone: status_banner::StatusTone::Info,
+                            status: Some("restoring".to_string()),
+                            status_banner::Copy {
+                                status_banner::Title { "Approved. Installing your wallet…" }
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::Ended { reason } => {
+                    let title = match reason {
+                        crate::scan_login::ScanLoginEndReason::Refused => "Your other device refused this sign-in",
+                        crate::scan_login::ScanLoginEndReason::Locked => "Too many wrong codes. This sign-in was stopped",
+                        crate::scan_login::ScanLoginEndReason::Expired => "Nobody approved this sign-in in time",
+                    };
+                    let show_recovery = reason == crate::scan_login::ScanLoginEndReason::Expired;
+                    rsx! {
+                        status_banner::Root {
+                            tone: status_banner::StatusTone::Warning,
+                            status: Some(reason.as_str().to_string()),
+                            status_banner::Copy {
+                                status_banner::Title { "{title}" }
+                            }
+                            status_banner::Actions {
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| {
+                                        start_scan_login_for(&svc_restart);
+                                        let next = tick.peek().wrapping_add(1);
+                                        tick.set(next);
+                                    },
+                                    button::Label { "Start again" }
+                                }
+                            }
+                        }
+                        if show_recovery {
+                            div { class: "actions", "data-aeon-part": "recovery",
+                                button::Root {
+                                    variant: button::ButtonVariant::Ghost,
+                                    class: "btn btn-ghost",
+                                    onclick: move |_| on_recovery.call(()),
+                                    button::Label { "Use recovery phrase" }
+                                }
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::Error { message } => {
+                    rsx! {
+                        p { class: "signin-error", role: "alert", "{message}" }
+                        div { class: "actions", "data-aeon-part": "exits",
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| {
+                                    start_scan_login_for(&svc_restart);
+                                    let next = tick.peek().wrapping_add(1);
+                                    tick.set(next);
+                                },
+                                button::Label { "Try again" }
+                            }
+                            button::Root {
+                                variant: button::ButtonVariant::Ghost,
+                                class: "btn btn-ghost",
+                                onclick: move |_| on_other_ways.call(()),
+                                button::Label { "Other ways" }
+                            }
+                        }
+                    }
+                }
+                crate::scan_login::ScanLoginPhase::Idle => {
+                    rsx! {
+                        div { class: "scan-login", "data-aeon-part": "scan",
+                            p { class: "auth-lede", "Scan with a signed-in device." }
+                        }
+                    }
                 }
             }
         }

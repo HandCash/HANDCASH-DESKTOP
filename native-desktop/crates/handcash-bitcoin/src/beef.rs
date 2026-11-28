@@ -31,6 +31,13 @@ pub struct Beef {
     pub txs: HashMap<String, BeefTx>,
 }
 
+fn txid_raw(txid_hex: &str) -> Result<[u8; 32], BitcoinError> {
+    let v = handcash_primitives::encoding::decode_hex(txid_hex)
+        .map_err(|_| BitcoinError::InvalidHex("txid".into()))?;
+    v.try_into()
+        .map_err(|_| BitcoinError::InvalidHex("txid length".into()))
+}
+
 impl Beef {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BitcoinError> {
         let mut r = Reader::new(bytes);
@@ -200,6 +207,102 @@ impl Beef {
             .and_then(|e| e.tx.as_ref())
     }
 
+    /// Extended Format bytes for `txid`, taking each input's source output from the parent
+    /// carried in this bundle. Errors when a parent is absent or txid-only (TS `toHexEF`).
+    pub fn ef_bytes_for(&self, txid: &str) -> Result<Vec<u8>, BitcoinError> {
+        let tx = self
+            .find_tx(txid)
+            .ok_or_else(|| BitcoinError::InvalidHex("transaction not found in beef".into()))?;
+        let mut prevouts = Vec::with_capacity(tx.inputs.len());
+        for inp in &tx.inputs {
+            let parent = self.find_tx(&inp.prev_txid).ok_or_else(|| {
+                BitcoinError::InvalidHex("source transaction not in beef".into())
+            })?;
+            let out = parent
+                .outputs
+                .get(inp.prev_vout as usize)
+                .ok_or_else(|| BitcoinError::InvalidHex("source output out of range".into()))?;
+            prevouts.push((out.satoshis, out.locking_script.as_slice()));
+        }
+        tx.to_ef_bytes(&prevouts)
+    }
+
+    /// BEEF v2 (BRC-96) bytes with transactions ordered parents-first.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, BitcoinError> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&BEEF_V2_MAGIC);
+        crate::write_varint(&mut out, self.bumps.len() as u64);
+        for b in &self.bumps {
+            out.extend_from_slice(&b.to_bytes());
+        }
+        let order = self.parents_first_order();
+        crate::write_varint(&mut out, order.len() as u64);
+        for txid in order {
+            let e = &self.txs[txid];
+            match (&e.tx, e.bump_index) {
+                (Some(tx), Some(idx)) => {
+                    out.push(1);
+                    crate::write_varint(&mut out, idx as u64);
+                    out.extend_from_slice(&tx.to_bytes()?);
+                }
+                (Some(tx), None) => {
+                    out.push(0);
+                    out.extend_from_slice(&tx.to_bytes()?);
+                }
+                (None, _) => {
+                    out.push(2);
+                    out.extend_from_slice(&reverse_32(txid_raw(txid)?));
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// AtomicBEEF (BRC-95): `01010101` + subject txid (wire order) + BEEF v2.
+    pub fn to_atomic_bytes(&self, subject_txid: &str) -> Result<Vec<u8>, BitcoinError> {
+        let subject = subject_txid.trim().to_ascii_lowercase();
+        if self.find_tx(&subject).is_none() {
+            return Err(BitcoinError::InvalidHex("atomic subject not in beef".into()));
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&ATOMIC_BEEF_PREFIX);
+        out.extend_from_slice(&reverse_32(txid_raw(&subject)?));
+        out.extend_from_slice(&self.to_bytes()?);
+        Ok(out)
+    }
+
+    /// Deterministic topological order: every in-bundle parent precedes its children.
+    fn parents_first_order(&self) -> Vec<&str> {
+        let mut ids: Vec<&str> = self.txs.keys().map(String::as_str).collect();
+        ids.sort_unstable();
+        let mut done: HashSet<&str> = HashSet::new();
+        let mut order = Vec::with_capacity(ids.len());
+        for id in ids {
+            self.visit_parents_first(id, &mut done, &mut order);
+        }
+        order
+    }
+
+    fn visit_parents_first<'a>(
+        &'a self,
+        id: &'a str,
+        done: &mut HashSet<&'a str>,
+        order: &mut Vec<&'a str>,
+    ) {
+        if !done.insert(id) {
+            return;
+        }
+        if let Some(tx) = self.txs.get(id).and_then(|e| e.tx.as_ref()) {
+            // Proven txs need no ancestry, but ordering their in-bundle parents first is harmless.
+            for inp in &tx.inputs {
+                if let Some((pid, _)) = self.txs.get_key_value(inp.prev_txid.as_str()) {
+                    self.visit_parents_first(pid.as_str(), done, order);
+                }
+            }
+        }
+        order.push(id);
+    }
+
     pub fn find_bump(&self, txid: &str) -> Option<&Bump> {
         let entry = self.txs.get(&txid.trim().to_ascii_lowercase())?;
         let idx = entry.bump_index?;
@@ -321,5 +424,43 @@ mod tests {
         assert_eq!(parsed.atomic_txid.as_deref(), Some(txid_hex.as_str()));
         assert!(parsed.find_tx(&txid_hex).is_some());
         assert!(parsed.find_bump(&txid_hex).is_some());
+
+        // Serializer reproduces the hand-built wire bytes exactly.
+        assert_eq!(parsed.to_atomic_bytes(&txid_hex).unwrap(), raw);
+
+        // Child spending the proven parent: parents-first order, EF, and round-trip.
+        let child = Transaction {
+            version: 1,
+            inputs: vec![crate::tx::TxInput {
+                prev_txid: txid_hex.clone(),
+                prev_vout: 0,
+                unlocking_script: vec![0x51],
+                sequence: 0xffff_ffff,
+            }],
+            outputs: vec![TxOutput {
+                satoshis: 1,
+                locking_script: vec![0x6a],
+            }],
+            lock_time: 0,
+        };
+        let mut bundle = parsed.clone();
+        let child_id = bundle.merge_raw_tx(&child.to_bytes().unwrap()).unwrap();
+        let atomic = bundle.to_atomic_bytes(&child_id).unwrap();
+        let back = Beef::from_bytes(&atomic).unwrap();
+        assert_eq!(back.atomic_txid.as_deref(), Some(child_id.as_str()));
+        assert_eq!(back.txs.len(), 2);
+        assert!(back.find_bump(&txid_hex).is_some());
+        let parent_pos = atomic
+            .windows(tx_bytes.len())
+            .position(|w| w == tx_bytes.as_slice())
+            .unwrap();
+        let child_pos = atomic
+            .windows(child.to_bytes().unwrap().len())
+            .position(|w| w == child.to_bytes().unwrap().as_slice())
+            .unwrap();
+        assert!(parent_pos < child_pos);
+        let ef = back.ef_bytes_for(&child_id).unwrap();
+        assert_eq!(&ef[4..10], &[0, 0, 0, 0, 0, 0xef]);
+        assert!(bundle.to_atomic_bytes(&"00".repeat(32)).is_err());
     }
 }

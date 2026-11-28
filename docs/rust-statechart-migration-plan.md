@@ -61,8 +61,8 @@ All 62 statecharts from `src/machines/machineManifest.ts` are ported losslessly 
 | 4 | `asyncAction` | `src/machines/asyncActionMachine.ts` | `async_action.rs` | Next (`ui/primitives.rs`, `ui/friends.rs`) |
 | 5 | `wipe` | `src/machines/wipeMachine.ts` | `wipe.rs` | Yes (`ui/panels.rs` `WipeWalletPanel`) |
 | 6 | `send` | `src/machines/sendMachine.ts` | `send.rs` | Yes (`ui/send.rs` `SendPanel`, `SendStage` deleted) |
-| 7 | `accountMove` | `src/wallet/accountMoveMachine.ts` | `account_move.rs` | Ready (used by `walletAccountMenu`) |
-| 8 | `walletAccountMenu` | `src/machines/walletAccountMenuMachine.ts` | `wallet_account_menu.rs` | Yes (`ui/chrome.rs` `WalletAccountMenu`) |
+| 7 | `accountMove` | `src/wallet/accountMoveMachine.ts` | `account_move.rs` | Ready (TS: used by spend-from-viewed `accountView.ts`, no longer by `walletAccountMenu`) |
+| 8 | `walletAccountMenu` | `src/machines/walletAccountMenuMachine.ts` | `wallet_account_menu.rs` | Stale: TS replaced MOVE/MOVE_PHASE/MOVED + `moving` with `VIEW` (view-only, no move on select) on 2026-11-27; re-port needed (`ui/chrome.rs` `WalletAccountMenu`) |
 | 9 | `app` | `src/machines/appMachine.ts` | `app.rs` | Yes (`ui/mod.rs` `App`, `AppSessionMachine` deleted) |
 | 10 | `unlock` | `src/machines/unlockMachine.ts` | `unlock.rs` | Yes (`ui/auth.rs` `AuthScreen`, `UnlockState` deleted) |
 | 11 | `walletStatus` | `src/machines/walletStatusMachine.ts` | `wallet_status.rs` | Yes (`ui/mod.rs` status bar) |

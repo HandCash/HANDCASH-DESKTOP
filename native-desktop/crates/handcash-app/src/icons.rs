@@ -712,7 +712,11 @@ const CHAIN_GLYPH_ARC_USD: [&str; 2] = ["M20.022 18.124c0-2.124-1.28-2.852-3.84-
 
 /// Disc + glyph chain mark — mirrors TS `LitecoinIcon` / `BitcoinIcon` / … (`data-chain-mark`).
 #[component]
-pub fn ChainMark(coin: String, #[props(default = 18)] size: u32) -> Element {
+pub fn ChainMark(
+    coin: String,
+    #[props(default = 18)] size: u32,
+    #[props(default = false)] symbol_only: bool,
+) -> Element {
     let glyphs: Vec<&'static str> = match coin.as_str() {
         "ltc" => vec![CHAIN_GLYPH_LTC],
         "bch" => vec![CHAIN_GLYPH_BCH],
@@ -740,9 +744,11 @@ pub fn ChainMark(coin: String, #[props(default = 18)] size: u32) -> Element {
             "aria-hidden": "true",
             "focusable": "false",
             "data-chain-mark": "{coin}",
-            circle { cx: "16", cy: "16", r: "15.2", class: "chain-mark-disc", fill: "{disc}" }
+            if !symbol_only {
+                circle { cx: "16", cy: "16", r: "15.2", class: "chain-mark-disc", fill: "{disc}" }
+            }
             for d in glyphs {
-                path { class: "chain-mark-glyph", fill: "#ffffff", d: "{d}" }
+                path { class: "chain-mark-glyph", fill: if symbol_only { disc } else { "#ffffff" }, d: "{d}" }
             }
         }
     }

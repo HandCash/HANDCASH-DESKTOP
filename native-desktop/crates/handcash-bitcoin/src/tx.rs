@@ -118,6 +118,46 @@ impl Transaction {
         Ok(out)
     }
 
+    /// BRC-30 Extended Format: like `to_bytes`, plus the `0000000000EF` marker after the
+    /// version and each input's source satoshis + locking script after its sequence.
+    /// `prevouts[i]` is the output spent by input `i`.
+    pub fn to_ef_bytes(&self, prevouts: &[(u64, &[u8])]) -> Result<Vec<u8>, BitcoinError> {
+        if prevouts.len() != self.inputs.len() {
+            return Err(BitcoinError::InvalidHex(
+                "EF needs one source output per input".into(),
+            ));
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.version.to_le_bytes());
+        out.extend_from_slice(&[0, 0, 0, 0, 0, 0xef]);
+        write_varint(&mut out, self.inputs.len() as u64);
+        for (inp, (sats, script)) in self.inputs.iter().zip(prevouts) {
+            let decoded =
+                decode_hex(&inp.prev_txid).map_err(|e| BitcoinError::InvalidHex(e.to_string()))?;
+            if decoded.len() != 32 {
+                return Err(BitcoinError::InvalidHex("prev_txid must be 32 bytes".into()));
+            }
+            let mut raw = [0u8; 32];
+            raw.copy_from_slice(&decoded);
+            out.extend_from_slice(&reverse_32(raw));
+            out.extend_from_slice(&inp.prev_vout.to_le_bytes());
+            write_varint(&mut out, inp.unlocking_script.len() as u64);
+            out.extend_from_slice(&inp.unlocking_script);
+            out.extend_from_slice(&inp.sequence.to_le_bytes());
+            out.extend_from_slice(&sats.to_le_bytes());
+            write_varint(&mut out, script.len() as u64);
+            out.extend_from_slice(script);
+        }
+        write_varint(&mut out, self.outputs.len() as u64);
+        for o in &self.outputs {
+            out.extend_from_slice(&o.satoshis.to_le_bytes());
+            write_varint(&mut out, o.locking_script.len() as u64);
+            out.extend_from_slice(&o.locking_script);
+        }
+        out.extend_from_slice(&self.lock_time.to_le_bytes());
+        Ok(out)
+    }
+
     /// Internal wire-order txid bytes (`double_sha256(serialized)`).
     pub fn txid_internal_bytes(&self) -> Result<[u8; 32], BitcoinError> {
         let bytes = self.to_bytes()?;
@@ -162,6 +202,15 @@ mod tests {
         assert_eq!(parsed, tx);
         assert_eq!(parsed.txid_hex().unwrap().len(), 64);
         assert!(parsed.is_final());
+
+        let script = [0x76u8, 0xa9];
+        let ef = tx.to_ef_bytes(&[(5000, &script)]).unwrap();
+        assert_eq!(&ef[4..10], &[0, 0, 0, 0, 0, 0xef]);
+        // EF = raw + 6-byte marker + 8-byte sats + 1-byte len + script per input.
+        assert_eq!(ef.len(), bytes.len() + 6 + 8 + 1 + script.len());
+        let tail = bytes.len() - 4 - 1 - 8 - 1 - 6; // start of outputs in raw
+        assert_eq!(&ef[ef.len() - (bytes.len() - tail)..], &bytes[tail..]);
+        assert!(tx.to_ef_bytes(&[]).is_err());
 
         let mut non_final = tx.clone();
         non_final.lock_time = 900_000;

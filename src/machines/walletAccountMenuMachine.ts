@@ -1,5 +1,4 @@
 import { assign, enqueueActions, setup } from 'xstate'
-import type { AccountMovePhase } from '../wallet/accountMoveMachine'
 
 type MenuError = string | null
 
@@ -9,8 +8,11 @@ type AfterSwitch = 'stay' | 'profile'
 /**
  * Wallet menu: switch and create accounts.
  *
- * Choosing an account another install holds moves it here (`moving`, driven
- * by `accountMoveMachine`; no step asks the user) and then switches to it.
+ * Choosing an account another install holds only views it (`VIEW`): the
+ * projection shows its cached balance read-only and never moves it. Viewing
+ * and selecting never move an account; a spend from a viewed account moves it
+ * here in the background first (`accountView.takeViewedAccountForSpend`) and
+ * fails closed when the move does not succeed.
  * `DISPLACED` arrives when this install stops holding the active account:
  * another install took it, or asked for it and this one released it. Keep
  * its local view open; holding guards refuse signing and backup writes. A busy
@@ -21,8 +23,6 @@ export const walletAccountMenuMachine = setup({
     context: {} as {
       targetAccountIndex: number | null
       afterSwitch: AfterSwitch
-      /** Where a move here stands, for the row's status line. */
-      movePhase: AccountMovePhase | null
       error: MenuError
       /** A displacement arrived while busy and waits for the menu to settle. */
       displacedWhileBusy: boolean
@@ -36,26 +36,26 @@ export const walletAccountMenuMachine = setup({
       | { type: 'SWITCHED' }
       | { type: 'CREATE' }
       | { type: 'CREATED' }
-      | { type: 'MOVE'; accountIndex: number }
-      | { type: 'MOVE_PHASE'; phase: AccountMovePhase }
-      | { type: 'MOVED' }
+      // View an account held on another device; never moves it.
+      | { type: 'VIEW'; accountIndex: number }
       | { type: 'DISPLACED'; nextAccountIndex: number | null }
       | { type: 'FAIL'; error: string },
   },
   actions: {
     /** Provided by the projection: navigate to Publish identity. */
     openProfile: () => {},
+    /** Provided by the projection: show the chosen account read-only. */
+    viewAccount: () => {},
     /** Provided by the projection: check again whether the open account is still held here. */
     recheckDisplacement: () => {},
     /** Switch target after a displacement. */
     targetNextAccount: assign(({ event }) => ({
       targetAccountIndex: event.type === 'DISPLACED' ? event.nextAccountIndex : null,
       afterSwitch: 'stay' as const,
-      movePhase: null,
       error: null,
       displacedWhileBusy: false,
     })),
-    clearError: assign({ movePhase: null, error: null, displacedWhileBusy: false }),
+    clearError: assign({ error: null, displacedWhileBusy: false }),
     recordDisplacement: assign({ displacedWhileBusy: true }),
     /** On settling, act on a displacement recorded while busy. */
     settleDisplacement: enqueueActions(({ context, enqueue }) => {
@@ -73,7 +73,6 @@ export const walletAccountMenuMachine = setup({
   context: {
     targetAccountIndex: null,
     afterSwitch: 'stay',
-    movePhase: null,
     error: null,
     displacedWhileBusy: false,
   },
@@ -118,31 +117,9 @@ export const walletAccountMenuMachine = setup({
           target: 'creating',
           actions: assign({ error: null }),
         },
-        MOVE: {
-          target: 'moving',
-          actions: assign({
-            targetAccountIndex: ({ event }) => event.accountIndex,
-            movePhase: 'reading',
-            error: null,
-          }),
-        },
-      },
-    },
-    moving: {
-      on: {
-        DISPLACED: { actions: 'recordDisplacement' },
-        MOVE_PHASE: { actions: assign({ movePhase: ({ event }) => event.phase }) },
-        MOVED: {
-          target: 'switching',
-          actions: assign({ afterSwitch: 'stay', movePhase: null }),
-        },
-        FAIL: {
-          target: 'open',
-          actions: assign({
-            targetAccountIndex: null,
-            movePhase: null,
-            error: ({ event }) => event.error,
-          }),
+        VIEW: {
+          target: 'closed',
+          actions: [assign({ targetAccountIndex: null, error: null }), 'viewAccount'],
         },
       },
     },

@@ -1207,7 +1207,7 @@ mod tests {
             "data-aeon-scope=\"swap-detail\"",
             "data-aeon-scope=\"app-update\"",
             "data-aeon-scope=\"call-dock\"",
-            "data-aeon-state=\"unavailable\"",
+            "data-aeon-state=\"ready\"",
         ] {
             assert!(html.contains(expected), "missing expected SSR marker: {expected}");
         }

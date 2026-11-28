@@ -311,15 +311,37 @@ pub fn LogViewerPanel(mut toast: Signal<Option<ToastNotice>>) -> Element {
                             value: "{cur_upload}",
                             oninput: move |e| upload_url.set(e.value()),
                         }
-                        p { class: "field-hint", "Log upload is not available in this build yet; copy lines or open the log folder instead." }
+                        p { class: "field-hint", "Logs are privacy-scrubbed before uploading to the support URL." }
                     }
-                    div { class: "actions", "data-aeon-state": "unavailable",
+                    div { class: "actions", "data-aeon-state": if cur_upload.trim().is_empty() { "idle" } else { "ready" },
                         button::Root {
                             variant: button::ButtonVariant::Solid,
                             class: "btn btn-primary",
                             "data-aeon-part": "upload-logs",
-                            "data-aeon-state": "unavailable",
-                            disabled: true,
+                            "data-aeon-state": if cur_upload.trim().is_empty() { "idle" } else { "ready" },
+                            disabled: cur_upload.trim().is_empty(),
+                            onclick: {
+                                let target_url = cur_upload.clone();
+                                let payload_text = raw_text.clone();
+                                move |_| {
+                                    let u = target_url.clone();
+                                    let body = payload_text.clone();
+                                    spawn(async move {
+                                        match crate::native_services::upload_support_logs(&u, &body, crate::state::APP_VERSION).await {
+                                            Ok(r) => toast.set(Some(ToastNotice {
+                                                title: "Logs uploaded".into(),
+                                                body: Some(format!("Sent {} scrubbed lines ({} B).", r.lines_sent, r.bytes_sent)),
+                                                tone: "success",
+                                            })),
+                                            Err(e) => toast.set(Some(ToastNotice {
+                                                title: "Upload failed".into(),
+                                                body: Some(e),
+                                                tone: "error",
+                                            })),
+                                        }
+                                    });
+                                }
+                            },
                             button::Label { "Upload session" }
                         }
                     }
@@ -616,15 +638,16 @@ pub fn ReceivePanel(profile: SessionSummary, mut toast: Signal<Option<ToastNotic
 #[component]
 pub fn SwapPanel() -> Element {
     let mut network = use_signal(|| "bsv".to_string());
+    let swap_gated = !crate::native_services::is_native_signing_enabled();
     rsx! {
-        div { class: "nav-child-panel", "data-aeon-scope": "swap-panel", "data-aeon-state": "unavailable",
+        div { class: "nav-child-panel", "data-aeon-scope": "swap-panel", "data-aeon-state": "ready",
             crate::ui::swaps::NetworkPicker {
                 value: network.read().clone(),
                 on_change: move |next| network.set(next),
             }
             crate::ui::swaps::SwapOffersPanel {
                 offers: Vec::new(),
-                swap_gated: true,
+                swap_gated,
             }
         }
     }

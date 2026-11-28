@@ -831,6 +831,7 @@ pub struct AppServices {
     pub brc39_archive: Brc39Archive,
     pub updater: Arc<ReleaseUpdater>,
     pub host_log: Arc<HostLog>,
+    pub scan_login: Arc<crate::scan_login::ScanLoginManager>,
     pub session: Mutex<Option<ActiveSession>>,
     /// In-memory session cache of resolved item art (`origin_key -> Some(data_uri) | None` for misses).
     item_art_mem: Mutex<HashMap<String, Option<String>>>,
@@ -904,6 +905,7 @@ impl AppServices {
             brc39_archive,
             updater,
             host_log,
+            scan_login: Arc::new(crate::scan_login::ScanLoginManager::new()),
             session: Mutex::new(None),
             item_art_mem: Mutex::new(HashMap::new()),
             item_art_inflight: Mutex::new(HashSet::new()),
@@ -2204,6 +2206,134 @@ impl AppServices {
         self.set_open_unlock_secret(&wrap_str);
         self.set_device_lock_mode("none");
         let _ = self.mark_keys_backup_confirmed("key");
+        Ok((sum, wrap_str))
+    }
+
+    /// Install a vault received via scan-to-sign-in (BRC-249).
+    /// Approver's accounts stay marked `elsewhere`; this install reserves a fresh
+    /// local account above them so devices never share spendable authority on the same key.
+    pub fn install_scan_login_vault(
+        &self,
+        transfer: &crate::scan_login::VaultTransfer,
+    ) -> Result<(SessionSummary, String), String> {
+        let master = transfer.to_vault_master()?;
+        let wrap = generate_wrap_secret();
+        let wrap_str = wrap.as_str().to_string();
+        let record = handcash_primitives::vault::encrypt_vault_v3(
+            &master,
+            None,
+            "wallet",
+            "main",
+            &wrap_str,
+        )
+        .map_err(|e| e.to_string())?;
+        let master_ik = record.identity_key.clone();
+        let record_json = serde_json::to_string(&record).map_err(|e| e.to_string())?;
+        if !self.durable.set(VAULT_STORAGE_KEY, &record_json, true) {
+            return Err("Failed to save approved vault to durable store.".into());
+        }
+
+        let mut reserved_index: u32 = 0;
+        if let Some(sent) = transfer.accounts.as_ref() {
+            let version_ok = sent.get("version").and_then(Value::as_u64) == Some(1);
+            let sent_master = sent
+                .get("masterIdentityKey")
+                .and_then(Value::as_str)
+                .map(|s| s.to_ascii_lowercase());
+            if version_ok && sent_master.as_deref() == Some(master_ik.to_ascii_lowercase().as_str()) {
+                if let Some(arr) = sent.get("accounts").and_then(Value::as_array) {
+                    let mut seen = std::collections::BTreeSet::<u32>::new();
+                    let mut accounts_out: Vec<Value> = Vec::new();
+                    for entry in arr {
+                        let Some(idx_u64) = entry.get("index").and_then(Value::as_u64) else {
+                            continue;
+                        };
+                        if idx_u64 > 1000 {
+                            continue;
+                        }
+                        let idx = idx_u64 as u32;
+                        if !seen.insert(idx) {
+                            continue;
+                        }
+                        let ik = match master.account_private_key(idx).and_then(|k| k.public_key_hex()) {
+                            Ok(k) => k,
+                            Err(_) => continue,
+                        };
+                        let name = entry
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.chars().take(80).collect::<String>())
+                            .unwrap_or_else(|| format!("Wallet {idx}"));
+                        let sent_holding = entry.get("holding");
+                        let seq = sent_holding
+                            .and_then(|h| h.get("seq"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0);
+                        let device_id = sent_holding
+                            .filter(|h| h.get("kind").and_then(Value::as_str) == Some("elsewhere"))
+                            .and_then(|h| h.get("deviceId"))
+                            .and_then(Value::as_str)
+                            .map(|s| Value::String(s.to_string()))
+                            .unwrap_or(Value::Null);
+                        accounts_out.push(serde_json::json!({
+                            "index": idx,
+                            "name": name,
+                            "identityKey": ik,
+                            "holding": { "kind": "elsewhere", "seq": seq, "deviceId": device_id },
+                        }));
+                    }
+                    if !accounts_out.is_empty() {
+                        let next_idx = seen.iter().copied().max().unwrap_or(0) + 1;
+                        let local_ik = master
+                            .account_private_key(next_idx)
+                            .and_then(|k| k.public_key_hex())
+                            .map_err(|e| e.to_string())?;
+                        accounts_out.push(serde_json::json!({
+                            "index": next_idx,
+                            "name": format!("Wallet {next_idx}"),
+                            "identityKey": local_ik,
+                            "holding": { "kind": "here", "seq": 0 },
+                        }));
+                        accounts_out.sort_by_key(|a| a.get("index").and_then(Value::as_u64).unwrap_or(0));
+                        reserved_index = next_idx;
+                        let store_key = format!("{VAULT_ACCOUNTS_PREFIX}{master_ik}");
+                        let store_doc = serde_json::json!({
+                            "version": 1,
+                            "masterIdentityKey": master_ik,
+                            "activeIndex": next_idx,
+                            "accounts": accounts_out,
+                            "takeover": false,
+                            "discovered": false,
+                        });
+                        if let Ok(raw) = serde_json::to_string(&store_doc) {
+                            let _ = self.durable.set(&store_key, &raw, false);
+                        }
+                    }
+                }
+            }
+        }
+
+        let unlocked = handcash_primitives::vault::UnlockedVault {
+            master,
+            mnemonic: None,
+            record,
+        };
+        let mut sum = self.activate_unlocked(unlocked)?;
+        if reserved_index != 0 {
+            sum = self.switch_vault_account(reserved_index)?;
+        }
+        if let Some(ref enrollment) = transfer.enrollment {
+            if !enrollment.is_null() {
+                if let Ok(raw) = serde_json::to_string(enrollment) {
+                    let _ = self.durable.set("handcash.brc250.enrollment.v1", &raw, false);
+                }
+            }
+        }
+        self.set_open_unlock_secret(&wrap_str);
+        self.set_device_lock_mode("none");
+        let _ = self.mark_keys_backup_confirmed("approved-device");
         Ok((sum, wrap_str))
     }
 

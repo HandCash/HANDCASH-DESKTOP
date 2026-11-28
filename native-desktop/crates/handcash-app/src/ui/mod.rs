@@ -408,6 +408,73 @@ pub fn HandCashApp() -> Element {
                     }
                 }
 
+                {
+                    let live_call = crate::p2p_chat_calls::current_call_snapshot();
+                    let elapsed = if live_call.state == "active" && live_call.started_at_ms > 0 {
+                        crate::state::now_ms().saturating_sub(live_call.started_at_ms) as u64
+                    } else {
+                        0
+                    };
+                    let shot_ver = crate::p2p_chat_calls::current_screenshot_toast();
+                    let upd = services.updater.status();
+                    let upd_phase = upd.get("phase").and_then(|v| v.as_str()).unwrap_or("idle").to_string();
+                    let upd_ver = upd.get("availableVersion").and_then(|v| v.as_str()).map(ToString::to_string);
+                    let pending_perm = crate::brc100_native::current_pending_permission();
+                    let signing_enabled = crate::native_services::is_native_signing_enabled();
+                    rsx! {
+                        if let Some(modal) = pending_perm {
+                            match modal {
+                                crate::brc100_native::PendingPermissionModal::Connect(view) => rsx! {
+                                    permissions::ConnectPermissionDialog {
+                                        pending: Some(view),
+                                        on_allow: Some(Callback::new(move |_| {
+                                            crate::brc100_native::set_pending_permission(None);
+                                            true
+                                        })),
+                                        on_deny: Some(Callback::new(move |_| {
+                                            crate::brc100_native::set_pending_permission(None);
+                                            true
+                                        })),
+                                    }
+                                },
+                                crate::brc100_native::PendingPermissionModal::Action(view) => rsx! {
+                                    permissions::ActionPermissionDialog {
+                                        pending: Some(view),
+                                        signing_gated: !signing_enabled,
+                                        on_allow: Some(Callback::new(move |_| {
+                                            crate::brc100_native::set_pending_permission(None);
+                                            true
+                                        })),
+                                        on_deny: Some(Callback::new(move |_| {
+                                            crate::brc100_native::set_pending_permission(None);
+                                            true
+                                        })),
+                                    }
+                                },
+                            }
+                        }
+                        platform_extras::UpdatePrompt {
+                            phase: upd_phase,
+                            available_version: upd_ver,
+                        }
+                        platform_extras::CallDock {
+                            state: live_call.state,
+                            peer_label: live_call.peer_label,
+                            status_label: live_call.status_label,
+                            elapsed_ms: elapsed,
+                            muted: live_call.muted,
+                            camera_on: live_call.camera_on,
+                            encrypted: live_call.encrypted,
+                            on_accept: move |_| { let _ = crate::p2p_chat_calls::accept_live_call(); },
+                            on_decline: move |_| { let _ = crate::p2p_chat_calls::dismiss_live_call(); },
+                            on_toggle_mute: move |_| { let _ = crate::p2p_chat_calls::toggle_call_mute(); },
+                            on_toggle_camera: move |_| { let _ = crate::p2p_chat_calls::toggle_call_camera(); },
+                            on_hang_up: move |_| { let _ = crate::p2p_chat_calls::hang_up_live_call(); },
+                            on_dismiss: move |_| { let _ = crate::p2p_chat_calls::dismiss_live_call(); },
+                        }
+                        platform_extras::ScreenshotToast { copied_version: shot_ver }
+                    }
+                }
                 chrome::AppToastHost { toast }
             }
             }

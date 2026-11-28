@@ -1015,7 +1015,7 @@ pub fn InventoryPanel(
                                                                 if !collections.is_empty() {
                                                                     h4 { class: "collect-section-title collect-nested-title", "Uncollected" }
                                                                 }
-                                                                {collect_items_list(&uncollected, &snap, grid, &selected_set, nav_child, selected_outpoints)}
+                                                                {collect_items_list(uncollected, &snap, grid, &selected_set, nav_child, selected_outpoints)}
                                                             }
                                                         }
                                                     }
@@ -1612,8 +1612,12 @@ pub fn SendCollectablePanel(
                             }
                             p {
                                 class: "send-confirm-note",
-                                "data-aeon-state": "unavailable",
-                                "Sending is not available in this build yet."
+                                "data-aeon-state": if crate::native_services::is_native_signing_enabled() { "ready" } else { "review-pending" },
+                                if crate::native_services::is_native_signing_enabled() {
+                                    "Ready to sign and broadcast collectable transfer."
+                                } else {
+                                    "Awaiting independent crypto review sign-off before live broadcast."
+                                }
                             }
                         }
                     }
@@ -1886,8 +1890,12 @@ pub fn BurnAssetPanel(
                         if is_confirming {
                             p {
                                 class: "burn-note",
-                                "data-aeon-state": "unavailable",
-                                "Burning is not available in this build yet."
+                                "data-aeon-state": if crate::native_services::is_native_signing_enabled() { "ready" } else { "review-pending" },
+                                if crate::native_services::is_native_signing_enabled() {
+                                    "Ready to sign and broadcast burn transaction."
+                                } else {
+                                    "Awaiting independent crypto review sign-off before live broadcast."
+                                }
                             }
                         } else {
                             p { class: "burn-note",

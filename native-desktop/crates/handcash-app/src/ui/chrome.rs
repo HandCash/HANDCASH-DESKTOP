@@ -628,16 +628,35 @@ pub fn WalletAccountMenu(
                                                             menu_chart.send(WalletAccountMenuEvent::Toggle);
                                                         }
                                                         if !held_here {
-                                                            // TS runs `moveAccountHere`; the native device mesh is not
-                                                            // ported yet, so report the move honestly as unavailable.
-                                                            let msg = "Moving a wallet held on another device is not available in the native app yet. Release it from that device first.".to_string();
                                                             menu_chart.send(WalletAccountMenuEvent::Move { account_index: idx });
-                                                            menu_chart.send(WalletAccountMenuEvent::Fail { error: msg.clone() });
-                                                            toast.set(Some(ToastNotice {
-                                                                title: "Move wallet".into(),
-                                                                body: Some(msg),
-                                                                tone: "error",
-                                                            }));
+                                                            let svc_move = Arc::clone(&svc_switch);
+                                                            spawn(async move {
+                                                                match crate::native_services::move_account_here(&svc_move, idx).await {
+                                                                    Ok(_) => match svc_move.switch_vault_account(idx) {
+                                                                        Ok(next_profile) => {
+                                                                            let next_snap = svc_move.read_snapshot();
+                                                                            let sats = next_snap.balance.displayed_sats;
+                                                                            snapshot.set(next_snap);
+                                                                            app_machine.send(AppEvent::AccountSwitched {
+                                                                                profile: session_to_wallet_profile(&next_profile),
+                                                                                balance_sats: sats,
+                                                                            });
+                                                                            svc_move.spawn_sync_identities_from_peers();
+                                                                            nav_child.set(None);
+                                                                            menu_chart.send(WalletAccountMenuEvent::Switched);
+                                                                            open_menu.set(None);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            menu_chart.send(WalletAccountMenuEvent::Fail { error: e.clone() });
+                                                                            toast.set(Some(ToastNotice { title: "Move wallet".into(), body: Some(e), tone: "error" }));
+                                                                        }
+                                                                    },
+                                                                    Err(e) => {
+                                                                        menu_chart.send(WalletAccountMenuEvent::Fail { error: e.clone() });
+                                                                        toast.set(Some(ToastNotice { title: "Move wallet".into(), body: Some(e), tone: "error" }));
+                                                                    }
+                                                                }
+                                                            });
                                                             return;
                                                         }
                                                         menu_chart.send(WalletAccountMenuEvent::Choose { account_index: idx });

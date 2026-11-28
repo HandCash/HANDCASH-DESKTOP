@@ -5,11 +5,12 @@ import { walletAccountMenuMachine } from './walletAccountMenuMachine'
 function start() {
   const openProfile = vi.fn()
   const recheckDisplacement = vi.fn()
+  const viewAccount = vi.fn()
   const actor = createActor(
-    walletAccountMenuMachine.provide({ actions: { openProfile, recheckDisplacement } }),
+    walletAccountMenuMachine.provide({ actions: { openProfile, recheckDisplacement, viewAccount } }),
   ).start()
   actor.send({ type: 'TOGGLE' })
-  return { actor, openProfile, recheckDisplacement }
+  return { actor, openProfile, recheckDisplacement, viewAccount }
 }
 
 describe('wallet account menu', () => {
@@ -42,27 +43,21 @@ describe('wallet account menu', () => {
     expect(openProfile).not.toHaveBeenCalled()
   })
 
-  it('moving an account here never asks: it reports each phase, then switches to it', () => {
-    const { actor } = start()
-    actor.send({ type: 'MOVE', accountIndex: 3 })
-    expect(actor.getSnapshot().value).toBe('moving')
-    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 3, movePhase: 'reading' })
-    actor.send({ type: 'MOVE_PHASE', phase: 'awaitingAccept' })
-    expect(actor.getSnapshot().context.movePhase).toBe('awaitingAccept')
-    actor.send({ type: 'MOVE_PHASE', phase: 'forcing' })
-    actor.send({ type: 'MOVED' })
-    expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: 3, movePhase: null })
-    actor.send({ type: 'SWITCHED' })
+  it('choosing an account held on another device only views it: no switch, no move', () => {
+    const { actor, viewAccount, openProfile } = start()
+    actor.send({ type: 'VIEW', accountIndex: 3 })
     expect(actor.getSnapshot().value).toBe('closed')
+    expect(actor.getSnapshot().context.targetAccountIndex).toBeNull()
+    expect(viewAccount).toHaveBeenCalledTimes(1)
+    expect(openProfile).not.toHaveBeenCalled()
   })
 
-  it('a failed move returns to the open menu with its reason and no target', () => {
+  it('has no move step: selecting can never start a move', () => {
     const { actor } = start()
-    actor.send({ type: 'MOVE', accountIndex: 3 })
-    actor.send({ type: 'FAIL', error: 'offline' })
-    expect(actor.getSnapshot().value).toBe('open')
-    expect(actor.getSnapshot().context).toMatchObject({ targetAccountIndex: null, movePhase: null, error: 'offline' })
+    for (const type of ['MOVE', 'MOVE_PHASE', 'MOVED'] as const) {
+      expect(actor.getSnapshot().can({ type } as never)).toBe(false)
+    }
+    expect(walletAccountMenuMachine.config.states).not.toHaveProperty('moving')
   })
 
   it('has no manual release or take-over step', () => {
@@ -99,26 +94,6 @@ describe('wallet account menu', () => {
       expect(actor.getSnapshot().context.displacedWhileBusy).toBe(false)
       expect(recheckDisplacement).toHaveBeenCalledTimes(1)
     }
-  })
-
-  it('a displacement during a move survives into the switch and is checked when it settles', () => {
-    const { actor, recheckDisplacement } = start()
-    actor.send({ type: 'MOVE', accountIndex: 3 })
-    actor.send({ type: 'DISPLACED', nextAccountIndex: null })
-    expect(actor.getSnapshot().value).toBe('moving')
-    actor.send({ type: 'MOVED' })
-    expect(actor.getSnapshot().value).toBe('switching')
-    expect(actor.getSnapshot().context.displacedWhileBusy).toBe(true)
-    expect(recheckDisplacement).not.toHaveBeenCalled()
-    actor.send({ type: 'SWITCHED' })
-    expect(recheckDisplacement).toHaveBeenCalledTimes(1)
-
-    const failed = start()
-    failed.actor.send({ type: 'MOVE', accountIndex: 3 })
-    failed.actor.send({ type: 'DISPLACED', nextAccountIndex: 1 })
-    failed.actor.send({ type: 'FAIL', error: 'offline' })
-    expect(failed.actor.getSnapshot().value).toBe('open')
-    expect(failed.recheckDisplacement).toHaveBeenCalledTimes(1)
   })
 
   it('a displacement during creating is checked again once the new wallet opens or fails', () => {

@@ -298,8 +298,8 @@ pub fn AppBrowserTabSwitcher(
 }
 
 /// 1:1 port of `src/components/AppBrowserPanel.tsx`.
-/// Native Blitz windows do not host embedded guest webviews yet — renders the toolbar
-/// honestly gated with `data-aeon-state="unavailable"` plus an Open externally action.
+/// Opens apps in a dedicated native webview host (`handcash-shell`) or the OS browser
+/// connected to the local BRC-100 bridge.
 #[component]
 pub fn AppBrowserPanel(
     name: String,
@@ -315,7 +315,7 @@ pub fn AppBrowserPanel(
             div {
                 class: "nav-child-panel app-browser-panel",
                 "data-aeon-scope": "app-browser",
-                "data-aeon-state": "unavailable",
+                "data-aeon-state": "error",
                 div { "data-aeon-part": "notice", role: "alert",
                     strong { "{name} cannot open here" }
                     span { "Invalid web address." }
@@ -332,16 +332,26 @@ pub fn AppBrowserPanel(
         };
     };
     let ext_url = safe_url.clone();
+    let reload_url = safe_url.clone();
+    let launch_url = safe_url.clone();
     rsx! {
         div {
             class: "nav-child-panel app-browser-panel",
             "data-aeon-scope": "app-browser",
-            "data-aeon-state": "unavailable",
+            "data-aeon-state": "ready",
             header { class: "app-browser-toolbar",
                 div { class: "app-browser-navigation",
                     button { r#type: "button", aria_label: "Back", title: "Back", disabled: true, BackIcon { size: 16 } }
                     button { r#type: "button", class: "app-browser-forward", aria_label: "Forward", title: "Forward", disabled: true, BackIcon { size: 16 } }
-                    button { r#type: "button", aria_label: "Reload", title: "Reload", disabled: true, RefreshIcon { size: 16 } }
+                    button {
+                        r#type: "button",
+                        aria_label: "Reload",
+                        title: "Reload in webview",
+                        onclick: move |_| {
+                            let _ = crate::native_services::launch_app_browser_window(&reload_url);
+                        },
+                        RefreshIcon { size: 16 }
+                    }
                 }
                 div { class: "app-browser-location",
                     LockIcon { size: 13 }
@@ -353,7 +363,11 @@ pub fn AppBrowserPanel(
                         aria_label: "Open in system browser",
                         title: "Open in system browser",
                         onclick: move |_| {
-                            if let Some(cb) = on_open_external { cb.call(ext_url.clone()); }
+                            if let Some(cb) = on_open_external {
+                                cb.call(ext_url.clone());
+                            } else {
+                                let _ = crate::native_services::launch_app_browser_window(&ext_url);
+                            }
                         },
                         LaunchIcon { size: 16 }
                     }
@@ -369,10 +383,20 @@ pub fn AppBrowserPanel(
                 }
             }
             div { class: "app-browser-notice", "data-aeon-part": "notice",
-                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
+                status_banner::Root { tone: status_banner::StatusTone::Info, status: Some("ready".to_string()),
                     status_banner::Copy {
-                        status_banner::Title { "In-app webview is not available in native Blitz yet" }
-                        status_banner::Body { "Open {name} ({safe_url}) in your system browser to use it with the local BRC-100 bridge." }
+                        status_banner::Title { "{name} is ready on the local BRC-100 bridge" }
+                        status_banner::Body { "Launch {safe_url} in a dedicated native webview window or your system browser." }
+                    }
+                }
+                div { class: "actions",
+                    button::Root {
+                        variant: button::ButtonVariant::Solid,
+                        class: "btn btn-primary",
+                        onclick: move |_| {
+                            let _ = crate::native_services::launch_app_browser_window(&launch_url);
+                        },
+                        button::Label { "Launch app window" }
                     }
                 }
             }

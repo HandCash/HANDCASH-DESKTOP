@@ -222,8 +222,11 @@ pub fn ChatThreadHeader(
     #[props(default)] image_url: Option<String>,
     #[props(default)] on_back: Option<EventHandler<()>>,
     #[props(default)] on_pay: Option<EventHandler<()>>,
+    #[props(default)] on_call: Option<EventHandler<()>>,
 ) -> Element {
-    let call_label = format!("Call {} (not available in this build yet)", friend.label);
+    let call_label = format!("Call {}", friend.label);
+    let call_peer_id = friend.identity_key.clone();
+    let call_peer_label = friend.label.clone();
     rsx! {
         header { class: "chat-thread-head panel-label-bar",
             if let Some(back_cb) = on_back {
@@ -240,8 +243,14 @@ pub fn ChatThreadHeader(
                 class: "chat-call-btn btn btn-ghost",
                 aria_label: call_label.clone(),
                 title: call_label,
-                "data-aeon-state": "unavailable",
-                disabled: true,
+                "data-aeon-state": "ready",
+                onclick: move |_| {
+                    if let Some(cb) = on_call {
+                        cb.call(());
+                    } else {
+                        let _ = crate::p2p_chat_calls::start_outgoing_call(&call_peer_id, &call_peer_label);
+                    }
+                },
                 PhoneIcon { size: 16 }
                 button::Label { "Call" }
             }
@@ -484,7 +493,7 @@ pub fn ChatThreadList(
 pub fn ChatComposer(
     draft: String,
     peer_label: String,
-    #[props(default)] can_attach: bool,
+    #[props(default = true)] can_attach: bool,
     on_draft_change: EventHandler<String>,
     on_submit: EventHandler<()>,
     #[props(default)] on_attach: Option<EventHandler<()>>,
@@ -535,13 +544,15 @@ pub fn ChatComposer(
                 button {
                     r#type: "button",
                     class: "chat-action-btn",
-                    title: if can_attach { "Attach file (up to 8 MB)" } else { "File attachments are not available in this build yet" },
+                    title: "Attach file (up to 8 MB)",
                     aria_label: "Attach file",
-                    "data-aeon-state": if can_attach { None } else { Some("unavailable") },
+                    "data-aeon-state": if can_attach { "ready" } else { "disabled" },
                     disabled: !can_attach,
                     onclick: move |_| {
                         if let Some(cb) = on_attach {
                             cb.call(());
+                        } else if let Ok(Some(att)) = crate::p2p_chat_calls::pick_chat_attachment() {
+                            on_draft_change.call(format!("[file: {} ({} B)]", att.filename, att.size_bytes));
                         }
                     },
                     AttachFileIcon { size: 18 }

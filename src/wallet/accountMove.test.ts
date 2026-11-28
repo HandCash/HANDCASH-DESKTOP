@@ -11,6 +11,7 @@ import {
   type HolderWrite,
 } from './accountHolding'
 import {
+  HOLDING_SERVE_MS,
   answerDirectRequest,
   moveAccountHere,
   serveHoldingChannel,
@@ -26,6 +27,7 @@ import {
   signReleaseAccept,
   signReleaseRequest,
 } from './accountRelease'
+import { HOLDING_GAP_MS } from './holdingFreshness'
 import type { ListedMessage } from './messageTransport'
 import type { HolderIo } from './vaultAccountHolding'
 import {
@@ -122,6 +124,13 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+})
+
+describe('holder cadence', () => {
+  it('a live holder reads its channel well inside the answer window, so it is never force-taken', () => {
+    expect(HOLDING_SERVE_MS * 2).toBeLessThanOrEqual(ANSWER_WINDOW_MS)
+    expect(HOLDING_SERVE_MS).toBeLessThan(HOLDING_GAP_MS)
+  })
 })
 
 describe('moving an account here (BRC-249, no prompt)', () => {

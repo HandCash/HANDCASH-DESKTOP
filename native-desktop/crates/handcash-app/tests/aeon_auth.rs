@@ -174,7 +174,11 @@ async fn complete_create_onboarding_is_reachable() {
             let signin = find_part(&restored, "sign-in");
             click(&mut restored, signin, height);
             assert!(!restored.tree.nodes.iter().flatten().any(|n| n.attr("aria-busy") == Some("true")),
-                "unsupported scan must not show a permanent spinner");
+                "scan-to-sign-in must render QR immediately without a permanent spinner");
+            let qr_id = find_class(&restored, "scan-login-qr");
+            let qr_rect = restored.layout.get(qr_id).expect("scan-login-qr layout").abs_rect;
+            assert!(qr_rect.width >= 180. && qr_rect.height >= 180.,
+                "scan-login-qr must have visible QR box: {qr_rect:?}");
             let other = button_named(&restored, "Other ways");
             click(&mut restored, other, height);
             let tab_id = button_named(&restored, ["Phrase", "Shares", "Key"][tab]);
@@ -215,6 +219,15 @@ async fn onboarding_layout_and_actions() {
             assert!(rect.width > 100. && rect.height > 20., "usable {part}: {rect:?}");
             assert!((rect.x + rect.width / 2. - width / 2.).abs() < 2.,
                 "centered {part} at {width}: {rect:?}");
+            let label_id = session.tree.nodes.iter().flatten().find(|n| {
+                n.attr("data-aeon-part") == Some("label")
+                    && session.tree.ancestors(n.id).contains(&id)
+            }).expect("button label").id;
+            let label_rect = session.layout.get(label_id).expect("label layout").abs_rect;
+            assert!(
+                ((label_rect.x + label_rect.width / 2.) - (rect.x + rect.width / 2.)).abs() < 2.,
+                "centered label inside {part} at {width}: btn={rect:?} label={label_rect:?}"
+            );
             let (x, y) = (rect.x + rect.width / 2., rect.y + rect.height / 2.);
             session.dispatch_pointer_move(x, y);
             let hit = session.hit_test(x, y).expect("hovered action hit");
@@ -231,4 +244,109 @@ async fn onboarding_layout_and_actions() {
             assert!(!states.contains(&"onboard-entry"), "{part} must leave entry state");
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn scan_login_completes_ui_transition_after_phone_handshake() {
+    use base64::Engine as _;
+    use handcash_app::scan_login::{
+        handle_scan_login_request, pairing_confirm_proof, scan_login_proof, sha256_hex,
+        ScanLoginPayload, ScanLoginPhase,
+    };
+    use handcash_primitives::keys::{brc78_encrypt, SecretKeyBytes};
+
+    let dir = std::env::temp_dir().join(format!(
+        "handcash-alpha-scan-login-ui-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let services = AppServices::open_in(dir, false).unwrap();
+    let dom = VirtualDom::new(HandCashApp);
+    dom.provide_root_context(services.clone());
+    let mut session = AeonNativeSession::from_virtual_dom(dom, 984., 652.);
+
+    let signin = find_part(&session, "sign-in");
+    click(&mut session, signin, 652.);
+    let qr_text = match services.scan_login.current_phase() {
+        ScanLoginPhase::Scan { qr_text, .. } => qr_text,
+        other => panic!("expected Scan phase after clicking Sign in, got {other:?}"),
+    };
+    let payload: ScanLoginPayload = serde_json::from_str(&qr_text).expect("valid scan payload");
+
+    let approver_key = SecretKeyBytes::random();
+    let approver_ik = approver_key.public_key_hex().unwrap().to_ascii_lowercase();
+    let hello_proof = scan_login_proof(&payload.secret, "hello", &approver_ik).unwrap();
+    let r_hello = handle_scan_login_request(
+        &services,
+        "POST",
+        "/handcash-device/v1/scan-login/hello",
+        &serde_json::json!({
+            "approverKey": approver_ik,
+            "label": "Phone",
+            "proof": hello_proof,
+        })
+        .to_string(),
+    );
+    assert_eq!(r_hello.status, 200);
+    let shown_code = match services.scan_login.current_phase() {
+        ScanLoginPhase::ScanComparing { code, .. } => code,
+        other => panic!("expected ScanComparing, got {other:?}"),
+    };
+
+    let nonce = "00112233445566778899aabbccddeeff";
+    let confirm_proof =
+        pairing_confirm_proof(&payload.secret, &approver_ik, nonce, &shown_code).unwrap();
+    let r_confirm = handle_scan_login_request(
+        &services,
+        "POST",
+        "/handcash-device/v1/scan-login/confirm",
+        &serde_json::json!({
+            "approverKey": approver_ik,
+            "nonce": nonce,
+            "proof": confirm_proof,
+        })
+        .to_string(),
+    );
+    assert_eq!(r_confirm.status, 200);
+
+    let master_key = SecretKeyBytes::random();
+    let transfer_json = serde_json::json!({
+        "v": 1,
+        "kind": "handcash-brc250-vault",
+        "master": { "derivation": "brc-157", "keyHex": master_key.to_hex().as_str(), "entropyLength": 32 },
+        "enrollment": null,
+        "accounts": null,
+        "sentAt": 1_700_000_000_000i64,
+    })
+    .to_string();
+    let ct = brc78_encrypt(transfer_json.as_bytes(), &approver_key, &payload.login_key).unwrap();
+    let sealed_b64 = base64::engine::general_purpose::STANDARD.encode(ct);
+    let vault_proof = scan_login_proof(&payload.secret, "vault", &sha256_hex(&sealed_b64)).unwrap();
+    let r_vault = handle_scan_login_request(
+        &services,
+        "POST",
+        "/handcash-device/v1/scan-login/vault",
+        &serde_json::json!({
+            "approverKey": approver_ik,
+            "sealedVault": sealed_b64,
+            "proof": vault_proof,
+        })
+        .to_string(),
+    );
+    assert_eq!(r_vault.status, 200, "vault reply: {}", r_vault.body);
+    assert!(services.current_session_summary().is_some(), "vault must be installed");
+
+    for _ in 0..20 {
+        session.sync();
+        if session.tree.nodes.iter().flatten().any(|n| {
+            n.attr("data-aeon-scope") == Some("auth") && n.attr("data-aeon-state") == Some("protect")
+        }) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    assert_step(&session, "protect");
 }

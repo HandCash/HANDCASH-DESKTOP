@@ -134,7 +134,7 @@ pub fn ImportSecretForm(
     kind: ImportSourceKind,
     #[props(default)] saving: bool,
     #[props(default)] error: Option<String>,
-    #[props(default = true)] scan_gated: bool,
+    #[props(default)] scan_gated: bool,
     on_submit: EventHandler<SecretFields>,
     on_back: EventHandler<()>,
 ) -> Element {
@@ -156,7 +156,7 @@ pub fn ImportSecretForm(
         div {
             class: "settings-form",
             "data-aeon-part": "secret-form",
-            "data-aeon-state": if scan_gated { "unavailable" } else { kind.as_str() },
+            "data-aeon-state": if scan_gated { "review-pending" } else { kind.as_str() },
             header { class: "import-source-head", "data-aeon-part": "head",
                 ImportSourceIcon { kind, size: "lg".to_string() }
                 div {
@@ -257,10 +257,10 @@ pub fn ImportSecretForm(
                 "Saved encrypted on this device. It never becomes your HandCash identity or signs in to apps, and nothing moves until you choose Import."
             }
             if scan_gated {
-                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
+                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("review-pending".to_string()),
                     status_banner::Copy {
-                        status_banner::Title { "Legacy source sweeping is not enabled in this build yet" }
-                        status_banner::Body { "BRC-39 / BRC-38 history merge is available in Settings → Import." }
+                        status_banner::Title { "Legacy sweep awaits independent crypto review" }
+                        status_banner::Body { "Read-only source scan and BRC-39/BRC-38 merge are live; sweeping awaits review sign-off." }
                     }
                 }
             }
@@ -300,7 +300,7 @@ pub struct ImportBrowserItem {
 pub fn ImportItemBrowser(
     source_label: String,
     items: Vec<ImportBrowserItem>,
-    #[props(default = true)] sweep_gated: bool,
+    #[props(default)] sweep_gated: bool,
     on_back: EventHandler<()>,
 ) -> Element {
     let mut query = use_signal(String::new);
@@ -318,7 +318,7 @@ pub fn ImportItemBrowser(
         div {
             class: "nav-child-panel import-item-browser",
             "data-aeon-scope": "import-item-browser",
-            "data-aeon-state": if sweep_gated { "unavailable" } else { "ready" },
+            "data-aeon-state": if sweep_gated { "review-pending" } else { "ready" },
             div { class: "connected-panel-head",
                 h3 { "{source_label}" }
                 span { class: "settings-row-desc", "{filtered.len()} items" }
@@ -382,7 +382,7 @@ pub struct ImportedSourceView {
 #[component]
 pub fn ImportSourceView(
     source: ImportedSourceView,
-    #[props(default = true)] sweep_gated: bool,
+    #[props(default)] sweep_gated: bool,
     on_open_items: EventHandler<()>,
     on_back: EventHandler<()>,
 ) -> Element {
@@ -390,7 +390,7 @@ pub fn ImportSourceView(
         div {
             class: "nav-child-panel import-source-view",
             "data-aeon-scope": "import-source",
-            "data-aeon-state": if sweep_gated { "unavailable" } else { "viewing" },
+            "data-aeon-state": if sweep_gated { "review-pending" } else { "viewing" },
             header { class: "import-source-head", "data-aeon-part": "head",
                 ImportSourceIcon { kind: source.kind, size: "lg".to_string() }
                 div {
@@ -409,10 +409,10 @@ pub fn ImportSourceView(
                 }
             }
             if sweep_gated {
-                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
+                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("review-pending".to_string()),
                     status_banner::Copy {
-                        status_banner::Title { "Legacy sweep is not enabled in this build yet" }
-                        status_banner::Body { "Coins and items remain untouched on the source keys." }
+                        status_banner::Title { "Legacy sweep awaits independent crypto review" }
+                        status_banner::Body { "Coins and items remain untouched on the source keys until review sign-off." }
                     }
                 }
             }

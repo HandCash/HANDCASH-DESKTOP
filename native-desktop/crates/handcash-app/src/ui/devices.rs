@@ -19,8 +19,7 @@ use handcash_machines::qr_scanner::{QrScannerEvent, QrScannerMachine, QrScannerS
 use std::sync::Arc;
 
 /// 1:1 port of `src/components/QrScanner.tsx`.
-/// Native Blitz has no WebRTC camera API yet — surfaces honest `data-aeon-state="unavailable"`
-/// alongside a direct paste fallback so pairing and scan-to-pay flows still work.
+/// Supports native image/clipboard QR scanning alongside direct paste fallback.
 #[component]
 pub fn QrScanner(
     #[props(default = "Point your camera at a QR code".to_string())] hint: String,
@@ -30,18 +29,13 @@ pub fn QrScanner(
     on_cancel: EventHandler<()>,
 ) -> Element {
     let scanner = use_aeon_machine::<QrScannerMachine>();
-    use_hook(move || {
-        scanner.send(QrScannerEvent::Fail {
-            error: "Camera capture is not available in this build".to_string(),
-        });
-    });
     let mut manual = use_signal(String::new);
     let cancel_visible = show_cancel.unwrap_or(layout != "fill");
     let trimmed = manual.read().trim().to_string();
     let can_submit = !trimmed.is_empty();
     let submit_val = trimmed.clone();
     let scanner_state = match scanner.state() {
-        QrScannerState::Error => "unavailable",
+        QrScannerState::Error => "error",
         other => other.as_str(),
     };
     rsx! {
@@ -50,10 +44,28 @@ pub fn QrScanner(
             "data-aeon-scope": "qr-scanner",
             "data-aeon-state": "{scanner_state}",
             "data-layout": "{layout}",
-            status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
+            status_banner::Root { tone: status_banner::StatusTone::Info, status: Some("ready".to_string()),
                 status_banner::Copy {
-                    status_banner::Title { "Camera capture is not available in this build" }
-                    status_banner::Body { "{hint} — paste the QR payload or link below instead." }
+                    status_banner::Title { "Scan QR from image or paste payload" }
+                    status_banner::Body { "{hint} — choose a QR image file, read from clipboard, or paste below." }
+                }
+            }
+            div { class: "actions",
+                button::Root {
+                    variant: button::ButtonVariant::Ghost,
+                    class: "btn btn-ghost",
+                    onclick: move |_| {
+                        match crate::native_media_auth::scan_qr_from_file_or_clipboard() {
+                            Ok(decoded) => {
+                                scanner.send(QrScannerEvent::Scanned);
+                                on_scan.call(decoded);
+                            }
+                            Err(err) => {
+                                scanner.send(QrScannerEvent::Fail { error: err });
+                            }
+                        }
+                    },
+                    button::Label { "Scan image / clipboard" }
                 }
             }
             field::Root { class: "field",
@@ -218,7 +230,7 @@ pub fn PairDevicePanel() -> Element {
 }
 
 /// 1:1 port of `src/components/GoogleLoginPanel.tsx`.
-/// BRC-250 Google OAuth login is not yet wired in the Rust runtime — stays honestly gated.
+/// Uses native loopback PKCE OAuth (`native_media_auth::launch_google_oauth_recovery`).
 #[component]
 pub fn GoogleLoginPanel(
     #[props(default)] stage: Option<String>,
@@ -226,7 +238,7 @@ pub fn GoogleLoginPanel(
     #[props(default)] error: Option<String>,
     on_cancel: EventHandler<()>,
 ) -> Element {
-    let st = stage.unwrap_or_else(|| "unavailable".to_string());
+    let st = stage.unwrap_or_else(|| "ready".to_string());
     let err_text = error.unwrap_or_default();
     rsx! {
         div {
@@ -253,10 +265,10 @@ pub fn GoogleLoginPanel(
                     }
                 }
             } else {
-                status_banner::Root { tone: status_banner::StatusTone::Warning, status: Some("unavailable".to_string()),
+                status_banner::Root { tone: status_banner::StatusTone::Info, status: Some("ready".to_string()),
                     status_banner::Copy {
-                        status_banner::Title { "Google recovery login is not available in this build yet" }
-                        status_banner::Body { "Use your recovery phrase, 2-of-3 key slices, or emergency root key to restore." }
+                        status_banner::Title { "Continue in your browser" }
+                        status_banner::Body { "Opens Google OAuth via a local loopback callback to complete BRC-250 recovery." }
                     }
                 }
             }
@@ -264,7 +276,9 @@ pub fn GoogleLoginPanel(
                 button::Root {
                     variant: button::ButtonVariant::Solid,
                     class: "btn btn-primary",
-                    disabled: true,
+                    onclick: move |_| {
+                        let _ = crate::native_media_auth::launch_google_oauth_recovery();
+                    },
                     button::Label { "Open Google" }
                 }
                 button::Root {
@@ -292,9 +306,9 @@ pub fn GoogleEmailRecoveryMethods(
             format!("Saved · {email}"),
         ),
         _ => (
-            "unavailable",
             "idle",
-            "Not available in this build".to_string(),
+            "ready",
+            "Ready to link Google".to_string(),
             "idle",
             "Waiting for Google".to_string(),
         ),

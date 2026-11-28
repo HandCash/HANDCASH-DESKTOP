@@ -6,6 +6,9 @@
  * the active account, on a move, or once before the first spend after a gap
  * (`holdingFreshness.ts`). Otherwise the spend guard asks
  * {@link activeAccountSpendRefusal}, which reads local storage only.
+ *
+ * Holding is cooperative, not a lock: every install keeps the keys. The
+ * refusal stops this install double-spending by accident, nothing more.
  */
 import { errorText } from './errorText'
 import {

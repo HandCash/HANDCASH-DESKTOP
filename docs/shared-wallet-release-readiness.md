@@ -14,10 +14,18 @@ Desktop package, UI package and src/version agree on 1.3.666. Tag v1.3.666 point
 
 Current Desktop HEAD has newer Settings/preferences/layout/copy changes and the currency-flag/Balance-heading removal. Android's pin does not include those changes despite the matching version labels. The release checker now rejects a matching version with a different source commit; an already-pinned version cannot silently skip a different source. Do not retag 1.3.666 or overwrite existing artifacts.
 
-## Exact one-wallet blocker
+## Implemented 2026-11-27 (shared `src/`, inherited by Mobile)
 
-- `WalletAccountMenu.tsx` routes selection of a remotely held account to `runMove`, not read-only selection.
-- `walletAccountMenuMachine.ts` models MOVE → moving → switching; DISPLACED switches away or creates an account when none is held locally. Its regressions explicitly enforce this older behavior.
+- Choosing an account held on another device only views it. `walletAccountMenuMachine.ts` has no MOVE/moving state; `VIEW` closes the menu and runs the provided `viewAccount` action. Regressions assert that choosing a remote account never moves it.
+- `src/wallet/accountView.ts` keeps the viewed account in a memory store, separate from ActiveWallet/Toolbox. Its balance is the display-only trusted snapshot (`readTrustedBalanceSnapshot`, with its read time) or "unavailable", never an invented zero. No signing runtime is built for it.
+- Spending from a viewed account (Dashboard Send/Swap) calls `takeViewedAccountForSpend`: move (`moveAccountHere`) → `switchVaultAccount` → `mergeArrivedForSpend`, deduped per identity key. It fails closed: a failed move never switches and the flow never opens; a failed switch or merge rejects and nothing is spent. Receive is disabled while viewing.
+- The holding guards (`switchVaultAccount` `ACCOUNT_HELD_ELSEWHERE`, `spendGuard.ts`, `spendAutoMove.ts`) are unchanged. There is no manual move flow.
+- Open gaps: no display projection yet for a newly paired device with no cache (shows "unavailable"); fiat menu, WalletNav and the side column still show the open held account while viewing; the native Rust port (`wallet_account_menu.rs`, `ui/chrome.rs`) still models MOVE/moving and needs re-porting; the signing-action audit below is still outstanding.
+
+## Exact one-wallet blocker (historical, before 2026-11-27)
+
+- `WalletAccountMenu.tsx` routed selection of a remotely held account to `runMove`, not read-only selection.
+- `walletAccountMenuMachine.ts` modelled MOVE → moving → switching; DISPLACED switches away or creates an account when none is held locally.
 - `session.ts: switchVaultAccount` refuses a remotely held account before building its signing Toolbox runtime. Removing this guard would give the non-holder a signing runtime and is not a read-only implementation.
 - `spendAutoMove.ts` already coalesces foreground spend moves and merges arrival history before spending; `spendGuard.ts` retains holding/freshness checks. These are necessary but do not provide read-only viewing or establish coverage of every signing API.
 

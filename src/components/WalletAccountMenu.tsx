@@ -4,8 +4,7 @@ import { useMachine } from '@xstate/react'
 import { useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
 import { walletAccountMenuMachine } from '../machines/walletAccountMenuMachine'
-import { moveAccountHere } from '../wallet/accountMove'
-import type { AccountMovePhase } from '../wallet/accountMoveMachine'
+import { clearAccountView, getAccountView, subscribeAccountView, viewAccount } from '../wallet/accountView'
 import { readTrustedBalance } from '../wallet/balanceSnapshot'
 import { copyText } from '../wallet/clipboard'
 import { claimedHandleForAccount, subscribeClaimedCloudHandle } from '../wallet/handleClaim'
@@ -70,17 +69,6 @@ function fallbackLabel(account: VaultAccount): string {
   return account.name || (account.index === 0 ? 'Primary' : `Wallet ${account.index}`)
 }
 
-const MOVE_PHASE_COPY: Record<AccountMovePhase, string> = {
-  reading: 'Moving here…',
-  dialing: 'Connecting to your other device…',
-  requestingDirect: 'Asking your other device…',
-  requestingBox: 'Asking your other device…',
-  awaitingAccept: 'Asking your other device…',
-  awaitingRelease: 'Your other device is handing it over…',
-  forcing: 'Other device offline · moving anyway…',
-  taking: 'Moving here…',
-}
-
 export function WalletAccountMenu({
   profile,
   identityLabel,
@@ -96,6 +84,8 @@ export function WalletAccountMenu({
     }),
   )
   const [snapshot, send] = useMachine(menuMachine)
+  const [viewed, setViewed] = useState(() => getAccountView())
+  useEffect(() => subscribeAccountView(() => setViewed(getAccountView())), [])
   const [accounts, setAccounts] = useState<AccountRow[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -170,6 +160,8 @@ export function WalletAccountMenu({
       return
     }
     const isActive = index === active.accountIndex
+    // Choosing an account held here leaves any view-only account.
+    clearAccountView()
     if (then === 'profile') {
       send({ type: 'EDIT_PROFILE', accountIndex: index, active: isActive })
       if (isActive) return
@@ -183,7 +175,7 @@ export function WalletAccountMenu({
   }
 
   /** Switch the runtime to `index`; the chart is already in `switching` (or `creating`). */
-  const performSwitch = async (index: number, arrived = false): Promise<boolean> => {
+  const performSwitch = async (index: number): Promise<boolean> => {
     const active = activeAccount()
     if (!active) {
       send({ type: 'FAIL', error: 'Unlock the vault before switching wallets.' })
@@ -201,8 +193,6 @@ export function WalletAccountMenu({
       if (!runtime || runtime.instance !== next) {
         throw new Error('Selected wallet runtime was replaced')
       }
-      // An arriving account takes the recompose fence before anything can spend.
-      const arrival = arrived ? settleAfterSwitch({ arrived: true }) : null
       const nextProfile: WalletProfile = {
         handle: next.handle,
         identityKey: next.identityKey,
@@ -221,7 +211,7 @@ export function WalletAccountMenu({
       playWalletSound('soft')
       send({ type: 'SWITCHED' })
       void refreshSelectedWalletBalance(runtime).catch(() => { /* Keep the cached paint on a busy store. */ })
-      if (!arrival) void settleAfterSwitch()
+      void settleAfterSwitch()
       return true
     } catch (error) {
       toastError('Switch wallet', messageOf(error))
@@ -230,8 +220,8 @@ export function WalletAccountMenu({
     }
   }
 
-  const settleAfterSwitch = (opts?: { arrived: true }) =>
-    refreshAfterAccountSwitch(opts).catch((error) => {
+  const settleAfterSwitch = () =>
+    refreshAfterAccountSwitch().catch((error) => {
       console.warn('[vault-account] post-switch refresh failed', messageOf(error))
     })
 
@@ -270,27 +260,25 @@ export function WalletAccountMenu({
     return store.accounts.find((a) => a.index !== exclude && isHeldHere(a))?.index ?? null
   }
 
-  /** Move an account another device holds onto this one, then open it. */
-  const runMove = async (index: number) => {
+  /**
+   * View an account another device holds: read-only, cached balance only.
+   * Never moves it and never opens a signing runtime for it; a spend from the
+   * view moves it here first (`takeViewedAccountForSpend`).
+   */
+  const runView = (account: AccountRow) => {
     const active = activeAccount()
     if (!active) {
-      toastError('Accounts', 'Unlock the vault before moving a wallet.')
+      toastError('Accounts', 'Unlock the vault before viewing a wallet.')
       return
     }
-    send({ type: 'MOVE', accountIndex: index })
-    try {
-      const result = await moveAccountHere({
-        master: active.vaultMaster,
-        index,
-        onPhase: (phase) => send({ type: 'MOVE_PHASE', phase }),
-      })
-      if (result.kind === 'failed') throw new Error(result.message)
-      send({ type: 'MOVED' })
-      await performSwitch(index, true)
-    } catch (error) {
-      toastError('Move wallet', messageOf(error))
-      send({ type: 'FAIL', error: messageOf(error) })
-    }
+    send({ type: 'VIEW', accountIndex: account.index })
+    viewAccount({
+      masterIdentityKey: vaultIdentityKey(active.vaultMaster),
+      accountIndex: account.index,
+      identityKey: account.identityKey,
+      chain: active.chain,
+      name: account.profile?.name ?? account.label,
+    })
   }
 
   const leaveRef = useRef({ performSwitch, performCreate, nextHeldAccount })
@@ -309,9 +297,9 @@ export function WalletAccountMenu({
     displacedRef.current = active.identityKey
     const holding = holdingOf(account)
     if (holding.kind === 'elsewhere' && holding.deviceId == null) {
-      toastSuccess('Wallet moved', 'Your other device asked for this wallet. You can still view it here; it no longer spends here.')
+      toastSuccess('Wallet moved', 'Your other device asked for this wallet. You can still view it here; spending from it moves it back here.')
     } else {
-      toastError('Wallet moved', 'Another device now holds this wallet. You can still view it here; it no longer spends here.')
+      toastError('Wallet moved', 'Another device now holds this wallet. You can still view it here; spending from it moves it back here.')
     }
   }
 
@@ -329,7 +317,10 @@ export function WalletAccountMenu({
     if (!busy) displacementCheckRef.current()
   }, [busy, open])
 
-  const current = accounts.find((account) => account.index === activeIndex)
+  // The viewed account (held on another device) is shown in place of the open one.
+  const viewedIndex = viewed ? viewed.accountIndex : null
+  const shownIndex = viewedIndex ?? activeIndex
+  const current = accounts.find((account) => account.index === shownIndex)
 
   return (
     <div
@@ -360,7 +351,7 @@ export function WalletAccountMenu({
             className={open ? 'wallet-account-caret is-open' : 'wallet-account-caret'}
           />
         </button>
-        <button
+        {viewed ? null : <button
           type="button"
           className="wallet-hero-identity-copy"
           title={`Copy ${identityCopy}`}
@@ -368,7 +359,7 @@ export function WalletAccountMenu({
           onClick={() => void copyText(identityCopy, { label: 'pay address' })}
         >
           <CopyIcon size={14} />
-        </button>
+        </button>}
       </div>
 
       {open ? (
@@ -387,10 +378,9 @@ export function WalletAccountMenu({
 
           <ul className="wallet-account-list" role="listbox" aria-label="Wallets">
             {accounts.map((account) => {
-              const selected = account.index === activeIndex
+              const selected = account.index === shownIndex
               const targeted = snapshot.context.targetAccountIndex === account.index
               const switching = snapshot.matches('switching') && targeted
-              const movePhase = snapshot.matches('moving') && targeted ? snapshot.context.movePhase : null
               const name = account.profile?.name ?? account.label
               const editLabel = account.profile ? `Edit ${name} profile` : `Publish a profile for ${name}`
               return (
@@ -404,22 +394,27 @@ export function WalletAccountMenu({
                         selected ? 'wallet-account-option is-selected' : 'wallet-account-option'
                       }
                       disabled={busy}
-                      onClick={() =>
-                        void (account.heldHere ? runSwitch(account.index) : runMove(account.index))
-                      }
+                      data-aeon-state={account.heldHere ? 'held' : 'view-only'}
+                      onClick={() => {
+                        if (account.heldHere) void runSwitch(account.index)
+                        else if (account.index === activeIndex) {
+                          // The open account, now held elsewhere: already shown read-only.
+                          clearAccountView()
+                          send({ type: 'CLOSE' })
+                        } else if (selected) send({ type: 'CLOSE' })
+                        else runView(account)
+                      }}
                     >
                       <span className="wallet-account-option-lead">
                         <ProfileAvatar profile={account.profile} label={name} />
                         <span className="wallet-account-option-copy">
                           <strong>{name}</strong>
                           <span>
-                            {movePhase
-                              ? MOVE_PHASE_COPY[movePhase]
-                              : switching
-                                ? 'Switching…'
-                                : !account.heldHere
-                                  ? 'On another device'
-                                  : account.handle ?? (account.profile ? account.label : 'No public profile')}
+                            {switching
+                              ? 'Switching…'
+                              : !account.heldHere
+                                ? 'View only · on another device'
+                                : account.handle ?? (account.profile ? account.label : 'No public profile')}
                           </span>
                         </span>
                       </span>

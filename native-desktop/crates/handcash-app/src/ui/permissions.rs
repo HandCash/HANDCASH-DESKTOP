@@ -475,7 +475,7 @@ pub fn IdentityPublishReview(
         prompt::PromptStatus::Pending
     };
     let effective_state = if signing_gated && stage_str == "reviewing" {
-        "unavailable"
+        "review-pending"
     } else {
         stage_str.as_str()
     };
@@ -723,7 +723,7 @@ pub fn PermissionRequestPanel(
         aria_label: "Permission decision".to_string(),
         secondary_label: "Deny".to_string(),
         secondary_disabled: committing,
-        primary_label: if gated { "Signing unavailable".to_string() } else { "Approve".to_string() },
+        primary_label: if gated { "Review pending".to_string() } else { "Approve".to_string() },
         primary_disabled: allow_disabled,
     };
     let scope = if is_connect {
@@ -732,7 +732,7 @@ pub fn PermissionRequestPanel(
         "action-permission-inline"
     };
     let state = if gated {
-        "unavailable".to_string()
+        "review-pending".to_string()
     } else {
         decision.state_attr()
     };
@@ -900,7 +900,7 @@ pub fn ActionPermissionDialog(
     let state = if !open {
         "idle"
     } else if gated {
-        "unavailable"
+        "review-pending"
     } else {
         "pending"
     };
